@@ -1,7 +1,7 @@
 use crate::lexer::lexeme::Lexeme;
 use crate::lexer::tokenizer::Span as LexSpan;
-use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, ParameterPathSegment};
 use fp_core::ast::path::PathPrefix;
+use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, ParameterPathSegment};
 use fp_core::span::Span;
 
 pub(crate) fn split_path_prefix(
@@ -90,7 +90,11 @@ pub(crate) fn decode_single_char_literal(inner: &str) -> Option<char> {
     let mut chars = inner.chars();
     let first = chars.next()?;
     if first != '\\' {
-        return if chars.next().is_none() { Some(first) } else { None };
+        return if chars.next().is_none() {
+            Some(first)
+        } else {
+            None
+        };
     }
     let esc = chars.next()?;
     let decoded = match esc {
@@ -107,7 +111,11 @@ pub(crate) fn decode_single_char_literal(inner: &str) -> Option<char> {
         }
         _ => return None,
     };
-    if chars.next().is_none() { Some(decoded) } else { None }
+    if chars.next().is_none() {
+        Some(decoded)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn decode_string_literal(raw: &str) -> Option<String> {

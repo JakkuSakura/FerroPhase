@@ -596,9 +596,9 @@ const BPF_DW: u8 = 0x18;
 mod tests {
     use super::run_object;
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirBlob, LirRegister,
-        LirTerminator, LirType, LirValue,
+        CallingConvention, Linkage, LirBasicBlock, LirBlob, LirConstant, LirFunction,
+        LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirLocal,
+        LirRegister, LirTerminator, LirType, LirValue,
     };
 
     fn i64_value(value: u64) -> LirValue {

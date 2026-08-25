@@ -193,6 +193,7 @@ impl FerroPhaseParser {
 }
 
 use eyre::Result;
+use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
     AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BlockStmt, BlockStmtExpr,
     DecimalType, EnumTypeVariant, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait,
@@ -203,19 +204,18 @@ use fp_core::ast::{
     ExprStruct, ExprStructural, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, FunctionParam,
     FunctionParamReceiver, FunctionSignature, Ident, Item, ItemDeclConst, ItemDeclFunction,
-    ItemDeclStatic, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
-    ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
-    MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr,
-    PatternQuote, PatternStruct, PatternStructural, PatternTuple,
-    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
-    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeArray,
-    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
-    TypeQuote, TypeReference, TypeSlice, TypeStruct, Value, ValueBytes, ValueChar, ValueNone,
-    ValueUInt, Visibility,
+    ItemDeclStatic, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic,
+    ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType,
+    MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name,
+    ParameterPath, ParameterPathSegment, Path, Pattern, PatternBox, PatternIdent, PatternKind,
+    PatternOr, PatternQuote, PatternStruct, PatternStructural, PatternTuple, PatternTupleStruct,
+    PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions,
+    ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp,
+    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
+    TypeReference, TypeSlice, TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt,
+    Visibility,
 };
 use fp_core::intrinsics::CallKind;
-use fp_core::ast::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
 use num_bigint::BigInt;
@@ -231,8 +231,10 @@ use crate::lexer::tokenizer::{Keyword, Token, TokenKind, strip_number_suffix};
 
 mod expr;
 mod items;
+mod pattern_expansion;
 mod types;
 
+pub(crate) use expr::patterns::parse_general_pattern;
 pub(crate) use expr::*;
 pub(crate) use items::*;
 pub(crate) use types::*;
@@ -332,7 +334,10 @@ pub(super) fn skips_modifiers_to_fn(input: &[Token]) -> bool {
             // included) before continuing to look for `fn`.
             Some(TokenKind::Keyword(Keyword::Extern)) => {
                 rest = &rest[1..];
-                if matches!(rest.first().map(|t| &t.kind), Some(TokenKind::StringLiteral)) {
+                if matches!(
+                    rest.first().map(|t| &t.kind),
+                    Some(TokenKind::StringLiteral)
+                ) {
                     rest = &rest[1..];
                 }
             }

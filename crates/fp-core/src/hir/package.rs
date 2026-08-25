@@ -42,13 +42,14 @@ pub struct HirPackage {
     pub module_tree: resolve::ModuleTree,
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
-    pub next_hir_id: u32,
     /// High-water mark for `next_def_id` — per-package, not a driver-wide
     /// counter: `DefId` is already `{package_id, index}`, so two packages
     /// minting indices from independently-reset counters can never
     /// collide, and this field's own `def_map` (once construction
     /// finishes) is the single source of truth a caller would otherwise
-    /// have to separately track and pass back in.
+    /// have to separately track and pass back in. Starts at 1 — index 0 is
+    /// reserved for the package-root `OwnerId` (see `OwnerId::root`), so a
+    /// real item can never mint a `DefId` that collides with it.
     pub next_def_id: u32,
     /// Fully-qualified path for a definition's `DefId`, recorded once at
     /// first registration (module segments + the definition's own bare
@@ -413,8 +414,7 @@ impl HirPackage {
             module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),
             def_map: HashMap::new(),
-            next_hir_id: 0,
-            next_def_id: 0,
+            next_def_id: 1,
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
@@ -449,12 +449,6 @@ impl HirPackage {
             const_block_defs: RefCell::new(HashMap::new()),
             diagnostics: crate::diagnostics::DiagnosticManager::new(),
         }
-    }
-
-    pub fn next_id(&mut self, package_id: PackageId) -> HirId {
-        let id = self.next_hir_id;
-        self.next_hir_id += 1;
-        HirId::new(package_id, id)
     }
 
     pub fn next_def_id(&mut self) -> DefId {

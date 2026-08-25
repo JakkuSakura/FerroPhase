@@ -389,10 +389,12 @@ impl AstToHirLowerer {
                             method.body = None;
                         }
                         let method_def_id = self.def_id_for_item(item);
-                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
-                            let op = impl_op_class
-                                .as_deref()
-                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
+                        if let Some(tag) =
+                            fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
+                        {
+                            let op = impl_op_class.as_deref().and_then(|class| {
+                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                            });
                             if let Some(op) = op {
                                 self.package.op_defs.insert(method_def_id.clone(), op);
                             }
@@ -505,7 +507,8 @@ impl AstToHirLowerer {
                             _ => None,
                         }
                         .unwrap_or(hir::Res::SelfTy);
-                        self.current_type_scope().insert(param.name.name.clone(), res);
+                        self.current_type_scope()
+                            .insert(param.name.name.clone(), res);
                     }
                     // Synthesize default trait methods into the impl if they
                     // are missing — resolving names as if still in the
@@ -612,16 +615,15 @@ impl AstToHirLowerer {
                         // A default-provided method (has a real body) —
                         // the fallback signature source `method_output`
                         // reads when a concrete impl doesn't redeclare it.
-                        let function = self.transform_function_with_body(
-                            func,
-                            Some(self_ty.clone()),
-                            true,
-                        )?;
+                        let function =
+                            self.transform_function_with_body(func, Some(self_ty.clone()), true)?;
                         let method_def_id = self.def_id_for_item(item);
-                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
-                            let op = trait_op_class
-                                .as_deref()
-                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
+                        if let Some(tag) =
+                            fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
+                        {
+                            let op = trait_op_class.as_deref().and_then(|class| {
+                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                            });
                             if let Some(op) = op {
                                 self.package.op_defs.insert(method_def_id.clone(), op);
                             }
@@ -675,7 +677,10 @@ impl AstToHirLowerer {
                 .bounds
                 .bounds
                 .iter()
-                .filter_map(|bound| self.ast_expr_to_hir_path(bound, PathResolutionScope::Type).ok())
+                .filter_map(|bound| {
+                    self.ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                        .ok()
+                })
                 .collect();
 
             Ok(hir::Trait {

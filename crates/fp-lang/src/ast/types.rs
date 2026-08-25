@@ -928,11 +928,12 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
         // skip a lifetime-only argument list like this.
         let mut bound_probe = probe;
         let _ = parse_optional_type_args(&mut bound_probe)?;
-        if skip_symbol(&mut bound_probe, ":").is_ok() && parse_type_bounds(&mut bound_probe).is_ok() {
+        if skip_symbol(&mut bound_probe, ":").is_ok() && parse_type_bounds(&mut bound_probe).is_ok()
+        {
             *input = bound_probe;
-            return Ok(Ty::Expr(Box::new(Expr::name(Name::path(Path::plain(vec![
-                ident,
-            ]))))));
+            return Ok(Ty::Expr(Box::new(Expr::name(Name::path(Path::plain(
+                vec![ident],
+            ))))));
         }
     }
     // A const-generic argument's own *value* (real `core::array`'s own
@@ -955,10 +956,9 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
     // `TransmuteFrom<&'a MaybeUninit<From>, { Assume::SAFETY }>`) is a
     // block expression, not a bare literal — same value-position as the
     // literal case just below, just wrapped in `{ .. }`.
-    if input
-        .first()
-        .is_some_and(|token| token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)
-        || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
+    if input.first().is_some_and(|token| {
+        token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral
+    }) || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
         || peek_symbol(*input) == Some("{")
     {
         let expr = parse_cast_no_struct(input, 0)?;

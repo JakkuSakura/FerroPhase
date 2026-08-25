@@ -13,6 +13,12 @@ use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE}
 use fp_core::hir::GenericCallResolution;
 use std::rc::{Rc, Weak};
 
+mod generic_types;
+mod intrinsics;
+mod literals;
+mod type_shapes;
+use type_shapes::*;
+
 /// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
 /// runs against, by cloning `dependency_program` (a cheap `Rc`-map clone,
 /// not a deep one — see `hir::HirProgram`'s own `packages` field) and adding
@@ -334,7 +340,10 @@ impl HirTypeChecker {
     /// the caller (an item's typecheck task) just suspends naturally until
     /// the answer is ready, with no manual queue-draining/polling by
     /// driver-level code required.
-    async fn request_comptime(&self, request: ComptimeRequest) -> fp_core::Result<fp_core::ast::Value> {
+    async fn request_comptime(
+        &self,
+        request: ComptimeRequest,
+    ) -> fp_core::Result<fp_core::ast::Value> {
         let resolver = self
             .comptime_resolver
             .clone()
@@ -521,7 +530,8 @@ impl HirTypeChecker {
                 out.insert(assoc.name.clone(), ty);
             }
         }
-        self.package().cache_impl_assoc_types(cache_key, out.clone());
+        self.package()
+            .cache_impl_assoc_types(cache_key, out.clone());
         Ok(out)
     }
 
@@ -620,12 +630,15 @@ impl HirTypeChecker {
     ) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut scope = self.with_generics(&function.sig.generics);
-            scope.check_signature(&function.sig).await.map_err(|error| {
-                Error::from(format!(
-                    "in function `{}` signature: {error}",
-                    function.sig.name
-                ))
-            })?;
+            scope
+                .check_signature(&function.sig)
+                .await
+                .map_err(|error| {
+                    Error::from(format!(
+                        "in function `{}` signature: {error}",
+                        function.sig.name
+                    ))
+                })?;
             if let Some(body) = &function.body {
                 scope
                     .check_function_body(&function.sig.inputs, &function.sig.output, body)
@@ -648,7 +661,10 @@ impl HirTypeChecker {
     /// The explicit associated-type bindings for a still-generic type
     /// parameter named `name`, if any are currently in scope — see
     /// `generic_param_bindings`'s own doc comment.
-    fn generic_param_bindings(&self, name: &hir::Symbol) -> Option<&[(hir::Symbol, hir::TypeExpr)]> {
+    fn generic_param_bindings(
+        &self,
+        name: &hir::Symbol,
+    ) -> Option<&[(hir::Symbol, hir::TypeExpr)]> {
         self.generic_param_bindings.get(name).map(Vec::as_slice)
     }
 
@@ -689,7 +705,9 @@ impl HirTypeChecker {
         // `check_block_with_expected_tail`) — not the whole body — so it
         // doesn't leak into unrelated statements earlier in the function.
         let output_ty = scope.check_type_expr(output).await?;
-        let refinement_hint = scope.program_rc().take_raw_refinement_hint(output.hir_id.clone());
+        let refinement_hint = scope
+            .program_rc()
+            .take_raw_refinement_hint(output.hir_id.clone());
         scope
             .check_block_with_expected_tail(block, Some(output_ty))
             .await?;
@@ -782,7 +800,11 @@ impl HirTypeChecker {
                         referent = *inner;
                     }
                     Ty {
-                        kind: TyKind::Ref(ty::Region::ReErased, Box::new(referent), reference.mutable),
+                        kind: TyKind::Ref(
+                            ty::Region::ReErased,
+                            Box::new(referent),
+                            reference.mutable,
+                        ),
                     }
                 }
                 hir::ExprKind::Call(callee, args) => {
@@ -853,8 +875,7 @@ impl HirTypeChecker {
                         &callee.kind
                     {
                         path.res.as_ref().and_then(|res| match res {
-                            hir::Res::Def(def_id) => match self.program_rc().item(def_id.clone())
-                            {
+                            hir::Res::Def(def_id) => match self.program_rc().item(def_id.clone()) {
                                 Some(item) => match &item.kind {
                                     hir::ItemKind::Function(function) => {
                                         Some(function.sig.output.hir_id.clone())
@@ -951,8 +972,11 @@ impl HirTypeChecker {
                                         )
                                         .await?
                                     } else {
-                                        self.method_declared_signature_at(&receiver_ty, &method_name)
-                                            .await?
+                                        self.method_declared_signature_at(
+                                            &receiver_ty,
+                                            &method_name,
+                                        )
+                                        .await?
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
@@ -1003,8 +1027,11 @@ impl HirTypeChecker {
                                         )
                                         .await?
                                     } else {
-                                        self.method_declared_signature_at(&receiver_ty, &method_name)
-                                            .await?
+                                        self.method_declared_signature_at(
+                                            &receiver_ty,
+                                            &method_name,
+                                        )
+                                        .await?
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
@@ -1094,15 +1121,13 @@ impl HirTypeChecker {
                     // method (`Option::map_or`'s `f: fn(T) -> U`): without a
                     // real `T` hint here, the closure's own parameter is
                     // unusable when its body gets checked.
-                    let declared_inputs = match self
-                        .method_declared_signature(&receiver_ty, method)
-                        .await
-                    {
-                        Ok(Some(Ty {
-                            kind: TyKind::FnPtr(sig),
-                        })) => Some(sig.binder.value.inputs),
-                        _ => None,
-                    };
+                    let declared_inputs =
+                        match self.method_declared_signature(&receiver_ty, method).await {
+                            Ok(Some(Ty {
+                                kind: TyKind::FnPtr(sig),
+                            })) => Some(sig.binder.value.inputs),
+                            _ => None,
+                        };
                     let mut arg_types = vec![receiver_ty.clone()];
                     for (index, arg) in args.iter().enumerate() {
                         // `inputs[0]` is `Self`; `args[index]` lines up with
@@ -1129,7 +1154,10 @@ impl HirTypeChecker {
                     match self.method_output(&receiver_ty, method, &arg_types).await {
                         Ok((method_def_id, generic_args, output)) => {
                             let package = self.package();
-                            package.record_method_resolution(expr.hir_id.clone(), method_def_id.clone());
+                            package.record_method_resolution(
+                                expr.hir_id.clone(),
+                                method_def_id.clone(),
+                            );
                             if let Some(args) = generic_args {
                                 package.record_generic_method_arg(
                                     expr.hir_id.clone(),
@@ -1157,7 +1185,11 @@ impl HirTypeChecker {
                     };
                     match &receiver_ty.kind {
                         TyKind::Array(inner, _) | TyKind::Slice(inner) => {
-                            self.require_same_at(&index_ty, &Ty::uint(ty::UintTy::Usize), expr.span)?;
+                            self.require_same_at(
+                                &index_ty,
+                                &Ty::uint(ty::UintTy::Usize),
+                                expr.span,
+                            )?;
                             (**inner).clone()
                         }
                         // `HashMap<K, V>` is a real struct (see
@@ -1170,7 +1202,8 @@ impl HirTypeChecker {
                         // so it goes through the general method-dispatch
                         // fallback below like any other type would.
                         TyKind::Adt(adt, args)
-                            if Some(adt.did.clone()) == self.well_known_struct_def_id("HashMap") =>
+                            if Some(adt.did.clone())
+                                == self.well_known_struct_def_id("HashMap") =>
                         {
                             let (Some(GenericArg::Type(key_ty)), Some(GenericArg::Type(value_ty))) =
                                 (args.first(), args.get(1))
@@ -1436,7 +1469,7 @@ impl HirTypeChecker {
                                 },
                             )))
                         }
-                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.index)),
+                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.local_id())),
                     };
                     Ty {
                         kind: TyKind::Array(Box::new(element), length),
@@ -1484,7 +1517,9 @@ impl HirTypeChecker {
                 hir::ExprKind::Continue => Ty::never(),
                 hir::ExprKind::Let(pattern, target, value) => {
                     let ty = self.check_type_expr(target).await?;
-                    let hint = self.program_rc().take_raw_refinement_hint(target.hir_id.clone());
+                    let hint = self
+                        .program_rc()
+                        .take_raw_refinement_hint(target.hir_id.clone());
                     if let Some(value) = value {
                         let value_ty = self.check_expr(value).await?;
                         self.require_same_at(&ty, &value_ty, expr.span)?;
@@ -1578,7 +1613,7 @@ impl HirTypeChecker {
                                     .map(|ty| (**ty).clone())
                             })
                             .unwrap_or_else(|| Ty {
-                                kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id.index)),
+                                kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id.local_id())),
                             });
                         scope.bind_pattern(&param.pat, param_ty.clone()).await?;
                         param_types.push(param_ty);
@@ -1612,7 +1647,8 @@ impl HirTypeChecker {
                     }
                 }
             };
-            self.package().record_expr_type(expr.hir_id.clone(), ty.clone());
+            self.package()
+                .record_expr_type(expr.hir_id.clone(), ty.clone());
             Ok(ty)
         })
     }
@@ -1640,7 +1676,9 @@ impl HirTypeChecker {
                     let ty = match (&local.ty, &local.init) {
                         (Some(annotation), Some(init)) => {
                             let mut ty = scope.check_type_expr(annotation).await?;
-                            let refinement_hint = scope.program_rc().take_raw_refinement_hint(annotation.hir_id.clone());
+                            let refinement_hint = scope
+                                .program_rc()
+                                .take_raw_refinement_hint(annotation.hir_id.clone());
                             let init_ty = scope.check_expr(init).await?;
                             if let Some(hint) = &refinement_hint {
                                 scope.discharge_refinement(hint, init)?;
@@ -1672,7 +1710,10 @@ impl HirTypeChecker {
                                 };
                                 if let Some(literal_len) = literal_len {
                                     ty = Ty {
-                                        kind: TyKind::Array(elem.clone(), u64_to_const_kind(literal_len)),
+                                        kind: TyKind::Array(
+                                            elem.clone(),
+                                            u64_to_const_kind(literal_len),
+                                        ),
                                     };
                                 }
                             }
@@ -1703,7 +1744,10 @@ impl HirTypeChecker {
                                 // against a clone of itself.
                                 let lengths_match = match (&ty.kind, &init_ty.kind) {
                                     (TyKind::Array(_, ty_len), TyKind::Array(_, init_len)) => {
-                                        match (const_kind_to_u64(ty_len), const_kind_to_u64(init_len)) {
+                                        match (
+                                            const_kind_to_u64(ty_len),
+                                            const_kind_to_u64(init_len),
+                                        ) {
                                             (Some(a), Some(b)) => a == b,
                                             _ => true,
                                         }
@@ -1725,14 +1769,14 @@ impl HirTypeChecker {
                                     "type mismatch: expected `{ty}`, found `{resolved_init}`"
                                 )));
                             }
-                            scope.package().record_expr_type(init.hir_id.clone(), resolved_init.clone());
+                            scope
+                                .package()
+                                .record_expr_type(init.hir_id.clone(), resolved_init.clone());
                             resolved_init
                         }
                         (Some(annotation), None) => scope.check_type_expr(annotation).await?,
                         (None, Some(init)) => scope.check_expr(init).await?,
-                        (None, None) => {
-                            scope.error_ty("local binding needs a type or initializer")
-                        }
+                        (None, None) => scope.error_ty("local binding needs a type or initializer"),
                     };
                     scope.bind_pattern(&local.pat, ty).await?;
                 }
@@ -1745,7 +1789,10 @@ impl HirTypeChecker {
         let ty = match block.expr.as_ref() {
             Some(expr) => {
                 if let Some(expected) = expected_tail {
-                    let result = scope.with_expected_expr_type(expected).check_expr(expr).await;
+                    let result = scope
+                        .with_expected_expr_type(expected)
+                        .check_expr(expr)
+                        .await;
                     result?
                 } else {
                     scope.check_expr(expr).await?
@@ -1856,12 +1903,14 @@ impl HirTypeChecker {
                                     size: 8,
                                 }),
                             )),
-                            _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.index)),
+                            _ => {
+                                ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.local_id()))
+                            }
                         },
                     ),
                 },
                 hir::TypeExprKind::Infer => Ty {
-                    kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.index)),
+                    kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.local_id())),
                 },
                 hir::TypeExprKind::ConstBlock(def_id, body) => {
                     // Requested immediately, in place — no deferral to the
@@ -1901,7 +1950,8 @@ impl HirTypeChecker {
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    self.package().record_type_expr_type(hir_id, body_ty.clone());
+                    self.package()
+                        .record_type_expr_type(hir_id, body_ty.clone());
                     body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
@@ -1922,7 +1972,8 @@ impl HirTypeChecker {
                                     lhs.push(value);
                                 }
                             }
-                            self.program_rc().insert_literal_type_hint(expr.hir_id.clone(), lhs);
+                            self.program_rc()
+                                .insert_literal_type_hint(expr.hir_id.clone(), lhs);
                             str_ty()
                         }
                         _ => {
@@ -1941,9 +1992,7 @@ impl HirTypeChecker {
                         .insert_literal_type_hint(expr.hir_id.clone(), vec![value.clone()]);
                     str_ty()
                 }
-                hir::TypeExprKind::Type => Ty {
-                    kind: TyKind::Type,
-                },
+                hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
                 hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
                 hir::TypeExprKind::Refinement {
                     base,
@@ -1962,7 +2011,8 @@ impl HirTypeChecker {
                     base_ty
                 }
             };
-            self.package().record_type_expr_type(expr.hir_id.clone(), ty.clone());
+            self.package()
+                .record_type_expr_type(expr.hir_id.clone(), ty.clone());
             Ok(ty)
         })
     }
@@ -2085,7 +2135,9 @@ impl HirTypeChecker {
             // below, which is a real resolution failure that must surface
             // rather than be silently laundered into `()`.
             if path.segments.len() == 1 && path.segments[0].name.as_str() == "void" {
-                return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
+                return Ok(hir::Ty {
+                    kind: hir::ty::TyKind::Tuple(vec![]),
+                });
             }
             // `create_null_type` (`ast_to_hir::mod.rs`) deliberately builds
             // this exact shape — an unresolved `Res::None` path literally
@@ -2132,9 +2184,11 @@ impl HirTypeChecker {
                                         hir::GenericArg::Type(ty) => {
                                             GenericArg::Type(self.check_type_expr(ty).await?)
                                         }
-                                        hir::GenericArg::Const(_) => GenericArg::Type(
-                                            self.error_ty("const generic arguments are not supported"),
-                                        ),
+                                        hir::GenericArg::Const(_) => {
+                                            GenericArg::Type(self.error_ty(
+                                                "const generic arguments are not supported",
+                                            ))
+                                        }
                                     };
                                     checked.push(arg);
                                 }
@@ -2252,11 +2306,12 @@ impl HirTypeChecker {
                     _ => None,
                 };
                 if let Some(declared_params) = declared_params {
-                    for (index, parameter) in declared_params.iter().enumerate().skip(checked.len()) {
+                    for (index, parameter) in declared_params.iter().enumerate().skip(checked.len())
+                    {
                         let default_ty = match &parameter.kind {
-                            hir::GenericParamKind::Type { default: Some(default) } => {
-                                Some(self.check_type_expr(default).await?)
-                            }
+                            hir::GenericParamKind::Type {
+                                default: Some(default),
+                            } => Some(self.check_type_expr(default).await?),
                             _ => None,
                         };
                         checked.push(GenericArg::Type(default_ty.unwrap_or_else(|| Ty {
@@ -2371,13 +2426,19 @@ impl HirTypeChecker {
                 ) {
                     Some(ty) => ty,
                     None => {
-                        return Some(Ok(self.error_ty("`HashMapEntry` struct definition was not found")))
+                        return Some(Ok(
+                            self.error_ty("`HashMapEntry` struct definition was not found")
+                        ));
                     }
                 };
-                let output = match self.well_known_struct_ty("HashMap", vec![GenericArg::Type(k), GenericArg::Type(v)]) {
+                let output = match self
+                    .well_known_struct_ty("HashMap", vec![GenericArg::Type(k), GenericArg::Type(v)])
+                {
                     Some(ty) => ty,
                     None => {
-                        return Some(Ok(self.error_ty("`HashMap` struct definition was not found")))
+                        return Some(Ok(
+                            self.error_ty("`HashMap` struct definition was not found")
+                        ));
                     }
                 };
                 let input = Ty {
@@ -2406,7 +2467,9 @@ impl HirTypeChecker {
         };
         match &iter_ty.kind {
             TyKind::Array(elem, _) | TyKind::Slice(elem) => (**elem).clone(),
-            TyKind::Adt(adt, args) if Some(adt.did.clone()) == self.well_known_struct_def_id("Vec") => {
+            TyKind::Adt(adt, args)
+                if Some(adt.did.clone()) == self.well_known_struct_def_id("Vec") =>
+            {
                 match args.first() {
                     Some(GenericArg::Type(elem)) => elem.clone(),
                     _ => self.error_ty("`Vec` for-loop iterator missing its element type argument"),
@@ -2488,8 +2551,7 @@ impl HirTypeChecker {
         // is simply the primitive itself; resolve the tail the same way
         // `Self::`/struct bases already do.
         if let Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name))) = &path.res {
-            if let (Some(receiver_ty), Some(tail)) =
-                (primitive_path_ty(name), path.segments.get(1))
+            if let (Some(receiver_ty), Some(tail)) = (primitive_path_ty(name), path.segments.get(1))
             {
                 if path.segments.len() == 2 {
                     if let Some(sig) = self
@@ -2560,7 +2622,12 @@ impl HirTypeChecker {
             let is_struct_or_enum = self
                 .program_rc()
                 .item(def_id.clone())
-                .map(|item| matches!(&item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)))
+                .map(|item| {
+                    matches!(
+                        &item.kind,
+                        hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
+                    )
+                })
                 .unwrap_or(false);
             if is_struct_or_enum {
                 let receiver_ty = self.path_ty(path).await?;
@@ -2602,16 +2669,18 @@ impl HirTypeChecker {
             let owner_id = program
                 .package(&self.current_package())
                 .and_then(|package| package.member_owner(def_id.clone()));
-            let found = owner_id.and_then(|owner_id| program.item(owner_id)).and_then(|item| {
-                let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                    return None;
-                };
-                let impl_member = impl_item
-                    .items
-                    .iter()
-                    .find(|member| member.def_id == *def_id)?;
-                Some((impl_item, &impl_member.kind))
-            });
+            let found = owner_id
+                .and_then(|owner_id| program.item(owner_id))
+                .and_then(|item| {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                        return None;
+                    };
+                    let impl_member = impl_item
+                        .items
+                        .iter()
+                        .find(|member| member.def_id == *def_id)?;
+                    Some((impl_item, &impl_member.kind))
+                });
             if let Some((impl_item, hir::ImplItemKind::Method(function))) = found {
                 let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
@@ -2671,7 +2740,12 @@ impl HirTypeChecker {
                         if member.def_id != *def_id {
                             return None;
                         }
-                        Some((impl_item.generics.clone(), impl_item.self_ty.clone(), impl_item.items.clone(), member.kind.clone()))
+                        Some((
+                            impl_item.generics.clone(),
+                            impl_item.self_ty.clone(),
+                            impl_item.items.clone(),
+                            member.kind.clone(),
+                        ))
                     })
                 });
             if let Some((generics, self_ty, impl_items, member_kind)) = cross_package_member {
@@ -2681,9 +2755,8 @@ impl HirTypeChecker {
                         let mut scope = self.with_generics(&generics);
                         let self_ty = scope.check_type_expr(&self_ty).await?;
                         let mut scope = scope.with_self_type(self_ty);
-                        let assoc_types = scope
-                            .impl_assoc_types(&impl_items, self_ty_hir_id)
-                            .await?;
+                        let assoc_types =
+                            scope.impl_assoc_types(&impl_items, self_ty_hir_id).await?;
                         let mut scope = scope.with_assoc_types(assoc_types);
                         return scope.function_signature(&function).await;
                     }
@@ -2785,9 +2858,7 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty).await
             }
-            hir::ItemKind::Const(constant)
-                if !self.package().def_map.contains_key(&def_id) =>
-            {
+            hir::ItemKind::Const(constant) if !self.package().def_map.contains_key(&def_id) => {
                 // A `DefId`'s own `package_id` field is not a reliable
                 // "which package is this really in" signal on its own —
                 // e.g. `hir::DefId::local(..)` always uses a generic
@@ -2863,9 +2934,9 @@ impl HirTypeChecker {
             for arg in &args.args {
                 let arg = match arg {
                     hir::GenericArg::Type(ty) => GenericArg::Type(self.check_type_expr(ty).await?),
-                    hir::GenericArg::Const(_) => GenericArg::Type(
-                        self.error_ty("const generic arguments are not supported"),
-                    ),
+                    hir::GenericArg::Const(_) => {
+                        GenericArg::Type(self.error_ty("const generic arguments are not supported"))
+                    }
                 };
                 checked.push(arg);
             }
@@ -2933,10 +3004,14 @@ impl HirTypeChecker {
         // `checked_impl_self_ty`/`impl_assoc_types` above, just reached
         // through the genuinely-`Err` path instead of the record-and-
         // recover one.
-        let signature = match self.function_signature_uncached(function, cache_key.clone()).await {
+        let signature = match self
+            .function_signature_uncached(function, cache_key.clone())
+            .await
+        {
             Ok(signature) => signature,
             Err(error) => {
-                self.program_rc().cache_function_signature(cache_key, Ty::error());
+                self.program_rc()
+                    .cache_function_signature(cache_key, Ty::error());
                 return Err(error);
             }
         };
@@ -2954,10 +3029,15 @@ impl HirTypeChecker {
         let mut inputs = Vec::with_capacity(function.sig.inputs.len());
         for (index, input) in function.sig.inputs.iter().enumerate() {
             let ty = scope.check_type_expr(&input.ty).await?;
-            if let Some(hint) = scope.program_rc().take_raw_refinement_hint(input.ty.hir_id.clone()) {
-                scope
-                    .program_rc()
-                    .insert_refinement_hint(cache_key.clone(), hir::ParamSlot::Input(index), hint);
+            if let Some(hint) = scope
+                .program_rc()
+                .take_raw_refinement_hint(input.ty.hir_id.clone())
+            {
+                scope.program_rc().insert_refinement_hint(
+                    cache_key.clone(),
+                    hir::ParamSlot::Input(index),
+                    hint,
+                );
             }
             inputs.push(Box::new(ty));
         }
@@ -2966,9 +3046,11 @@ impl HirTypeChecker {
             .program_rc()
             .take_raw_refinement_hint(function.sig.output.hir_id.clone())
         {
-            scope
-                .program_rc()
-                .insert_refinement_hint(cache_key.clone(), hir::ParamSlot::Output, hint);
+            scope.program_rc().insert_refinement_hint(
+                cache_key.clone(),
+                hir::ParamSlot::Output,
+                hint,
+            );
         }
         drop(scope);
         Ok(Ty {
@@ -3003,669 +3085,6 @@ impl HirTypeChecker {
         Ok(checked)
     }
 
-    fn instantiate_call(
-        &self,
-        callable: &Ty,
-        actuals: &[Ty],
-    ) -> Result<Option<(HashMap<ty::ParamTy, Ty>, Ty)>> {
-        let TyKind::FnPtr(signature) = &callable.kind else {
-            return Ok(None);
-        };
-        if signature.binder.value.inputs.len() != actuals.len() {
-            // `None` already means "not callable with these args" to every
-            // caller (see the `TyKind::FnPtr` mismatch case just above) —
-            // an arity mismatch is the same kind of "doesn't match", not a
-            // hard error, so report it the same way instead of aborting.
-            self.record_error("call argument count does not match function signature");
-            return Ok(None);
-        }
-        let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
-        for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
-            self.unify_call_types(expected, actual, &mut substitutions)?;
-        }
-        let output = self.substitute_param_map(&signature.binder.value.output, &substitutions);
-        Ok(Some((substitutions, output)))
-    }
-
-    fn generic_call_args(
-        &self,
-        def_id: hir::DefId,
-        substitutions: &HashMap<ty::ParamTy, Ty>,
-    ) -> Result<Option<Vec<Ty>>> {
-        let function = match self.program_rc().item(def_id.clone()) {
-            Some(item) => match &item.kind {
-                hir::ItemKind::Function(function) => Some(function.clone()),
-                _ => None,
-            },
-            // `item`/`def_map` only ever holds *top-level* items
-            // (struct/enum/fn/const/impl) — an `impl` block's own methods
-            // are never flattened into it as their own entries. A UFCS
-            // associated-function call (`HashMap::from(..)`) resolves
-            // straight to such an impl-member `DefId`, so the lookup above
-            // always misses for it — `impl_method_item_index` (built once
-            // per package) gives the enclosing impl's item index directly,
-            // same-package or cross-package alike, since `def_id` already
-            // carries its owning `package_id`.
-            None => self
-                .program_rc()
-                .package(&def_id.package_id)
-                .and_then(|package| {
-                    let impl_def_id = package.impl_method_item_index.get(&def_id)?;
-                    let item = package.def_map.get(impl_def_id)?;
-                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                        return None;
-                    };
-                    impl_item.items.iter().find_map(|impl_member| {
-                        if impl_member.def_id != def_id {
-                            return None;
-                        }
-                        match &impl_member.kind {
-                            hir::ImplItemKind::Method(function) => Some(function.clone()),
-                            _ => None,
-                        }
-                    })
-                }),
-        };
-        let Some(function) = function else {
-            return Ok(None);
-        };
-        if function.sig.generics.params.is_empty() {
-            return Ok(None);
-        }
-        let mut args = Vec::with_capacity(function.sig.generics.params.len());
-        for (index, parameter) in function.sig.generics.params.iter().enumerate() {
-            let param = ty::ParamTy {
-                index: index as u32,
-                name: parameter.name.clone(),
-            };
-            let Some(argument) = substitutions.get(&param) else {
-                self.record_error(format!(
-                    "could not infer generic parameter `{}` for `{def_id}`",
-                    parameter.name
-                ));
-                return Ok(None);
-            };
-            args.push(argument.clone());
-        }
-        Ok(Some(args))
-    }
-
-    /// Like `require_same_hard`, but tolerates `TyKind::Infer` holes on the
-    /// `annotation` side (e.g. a `let x: Vec<_> = ...;`'s elided `_`) by
-    /// treating them as matching whatever `concrete` has in that position —
-    /// an elided `_` never contradicts the resolved type, unlike an
-    /// explicitly-written, disagreeing one. Recurses structurally so a hole
-    /// nested inside a generic argument (`Vec<_>`, `Option<_>`, ...) is
-    /// tolerated the same way a top-level one is; any position where
-    /// `annotation` wrote something concrete still has to agree with
-    /// `concrete` exactly.
-    fn ty_matches_with_infer_holes(annotation: &Ty, concrete: &Ty) -> bool {
-        match (&annotation.kind, &concrete.kind) {
-            (TyKind::Infer(_), _) => true,
-            (TyKind::Ref(_, a, _), TyKind::Ref(_, c, _)) => {
-                Self::ty_matches_with_infer_holes(a, c)
-            }
-            (TyKind::Tuple(a), TyKind::Tuple(c)) if a.len() == c.len() => a
-                .iter()
-                .zip(c)
-                .all(|(a, c)| Self::ty_matches_with_infer_holes(a, c)),
-            (TyKind::Array(a, a_len), TyKind::Array(c, c_len)) => {
-                Self::ty_matches_with_infer_holes(a, c) && a_len == c_len
-            }
-            (TyKind::Slice(a), TyKind::Slice(c)) | (TyKind::Array(a, _), TyKind::Slice(c)) => {
-                Self::ty_matches_with_infer_holes(a, c)
-            }
-            (TyKind::Adt(a_def, a_args), TyKind::Adt(c_def, c_args))
-                if a_def.did == c_def.did && a_args.len() == c_args.len() =>
-            {
-                a_args.iter().zip(c_args).all(|(a, c)| match (a, c) {
-                    (GenericArg::Type(a), GenericArg::Type(c)) => {
-                        Self::ty_matches_with_infer_holes(a, c)
-                    }
-                    _ => a == c,
-                })
-            }
-            _ => annotation == concrete,
-        }
-    }
-
-    /// A strict, top-level structural compatibility check — deliberately
-    /// narrower than `unify_call_types`, which is a lenient *substitution*
-    /// helper whose catch-all (`require_same`) always returns `Ok(())`
-    /// even on a genuine mismatch (it only records a diagnostic; several
-    /// callers rely on that non-failing behavior). Using
-    /// `unify_call_types(..).is_ok()` alone as a receiver-matching gate is
-    /// therefore unsound: an unrelated pairing like `Adt(Option, [T])` vs
-    /// `Array(i64, 3)` falls through every real structural arm to
-    /// `require_same` and reports a false match. This function is only
-    /// used to gate *which* impl candidate's self-type is even eligible to
-    /// unify against a receiver in the first place — real substitution
-    /// still happens via `unify_call_types` afterward, once this confirms
-    /// the two are the same kind of type.
-    fn ty_shapes_compatible(a: &TyKind, b: &TyKind) -> bool {
-        match (a, b) {
-            (TyKind::Param(_), _) | (_, TyKind::Param(_)) => true,
-            (TyKind::Ref(_, a, _), TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(&a.kind, &b.kind),
-            (TyKind::Ref(_, a, _), b) => Self::ty_shapes_compatible(&a.kind, b),
-            (a, TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(a, &b.kind),
-            (TyKind::Slice(_) | TyKind::Array(_, _), TyKind::Slice(_) | TyKind::Array(_, _)) => true,
-            (TyKind::Tuple(a), TyKind::Tuple(b)) => a.len() == b.len(),
-            (TyKind::RawPtr(_), TyKind::RawPtr(_)) => true,
-            (TyKind::FnPtr(_), TyKind::FnPtr(_)) => true,
-            (TyKind::Adt(a, _), TyKind::Adt(b, _)) => a.did == b.did,
-            (TyKind::Bool, TyKind::Bool)
-            | (TyKind::Char, TyKind::Char)
-            | (TyKind::Int(_), TyKind::Int(_))
-            | (TyKind::Uint(_), TyKind::Uint(_))
-            | (TyKind::Float(_), TyKind::Float(_))
-            | (TyKind::Never, TyKind::Never)
-            | (TyKind::Any, TyKind::Any)
-            | (TyKind::Type, TyKind::Type) => true,
-            _ => a == b,
-        }
-    }
-
-    fn unify_call_types(
-        &self,
-        expected: &Ty,
-        actual: &Ty,
-        substitutions: &mut HashMap<ty::ParamTy, Ty>,
-    ) -> Result<()> {
-        self.unify_call_types_impl(expected, actual, substitutions, true)
-    }
-
-    /// `unify_call_types`, but purely speculative: used by candidate-impl
-    /// matching (`method_output_at`'s `matches_receiver`, `generic_args_
-    /// compatible`, ...) to test compatibility without committing to it —
-    /// the caller always discards the actual `Result` via `.is_ok()`/
-    /// `.is_err()` and moves on to the next candidate on failure. Real
-    /// Rust's own method-resolution candidate search never turns a
-    /// rejected candidate into a diagnostic; only "no candidate matched
-    /// at all" is a real error. Plain `unify_call_types` records every
-    /// mismatch as a permanent diagnostic (`require_same`'s whole point,
-    /// for *committed* checks) — reused unchanged for a speculative probe,
-    /// every non-matching candidate among (for example) a numeric type's
-    /// dozen near-identical width-specific impls would permanently pollute
-    /// the diagnostic list once per rejected candidate per call site,
-    /// even though the search goes on to find the right one and the
-    /// overall typecheck never actually fails.
-    fn unify_call_types_probe(
-        &self,
-        expected: &Ty,
-        actual: &Ty,
-        substitutions: &mut HashMap<ty::ParamTy, Ty>,
-    ) -> Result<()> {
-        self.unify_call_types_impl(expected, actual, substitutions, false)
-    }
-
-    fn unify_call_types_impl(
-        &self,
-        expected: &Ty,
-        actual: &Ty,
-        substitutions: &mut HashMap<ty::ParamTy, Ty>,
-        record: bool,
-    ) -> Result<()> {
-        match (&expected.kind, &actual.kind) {
-            (TyKind::Param(param), _) => {
-                if let Some(previous) = substitutions.get(param) {
-                    if record {
-                        self.require_same(previous, actual)?;
-                    } else if previous != actual {
-                        return Err(Error::from("speculative type mismatch"));
-                    }
-                } else {
-                    substitutions.insert(param.clone(), actual.clone());
-                }
-                Ok(())
-            }
-            (_, TyKind::Param(param)) => {
-                if let Some(previous) = substitutions.get(param) {
-                    if record {
-                        self.require_same(previous, expected)?;
-                    } else if previous != expected {
-                        return Err(Error::from("speculative type mismatch"));
-                    }
-                } else {
-                    substitutions.insert(param.clone(), expected.clone());
-                }
-                Ok(())
-            }
-            (TyKind::Ref(_, expected, _), TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
-            }
-            (TyKind::Ref(_, expected, _), _) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
-            }
-            // Symmetric to the rule above: a bare-expected/`Ref`-actual pair
-            // (e.g. a `str`-returning call's result reconciled against a
-            // `&str` expected-type hint) derefs the actual side the same
-            // way. Safe as a general rule — if the underlying shapes still
-            // don't match after peeling, the recursive call's own catch-all
-            // still reports a genuine mismatch.
-            (_, TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
-            }
-            (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
-                if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
-            {
-                for (expected, actual) in expected
-                    .binder
-                    .value
-                    .inputs
-                    .iter()
-                    .zip(&actual.binder.value.inputs)
-                {
-                    self.unify_call_types_impl(expected, actual, substitutions, record)?;
-                }
-                self.unify_call_types_impl(
-                    &expected.binder.value.output,
-                    &actual.binder.value.output,
-                    substitutions,
-                    record,
-                )
-            }
-            (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => {
-                expected
-                    .iter()
-                    .zip(actual)
-                    .try_for_each(|(expected, actual)| {
-                        self.unify_call_types_impl(expected, actual, substitutions, record)
-                    })
-            }
-            (TyKind::Array(expected, _), TyKind::Array(actual, _))
-            | (TyKind::Slice(expected), TyKind::Slice(actual))
-            | (TyKind::Array(expected, _), TyKind::Slice(actual))
-            | (TyKind::Slice(expected), TyKind::Array(actual, _)) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
-            }
-            (TyKind::Adt(expected, expected_args), TyKind::Adt(actual, actual_args))
-                if expected.did == actual.did && expected_args.len() == actual_args.len() =>
-            {
-                for (expected, actual) in expected_args.iter().zip(actual_args) {
-                    if let (GenericArg::Type(expected), GenericArg::Type(actual)) =
-                        (expected, actual)
-                    {
-                        self.unify_call_types_impl(expected, actual, substitutions, record)?;
-                    }
-                }
-                Ok(())
-            }
-            // C-string/FFI decay: a `&str`/string-literal argument may be
-            // passed where a raw pointer (`*const char`/`*mut char`, an
-            // `extern "C"` parameter) is expected — the same implicit
-            // decay C itself performs for string literals and `&str`'s
-            // byte-slice representation already matches a C string's byte
-            // layout at the FFI boundary.
-            (TyKind::RawPtr(_), TyKind::Slice(_)) => Ok(()),
-            // `void*`/any-object-pointer decay, same as C: a raw pointer of
-            // one pointee type may be passed where a raw pointer of another
-            // is expected (e.g. `*mut u8` into `memcpy`'s `*mut void`
-            // parameter) — this compiler has no real `void`/opaque-pointer
-            // distinction, just an ordinary `RawPtr(())`.
-            (TyKind::RawPtr(_), TyKind::RawPtr(_)) => Ok(()),
-            _ => {
-                if record {
-                    self.require_same(expected, actual)
-                } else if expected == actual
-                    || matches!(expected.kind, TyKind::Never)
-                    || matches!(actual.kind, TyKind::Never)
-                {
-                    Ok(())
-                } else {
-                    Err(Error::from("speculative type mismatch"))
-                }
-            }
-        }
-    }
-
-    /// Whether an impl block's generic arguments (e.g. `Vec`'s `[&str]` in
-    /// `impl Vec<&str> { .. }`) are compatible with a call site's actual
-    /// receiver arguments (e.g. `Vec`'s `[str]` for a `Vec<str>` value) —
-    /// used by `method_output` to pick the right specialization instead of
-    /// letting any `impl SomeGeneric<T> { .. }` match every instantiation.
-    /// A still-generic impl argument (containing an uninstantiated
-    /// `Param`, e.g. `impl<T> Vec<T>`) always matches, since it has nothing
-    /// concrete to conflict with; a concrete one must coerce the same way
-    /// a call argument would (the same `Ref`-peeling rules as everywhere
-    /// else), not require exact structural equality.
-    fn generic_args_compatible(&self, impl_args: &[GenericArg], receiver_args: &[GenericArg]) -> bool {
-        if impl_args.len() != receiver_args.len() {
-            return false;
-        }
-        impl_args.iter().zip(receiver_args).all(|(impl_arg, receiver_arg)| {
-            match (impl_arg, receiver_arg) {
-                (GenericArg::Type(impl_ty), GenericArg::Type(receiver_ty)) => {
-                    if ty_contains_param(impl_ty) {
-                        return true;
-                    }
-                    let mut substitutions = HashMap::new();
-                    self.unify_call_types_probe(impl_ty, receiver_ty, &mut substitutions)
-                        .is_ok()
-                }
-                _ => impl_arg == receiver_arg,
-            }
-        })
-    }
-
-    /// Unify two branches of the same control-flow join (`if`/`else`,
-    /// `match` arms) that are expected to produce the same type. Unlike
-    /// `require_same`, this tolerates one side still carrying an
-    /// uninstantiated `TyKind::Param` (e.g. `Option::None`'s type, which has
-    /// no argument of its own to infer `T` from) against the other side's
-    /// fully concrete type (e.g. `Option::Some(x)`'s `Option<i64>`) —
-    /// exactly the same substitution `unify_call_types` already performs for
-    /// call arguments, just tried in both directions since either branch
-    /// could be the concrete one.
-    fn unify_branch_types(&self, a: &Ty, b: &Ty) -> Result<Ty> {
-        if a == b {
-            return Ok(a.clone());
-        }
-        let mut substitutions = HashMap::new();
-        if self.unify_call_types_probe(a, b, &mut substitutions).is_ok() {
-            return Ok(self.substitute_param_map(a, &substitutions));
-        }
-        let mut substitutions = HashMap::new();
-        if self.unify_call_types_probe(b, a, &mut substitutions).is_ok() {
-            return Ok(self.substitute_param_map(b, &substitutions));
-        }
-        self.require_same(a, b)?;
-        Ok(a.clone())
-    }
-
-    /// A substitution can itself resolve to another still-unsubstituted
-    /// `Param` (e.g. one generic scope's `T` bound to an enclosing scope's
-    /// own, not-yet-closed-over `U`) — a single `.get()` lookup doesn't
-    /// walk that chain to its end. Depth-bounded the same way the
-    /// autoderef chain in `method_output` is (a real chain this deep would
-    /// be pathological): fails closed (returns the last-seen `Param`
-    /// unresolved) rather than looping forever on a genuine cycle.
-    fn resolve_param_transitively<'a>(
-        &self,
-        param: &'a ty::ParamTy,
-        substitutions: &'a HashMap<ty::ParamTy, Ty>,
-    ) -> Option<&'a Ty> {
-        let mut resolved = substitutions.get(param)?;
-        for _ in 0..8 {
-            let TyKind::Param(next_param) = &resolved.kind else {
-                return Some(resolved);
-            };
-            let Some(next) = substitutions.get(next_param) else {
-                return Some(resolved);
-            };
-            resolved = next;
-        }
-        Some(resolved)
-    }
-
-    fn substitute_param_map(&self, ty: &Ty, substitutions: &HashMap<ty::ParamTy, Ty>) -> Ty {
-        match &ty.kind {
-            TyKind::Param(param) => match self.resolve_param_transitively(param, substitutions) {
-                Some(resolved) => resolved.clone(),
-                None => ty.clone(),
-            },
-            TyKind::Ref(region, inner, mutable) => Ty {
-                kind: TyKind::Ref(
-                    region.clone(),
-                    Box::new(self.substitute_param_map(inner, substitutions)),
-                    *mutable,
-                ),
-            },
-            TyKind::RawPtr(value) => Ty {
-                kind: TyKind::RawPtr(ty::TypeAndMut {
-                    ty: Box::new(self.substitute_param_map(&value.ty, substitutions)),
-                    mutbl: value.mutbl,
-                }),
-            },
-            TyKind::Tuple(fields) => Ty {
-                kind: TyKind::Tuple(
-                    fields
-                        .iter()
-                        .map(|field| Box::new(self.substitute_param_map(field, substitutions)))
-                        .collect(),
-                ),
-            },
-            TyKind::Array(inner, length) => Ty {
-                kind: TyKind::Array(
-                    Box::new(self.substitute_param_map(inner, substitutions)),
-                    length.clone(),
-                ),
-            },
-            TyKind::Slice(inner) => Ty {
-                kind: TyKind::Slice(Box::new(self.substitute_param_map(inner, substitutions))),
-            },
-            TyKind::Adt(def, args) => Ty {
-                kind: TyKind::Adt(
-                    def.clone(),
-                    args.iter()
-                        .map(|arg| match arg {
-                            GenericArg::Type(ty) => {
-                                GenericArg::Type(self.substitute_param_map(ty, substitutions))
-                            }
-                            other => other.clone(),
-                        })
-                        .collect(),
-                ),
-            },
-            _ => ty.clone(),
-        }
-    }
-
-    /// Finds the impl method `method_output` would eventually resolve for
-    /// `receiver_ty`, returning just its *declared* signature (`Self`
-    /// substituted from the already-known receiver type; the method's own
-    /// generics, e.g. `map_or`'s `U`, left as unresolved `Param`s) —
-    /// without needing any argument types. `Self`'s position always
-    /// substitutes cleanly from `receiver_ty` alone, entirely independent
-    /// of the call's other arguments, so this doesn't need to wait for
-    /// them the way `instantiate_call`'s full unification does.
-    ///
-    /// This exists so `MethodCall` can seed a real expected-type hint for
-    /// each argument *before* checking it (mirroring `Call`'s existing
-    /// per-parameter hint) — the load-bearing case being a closure
-    /// argument to a generic method like `Option::map_or(self, default: U,
-    /// f: fn(T) -> U) -> U`: without this, `T` is unknown when the closure
-    /// literal is checked, so its parameter silently gets an unusable
-    /// placeholder type. Mirrors the matching loop in `method_output`
-    /// (kept in sync deliberately, not factored into one shared loop,
-    /// since the two stop at different points and diverging their control
-    /// flow — `Result` vs best-effort `None` — reads more clearly split).
-    async fn method_declared_signature(
-        &mut self,
-        receiver_ty: &Ty,
-        method: &hir::Symbol,
-    ) -> Result<Option<Ty>> {
-        let mut current = receiver_ty.clone();
-        for _ in 0..8 {
-            if let Some(signature) = self.method_declared_signature_at(&current, method).await? {
-                return Ok(Some(signature));
-            }
-            match self.deref_target(&current).await {
-                Some(target) => current = target,
-                None => break,
-            }
-        }
-        Ok(None)
-    }
-
-    /// `find_signature`'s logic, factored out of `method_declared_signature_at`
-    /// as a plain associated fn (rather than a captured closure) so it can
-    /// be `async`/awaited at both of that function's call sites.
-    async fn method_declared_signature_apply_receiver(
-        scope: &mut HirTypeChecker,
-        receiver_ty: &Ty,
-        function: &hir::Function,
-    ) -> Result<Option<Ty>> {
-        let signature = scope.function_signature(function).await?;
-        let TyKind::FnPtr(sig) = &signature.kind else {
-            return Ok(None);
-        };
-        let has_self_param = matches!(
-            function.sig.inputs.first().map(|param| &param.pat.kind),
-            Some(hir::PatKind::Binding { name, .. }) if name.as_str() == "self"
-        );
-        if !has_self_param {
-            // An associated function called via `Self::name(..)` (e.g.
-            // `Layout::is_size_alignment_valid(size, alignment)`) takes no
-            // receiver at all — the caller already supplies every argument
-            // explicitly, so there's no `Self` position to unify here.
-            // Return the declared signature verbatim; the caller's own
-            // `instantiate_call` against the explicit call arguments does
-            // the real unification.
-            return Ok(Some(signature));
-        }
-        let self_input = &sig.binder.value.inputs[0];
-        // `Self`'s position, substituted from the *actual*
-        // receiver — everything else in the signature stays
-        // in terms of the method's own generics for now.
-        // Speculative: the caller (`method_output_at`/`method_declared_
-        // signature_at`) tries every candidate impl in turn and silently
-        // moves on when this returns `None` — a rejected candidate here is
-        // never a real type error, so this must not permanently record one
-        // (see `unify_call_types_probe`'s own doc comment).
-        let mut substitutions = HashMap::new();
-        if scope.unify_call_types_probe(self_input, receiver_ty, &mut substitutions).is_err() {
-            return Ok(None);
-        }
-        let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
-        Ok(Some(Ty {
-            kind: TyKind::FnPtr(ty::PolyFnSig {
-                binder: ty::Binder {
-                    value: substituted,
-                    bound_vars: sig.binder.bound_vars.clone(),
-                },
-            }),
-        }))
-    }
-
-    async fn method_declared_signature_at(
-        &mut self,
-        receiver_ty: &Ty,
-        method: &hir::Symbol,
-    ) -> Result<Option<Ty>> {
-        let receiver_ty = match &receiver_ty.kind {
-            TyKind::Ref(_, inner, _) => inner.as_ref(),
-            _ => receiver_ty,
-        };
-        // A still-generic receiver (`self: T` inside a default trait
-        // method body) has no impl to search at all — `T` is abstract,
-        // not a concrete type any impl's self-type could ever unify
-        // against. Resolve directly from `T`'s own trait bounds instead,
-        // the same way rustc resolves a generic receiver's method (from
-        // `ParamEnv`, never impl search) — mirrors `T::method(..)`'s own
-        // resolution via `generic_param_bound_method_signature` for the
-        // identical underlying case, just reached through `.method()`
-        // call syntax instead of an explicit type-relative path.
-        if let TyKind::Param(param) = &receiver_ty.kind {
-            return self
-                .generic_param_bound_method_signature(&param.name, method)
-                .await;
-        }
-        let receiver_def = match &receiver_ty.kind {
-            TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
-            _ => None,
-        };
-        // `hir::HirProgram::impls_for_adt` is the fast-reject path for an
-        // ADT receiver (self-type also resolves to `TyKind::Adt` with the
-        // same `did`); a concrete non-ADT receiver (primitive/tuple/
-        // slice/etc.) uses the shape-bucketed counterpart instead —
-        // either way, a bounded, indexed lookup, never a scan over every
-        // impl in the workspace (see `shape_and_blanket_candidates`'s doc
-        // comment for why that's a hard requirement, not a nicety).
-        // `program` is cloned out first so the borrow doesn't outlive the
-        // `&mut self` calls below.
-        let program = self.program_rc();
-        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match &receiver_def {
-            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
-            None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
-        };
-        for item in candidates {
-            let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                continue;
-            };
-            let mut scope = self.with_generics(&impl_item.generics);
-            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
-            let self_ty = match &checked_self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => &checked_self_ty,
-            };
-            let matches_receiver = match (receiver_def.clone(), &receiver_ty.kind, &self_ty.kind) {
-                (Some(receiver_def), TyKind::Adt(_, receiver_args), TyKind::Adt(impl_receiver, impl_args)) => {
-                    impl_receiver.did == receiver_def
-                        && scope.generic_args_compatible(impl_args, receiver_args)
-                }
-                (None, TyKind::Adt(_, _), _) => false,
-                (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
-                    && scope
-                        .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
-                        .is_ok(),
-                (Some(_), _, _) => false,
-            };
-            if !matches_receiver {
-                continue;
-            }
-            for impl_item in &impl_item.items {
-                match &impl_item.kind {
-                    hir::ImplItemKind::Method(function) if impl_item.name == *method => {
-                        return Self::method_declared_signature_apply_receiver(
-                            &mut scope,
-                            receiver_ty,
-                            function,
-                        )
-                        .await;
-                    }
-                    // An associated const looked up through the same
-                    // type-relative path shape (`u8::MAX`, `Layout::
-                    // MIN_SIZE`) — not a callable method, but the same
-                    // "name declared inside this receiver's own impl"
-                    // lookup answers it: the const's own declared type.
-                    hir::ImplItemKind::AssocConst(constant) if impl_item.name == *method => {
-                        let mut scope = scope.with_self_type(checked_self_ty.clone());
-                        return Ok(Some(scope.check_type_expr(&constant.ty).await?));
-                    }
-                    _ => {}
-                }
-            }
-            // Not redeclared in this impl's own items — same
-            // trait-default-method fallback as `method_output` (kept in
-            // sync deliberately; see that function's matching block for
-            // why). `Self::AssocType`-shaped types in a default method's
-            // signature (e.g. `Iterator::map`'s `F: FnMut(Self::Item) ->
-            // B`) only resolve if `scope.self_type`/`scope.assoc_types`
-            // are populated first — this function doesn't need that for
-            // the inherent-method case above (no associated types
-            // involved there), but does here.
-            if let Some(trait_ty) = &impl_item.trait_ty {
-                if let Some(trait_def) = scope.resolve_trait_def(trait_ty) {
-                    for trait_item in &trait_def.items {
-                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
-                            continue;
-                        };
-                        if trait_item.name == *method && function.body.is_some() {
-                            let mut scope = scope.with_self_type(checked_self_ty.clone());
-                            let assoc_types = scope
-                                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                                .await?;
-                            let mut scope = scope.with_assoc_types(assoc_types);
-                            return Self::method_declared_signature_apply_receiver(
-                                &mut scope,
-                                receiver_ty,
-                                function,
-                            )
-                            .await;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Substitutes a partial `ParamTy -> Ty` map through every input/output
-    /// position of a function signature — the same substitution
-    /// `substitute_param_map` already does for a single `Ty`, applied
-    /// across a whole `FnSig` (used by `method_declared_signature`, which
-    /// only has `Self`'s own substitution available yet, not a full
-    /// `instantiate_call` result).
     fn substitute_param_map_fn_sig(
         &self,
         sig: &ty::FnSig,
@@ -4040,7 +3459,8 @@ impl HirTypeChecker {
                     }
                     let mut scope = self.with_self_type(receiver_ty.clone());
                     let signature = scope.function_signature(function).await?;
-                    let Some((substitutions, result)) = scope.instantiate_call(&signature, actuals)?
+                    let Some((substitutions, result)) =
+                        scope.instantiate_call(&signature, actuals)?
                     else {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
@@ -4084,7 +3504,11 @@ impl HirTypeChecker {
                 _ => &checked_self_ty,
             };
             let matches_receiver = match (receiver_def.clone(), &receiver_ty.kind, &self_ty.kind) {
-                (Some(receiver_def), TyKind::Adt(_, receiver_args), TyKind::Adt(impl_receiver, impl_args)) => {
+                (
+                    Some(receiver_def),
+                    TyKind::Adt(_, receiver_args),
+                    TyKind::Adt(impl_receiver, impl_args),
+                ) => {
                     // Match the base ADT *and* its generic arguments — an
                     // `impl Vec<&str> { .. }`/`impl Vec<String> { .. }`
                     // specialization must only match the receiver it was
@@ -4102,10 +3526,12 @@ impl HirTypeChecker {
                 // receiver) needs its own `Param`s substituted the same
                 // way a call argument would, not an exact-shape match
                 // (which a still-generic impl could never satisfy).
-                (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
-                    && scope
-                        .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
-                        .is_ok(),
+                (None, _, _) => {
+                    Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
+                        && scope
+                            .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
+                            .is_ok()
+                }
                 (Some(_), _, _) => false,
             };
             if !matches_receiver {
@@ -4160,7 +3586,9 @@ impl HirTypeChecker {
                             let Some((substitutions, result)) =
                                 scope.instantiate_call(&signature, actuals)?
                             else {
-                                return Err(Error::from("method arguments do not match its signature"));
+                                return Err(Error::from(
+                                    "method arguments do not match its signature",
+                                ));
                             };
                             let args = scope.method_generic_args(
                                 &impl_generics,
@@ -4197,7 +3625,8 @@ impl HirTypeChecker {
             return None;
         };
         let tr = Rc::new(tr.clone());
-        self.program_rc().cache_resolved_trait_def(def_id, tr.clone());
+        self.program_rc()
+            .cache_resolved_trait_def(def_id, tr.clone());
         Some(tr)
     }
 
@@ -4258,7 +3687,6 @@ impl HirTypeChecker {
         }
         None
     }
-
 
     fn method_generic_args(
         &self,
@@ -4324,7 +3752,8 @@ impl HirTypeChecker {
         ty: Ty,
     ) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            self.package().record_pat_type(pattern.hir_id.clone(), ty.clone());
+            self.package()
+                .record_pat_type(pattern.hir_id.clone(), ty.clone());
             // Match ergonomics: an ADT-shaped pattern (`Value::Null`, `Point {
             // x, y }`, a tuple) matches against a `&Value`/`&(A, B)` scrutinee
             // the same way it matches a bare one — e.g. matching on `self`
@@ -4370,7 +3799,9 @@ impl HirTypeChecker {
                     if self.enum_variant_ty(path).await?.is_some() {
                         let (_, payloads) = self.variant_payload_types(path, &adt_ty).await?;
                         let [payload] = payloads.as_slice() else {
-                            self.record_error("struct enum pattern requires exactly one payload type");
+                            self.record_error(
+                                "struct enum pattern requires exactly one payload type",
+                            );
                             return Ok(());
                         };
                         for field in fields {
@@ -4453,7 +3884,11 @@ impl HirTypeChecker {
         Ok(substituted)
     }
 
-    async fn variant_payload_types(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<(Ty, Vec<Ty>)> {
+    async fn variant_payload_types(
+        &mut self,
+        path: &hir::Path,
+        scrutinee: &Ty,
+    ) -> Result<(Ty, Vec<Ty>)> {
         let Some(hir::Res::Def(ref variant_id)) = path.res else {
             return Ok((self.error_ty("variant pattern is unresolved"), Vec::new()));
         };
@@ -4506,7 +3941,11 @@ impl HirTypeChecker {
         ))
     }
 
-    async fn enum_struct_payload_type(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<Option<Ty>> {
+    async fn enum_struct_payload_type(
+        &mut self,
+        path: &hir::Path,
+        scrutinee: &Ty,
+    ) -> Result<Option<Ty>> {
         if self.enum_variant_ty(path).await?.is_none() {
             return Ok(None);
         }
@@ -4518,7 +3957,9 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if matches!(
-            self.program_rc().item(adt.did.clone()).map(|item| &item.kind),
+            self.program_rc()
+                .item(adt.did.clone())
+                .map(|item| &item.kind),
             Some(hir::ItemKind::Struct(_))
         ) {
             Ok(Some(payload))
@@ -4602,6 +4043,7 @@ impl HirTypeChecker {
         }
     }
 
+    /* moved to intrinsics.rs
     async fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
         use fp_core::intrinsics::IntrinsicKind;
 
@@ -4739,10 +4181,8 @@ impl HirTypeChecker {
                 .unwrap_or_else(|| self.error_ty("std::meta::TypeDescriptor is not declared")),
             IntrinsicKind::FieldType => self
                 .well_known_struct_ty("FieldTypeDescriptor", Vec::new())
-                .unwrap_or_else(|| {
-                    self.error_ty("std::meta::FieldTypeDescriptor is not declared")
-                }),
-            // `create_struct`/`addfield`/`build_type` *construct*/mutate a
+                .unwrap_or_else(|| self.error_ty("std::meta::FieldTypeDescriptor is not declared")),
+            // `create_struct`/`addfield`/`build_type` construct or mutate a
             // type value (backing `TypeBuilder.ty: type`), consumed only by
             // the comptime interpreter (`Value::Type`) via dedicated
             // `ComptimeOp`s — same opaque-handle kind as the `type`
@@ -4770,6 +4210,9 @@ impl HirTypeChecker {
             _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", kind)),
         })
     }
+
+    }
+    */
 
     /// A type mismatch is recorded as a diagnostic, not a hard error — this
     /// is called from dozens of sites across `check_expr`/`check_block`/etc
@@ -4824,8 +4267,7 @@ impl HirTypeChecker {
         value_expr: &hir::Expr,
     ) -> Result<()> {
         let hypotheses = crate::refinement::implicit_hypotheses(&hint.base, &hint.binder);
-        match crate::refinement::discharge(&hint.binder, &hint.predicate, value_expr, &hypotheses)
-        {
+        match crate::refinement::discharge(&hint.binder, &hint.predicate, value_expr, &hypotheses) {
             crate::refinement::RefinementOutcome::ProvenTrue => Ok(()),
             crate::refinement::RefinementOutcome::ProvenFalse => Err(Error::from(format!(
                 "refinement predicate violated at compile time: value does not satisfy `{} : {} // ...`",
@@ -4866,695 +4308,7 @@ impl HirTypeChecker {
         }
         Ok(())
     }
-
-    fn unit_ty(&self) -> Ty {
-        Ty {
-            kind: TyKind::Tuple(Vec::new()),
-        }
-    }
-
-    fn literal_ty(&self, literal: &hir::Lit) -> Ty {
-        match literal {
-            hir::Lit::Bool(_) => Ty::bool(),
-            hir::Lit::Char(_) => Ty::char(),
-            hir::Lit::Integer(_) => Ty::int(ty::IntTy::I64),
-            hir::Lit::Float(_) => Ty::float(ty::FloatTy::F64),
-            hir::Lit::Str(_) => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-            },
-            hir::Lit::Null => Ty::never(),
-            // `b"..."` — a real Rust byte-string literal's type, `&[u8; N]`.
-            hir::Lit::Bytes(bytes) => Ty {
-                kind: TyKind::Ref(
-                    ty::Region::ReErased,
-                    Box::new(Ty {
-                        kind: TyKind::Array(
-                            Box::new(Ty::uint(ty::UintTy::U8)),
-                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
-                                ty::ScalarInt {
-                                    data: bytes.len() as u128,
-                                    size: 8,
-                                },
-                            ))),
-                        ),
-                    }),
-                    ty::Mutability::Not,
-                ),
-            },
-            // `c"..."` — typed as `&std::ffi::CStr`, a real (empty) struct
-            // that already resolves fine through ordinary ADT lookup; look
-            // it up the same way `collection_constructor_signature` finds
-            // `Vec`/`HashMap` (no HIR path to resolve against here, since
-            // this literal has no backing definition of its own).
-            hir::Lit::CStr(_) => self
-                .well_known_struct_ty("CStr", Vec::new())
-                .map(|ty| Ty {
-                    kind: TyKind::Ref(ty::Region::ReErased, Box::new(ty), ty::Mutability::Not),
-                })
-                .unwrap_or_else(Ty::never),
-        }
-    }
-}
-
-/// Extracts a resolved array/array-repeat length's real count, when known
-/// (mirrors the exact `ConstValue::Scalar(Scalar::Int(ScalarInt{..}))`
-/// shape the `Array`/`ArrayRepeat` expression-checking arms above already
-/// construct for a literal's own statically-known length) — `None` for
-/// any other `ConstKind` (`Infer`, `Param`, etc.), which have no concrete
-/// count to extract.
-fn const_kind_to_u64(kind: &ty::ConstKind) -> Option<u64> {
-    match kind {
-        ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(scalar))) => {
-            Some(scalar.data as u64)
-        }
-        _ => None,
-    }
-}
-
-/// Inverse of `const_kind_to_u64` — builds a resolved array-length
-/// `ConstKind` from a real count, matching the exact construction the
-/// `Array`/`ArrayRepeat` expression-checking arms above already use.
-fn u64_to_const_kind(value: u64) -> ty::ConstKind {
-    ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(ty::ScalarInt {
-        data: value as u128,
-        size: 8,
-    })))
-}
-
-/// Whether `ty` still has an uninstantiated generic parameter anywhere in
-/// its structure — used to decide whether a call's result is worth
-/// reconciling against an ambient expected-type hint (only meaningful for
-/// still-generic results; a fully concrete type needs no such help).
-fn ty_contains_param(ty: &Ty) -> bool {
-    match &ty.kind {
-        TyKind::Param(_) => true,
-        TyKind::Ref(_, inner, _) => ty_contains_param(inner),
-        TyKind::RawPtr(value) => ty_contains_param(&value.ty),
-        TyKind::Slice(inner) => ty_contains_param(inner),
-        TyKind::Array(inner, _) => ty_contains_param(inner),
-        TyKind::Tuple(tys) => tys.iter().any(|ty| ty_contains_param(ty)),
-        TyKind::Adt(_, args) => args.iter().any(|arg| match arg {
-            GenericArg::Type(ty) => ty_contains_param(ty),
-            _ => false,
-        }),
-        TyKind::FnPtr(signature) => {
-            signature
-                .binder
-                .value
-                .inputs
-                .iter()
-                .any(|ty| ty_contains_param(ty))
-                || ty_contains_param(&signature.binder.value.output)
-        }
-        _ => false,
-    }
-}
-
-/// The same erased shape a plain `str`/string literal already resolves to
-/// (`literal_ty`'s `Lit::Str` arm) — used by literal/union string type
-/// resolution so every one of those erases identically.
-fn str_ty() -> Ty {
-    Ty {
-        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-    }
-}
-
-/// The `hir::HirPackage::impls_by_shape` bucket key(s) a *checked* receiver
-/// `TyKind` corresponds to — the lookup-side counterpart to
-/// `hir::package::classify_impl_shape`'s index-side classification of an
-/// impl's own (unchecked) self-type `TypeExprKind`. Both sides must agree
-/// on the same key for a given shape, or a real impl silently becomes
-/// unreachable from method/associated-item candidate search.
-///
-/// Returns more than one key only for the one representational collision
-/// in this compiler's checked-`Ty` system: `str` and `[u8]`-ish slices
-/// both check to the identical `TyKind::Slice(Box::new(Ty::int(I8)))`
-/// shape (see `primitive_ty`'s own `TypePrimitive::String` arm) — there is
-/// no way to tell them apart once a value has reached this checked `Ty`
-/// form, so both the `"[]"` and `"str"` buckets are checked rather than
-/// risking one of them going silently unreachable.
-///
-/// Returns `None` for receiver kinds this compiler has no concrete-impl
-/// dispatch shape for at all (closures, generators, trait objects, `dyn`
-/// existentials, ...) — those still get checked against `blanket_impls`
-/// by every caller, which is the only class of impl that could apply to
-/// them; there is deliberately no broader fallback here (see
-/// `method_output_at`'s own doc comment for why a receiver landing here
-/// with `None` is expected, not a bug — unlike an *impl* whose self-type
-/// can't be classified at index time, which is a bug and is flagged via
-/// `HirPackage::diagnostics` at that point instead).
-fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
-    Some(match kind {
-        TyKind::Bool => vec!["bool"],
-        TyKind::Char => vec!["char"],
-        TyKind::Int(int) => vec![match int {
-            ty::IntTy::I8 => "i8",
-            ty::IntTy::I16 => "i16",
-            ty::IntTy::I32 => "i32",
-            ty::IntTy::I64 => "i64",
-            ty::IntTy::I128 => "i128",
-            ty::IntTy::Isize => "isize",
-        }],
-        TyKind::Uint(uint) => vec![match uint {
-            ty::UintTy::U8 => "u8",
-            ty::UintTy::U16 => "u16",
-            ty::UintTy::U32 => "u32",
-            ty::UintTy::U64 => "u64",
-            ty::UintTy::U128 => "u128",
-            ty::UintTy::Usize => "usize",
-        }],
-        TyKind::Float(float) => vec![match float {
-            ty::FloatTy::F16 => "f16",
-            ty::FloatTy::F32 => "f32",
-            ty::FloatTy::F64 => "f64",
-            ty::FloatTy::F128 => "f128",
-        }],
-        TyKind::Slice(_) => vec!["[]", "str"],
-        TyKind::Array(_, _) => vec!["[;N]"],
-        TyKind::Tuple(elements) if elements.is_empty() => vec!["()"],
-        TyKind::Tuple(_) => vec!["(,)"],
-        TyKind::Ref(_, _, ty::Mutability::Not) => vec!["&"],
-        TyKind::Ref(_, _, ty::Mutability::Mut) => vec!["&mut"],
-        TyKind::RawPtr(pointee) => vec![match pointee.mutbl {
-            ty::Mutability::Not => "*const",
-            ty::Mutability::Mut => "*mut",
-        }],
-        TyKind::FnPtr(_) => vec!["fn(..)"],
-        TyKind::Never => vec!["!"],
-        _ => return None,
-    })
-}
-
-/// The bounded, indexed candidate list for a receiver that isn't a
-/// resolved ADT (`hir::HirProgram::impls_for_adt`'s domain) — every impl
-/// whose self-type shares `receiver_kind`'s own shape (`ty_shape_keys`),
-/// plus every blanket impl (`impl<T> Trait for T`, which must be checked
-/// regardless of shape). Deliberately never falls back to scanning every
-/// impl in the workspace: a receiver kind `ty_shape_keys` has no bucket
-/// for (closures, generators, `dyn` trait objects, ...) just gets the
-/// blanket-impl list alone, which is the only class of impl that could
-/// possibly apply to it anyway.
-fn shape_and_blanket_candidates<'a>(
-    program: &'a hir::HirProgram,
-    receiver_kind: &TyKind,
-) -> impl Iterator<Item = &'a hir::Item> {
-    ty_shape_keys(receiver_kind)
-        .into_iter()
-        .flatten()
-        .flat_map(move |key| program.impls_for_shape(key))
-        .chain(program.blanket_impls())
-}
-
-fn primitive_path_ty(name: &str) -> Option<Ty> {
-    Some(match name {
-        "bool" => Ty::bool(),
-        "char" => Ty::char(),
-        "i8" => Ty::int(ty::IntTy::I8),
-        "i16" => Ty::int(ty::IntTy::I16),
-        "i32" => Ty::int(ty::IntTy::I32),
-        "i64" => Ty::int(ty::IntTy::I64),
-        "i128" => Ty::int(ty::IntTy::I128),
-        "isize" => Ty::int(ty::IntTy::Isize),
-        "u8" => Ty::uint(ty::UintTy::U8),
-        "u16" => Ty::uint(ty::UintTy::U16),
-        "u32" => Ty::uint(ty::UintTy::U32),
-        "u64" => Ty::uint(ty::UintTy::U64),
-        "u128" => Ty::uint(ty::UintTy::U128),
-        "usize" => Ty::uint(ty::UintTy::Usize),
-        "f16" => Ty::float(ty::FloatTy::F16),
-        "f32" => Ty::float(ty::FloatTy::F32),
-        "f64" => Ty::float(ty::FloatTy::F64),
-        "f128" => Ty::float(ty::FloatTy::F128),
-        "str" => Ty {
-            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-        },
-        _ => return None,
-    })
-}
-
-/// Converts the subset of `ast::Ty` that `TypeBuilder`'s intrinsics
-/// (`ComptimeOp::CreateStruct`/`AddField`, `fp-interpret`) can actually
-/// produce for a field's type — primitives and references to them — into
-/// the checked `hir::ty::Ty` shape `field_ty` needs. Anything else (a
-/// nested/generic comptime-constructed field type) is out of scope, per
-/// this feature's stated scope, and returns `None` rather than guessing.
-fn ast_value_ty_to_hir_ty(ty: &fp_core::ast::Ty) -> Option<Ty> {
-    match ty {
-        fp_core::ast::Ty::Primitive(primitive) => Some(primitive_ty(*primitive)),
-        fp_core::ast::Ty::Reference(reference) => {
-            ast_value_ty_to_hir_ty(&reference.ty).map(|inner| Ty {
-                kind: TyKind::Ref(
-                    ty::Region::ReStatic,
-                    Box::new(inner),
-                    ty::Mutability::Not,
-                ),
-            })
-        }
-        _ => None,
-    }
-}
-
-fn primitive_ty(primitive: TypePrimitive) -> Ty {
-    match primitive {
-        TypePrimitive::Bool => Ty::bool(),
-        TypePrimitive::Char => Ty::char(),
-        TypePrimitive::Int(int) => match int {
-            TypeInt::I8 => Ty::int(ty::IntTy::I8),
-            TypeInt::I16 => Ty::int(ty::IntTy::I16),
-            TypeInt::I32 => Ty::int(ty::IntTy::I32),
-            TypeInt::I64 => Ty::int(ty::IntTy::I64),
-            TypeInt::I128 => Ty::int(ty::IntTy::I128),
-            TypeInt::U8 => Ty::uint(ty::UintTy::U8),
-            TypeInt::U16 => Ty::uint(ty::UintTy::U16),
-            TypeInt::U32 => Ty::uint(ty::UintTy::U32),
-            TypeInt::U64 => Ty::uint(ty::UintTy::U64),
-            TypeInt::U128 => Ty::uint(ty::UintTy::U128),
-            TypeInt::BigInt => Ty::int(ty::IntTy::I128),
-        },
-        TypePrimitive::Decimal(decimal) => Ty::float(match decimal {
-            DecimalType::F32 => ty::FloatTy::F32,
-            _ => ty::FloatTy::F64,
-        }),
-        TypePrimitive::String => Ty {
-            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-        },
-        TypePrimitive::List => Ty {
-            kind: TyKind::Slice(Box::new(Ty::never())),
-        },
-    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_pkg() -> hir::PackageId {
-        hir::PackageId::new("test")
-    }
-
-    fn hid(index: u32) -> hir::HirId {
-        hir::HirId::new(test_pkg(), index)
-    }
-
-    /// Test-only stand-in for the old `HirTypeChecker::new(program).check()`
-    /// single-future entry point — spawns one task per top-level item (see
-    /// `HirTypeChecker::spawn_item_task`) and awaits them all directly, the
-    /// same way `fp_compiler::driver::type_check_program` does (no
-    /// driver-specific setup, no comptime requests expected in these
-    /// tests). `async` all the way through, rather than hand-rolling a
-    /// poll/tick loop: the caller drives it to completion via
-    /// `ExecutorHandle::run` (see call sites below), on the same executor
-    /// the item tasks are spawned on.
-    async fn typecheck_program(
-        package: hir::HirPackage,
-        executor: ExecutorHandle,
-    ) -> Result<Rc<hir::HirPackage>> {
-        let checker = HirTypeChecker::new(package, None, None, executor);
-        let item_ids: Vec<_> = checker
-            .borrow()
-            .package()
-            .items
-            .iter()
-            .map(|item| item.def_id.clone())
-            .collect();
-        let handles: Vec<_> = item_ids
-            .into_iter()
-            .map(|def_id| HirTypeChecker::spawn_item_task(&checker, def_id))
-            .collect();
-        for handle in handles {
-            handle.await;
-        }
-        Ok(checker.borrow().finish())
-    }
-
-    /// The core same-package ordering fix: `const A` (checked first, per
-    /// `program.items`' textual order) references `const B`, declared
-    /// *later* in the same list. Before `expr_path_ty`'s `Const` arm
-    /// awaited `B`'s own task on demand, this silently fell back to
-    /// "constant type was not recorded" instead of resolving `B`'s real
-    /// type.
-    #[test]
-    fn forward_referenced_const_resolves_regardless_of_item_order() {
-        let b_def_id = hir::DefId::local(2);
-        let a_def_id = hir::DefId::local(1);
-
-        let b_item = hir::Item {
-            hir_id: hid(10),
-            def_id: b_def_id.clone(),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Const(hir::Const {
-                name: "B".into(),
-                ty: hir::TypeExpr {
-                    hir_id: hid(11),
-                    kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                    span: fp_core::span::Span::null(),
-                },
-                body: hir::Body {
-                    hir_id: hid(12),
-                    params: Vec::new(),
-                    value: hir::Expr {
-                        hir_id: hid(13),
-                        kind: hir::ExprKind::Literal(hir::Lit::Integer(41)),
-                        span: fp_core::span::Span::null(),
-                    },
-                },
-            }),
-            span: fp_core::span::Span::null(),
-        };
-
-        let a_item = hir::Item {
-            hir_id: hid(20),
-            def_id: a_def_id.clone(),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Const(hir::Const {
-                name: "A".into(),
-                ty: hir::TypeExpr {
-                    hir_id: hid(21),
-                    kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                    span: fp_core::span::Span::null(),
-                },
-                body: hir::Body {
-                    hir_id: hid(22),
-                    params: Vec::new(),
-                    value: hir::Expr {
-                        hir_id: hid(23),
-                        kind: hir::ExprKind::Binary(
-                            hir::BinOp::Add,
-                            Box::new(hir::Expr {
-                                hir_id: hid(24),
-                                kind: hir::ExprKind::Path(hir::Path {
-                                    segments: vec![hir::PathSegment {
-                                        name: "B".into(),
-                                        args: None,
-                                    }],
-                                    res: Some(hir::Res::Def(b_def_id.clone())),
-                                }),
-                                span: fp_core::span::Span::null(),
-                            }),
-                            Box::new(hir::Expr {
-                                hir_id: hid(25),
-                                kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
-                                span: fp_core::span::Span::null(),
-                            }),
-                        ),
-                        span: fp_core::span::Span::null(),
-                    },
-                },
-            }),
-            span: fp_core::span::Span::null(),
-        };
-
-        let mut program = hir::HirPackage::new(test_pkg());
-        // Textual order: A first, B second -- A's own task must await B's
-        // on demand rather than assuming it's already been checked.
-        program.items.push(a_item.clone());
-        program.items.push(b_item.clone());
-        program.def_map.insert(a_def_id.clone(), a_item);
-        program.def_map.insert(b_def_id.clone(), b_item);
-
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(
-            results.const_type(a_def_id),
-            Some(Ty::int(ty::IntTy::I64)),
-            "forward-referenced const B's type must resolve, not fall back to error_ty"
-        );
-        assert_eq!(results.const_type(b_def_id), Some(Ty::int(ty::IntTy::I64)));
-    }
-
-    #[test]
-    fn records_literal_type_by_hir_id() {
-        let expr = hir::Expr {
-            hir_id: hid(7),
-            kind: hir::ExprKind::Literal(hir::Lit::Integer(4)),
-            span: fp_core::span::Span::null(),
-        };
-        let mut program = hir::HirPackage::new(test_pkg());
-        let item = hir::Item {
-            hir_id: hid(1),
-            def_id: hir::DefId::local(1),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Expr(expr),
-            span: fp_core::span::Span::null(),
-        };
-        program.items.push(item.clone());
-        // Real HIR lowering always populates `def_map` before typing begins
-        // (see `ast_to_hir::transform_package`'s last step) — per-item tasks
-        // look items up by `DefId` through it (needed so a cross-reference
-        // to an item spawned only by `def_id`, not handed the `Item`
-        // directly, can still find it), so a hand-built test program needs
-        // to mirror that.
-        program.def_map.insert(item.def_id.clone(), item);
-
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(results.expr_type(hid(7)), Some(Ty::int(ty::IntTy::I64)));
-    }
-
-    #[test]
-    fn records_binding_pattern_type() {
-        let pattern = hir::Pat {
-            hir_id: hid(8),
-            kind: hir::PatKind::Binding {
-                name: "value".into(),
-                mutable: false,
-            },
-        };
-        let expr = hir::Expr {
-            hir_id: hid(9),
-            kind: hir::ExprKind::Let(
-                pattern,
-                Box::new(hir::TypeExpr {
-                    hir_id: hid(10),
-                    kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                    span: fp_core::span::Span::null(),
-                }),
-                None,
-            ),
-            span: fp_core::span::Span::null(),
-        };
-        let mut program = hir::HirPackage::new(test_pkg());
-        let item = hir::Item {
-            hir_id: hid(1),
-            def_id: hir::DefId::local(1),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Expr(expr),
-            span: fp_core::span::Span::null(),
-        };
-        program.items.push(item.clone());
-        program.def_map.insert(item.def_id.clone(), item);
-
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(results.pat_type(hid(8)), Some(Ty::int(ty::IntTy::I64)));
-    }
-
-    fn str_shaped_ty() -> Ty {
-        Ty {
-            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-        }
-    }
-
-    /// Wraps a bare `hir::TypeExpr` in `let value: <ty>;` (no initializer)
-    /// the same way `f16_and_f128_type_paths_resolve_as_primitive_floats`
-    /// does, so `check_type_expr`'s handling of a single `TypeExprKind` can
-    /// be exercised in isolation via `results.pat_type(hid(8))`.
-    fn let_with_type(ty_kind: hir::TypeExprKind) -> hir::HirPackage {
-        let pattern = hir::Pat {
-            hir_id: hid(8),
-            kind: hir::PatKind::Binding {
-                name: "value".into(),
-                mutable: false,
-            },
-        };
-        let expr = hir::Expr {
-            hir_id: hid(9),
-            kind: hir::ExprKind::Let(
-                pattern,
-                Box::new(hir::TypeExpr {
-                    hir_id: hid(10),
-                    kind: ty_kind,
-                    span: fp_core::span::Span::null(),
-                }),
-                None,
-            ),
-            span: fp_core::span::Span::null(),
-        };
-        let mut program = hir::HirPackage::new(test_pkg());
-        let item = hir::Item {
-            hir_id: hid(1),
-            def_id: hir::DefId::local(1),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Expr(expr),
-            span: fp_core::span::Span::null(),
-        };
-        program.items.push(item.clone());
-        program.def_map.insert(item.def_id.clone(), item);
-        program
-    }
-
-    #[test]
-    fn string_literal_type_resolves_to_str() {
-        let program = let_with_type(hir::TypeExprKind::LiteralString("foo".into()));
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
-    }
-
-    #[test]
-    fn union_of_string_literal_types_resolves_to_str() {
-        let program = let_with_type(hir::TypeExprKind::TypeBinaryOp(hir::TypeBinaryOp {
-            kind: fp_core::ast::TypeBinaryOpKind::Union,
-            lhs: Box::new(hir::TypeExpr {
-                hir_id: hid(11),
-                kind: hir::TypeExprKind::LiteralString("a".into()),
-                span: fp_core::span::Span::null(),
-            }),
-            rhs: Box::new(hir::TypeExpr {
-                hir_id: hid(12),
-                kind: hir::TypeExprKind::LiteralString("b".into()),
-                span: fp_core::span::Span::null(),
-            }),
-        }));
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
-    }
-
-    /// A union of two *non*-literal types (e.g. two primitives) must keep
-    /// erroring exactly as it did before literal-union support was added —
-    /// only a union where every operand is itself a literal-string type (or
-    /// a nested union of them) is accepted.
-    #[test]
-    fn union_of_non_literal_types_still_errors() {
-        let program = let_with_type(hir::TypeExprKind::TypeBinaryOp(hir::TypeBinaryOp {
-            kind: fp_core::ast::TypeBinaryOpKind::Union,
-            lhs: Box::new(hir::TypeExpr {
-                hir_id: hid(11),
-                kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                span: fp_core::span::Span::null(),
-            }),
-            rhs: Box::new(hir::TypeExpr {
-                hir_id: hid(12),
-                kind: hir::TypeExprKind::Primitive(TypePrimitive::Bool),
-                span: fp_core::span::Span::null(),
-            }),
-        }));
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(results.pat_type(hid(8)), Some(Ty::error()));
-    }
-
-    /// `f16`/`f128` are real, stabilized Rust primitive float types (same
-    /// family as `f32`/`f64`), not name-resolution gaps — a bare `f16`/
-    /// `f128` type path must resolve straight to `Ty::Float`, never fall
-    /// through to `path_ty`'s "unresolved type path" `error_ty` branch the
-    /// way an actually-undeclared name would.
-    #[test]
-    fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
-        // `let value: f16/f128;` with no initializer — `ExprKind::Let`'s
-        // declared-type slot (`check_type_expr(target)`) is recorded into
-        // `pat_types` verbatim, unlike a `Const`'s slot (which gets
-        // overwritten by the body's own inferred type), so this isolates
-        // exactly what `path_ty`/`primitive_path_ty` resolve a bare
-        // `f16`/`f128` path to.
-        fn let_item(def_id: hir::DefId, hir_id_base: u32, pat_name: &str, path_name: &str) -> hir::Item {
-            let pattern = hir::Pat {
-                hir_id: hid(hir_id_base + 1),
-                kind: hir::PatKind::Binding {
-                    name: pat_name.into(),
-                    mutable: false,
-                },
-            };
-            let expr = hir::Expr {
-                hir_id: hid(hir_id_base + 2),
-                kind: hir::ExprKind::Let(
-                    pattern,
-                    Box::new(hir::TypeExpr {
-                        hir_id: hid(hir_id_base + 3),
-                        kind: hir::TypeExprKind::Path(hir::Path {
-                            segments: vec![hir::PathSegment {
-                                name: path_name.into(),
-                                args: None,
-                            }],
-                            res: None,
-                        }),
-                        span: fp_core::span::Span::null(),
-                    }),
-                    None,
-                ),
-                span: fp_core::span::Span::null(),
-            };
-            hir::Item {
-                hir_id: hid(hir_id_base),
-                def_id,
-                visibility: hir::Visibility::Private,
-                kind: hir::ItemKind::Expr(expr),
-                span: fp_core::span::Span::null(),
-            }
-        }
-
-        let f16_def_id = hir::DefId::local(1);
-        let f128_def_id = hir::DefId::local(2);
-        let f16_item = let_item(f16_def_id.clone(), 10, "f16_value", "f16");
-        let f128_item = let_item(f128_def_id.clone(), 20, "f128_value", "f128");
-
-        let mut program = hir::HirPackage::new(test_pkg());
-        program.items.push(f16_item.clone());
-        program.items.push(f128_item.clone());
-        program.def_map.insert(f16_def_id, f16_item);
-        program.def_map.insert(f128_def_id, f128_item);
-
-        let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let results = executor
-            .run(typecheck_program(program, executor.clone()))
-            .expect("HIR type check");
-        assert_eq!(
-            results.pat_type(hid(11)),
-            Some(Ty::float(ty::FloatTy::F16)),
-            "bare `f16` type path must resolve to the f16 primitive, not an unresolved-path error type"
-        );
-        assert_eq!(
-            results.pat_type(hid(21)),
-            Some(Ty::float(ty::FloatTy::F128)),
-            "bare `f128` type path must resolve to the f128 primitive, not an unresolved-path error type"
-        );
-    }
-
-    #[test]
-    fn comptime_request_returns_resolver_value_directly() {
-        let resolver: ComptimeResolver =
-            Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
-        let package = hir::HirPackage::new(test_pkg());
-        let checker = HirTypeChecker::new(
-            package,
-            None,
-            Some(resolver),
-            fp_core::executor::CompilerExecutor::new().handle(),
-        );
-        let request = ComptimeRequest {
-            package_id: test_pkg(),
-            def_id: hir::DefId::new(test_pkg(), 0),
-        };
-        let mut future = Box::pin(async move { checker.borrow().request_comptime(request).await });
-        let waker = std::task::Waker::noop();
-        let mut cx = std::task::Context::from_waker(waker);
-        let value = match future.as_mut().poll(&mut cx) {
-            std::task::Poll::Ready(result) => result.expect("comptime value"),
-            std::task::Poll::Pending => panic!("resolver-backed comptime request should resolve immediately"),
-        };
-        assert!(value.is_unit());
-    }
-}
+mod tests;

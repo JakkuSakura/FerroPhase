@@ -13,70 +13,29 @@ use fp_sql::sql_ast::parse_sql_ast;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// A name resolved during AST-to-HIR lowering, ahead of typing (which
-/// operates on already-lowered HIR and never consults this) — moved here
-/// from `fp-typing`, which never actually used it itself; this crate's
-/// `AstToHirLowerer` (via `resolved_names`/`with_resolved_names`) is the only
-/// real consumer.
-pub type ResolvedNameTable = HashMap<fp_core::ast::ExprId, ResolvedName>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedNameNamespace {
-    Value,
-    Type,
-    Module,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedName {
-    pub namespace: ResolvedNameNamespace,
-    pub path: fp_core::ast::path::QualifiedPath,
-}
-
+mod closure;
+pub(crate) use closure::strip_doc_attrs_in_items;
+use closure::*;
+mod config;
 mod exprs; // expression lowering
 mod helpers;
+mod imports;
 mod items; // item/impl helpers
+mod macro_expansion;
 mod patterns; // pattern lowering // shared path/name helpers
+mod predeclare;
+mod quote_detection;
+mod structural;
+use quote_detection::*;
 
 #[cfg(test)]
 mod tests;
 
+pub use config::{HirLoweringConfig, ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
+
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
-
-#[derive(Clone, Debug, Default)]
-pub struct HirLoweringConfig {
-    /// What the eventual target language can express directly — see
-    /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
-    /// `LanguageCapabilities::NATIVE` (nothing first-class), matching
-    /// every existing caller's behavior exactly.
-    ///
-    /// When `capabilities.first_class_closures` is `false` (the default),
-    /// a closure literal is defunctionalized (decomposed into an ordinary
-    /// struct + function pair) by `ClosureLowering` *before* HIR
-    /// generation even runs — needed by pipelines that lower to MIR
-    /// (`PipelineMode::Native`), since MIR has no closure representation
-    /// of its own yet.
-    ///
-    /// When `true`, that pre-pass is skipped entirely and a closure
-    /// literal instead survives HIR generation as a real, first-class
-    /// `hir::ExprKind::Closure` node — mirroring rustc's own ordering
-    /// (a closure stays a rich, typed expression throughout type
-    /// checking, with its signature resolved via ordinary expected-type
-    /// propagation from its call site, and is only "compiled away" as a
-    /// later lowering concern). Set by targets (e.g. `fp-kotlin`) that
-    /// never lower to MIR and want a genuine closure literal to render as
-    /// an idiomatic target-language lambda.
-    ///
-    /// Similarly, `capabilities.first_class_for_loops` controls whether a
-    /// `for` loop is desugared into an index-based `while` loop before HIR
-    /// generation (`false`, the default) or survives as a real
-    /// `hir::ExprKind::For` node (`true`) for targets whose own `for`/
-    /// collection methods can express the original iterator chain
-    /// directly (see `ast_to_hir::exprs::transform_for_to_hir`).
-    pub capabilities: fp_core::capabilities::LanguageCapabilities,
-}
 
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
@@ -88,7 +47,12 @@ fn query_origin(document: &QueryDocument) -> QueryOrigin {
 /// The generator now supports lossy mode and will gradually become more pure.
 pub struct AstToHirLowerer {
     package_id: hir::PackageId,
-    next_hir_id: u32,
+    /// The closest enclosing item-like definition, used as the `owner` of
+    /// every `HirId` minted while lowering it (see `HirId`'s doc comment).
+    /// `None` outside any item (root owner used instead).
+    current_owner: Option<hir::DefId>,
+    /// Per-owner `HirId` counter, reset to zero on entering each owner.
+    local_id: u32,
     current_file: FileId,
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
@@ -287,6 +251,23 @@ impl AstToHirLowerer {
         std::mem::replace(&mut self.diagnostics, DiagnosticManager::new())
     }
 
+    /// Lowers `f` with `owner` as the current `HirId` owner, resetting the
+    /// per-owner `local_id` counter to zero for its duration and restoring
+    /// the previous owner/counter afterward (so nested items don't leak
+    /// their local-id space into the enclosing item).
+    fn with_owner<T>(
+        &mut self,
+        owner: hir::DefId,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let previous_owner = self.current_owner.replace(owner);
+        let previous_local = std::mem::replace(&mut self.local_id, 0);
+        let result = f(self);
+        self.current_owner = previous_owner;
+        self.local_id = previous_local;
+        result
+    }
+
     fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
         !self.respect_cfg || fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
     }
@@ -302,421 +283,6 @@ impl AstToHirLowerer {
             self.register_import_binding(binding, &_import.visibility);
         }
         Ok(())
-    }
-
-    fn collect_imports(
-        &self,
-        base: Vec<String>,
-        tree: &ast::ItemImportTree,
-        out: &mut Vec<ImportBinding>,
-    ) -> Result<()> {
-        match tree {
-            // A group member's bare `self` (`use path::Item::{self, ..};`)
-            // parses as `Path` wrapping a *single* `SelfMod` segment, not
-            // the bare `SelfMod` variant itself — `parse_use_path`'s loop
-            // always wraps whatever it parses in a `Path`, and `self` in
-            // group position hits the same `SelfMod` branch as `self::`
-            // at the start of an ordinary path, with no syntactic way to
-            // tell the two apart at parse time. Handle it here, before
-            // `collect_imports_from_path`, which would otherwise treat a
-            // lone `SelfMod` segment as "current module" prefix semantics
-            // (`self::`) — overwriting `base` with `self.module_path`
-            // instead of using `base` as-is — and silently produce no
-            // binding at all, since a single-segment path with no `::`
-            // separator never reaches that function's `out.push`.
-            ast::ItemImportTree::Path(path)
-                if matches!(path.segments.as_slice(), [ast::ItemImportTree::SelfMod]) =>
-            {
-                self.collect_imports(base, &ast::ItemImportTree::SelfMod, out)
-            }
-            ast::ItemImportTree::Path(path) => self.collect_imports_from_path(base, path, out),
-            ast::ItemImportTree::Ident(ident) => {
-                let mut target = base;
-                target.push(ident.name.clone());
-                out.push(ImportBinding {
-                    target,
-                    alias: None,
-                    is_glob: false,
-                });
-                Ok(())
-            }
-            ast::ItemImportTree::Rename(rename) => {
-                let mut target = base;
-                target.push(rename.from.name.clone());
-                out.push(ImportBinding {
-                    target,
-                    alias: Some(rename.to.name.clone()),
-                    is_glob: false,
-                });
-                Ok(())
-            }
-            ast::ItemImportTree::Group(group) => {
-                for item in &group.items {
-                    self.collect_imports(base.clone(), item, out)?;
-                }
-                Ok(())
-            }
-            // A bare `self` reached here only ever comes from a *group*
-            // member (`use path::Item::{self, Variant1, Variant2};`, real
-            // core::prelude::v1's own `pub use crate::option::Option::
-            // {self, None, Some};`/`crate::result::Result::{self, Err,
-            // Ok};`) — `self::` as the *first* segment of a path (`use
-            // self::foo;`, "current module") is consumed directly by
-            // `collect_imports_from_path`'s own per-segment loop and never
-            // delegates to this function for that segment. In the group
-            // position, `self` means "the enclosing path itself" (`Item`,
-            // not just its variants) — dropping it here (as a no-op)
-            // silently imported every variant but never the type/enum
-            // itself, so `use ...::Option::{self, ..}` never actually
-            // brought `Option` into scope, only `None`/`Some`.
-            ast::ItemImportTree::SelfMod => {
-                if !base.is_empty() {
-                    out.push(ImportBinding {
-                        target: base,
-                        alias: None,
-                        is_glob: false,
-                    });
-                }
-                Ok(())
-            }
-            ast::ItemImportTree::Root
-            | ast::ItemImportTree::SuperMod
-            | ast::ItemImportTree::Crate
-            | ast::ItemImportTree::Glob => Ok(()),
-        }
-    }
-
-    fn collect_imports_from_path(
-        &self,
-        base: Vec<String>,
-        path: &ast::ItemImportPath,
-        out: &mut Vec<ImportBinding>,
-    ) -> Result<()> {
-        let mut prefix = base;
-        // Each `super` climbs one level *from wherever the previous
-        // segment left off* — a repeated `SuperMod` must pop from the
-        // already-adjusted `prefix`, not re-derive from `self.module_path`
-        // every time, or `super::super::X` collapses to the same result as
-        // a single `super::X` (confirmed: real `core::iter`'s own `use
-        // super::super::{Enumerate, Map, ...};` resolved one level too
-        // shallow because of this, leaving every adapter type unresolved).
-        let mut super_climbed = false;
-        for seg in &path.segments {
-            match seg {
-                ast::ItemImportTree::Root | ast::ItemImportTree::Crate => {
-                    prefix.clear();
-                    super_climbed = false;
-                }
-                ast::ItemImportTree::SelfMod => {
-                    prefix = self.module_path.segments.clone();
-                    super_climbed = false;
-                }
-                ast::ItemImportTree::SuperMod => {
-                    if !super_climbed {
-                        prefix = self.module_path.segments.clone();
-                        super_climbed = true;
-                    }
-                    prefix.pop();
-                }
-                ast::ItemImportTree::Ident(ident) => {
-                    prefix.push(ident.name.clone());
-                }
-                ast::ItemImportTree::Rename(rename) => {
-                    let mut target = prefix.clone();
-                    target.push(rename.from.name.clone());
-                    out.push(ImportBinding {
-                        target,
-                        alias: Some(rename.to.name.clone()),
-                        is_glob: false,
-                    });
-                    return Ok(());
-                }
-                ast::ItemImportTree::Group(group) => {
-                    for item in &group.items {
-                        self.collect_imports(prefix.clone(), item, out)?;
-                    }
-                    return Ok(());
-                }
-                ast::ItemImportTree::Path(nested) => {
-                    self.collect_imports_from_path(prefix.clone(), nested, out)?;
-                    return Ok(());
-                }
-                ast::ItemImportTree::Glob => {
-                    out.push(ImportBinding {
-                        target: prefix,
-                        alias: None,
-                        is_glob: true,
-                    });
-                    return Ok(());
-                }
-            }
-        }
-
-        if !prefix.is_empty() {
-            out.push(ImportBinding {
-                target: prefix,
-                alias: None,
-                is_glob: false,
-            });
-        }
-        Ok(())
-    }
-
-    /// Expand `use <prefix>::*;` into one `ImportBinding` per direct member
-    /// (value, type, or submodule) of the target module, so glob re-exports
-    /// like `pub use macos::*;` actually make the re-exported module's
-    /// contents resolvable under the importing module's own path — this
-    /// pass previously treated every glob import as a silent no-op.
-    fn expand_glob_import(&self, prefix: Vec<String>, out: &mut Vec<ImportBinding>) {
-        let target_path = fp_core::ast::path::QualifiedPath::new(prefix.clone());
-        let mut candidates = vec![target_path.clone()];
-        if !self.module_path.is_empty() {
-            let relative = self.module_path.join(&prefix);
-            if relative != target_path {
-                candidates.push(relative);
-            }
-        }
-        for candidate in candidates {
-            let Some(module_id) = self.package.module_tree.module_id(&candidate) else {
-                continue;
-            };
-            let mut seen = HashSet::new();
-            // Item children (values/types) — a direct lookup of this
-            // module's own bindings instead of a flat scan over every
-            // global definition in the package filtered by key prefix.
-            for (child_name, _) in self
-                .package
-                .module_tree
-                .bindings(module_id, hir::Namespace::Value)
-                .chain(
-                    self.package
-                        .module_tree
-                        .bindings(module_id, hir::Namespace::Type),
-                )
-            {
-                if !seen.insert(child_name.to_string()) {
-                    continue;
-                }
-                let mut full = candidate.segments.clone();
-                full.push(child_name.to_string());
-                out.push(ImportBinding {
-                    target: full,
-                    alias: None,
-                    is_glob: false,
-                });
-            }
-            // `type X = Y;` aliases live in their own table (see
-            // `register_type_alias`), not modeled by `ModuleTree` —
-            // still a scan over that one flat map, filtered by key prefix.
-            for key in self.type_aliases.keys() {
-                let segments: Vec<&str> = key.split("::").collect();
-                if segments.len() != candidate.segments.len() + 1 {
-                    continue;
-                }
-                if !segments
-                    .iter()
-                    .zip(candidate.segments.iter())
-                    .all(|(a, b)| *a == b.as_str())
-                {
-                    continue;
-                }
-                let child = segments[candidate.segments.len()].to_string();
-                if !seen.insert(child.clone()) {
-                    continue;
-                }
-                let mut full = candidate.segments.clone();
-                full.push(child);
-                out.push(ImportBinding {
-                    target: full,
-                    alias: None,
-                    is_glob: false,
-                });
-            }
-            // Module children — a direct tree lookup instead of the old
-            // linear scan over every module path in the package.
-            for (child_name, _) in self.package.module_tree.children(module_id) {
-                if !seen.insert(child_name.to_string()) {
-                    continue;
-                }
-                let mut full = candidate.segments.clone();
-                full.push(child_name.to_string());
-                out.push(ImportBinding {
-                    target: full,
-                    alias: None,
-                    is_glob: false,
-                });
-            }
-            return;
-        }
-    }
-
-    /// Returns whether `binding` actually resolved to something (module,
-    /// value, or type). Idempotent *by construction*, not by assumption:
-    /// once `(module_path, alias)` has resolved once, every later call
-    /// (e.g. `append_item`'s own `ItemKind::Import` handling re-running
-    /// after `transform_package`'s upfront import worklist already
-    /// resolved it) is a guaranteed no-op — see `resolved_import_aliases`.
-    fn register_import_binding(&mut self, binding: ImportBinding, visibility: &ast::Visibility) -> bool {
-        let alias = binding
-            .alias
-            .clone()
-            .unwrap_or_else(|| binding.target.last().cloned().unwrap_or_default());
-        if alias.is_empty() {
-            return false;
-        }
-        let resolved_key = (self.module_path.clone(), alias.clone());
-        if self.resolved_import_aliases.contains(&resolved_key) {
-            return true;
-        }
-        let Some((last, prefix)) = binding.target.split_last() else {
-            return false;
-        };
-
-        // Candidate starting points for the segment walk below, in
-        // priority order (first match wins) — same crate-root reasoning
-        // this always had: `use crate::X`/`use ::X` (an absolute import)
-        // reaches here with its "crate::"/root prefix already stripped
-        // by `collect_imports_from_path`, which doesn't know the current
-        // crate's own root depth. For an ordinary single-crate package
-        // the crate root is just the package name (`module_path`'s first
-        // segment); the vendored real Rust `std` library is the one
-        // exception, bundling three real crates (`core`/`alloc`/`std`)
-        // under one FerroPhase package, so a file belonging to one of
-        // those needs its sub-crate name kept too (`module_path`'s first
-        // two segments — see `rs_relative_to_module_segments` in
-        // fp-rust's provider). Trying each possible root is harmless for
-        // ordinary packages, where they either coincide or a root simply
-        // never resolves anything.
-        let mut roots = vec![fp_core::ast::path::QualifiedPath::new(Vec::new())];
-        if !self.module_path.is_empty() {
-            roots.push(self.module_path.clone());
-        }
-        let root_segs = self.module_path.segments.clone();
-        if !root_segs.is_empty() {
-            roots.push(fp_core::ast::path::QualifiedPath::new(root_segs[..1].to_vec()));
-        }
-        if root_segs.len() >= 2 {
-            roots.push(fp_core::ast::path::QualifiedPath::new(root_segs[..2].to_vec()));
-        }
-
-        for start in roots {
-            // Phase 1, mirrors rustc's `resolve_import`/`maybe_resolve_path`
-            // (`compiler/rustc_resolve/src/imports.rs`): walk every segment
-            // except the last one at a time, looking each up in the
-            // *current* module's own binding table and continuing from
-            // whatever module that binding actually resolves to — so a
-            // re-exported/aliased module (`pub use core::option;`) is
-            // followed transparently, the same way rustc's resolver does,
-            // rather than re-deriving one flat guessed string key from the
-            // literal path text.
-            let Some(module_path) = self.resolve_module_path_through_aliases(&start, prefix) else {
-                continue;
-            };
-            let candidate = module_path.with_segment(last.clone());
-
-            // Whole-module import (`use std::json;`) — the last segment
-            // itself names a module, not an item within one.
-            if self.package.module_tree.module_exists(&candidate) {
-                let res = hir::Res::Module(candidate.segments.clone());
-                self.current_value_scope().insert(alias.clone(), res.clone());
-                self.current_type_scope().insert(alias.clone(), res.clone());
-                // Every top-level item gets its own transient
-                // `with_module_scope` push/pop cycle (see
-                // `transform_package`), so a scope-only insert here is
-                // invisible to sibling items processed afterward (e.g. a
-                // `use std::json;` above `fn main() {}` would otherwise
-                // never be visible inside `main`'s body). Persist the
-                // alias the same way value/type re-exports already do
-                // below, so `module::item()` resolves regardless of
-                // which sibling item introduced the `use`.
-                self.record_value_symbol(&alias, res.clone(), visibility);
-                self.record_type_symbol(&alias, res, visibility);
-                self.resolved_import_aliases.insert(resolved_key);
-                return true;
-            }
-
-            // Phase 2, mirrors rustc's `maybe_resolve_ident_in_module`:
-            // resolve the final identifier against the walked module's
-            // own bindings.
-            let key = candidate.to_key();
-            let value = self.lookup_symbol(&key, hir::Namespace::Value);
-            let ty = self.lookup_symbol(&key, hir::Namespace::Type);
-            // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
-            // a separate table from the module tree's value/type bindings
-            // (see `register_type_alias`) — an import/glob-re-export needs
-            // its own explicit copy step here, or a re-exported alias (e.g.
-            // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
-            // resolvable under the shorter path at all.
-            let type_alias = self.type_aliases.get(&key).cloned();
-            if value.is_none() && ty.is_none() && type_alias.is_none() {
-                continue;
-            }
-
-            if let Some(res) = value {
-                self.current_value_scope()
-                    .insert(alias.clone(), res.clone());
-                self.record_value_symbol(&alias, res, visibility);
-            }
-            if let Some(res) = ty {
-                self.current_type_scope().insert(alias.clone(), res.clone());
-                self.record_type_symbol(&alias, res, visibility);
-            }
-            if let Some(alias_ty) = type_alias {
-                let new_key = self.qualify_name(&alias);
-                self.type_aliases.insert(new_key, alias_ty);
-            }
-            self.resolved_import_aliases.insert(resolved_key);
-            return true;
-        }
-        false
-    }
-
-    /// Walks `segments` one at a time starting from `start`, looking up
-    /// each name against the *current* module's own binding table and
-    /// following any resolved module alias's real canonical path as the
-    /// scope for the next segment — mirrors rustc's `resolve_import`/
-    /// `maybe_resolve_path` (`compiler/rustc_resolve/src/imports.rs`):
-    /// resolution walks forward from whatever a segment's binding
-    /// actually points at, never re-deriving a flat string key from the
-    /// literal path text. Returns the final resolved module path once
-    /// every segment has been consumed as a module hop, or `None` if a
-    /// step doesn't resolve to a module at all. Terminates naturally —
-    /// each step consumes exactly one segment of a finite input path, so
-    /// (unlike following an *alias* recursively) this walk can't loop.
-    fn resolve_module_path_through_aliases(
-        &self,
-        start: &fp_core::ast::path::QualifiedPath,
-        segments: &[String],
-    ) -> Option<fp_core::ast::path::QualifiedPath> {
-        let mut current = start.clone();
-        for segment in segments {
-            let candidate = current.with_segment(segment.clone());
-            if self.package.module_tree.module_exists(&candidate) {
-                current = candidate;
-                continue;
-            }
-            let key = candidate.to_key();
-            let module_alias = self
-                .lookup_symbol(&key, hir::Namespace::Value)
-                .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type));
-            match module_alias {
-                Some(hir::Res::Module(real_path)) => {
-                    current = fp_core::ast::path::QualifiedPath::new(real_path);
-                }
-                // Not a module alias — could still be a legitimate
-                // non-module path component (e.g. an enum type name in
-                // `result::Result::Ok`, where `Result` is a type, not a
-                // module, but its variants are still addressed through
-                // it). Rustc's resolver treats a type's own namespace as
-                // a valid intermediate hop for exactly this shape; here,
-                // simply keep walking literally — the final identifier
-                // lookup still gets a fair chance either way, and this
-                // never regresses a path that previously only worked via
-                // pure literal splicing.
-                _ => current = candidate,
-            }
-        }
-        Some(current)
     }
 
     pub fn with_file<P: AsRef<Path>>(
@@ -742,7 +308,8 @@ impl AstToHirLowerer {
     ) -> Self {
         Self {
             package_id: package_id.clone(),
-            next_hir_id: 0,
+            current_owner: None,
+            local_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
             type_scopes: vec![HashMap::new()],
@@ -1029,7 +596,8 @@ impl AstToHirLowerer {
     /// never clobber a def's one true canonical path.
     fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::ast::path::QualifiedPath) {
         if let hir::Res::Def(def_id) = res {
-            self.package.def_paths
+            self.package
+                .def_paths
                 .entry(def_id.clone())
                 .or_insert_with(|| hir::DefPath::from_qualified_path(path));
         }
@@ -1168,582 +736,6 @@ impl AstToHirLowerer {
         }
     }
 
-    fn prepare_lowering_state(&mut self) {
-        self.type_scopes.clear();
-        self.type_scopes.push(HashMap::new());
-        self.value_scopes.clear();
-        self.value_scopes.push(HashMap::new());
-        self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
-        self.module_visibility.clear();
-        self.module_visibility.push(true);
-        self.next_hir_id = 0;
-        self.current_position = 0;
-        self.type_aliases.clear();
-        self.trait_defs.clear();
-        self.trait_def_modules.clear();
-        self.structural_value_defs.clear();
-        self.const_list_length_scopes.clear();
-        self.const_list_length_scopes.push(HashMap::new());
-        self.synthetic_items.clear();
-        self.package.module_tree = hir::resolve::ModuleTree::new();
-        self.pending_impls.clear();
-        self.pending_type_aliases.clear();
-        self.resolved_import_aliases.clear();
-        // Keep predeclared struct fields available for struct update lowering.
-    }
-
-    fn load_default_prelude_defs(&mut self) {
-        // Real std nests prelude re-exports one level deeper than a bare
-        // `"std::prelude::"` prefix — `std::prelude::v1::Some`/
-        // `std::prelude::rust_2021::Vec`, not `std::prelude::Some`
-        // directly (`std::prelude::mod.rs` is itself just `pub mod v1;
-        // pub mod rust_2015 { pub use v1::*; }` ...). The vendored real
-        // `std` additionally bundles three real crates (`core`/`alloc`/
-        // `std`) under one FerroPhase package, so a genuine key looks
-        // like `std::core::prelude::v1::Ok` or `std::std::prelude::v1::Ok`
-        // — a literal `"std::prelude::"` prefix check matches neither
-        // (the segment right after the leading `"std::"` is `"core"`/
-        // `"std"`, not `"prelude"`). Look for a `prelude` path *segment*
-        // anywhere instead of a fixed-depth prefix, and take the last
-        // segment as the prelude-visible bare name — otherwise every real
-        // prelude item (`Ok`, `Err`, `Some`, `None`, `Vec`, ...) is
-        // silently dropped, and any code using them unqualified fails to
-        // resolve at all.
-        fn prelude_bare_name(key: &str) -> Option<&str> {
-            if key.split("::").any(|segment| segment == "prelude") {
-                key.rsplit("::").next()
-            } else {
-                None
-            }
-        }
-        let type_aliases: Vec<_> = self
-            .package
-            .module_tree
-            .all_bindings(hir::Namespace::Type)
-            .filter_map(|(path, entry)| {
-                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
-            })
-            .collect();
-        let value_aliases: Vec<_> = self
-            .package
-            .module_tree
-            .all_bindings(hir::Namespace::Value)
-            .filter_map(|(path, entry)| {
-                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
-            })
-            .collect();
-        if std::env::var("FP_DEBUG_PRELUDE").is_ok() {
-            eprintln!(
-                "DEBUG load_default_prelude_defs: package_id={:?} {} type aliases, {} value aliases, has String={}",
-                self.package_id,
-                type_aliases.len(),
-                value_aliases.len(),
-                type_aliases.iter().any(|(name, _)| name == "String"),
-            );
-        }
-        let prelude_module = self.package.module_tree.prelude();
-        for (name, res) in type_aliases {
-            self.package.module_tree.bind(
-                prelude_module,
-                hir::Namespace::Type,
-                &name,
-                hir::SymbolEntry {
-                    res,
-                    export: hir::SymbolExport::Public,
-                    path: None,
-                },
-            );
-        }
-        for (name, res) in value_aliases {
-            self.package.module_tree.bind(
-                prelude_module,
-                hir::Namespace::Value,
-                &name,
-                hir::SymbolEntry {
-                    res,
-                    export: hir::SymbolExport::Public,
-                    path: None,
-                },
-            );
-        }
-
-        // This package's own module tree only ever holds *this* module's
-        // own (freshly `reset_file_context`-cleared) declarations — std's
-        // prelude re-exports live in a dependency package, compiled in its
-        // own, separate `AstToHirLowerer` invocation entirely. Its exported
-        // symbol table (`hir_exports`, the third element
-        // `hir_definitions()` returns) is where those actually surface;
-        // scan it the same way, merging in rather than overwriting what's
-        // already collected above.
-        for (_module_path, _hir_package, exports) in self.hir_program.hir_definitions() {
-            for (key, res) in &exports {
-                let Some(name) = prelude_bare_name(key) else {
-                    continue;
-                };
-                // A prelude export could be looked up in either
-                // namespace (`Option` as a type, `Some`/`None` as
-                // values) — record it in both; an entry that's never
-                // consulted in the "wrong" namespace is simply unused,
-                // not incorrect.
-                if self
-                    .package
-                    .module_tree
-                    .lookup(prelude_module, hir::Namespace::Value, name)
-                    .is_none()
-                {
-                    self.package.module_tree.bind(
-                        prelude_module,
-                        hir::Namespace::Value,
-                        name,
-                        hir::SymbolEntry {
-                            res: res.clone(),
-                            export: hir::SymbolExport::Public,
-                            path: None,
-                        },
-                    );
-                }
-                if self
-                    .package
-                    .module_tree
-                    .lookup(prelude_module, hir::Namespace::Type, name)
-                    .is_none()
-                {
-                    self.package.module_tree.bind(
-                        prelude_module,
-                        hir::Namespace::Type,
-                        name,
-                        hir::SymbolEntry {
-                            res: res.clone(),
-                            export: hir::SymbolExport::Public,
-                            path: None,
-                        },
-                    );
-                }
-            }
-        }
-    }
-    /// The current, real mechanism for merging every workspace dependency's
-    /// own `def_map`/`def_paths`/`op_defs`/`intrinsic_defs` into this
-    /// package's own `program` — called at `:1726`/`:1877`, and depended on
-    /// by `hir_to_mir::HirToMirLowerer`'s cross-package lookups (`hir_def_map`,
-    /// documented at `hir_to_mir/expr.rs`) as well as `fp-typing`'s own
-    /// same-package/cross-package resolution. Not legacy code awaiting
-    /// deletion — a future "one shared program, not copied per package"
-    /// redesign remains a real architectural option, but until that lands
-    /// this is the only mechanism that makes cross-package references work
-    /// at all.
-    fn seed_workspace_definitions(&mut self, program: &mut hir::HirPackage) {
-        for (_module_path, hir_program, _exports) in self.hir_program.hir_definitions() {
-            // Deliberately *not* pushed into `program.items` — that would
-            // duplicate every dependency's struct/enum into this package's
-            // own output/lifted AST regardless of whether anything here
-            // actually references them. `def_map` (populated below) is the
-            // registry; `hir_to_mir::HirToMirLowerer::compute_adt_layout` looks
-            // up and lazily registers a foreign struct/enum from it only
-            // when something concrete actually needs one.
-            for item in &hir_program.items {
-                program.def_map.insert(item.def_id.clone(), item.clone());
-            }
-            program.def_map.extend(hir_program.def_map.clone());
-            program.def_paths.extend(hir_program.def_paths.clone());
-            program.op_defs.extend(hir_program.op_defs.clone());
-            program
-                .intrinsic_defs
-                .extend(hir_program.intrinsic_defs.clone());
-            program
-                .type_alias_targets
-                .extend(hir_program.type_alias_targets.clone());
-            // Cross-package exported value/type symbols (`_exports`) are
-            // *not* eagerly copied into this package's own module tree
-            // here — `resolve_type_symbol`/`resolve_value_symbol`/
-            // `lookup_global_res`/`item_exists` all fall back to
-            // `workspace.find_export` lazily on a local-lookup miss
-            // instead.
-        }
-        for path in self.workspace.as_ref().map(|w| w.module_paths()).unwrap_or_default() {
-            self.package.module_tree.ensure_module(&path);
-        }
-        // Cross-package `type X = Y;` aliases (e.g. `libc::char`) are
-        // *not* eagerly copied in here either — `lookup_type_alias`/
-        // `lookup_type_alias_with_key` fall back to `workspace.
-        // find_type_alias` lazily on a local-lookup miss instead.
-    }
-
-    fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
-        for item in items {
-            if !self.item_enabled_by_cfg(item) {
-                continue;
-            }
-            if should_drop_quote_item(item) {
-                continue;
-            }
-            if should_drop_const_type_item(item) {
-                continue;
-            }
-            match item.kind() {
-                ItemKind::Module(module) => {
-                    self.allocate_def_id_for_item(item);
-                    self.record_module_def(module.name.as_str());
-                    self.push_module_scope(&module.name.name, &module.visibility);
-                    self.predeclare_items(&module.items, tolerant)?;
-                    self.pop_module_scope();
-                }
-                ItemKind::DefConst(def_const) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
-                }
-                ItemKind::DefStruct(def_struct) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_struct.name.name, def_id.clone(), &def_struct.visibility);
-                    self.register_value_def(&def_struct.name.name, def_id.clone(), &def_struct.visibility);
-                    if attrs_has_name(&def_struct.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id.clone());
-                    }
-                    self.struct_field_defs
-                        .insert(def_id, def_struct.value.fields.clone());
-                }
-                ItemKind::DefStructural(def_structural) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(
-                        &def_structural.name.name,
-                        def_id.clone(),
-                        &def_structural.visibility,
-                    );
-                    self.register_value_def(
-                        &def_structural.name.name,
-                        def_id.clone(),
-                        &def_structural.visibility,
-                    );
-                    if attrs_has_name(&def_structural.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id.clone());
-                    }
-                    self.struct_field_defs
-                        .insert(def_id, def_structural.value.fields.clone());
-                }
-                ItemKind::OpaqueType(opaque_def) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&opaque_def.name.name, def_id.clone(), &opaque_def.visibility);
-                    self.struct_field_defs.insert(def_id, Vec::new());
-                }
-                ItemKind::DefEnum(def_enum) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_enum.name.name, def_id.clone(), &def_enum.visibility);
-                    if attrs_has_name(&def_enum.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id);
-                    }
-
-                    let enum_op_class = fp_core::intrinsics::extract_op_attr(&def_enum.attrs, "class");
-                    for variant in &def_enum.value.variants {
-                        let variant_def_id = self.next_def_id();
-                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&variant.attrs, "variant") {
-                            let op = enum_op_class
-                                .as_deref()
-                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
-                            if let Some(op) = op {
-                                self.package.op_defs.insert(variant_def_id.clone(), op);
-                            }
-                        }
-
-                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
-                            def_enum.name.name.clone(),
-                            variant.name.name.clone(),
-                        ]);
-                        let qualified_variant = variant_path.to_key();
-                        let fully_qualified = if self.module_path.is_empty() {
-                            qualified_variant.clone()
-                        } else {
-                            self.module_path.join(&variant_path.segments).to_key()
-                        };
-                        // Record the `Enum::Variant`-qualified registration
-                        // first so its more complete path wins the
-                        // `def_paths` entry over the bare-name
-                        // registration below (see the analogous comment in
-                        // `transform_item_to_hir`'s `DefEnum` arm).
-                        //
-                        // Must go through `record_value_path` (which takes
-                        // an already-split `QualifiedPath`), not
-                        // `record_value_symbol` (which takes a bare `&str`
-                        // name and appends it as a *single* module-tree
-                        // segment via `qualify_path`/`with_segment`) — the
-                        // latter turned the "::"-joined string
-                        // `"Option::None"` into one literal segment named
-                        // `"Option::None"` bound directly under module
-                        // `option`, instead of a `None` binding under
-                        // submodule `option::Option`. Any lookup that
-                        // *splits* a qualified key into real segments
-                        // (`register_import_binding`'s `Option::{self,
-                        // None, Some}` resolution, `load_default_prelude_defs`'s
-                        // scan) could then never find it — the actual root
-                        // cause of every enum-variant-based prelude import
-                        // (`Some`/`None`/`Ok`/`Err`) failing to resolve
-                        // crate-wide.
-                        self.record_value_path(
-                            &self.module_path.join(&variant_path.segments),
-                            hir::Res::Def(variant_def_id.clone()),
-                            &def_enum.visibility,
-                        );
-                        self.register_value_def(
-                            &variant.name.name,
-                            variant_def_id.clone(),
-                            &def_enum.visibility,
-                        );
-                        self.enum_variant_def_ids
-                            .insert(fully_qualified, variant_def_id);
-                    }
-                }
-                ItemKind::DefFunction(def_fn) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
-                }
-                ItemKind::DeclFunction(decl_fn) => {
-                    // Body-less `extern "C" fn foo(...);` declarations (e.g.
-                    // the embedded libc package's platform bindings) must be
-                    // registered here, not left to `append_item` (STEP 4),
-                    // so that STEP 2's import resolution (in particular glob
-                    // re-exports like `pub use macos::*;`) can already see
-                    // them when it enumerates the module tree's value
-                    // bindings.
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_value_def(&decl_fn.name.name, def_id, &ast::Visibility::Public);
-                }
-                ItemKind::DefTrait(def_trait) => {
-                    let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_trait.name.name, def_id.clone(), &def_trait.visibility);
-                    if attrs_has_name(&def_trait.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id);
-                    }
-                    self.trait_defs
-                        .insert(def_trait.name.name.clone(), def_trait.clone());
-                    self.trait_def_modules
-                        .insert(def_trait.name.name.clone(), self.module_path.clone());
-                }
-                ItemKind::DefType(def_type) => {
-                    self.register_type_alias(&def_type.name.name, &def_type.value);
-                    if let Some(materialized) = self.materialized_type_alias(def_type) {
-                        let def_id = self.allocate_def_id_for_item(item);
-                        self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
-                        if attrs_has_name(&def_type.attrs, "unimplemented") {
-                            self.unimplemented_type_def_ids.insert(def_id.clone());
-                        }
-                        match materialized {
-                            MaterializedTypeAlias::Struct(struct_ty) => {
-                                self.struct_field_defs
-                                    .insert(def_id, struct_ty.fields.clone());
-                            }
-                            MaterializedTypeAlias::Structural(structural) => {
-                                self.struct_field_defs
-                                    .insert(def_id, structural.fields.clone());
-                            }
-                            MaterializedTypeAlias::Enum(enum_ty) => {
-                                for variant in &enum_ty.variants {
-                                    let variant_def_id = self.next_def_id();
-
-                                    let variant_path =
-                                        fp_core::ast::path::QualifiedPath::new(vec![
-                                            def_type.name.name.clone(),
-                                            variant.name.name.clone(),
-                                        ]);
-                                    let qualified_variant = variant_path.to_key();
-                                    let fully_qualified = if self.module_path.is_empty() {
-                                        qualified_variant.clone()
-                                    } else {
-                                        self.module_path.join(&variant_path.segments).to_key()
-                                    };
-                                    self.record_value_symbol(
-                                        &qualified_variant,
-                                        hir::Res::Def(variant_def_id.clone()),
-                                        &def_type.visibility,
-                                    );
-                                    self.register_value_def(
-                                        &variant.name.name,
-                                        variant_def_id.clone(),
-                                        &def_type.visibility,
-                                    );
-                                    self.enum_variant_def_ids
-                                        .insert(fully_qualified, variant_def_id);
-                                }
-                            }
-                        }
-                    } else {
-                        // A transparent alias (`type __darwin_useconds_t =
-                        // __uint32_t;`, `type Result<T> = ...;`) — the
-                        // aliased type isn't a fresh struct/enum/structural
-                        // this declaration itself introduces, so there's no
-                        // new nominal HIR item to build. HIR has no
-                        // first-class "type alias" item at all, so without
-                        // this branch the alias's own name would never be
-                        // given a `DefId`/`Res::Def` and could never resolve
-                        // anywhere it's referenced — real Rust code (std's
-                        // own `pub type Result<T> = ..`-style aliases,
-                        // nearly every libc typedef) uses this shape
-                        // constantly. Give it a real `DefId` (so qualified
-                        // lookups like `macos::useconds_t` still work
-                        // exactly like a materializing alias's would), and
-                        // record its already-lowered target `TypeExpr` so
-                        // `path_ty` can expand it in place at every use.
-                        //
-                        // Same timing hazard as `ItemKind::Impl` below: a
-                        // module-qualified RHS (`type Result = result::
-                        // Result<(), Error>;`) needs `result` already
-                        // resolved as an import, but this whole method
-                        // (STEP 1) runs strictly before STEP 2's import
-                        // resolution — so defer exactly the same way,
-                        // checked non-mutating before the first mutation.
-                        let defer = tolerant
-                            && type_alias_rhs_first_segment_name(&def_type.value)
-                                .map(|name| {
-                                    self.resolve_type_symbol(name).is_none()
-                                        && !is_primitive_type_name(name)
-                                })
-                                .unwrap_or(false);
-                        if defer {
-                            self.pending_type_aliases
-                                .push((self.module_path.clone(), item.clone()));
-                        } else {
-                            let def_id = self.allocate_def_id_for_item(item);
-                            self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
-                            let target = self.transform_type_to_hir(&def_type.value)?;
-                            self.package.type_alias_targets.insert(def_id, target);
-                        }
-                    }
-                }
-                ItemKind::Impl(_) => {
-                    let ItemKind::Impl(impl_block) = item.kind() else {
-                        unreachable!();
-                    };
-                    // Only single-segment bare names (`Vec`, not
-                    // `crate::vec::Vec` or a blanket `T`) can plausibly be
-                    // waiting on an import that hasn't been processed yet
-                    // — everything else keeps today's immediate behavior,
-                    // including its immediate failure modes. Checked via
-                    // `resolve_type_symbol` (non-mutating) *before* the
-                    // first mutation below (`allocate_def_id_for_item`),
-                    // so a deferred item has made zero state changes and
-                    // is safe to fully re-run later, unmodified.
-                    let defer = tolerant
-                        && self_type_first_segment_name(&impl_block.self_ty)
-                            .map(|name| {
-                                self.resolve_type_symbol(name).is_none()
-                                    && !is_primitive_type_name(name)
-                            })
-                            .unwrap_or(false);
-                    if defer {
-                        self.pending_impls
-                            .push((self.module_path.clone(), item.clone()));
-                    } else {
-                        self.allocate_def_id_for_item(item);
-                        // A self-type can be permanently unresolvable — not a
-                        // timing issue an import-order retry would fix, but a
-                        // genuine dead end (e.g. its target type lives in a
-                        // module that failed to parse in the first place, so
-                        // no amount of import resolution will ever find it).
-                        // Skip just this one impl rather than aborting HIR
-                        // generation for the whole package — the same
-                        // "tolerate what's broken, keep what isn't" policy
-                        // already applied at the file level (parse errors).
-                        let self_path = match self
-                            .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)
-                        {
-                            Ok(path) => path,
-                            Err(error) => {
-                                tracing::warn!(
-                                    "skipping impl with unresolvable self-type in {}: {error}",
-                                    self.module_path.to_key(),
-                                );
-                                continue;
-                            }
-                        };
-                        let mut method_path = match self.canonical_type_path(&self_path) {
-                            Ok(path) => path.segments,
-                            Err(error) => {
-                                tracing::warn!(
-                                    "skipping impl with unresolvable self-type in {}: {error}",
-                                    self.module_path.to_key(),
-                                );
-                                continue;
-                            }
-                        };
-                        // `impl Vec<&str> { fn join }` / `impl Vec<String> {
-                        // fn join }` are two genuinely different,
-                        // already-concrete methods (this impl declares no
-                        // generic parameter of its own to substitute), but
-                        // `canonical_type_path` only ever returns the base
-                        // struct's nominal path ("std::alloc::Vec") --
-                        // dropping the impl's own concrete generic
-                        // arguments entirely. Left alone, both compute the
-                        // identical qualified path "std::alloc::Vec::join",
-                        // colliding once both reach the same LIR workspace
-                        // ("duplicate LIR artifact `Vec__join`"). A truly
-                        // generic impl (`impl<T> Vec<T> { fn push }`) is
-                        // unaffected — it has its own generic params, so
-                        // this check is skipped; its per-call-site
-                        // specializations are disambiguated further
-                        // downstream instead (hir_to_mir's
-                        // `specialization_suffix`, keyed off the
-                        // *substituted* type, not the impl itself).
-                        if impl_block.generics_params.is_empty() {
-                            if let Some(args) = self_path
-                                .segments
-                                .last()
-                                .and_then(|segment| segment.args.as_ref())
-                                .filter(|args| !args.args.is_empty())
-                            {
-                                use std::hash::{Hash, Hasher};
-                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                for arg in &args.args {
-                                    format!("{:?}", arg).hash(&mut hasher);
-                                }
-                                if let Some(last) = method_path.last_mut() {
-                                    last.push_str(&format!("_spec_{:x}", hasher.finish()));
-                                }
-                            }
-                        }
-                        for impl_item in &impl_block.items {
-                            match impl_item.kind() {
-                                ast::ItemKind::DefFunction(function) => {
-                                    let method_def_id = self.allocate_def_id_for_item(impl_item);
-                                    method_path.push(function.name.name.clone());
-                                    self.record_value_path(
-                                        &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
-                                        hir::Res::Def(method_def_id),
-                                        &function.visibility,
-                                    );
-                                    method_path.pop();
-                                }
-                                // An inherent/trait-impl associated const
-                                // (`impl char { pub const MIN: char = ...;
-                                // }`) — until this arm existed, this loop's
-                                // exclusive `DefFunction` match silently
-                                // skipped every associated const, so
-                                // nothing outside the impl's own body
-                                // (predeclare_items runs before any body is
-                                // lowered) could ever resolve a reference
-                                // to it (`char::MIN`) — not a timing/
-                                // ordering issue an import retry could
-                                // paper over, since the symbol was never
-                                // registered *anywhere*, ever, regardless
-                                // of reference order.
-                                ast::ItemKind::DefConst(constant) => {
-                                    let const_def_id = self.allocate_def_id_for_item(impl_item);
-                                    method_path.push(constant.name.name.clone());
-                                    self.record_value_path(
-                                        &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
-                                        hir::Res::Def(const_def_id),
-                                        &constant.visibility,
-                                    );
-                                    method_path.pop();
-                                }
-                                _ => continue,
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
     fn current_module_visibility_flag(&self) -> bool {
         *self.module_visibility.last().unwrap_or(&true)
     }
@@ -1843,7 +835,11 @@ impl AstToHirLowerer {
             .or_else(|| {
                 self.package
                     .module_tree
-                    .lookup_res(self.package.module_tree.prelude(), hir::Namespace::Type, name)
+                    .lookup_res(
+                        self.package.module_tree.prelude(),
+                        hir::Namespace::Type,
+                        name,
+                    )
                     .cloned()
             })
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Type))
@@ -1882,22 +878,25 @@ impl AstToHirLowerer {
             .filter(|(key, _)| key.rsplit("::").next().unwrap_or(key.as_str()) == name)
             .collect();
         candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
-        candidates.into_iter().min_by_key(|(_, res)| {
-            let hir::Res::Def(def_id) = res else {
-                // Non-`Def` resolutions (a module, a local, ...) have no
-                // alias/depth to compare — treat as maximally preferred
-                // among themselves via stable key order alone.
-                return (0usize, 0usize);
-            };
-            // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
-            // ranks behind a real nominal declaration (`enum Result`).
-            let is_alias = hir_program.type_alias_target(def_id.clone()).is_some() as usize;
-            let depth = hir_program
-                .def_path(def_id.clone())
-                .map(|path| path.segments.len())
-                .unwrap_or(usize::MAX);
-            (is_alias, depth)
-        }).map(|(_, res)| res)
+        candidates
+            .into_iter()
+            .min_by_key(|(_, res)| {
+                let hir::Res::Def(def_id) = res else {
+                    // Non-`Def` resolutions (a module, a local, ...) have no
+                    // alias/depth to compare — treat as maximally preferred
+                    // among themselves via stable key order alone.
+                    return (0usize, 0usize);
+                };
+                // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
+                // ranks behind a real nominal declaration (`enum Result`).
+                let is_alias = hir_program.type_alias_target(def_id.clone()).is_some() as usize;
+                let depth = hir_program
+                    .def_path(def_id.clone())
+                    .map(|path| path.segments.len())
+                    .unwrap_or(usize::MAX);
+                (is_alias, depth)
+            })
+            .map(|(_, res)| res)
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -1944,7 +943,11 @@ impl AstToHirLowerer {
             .or_else(|| {
                 self.package
                     .module_tree
-                    .lookup_res(self.package.module_tree.prelude(), hir::Namespace::Value, name)
+                    .lookup_res(
+                        self.package.module_tree.prelude(),
+                        hir::Namespace::Value,
+                        name,
+                    )
                     .cloned()
             })
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
@@ -2047,8 +1050,11 @@ impl AstToHirLowerer {
         if !self.synthetic_items.is_empty() {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
-                hir_program.def_map.insert(item.def_id.clone(), item.clone());
-                self.program_def_map.insert(item.def_id.clone(), item.clone());
+                hir_program
+                    .def_map
+                    .insert(item.def_id.clone(), item.clone());
+                self.program_def_map
+                    .insert(item.def_id.clone(), item.clone());
             }
             hir_program.items.extend(synthetic.drain(..));
         }
@@ -2183,7 +1189,10 @@ impl AstToHirLowerer {
                 } else {
                     package.items[i - generated_count].module_path.clone()
                 };
-                fp_core::ast::package::PackageItem { module_path: path, item }
+                fp_core::ast::package::PackageItem {
+                    module_path: path,
+                    item,
+                }
             })
             .collect();
         // Item-position `macro_rules!` invocations (real std's own idiom for
@@ -2264,7 +1273,8 @@ impl AstToHirLowerer {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
                 program.def_map.insert(item.def_id.clone(), item.clone());
-                self.program_def_map.insert(item.def_id.clone(), item.clone());
+                self.program_def_map
+                    .insert(item.def_id.clone(), item.clone());
             }
             program.items.extend(synthetic.drain(..));
         }
@@ -2272,7 +1282,9 @@ impl AstToHirLowerer {
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program.op_defs.extend(self.package.op_defs.clone());
-        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
+        program
+            .intrinsic_defs
+            .extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
@@ -2300,7 +1312,10 @@ impl AstToHirLowerer {
     /// Whatever's left unresolved after the fixed point is left as-is,
     /// exactly like today's single-sweep behavior — not a new error
     /// surface, genuinely-unresolvable imports behave the same as before.
-    fn resolve_pending_imports(&mut self, package: &fp_core::ast::package::AstPackage) -> Result<()> {
+    fn resolve_pending_imports(
+        &mut self,
+        package: &fp_core::ast::package::AstPackage,
+    ) -> Result<()> {
         let mut pending: Vec<(
             fp_core::ast::path::QualifiedPath,
             ImportBinding,
@@ -2321,7 +1336,11 @@ impl AstToHirLowerer {
             this: &mut AstToHirLowerer,
             module_path: &fp_core::ast::path::QualifiedPath,
             item: &ast::Item,
-            pending: &mut Vec<(fp_core::ast::path::QualifiedPath, ImportBinding, ast::Visibility)>,
+            pending: &mut Vec<(
+                fp_core::ast::path::QualifiedPath,
+                ImportBinding,
+                ast::Visibility,
+            )>,
         ) -> Result<()> {
             match item.kind() {
                 ItemKind::Import(import) => {
@@ -2444,12 +1463,15 @@ impl AstToHirLowerer {
 
         let mut program = hir::HirPackage::new(self.package.id.clone());
         program.def_map.insert(item.def_id.clone(), item.clone());
-        self.program_def_map.insert(item.def_id.clone(), item.clone());
+        self.program_def_map
+            .insert(item.def_id.clone(), item.clone());
         program.items.push(item);
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program.op_defs.extend(self.package.op_defs.clone());
-        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
+        program
+            .intrinsic_defs
+            .extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
@@ -2472,7 +1494,8 @@ impl AstToHirLowerer {
         self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
-            self.program_def_map.insert(item.def_id.clone(), item.clone());
+            self.program_def_map
+                .insert(item.def_id.clone(), item.clone());
         }
 
         // Append in the same order: extra-module items (impls in particular)
@@ -2490,7 +1513,8 @@ impl AstToHirLowerer {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
                 program.def_map.insert(item.def_id.clone(), item.clone());
-                self.program_def_map.insert(item.def_id.clone(), item.clone());
+                self.program_def_map
+                    .insert(item.def_id.clone(), item.clone());
             }
             program.items.extend(synthetic.drain(..));
         }
@@ -2503,7 +1527,9 @@ impl AstToHirLowerer {
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program.op_defs.extend(self.package.op_defs.clone());
-        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
+        program
+            .intrinsic_defs
+            .extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
@@ -2594,7 +1620,9 @@ impl AstToHirLowerer {
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
-                    program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
+                    program
+                        .def_map
+                        .insert(hir_item.def_id.clone(), hir_item.clone());
                     self.program_def_map
                         .insert(hir_item.def_id.clone(), hir_item.clone());
                     program.items.push(hir_item);
@@ -2607,23 +1635,30 @@ impl AstToHirLowerer {
                         return Ok(());
                     }
                 }
-                let hir_expr = self.transform_expr_to_hir(expr)?;
-                let hir_item = hir::Item {
-                    hir_id: self.next_id(),
-                    def_id: self.allocate_def_id_for_item(item),
-                    visibility: hir::Visibility::Private,
-                    kind: hir::ItemKind::Expr(hir_expr),
-                    span: item.span(),
-                };
-                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
-                self.program_def_map
-                    .insert(hir_item.def_id.clone(), hir_item.clone());
-                program.items.push(hir_item);
-                Ok(())
+                let def_id = self.allocate_def_id_for_item(item);
+                self.with_owner(def_id.clone(), |this| {
+                    let hir_expr = this.transform_expr_to_hir(expr)?;
+                    let hir_item = hir::Item {
+                        hir_id: this.next_id(),
+                        def_id,
+                        visibility: hir::Visibility::Private,
+                        kind: hir::ItemKind::Expr(hir_expr),
+                        span: item.span(),
+                    };
+                    program
+                        .def_map
+                        .insert(hir_item.def_id.clone(), hir_item.clone());
+                    this.program_def_map
+                        .insert(hir_item.def_id.clone(), hir_item.clone());
+                    program.items.push(hir_item);
+                    Ok(())
+                })
             }
             ItemKind::DeclFunction(decl) => {
                 let hir_item = self.transform_decl_function(item, decl)?;
-                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
+                program
+                    .def_map
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 self.program_def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
                 program.items.push(hir_item);
@@ -2641,7 +1676,9 @@ impl AstToHirLowerer {
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
-                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
+                program
+                    .def_map
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 self.program_def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
                 program.items.push(hir_item);
@@ -2723,7 +1760,10 @@ impl AstToHirLowerer {
                     let def_id = self.next_def_id();
                     let const_block_expr = hir::Expr {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id: def_id.clone(), body }),
+                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock {
+                            def_id: def_id.clone(),
+                            body,
+                        }),
                         span: item.span(),
                     };
                     self.current_value_scope()
@@ -2818,13 +1858,27 @@ impl AstToHirLowerer {
 
     /// Transform an AST item into a HIR item
     fn transform_item_to_hir(&mut self, item: &ast::Item) -> Result<hir::Item> {
-        let hir_id = self.next_id();
         let def_id = self.def_id_for_item(item);
+        self.with_owner(def_id.clone(), |this| {
+            this.transform_item_to_hir_inner(item, def_id)
+        })
+    }
+
+    fn transform_item_to_hir_inner(
+        &mut self,
+        item: &ast::Item,
+        def_id: hir::DefId,
+    ) -> Result<hir::Item> {
+        let hir_id = self.next_id();
         let span = self.create_span(1);
 
         let (kind, visibility) = match item.kind() {
             ItemKind::DefConst(const_def) => {
-                self.register_value_def(&const_def.name.name, def_id.clone(), &const_def.visibility);
+                self.register_value_def(
+                    &const_def.name.name,
+                    def_id.clone(),
+                    &const_def.visibility,
+                );
                 let hir_const = self.transform_const_def(const_def)?;
                 (
                     hir::ItemKind::Const(hir_const),
@@ -2832,8 +1886,16 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefStruct(struct_def) => {
-                self.register_type_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
-                self.register_value_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
+                self.register_type_def(
+                    &struct_def.name.name,
+                    def_id.clone(),
+                    &struct_def.visibility,
+                );
+                self.register_value_def(
+                    &struct_def.name.name,
+                    def_id.clone(),
+                    &struct_def.visibility,
+                );
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_def.value.generics_params);
                 let name = hir::Symbol::new(struct_def.name.name.clone());
@@ -2863,8 +1925,16 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefStructural(struct_def) => {
-                self.register_type_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
-                self.register_value_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
+                self.register_type_def(
+                    &struct_def.name.name,
+                    def_id.clone(),
+                    &struct_def.visibility,
+                );
+                self.register_value_def(
+                    &struct_def.name.name,
+                    def_id.clone(),
+                    &struct_def.visibility,
+                );
                 let name = hir::Symbol::new(struct_def.name.name.clone());
                 let fields = struct_def
                     .value
@@ -2891,7 +1961,11 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::OpaqueType(opaque_def) => {
-                self.register_type_def(&opaque_def.name.name, def_id.clone(), &opaque_def.visibility);
+                self.register_type_def(
+                    &opaque_def.name.name,
+                    def_id.clone(),
+                    &opaque_def.visibility,
+                );
                 let name = hir::Symbol::new(opaque_def.name.name.clone());
                 (
                     hir::ItemKind::Struct(hir::Struct {
@@ -3043,7 +2117,11 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DeclFunction(func_decl) => {
-                self.register_value_def(&func_decl.name.name, def_id.clone(), &ast::Visibility::Public);
+                self.register_value_def(
+                    &func_decl.name.name,
+                    def_id.clone(),
+                    &ast::Visibility::Public,
+                );
                 let function = self.transform_decl_function_sig(func_decl, None)?;
                 (hir::ItemKind::Function(function), hir::Visibility::Public)
             }
@@ -3170,17 +2248,19 @@ impl AstToHirLowerer {
         item: &ast::Item,
         decl: &ast::ItemDeclFunction,
     ) -> Result<hir::Item> {
-        let hir_id = self.next_id();
         let def_id = self.def_id_for_item(item);
-        let span = self.create_span(1);
-        self.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
-        let function = self.transform_decl_function_sig(decl, None)?;
-        Ok(hir::Item {
-            hir_id,
-            def_id,
-            visibility: hir::Visibility::Public,
-            kind: hir::ItemKind::Function(function),
-            span,
+        self.with_owner(def_id.clone(), |this| {
+            let hir_id = this.next_id();
+            let span = this.create_span(1);
+            this.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
+            let function = this.transform_decl_function_sig(decl, None)?;
+            Ok(hir::Item {
+                hir_id,
+                def_id,
+                visibility: hir::Visibility::Public,
+                kind: hir::ItemKind::Function(function),
+                span,
+            })
         })
     }
 
@@ -3358,8 +2438,8 @@ impl AstToHirLowerer {
                 });
                 match primary_trait_name {
                     Some(name) => {
-                        let path = self
-                            .name_to_hir_path_with_scope(&name, PathResolutionScope::Type)?;
+                        let path =
+                            self.name_to_hir_path_with_scope(&name, PathResolutionScope::Type)?;
                         Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Path(path),
@@ -4257,8 +3337,11 @@ impl AstToHirLowerer {
         if let Some(alias) = segments.get(0).and_then(|name| self.type_aliases.get(name)) {
             return Some(alias.clone());
         }
-        self.find_workspace_type_alias(&qualified)
-            .or_else(|| segments.get(0).and_then(|name| self.find_workspace_type_alias(name)))
+        self.find_workspace_type_alias(&qualified).or_else(|| {
+            segments
+                .get(0)
+                .and_then(|name| self.find_workspace_type_alias(name))
+        })
     }
 
     fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, ast::Ty)> {
@@ -4308,7 +3391,7 @@ impl AstToHirLowerer {
         None
     }
 
-    fn ty_is_simple_path(&self, ty: &ast::Ty, segments: &[String]) -> bool {
+    pub(super) fn ty_is_simple_path(&self, ty: &ast::Ty, segments: &[String]) -> bool {
         match ty {
             ast::Ty::Expr(expr) => self.expr_is_simple_path(expr, segments),
             ast::Ty::Value(type_value) => match type_value.value.as_ref() {
@@ -4320,7 +3403,7 @@ impl AstToHirLowerer {
         }
     }
 
-    fn expr_is_simple_path(&self, expr: &ast::Expr, segments: &[String]) -> bool {
+    pub(super) fn expr_is_simple_path(&self, expr: &ast::Expr, segments: &[String]) -> bool {
         match expr.kind() {
             ast::ExprKind::Name(name) => self.name_matches_segments(name, segments),
             ast::ExprKind::Value(value) => match value.as_ref() {
@@ -4333,7 +3416,7 @@ impl AstToHirLowerer {
         }
     }
 
-    fn name_matches_segments(&self, name: &Name, segments: &[String]) -> bool {
+    pub(super) fn name_matches_segments(&self, name: &Name, segments: &[String]) -> bool {
         match name {
             Name::Ident(ident) => segments.len() == 1 && ident.name == segments[0],
             Name::Path(path) => self.path_matches_segments(path, segments),
@@ -4349,7 +3432,7 @@ impl AstToHirLowerer {
         }
     }
 
-    fn path_matches_segments(&self, path: &ast::Path, segments: &[String]) -> bool {
+    pub(super) fn path_matches_segments(&self, path: &ast::Path, segments: &[String]) -> bool {
         if path.segments.len() != segments.len() {
             return false;
         }
@@ -4359,7 +3442,7 @@ impl AstToHirLowerer {
             .all(|(seg, expected)| seg.name == *expected)
     }
 
-    fn enter_type_alias(&mut self, key: &str, span: Span) -> bool {
+    pub(super) fn enter_type_alias(&mut self, key: &str, span: Span) -> bool {
         if self.resolving_type_aliases.contains(key) {
             self.add_error(
                 Diagnostic::error(format!("type alias cycle detected: {}", key))
@@ -4372,11 +3455,11 @@ impl AstToHirLowerer {
         true
     }
 
-    fn exit_type_alias(&mut self, key: &str) {
+    pub(super) fn exit_type_alias(&mut self, key: &str) {
         self.resolving_type_aliases.remove(key);
     }
 
-    fn materialized_type_alias(
+    pub(super) fn materialized_type_alias(
         &self,
         def_type: &ast::ItemDefType,
     ) -> Option<MaterializedTypeAlias> {
@@ -4391,12 +3474,23 @@ impl AstToHirLowerer {
         }
     }
 
-    fn materialize_def_type_item(
+    pub(super) fn materialize_def_type_item(
         &mut self,
         item: &ast::Item,
         def_type: &ast::ItemDefType,
     ) -> Result<Option<hir::Item>> {
         let def_id = self.def_id_for_item(item);
+        self.with_owner(def_id.clone(), |this| {
+            this.materialize_def_type_item_inner(item, def_type, def_id)
+        })
+    }
+
+    pub(super) fn materialize_def_type_item_inner(
+        &mut self,
+        item: &ast::Item,
+        def_type: &ast::ItemDefType,
+        def_id: hir::DefId,
+    ) -> Result<Option<hir::Item>> {
         let hir_id = self.next_id();
         let span = self.create_span(1);
 
@@ -4586,421 +3680,6 @@ impl AstToHirLowerer {
     }
 }
 
-fn should_drop_quote_item(item: &ast::Item) -> bool {
-    match item.kind() {
-        ItemKind::DefFunction(func) => signature_contains_quote(&func.sig),
-        ItemKind::DeclFunction(func) => signature_contains_quote(&func.sig),
-        ItemKind::DefConst(def) => {
-            def.ty_annotation()
-                .or_else(|| def.ty.as_ref())
-                .is_some_and(ty_contains_quote)
-                || expr_contains_quote_value(def.value.as_ref())
-        }
-        _ => false,
-    }
-}
-
-fn should_drop_const_type_item(item: &ast::Item) -> bool {
-    let _ = item;
-    false
-}
-
-/// A type alias's RHS that needs compile-time evaluation to produce a
-/// concrete type (`type X = const { .. };` or the bare-expression form
-/// `type X = EXPR;`) — the one case `materialized_type_alias` returns
-/// `None` for. Returns the inner expression to check/comptime-evaluate,
-/// unwrapping an explicit `const { .. }` wrapper (redundant sugar in this
-/// position, per Part B) so both syntaxes lower identically.
-fn comptime_type_alias_rhs(ty: &ast::Ty) -> Option<&ast::Expr> {
-    match ty {
-        ast::Ty::ConstBlock(const_block) => Some(const_block.expr.as_ref()),
-        ast::Ty::Expr(expr) => Some(expr.as_ref()),
-        _ => None,
-    }
-}
-
-/// Shared with `canonical_type_path`'s own primitive-name check, and with
-/// the tolerant-predeclare deferral check below, so both places recognize
-/// the same set of names as "not a real registered type, don't bother
-/// looking it up."
-fn is_primitive_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "str" | "char"
-            | "bool"
-            | "i8"
-            | "i16"
-            | "i32"
-            | "i64"
-            | "i128"
-            | "isize"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "u128"
-            | "usize"
-            | "f16"
-            | "f32"
-            | "f64"
-            | "f128"
-    )
-}
-
-/// Returns the self-type's head (first) segment name when it's a plain,
-/// unprefixed name-based path — a bare single segment (`Vec`, or
-/// `Vec<u8>` via a single-segment `Name::ParameterPath`), or the first
-/// segment of a bare multi-segment path (`ops::RangeFull`, where `ops`
-/// is a module brought into scope by a plain `use crate::{..., ops};`).
-/// Either shape could plausibly still be waiting on an import that
-/// hasn't been processed yet. Already-anchored paths (`crate::vec::Vec`,
-/// `self::Foo`, `super::Foo`) and non-name self-types (blanket
-/// `impl<T> Trait for T`) all return `None` — those are never deferred,
-/// they fall straight through to today's immediate resolution/failure.
-/// Same idea as `self_type_first_segment_name`, for a type alias's RHS
-/// (`ast::Ty`, not `ast::Expr`) — `result::Result<(), Error>` and similar
-/// module-qualified type references lower to `Ty::Expr(Name::Path(..))`
-/// (see `comptime_type_alias_rhs`'s doc comment for the same shape used
-/// elsewhere), so this just unwraps that one layer and delegates.
-fn type_alias_rhs_first_segment_name(ty: &ast::Ty) -> Option<&str> {
-    match ty {
-        ast::Ty::Expr(expr) => self_type_first_segment_name(expr),
-        _ => None,
-    }
-}
-
-fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> {
-    let ast::ExprKind::Name(name) = self_ty.kind() else {
-        return None;
-    };
-    match name {
-        Name::Ident(ident) => Some(ident.name.as_str()),
-        Name::Path(path) if path.prefix == fp_core::ast::path::PathPrefix::Plain => {
-            path.segments.first().map(|seg| seg.name.as_str())
-        }
-        Name::ParameterPath(param_path)
-            if param_path.prefix == fp_core::ast::path::PathPrefix::Plain =>
-        {
-            param_path
-                .segments
-                .first()
-                .map(|seg| seg.ident.name.as_str())
-        }
-        _ => None,
-    }
-}
-
-fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
-    sig.params.iter().any(|param| ty_contains_quote(&param.ty))
-        || sig.ret_ty.as_ref().is_some_and(ty_contains_quote)
-}
-
-#[allow(dead_code)]
-fn signature_contains_type_type(sig: &ast::FunctionSignature) -> bool {
-    sig.params.iter().any(|param| {
-        ty_contains_type_type(&param.ty)
-            || param
-                .ty_annotation
-                .as_ref()
-                .is_some_and(ty_contains_type_type)
-    }) || sig.ret_ty.as_ref().is_some_and(ty_contains_type_type)
-}
-
-fn ty_contains_quote(ty: &ast::Ty) -> bool {
-    match ty {
-        ast::Ty::Quote(_) => true,
-        ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_quote),
-        ast::Ty::Array(array) => ty_contains_quote(&array.elem),
-        ast::Ty::Vec(vec) => ty_contains_quote(&vec.ty),
-        ast::Ty::Reference(reference) => ty_contains_quote(&reference.ty),
-        ast::Ty::RawPtr(raw_ptr) => ty_contains_quote(&raw_ptr.ty),
-        ast::Ty::Slice(slice) => ty_contains_quote(&slice.elem),
-        ast::Ty::Struct(def) => def
-            .fields
-            .iter()
-            .any(|field| ty_contains_quote(&field.value)),
-        ast::Ty::Structural(def) => def
-            .fields
-            .iter()
-            .any(|field| ty_contains_quote(&field.value)),
-        ast::Ty::Enum(def) => def
-            .variants
-            .iter()
-            .any(|variant| ty_contains_quote(&variant.value)),
-        ast::Ty::Function(func) => {
-            func.params.iter().any(ty_contains_quote)
-                || func
-                    .ret_ty
-                    .as_ref()
-                    .is_some_and(|ty| ty_contains_quote(ty.as_ref()))
-        }
-        ast::Ty::TypeBinaryOp(op) => ty_contains_quote(&op.lhs) || ty_contains_quote(&op.rhs),
-        ast::Ty::TypeBounds(bounds) => bounds
-            .bounds
-            .iter()
-            .any(|expr| expr_contains_quote_value(expr)),
-        ast::Ty::Value(value) => value_contains_quote(value.value.as_ref()),
-        ast::Ty::Expr(expr) => expr_contains_quote_value(expr.as_ref()),
-        ast::Ty::ConstBlock(block) => expr_contains_quote_value(block.expr.as_ref()),
-        ast::Ty::Refinement(refinement) => ty_contains_quote(&refinement.base),
-        ast::Ty::Literal(_)
-        | ast::Ty::Primitive(_)
-        | ast::Ty::TokenStream(_)
-        | ast::Ty::ImplTraits(_)
-        | ast::Ty::Any(_)
-        | ast::Ty::GenericVar(_)
-        | ast::Ty::ErrorType(_)
-        | ast::Ty::InferVar(_)
-        | ast::Ty::Unit(_)
-        | ast::Ty::Unknown(_)
-        | ast::Ty::Nothing(_)
-        | ast::Ty::Type(_)
-        | ast::Ty::RequestedType(_)
-        | ast::Ty::Wildcard(_) => false,
-    }
-}
-
-#[allow(dead_code)]
-fn ty_contains_type_type(ty: &ast::Ty) -> bool {
-    match ty {
-        ast::Ty::Type(_) | ast::Ty::RequestedType(_) | ast::Ty::ConstBlock(_) => true,
-        ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_type_type),
-        ast::Ty::Array(array) => ty_contains_type_type(&array.elem),
-        ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),
-        ast::Ty::Reference(reference) => ty_contains_type_type(&reference.ty),
-        ast::Ty::RawPtr(raw_ptr) => ty_contains_type_type(&raw_ptr.ty),
-        ast::Ty::Slice(slice) => ty_contains_type_type(&slice.elem),
-        ast::Ty::Struct(def) => def
-            .fields
-            .iter()
-            .any(|field| ty_contains_type_type(&field.value)),
-        ast::Ty::Structural(def) => def
-            .fields
-            .iter()
-            .any(|field| ty_contains_type_type(&field.value)),
-        ast::Ty::Enum(def) => def
-            .variants
-            .iter()
-            .any(|variant| ty_contains_type_type(&variant.value)),
-        ast::Ty::Function(func) => type_function_contains_type_type(func),
-        ast::Ty::TypeBinaryOp(op) => {
-            ty_contains_type_type(&op.lhs) || ty_contains_type_type(&op.rhs)
-        }
-        ast::Ty::TypeBounds(bounds) => bounds
-            .bounds
-            .iter()
-            .any(|expr| expr_contains_type_type(expr)),
-        ast::Ty::Value(value) => value_contains_type_type(value.value.as_ref()),
-        ast::Ty::Expr(expr) => expr_contains_type_type(expr.as_ref()),
-        ast::Ty::Refinement(refinement) => ty_contains_type_type(&refinement.base),
-        ast::Ty::Literal(_)
-        | ast::Ty::Primitive(_)
-        | ast::Ty::TokenStream(_)
-        | ast::Ty::ImplTraits(_)
-        | ast::Ty::Any(_)
-        | ast::Ty::GenericVar(_)
-        | ast::Ty::ErrorType(_)
-        | ast::Ty::InferVar(_)
-        | ast::Ty::Unit(_)
-        | ast::Ty::Unknown(_)
-        | ast::Ty::Nothing(_)
-        | ast::Ty::Quote(_)
-        | ast::Ty::Wildcard(_) => false,
-    }
-}
-
-#[allow(dead_code)]
-fn type_function_contains_type_type(func: &ast::TypeFunction) -> bool {
-    func.params.iter().any(ty_contains_type_type)
-        || func
-            .ret_ty
-            .as_ref()
-            .is_some_and(|ty| ty_contains_type_type(ty.as_ref()))
-}
-
-fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
-    if let ast::ExprKind::Value(value) = expr.kind() {
-        return value_contains_quote(value.as_ref());
-    }
-    false
-}
-
-#[allow(dead_code)]
-fn expr_contains_type_type(expr: &ast::Expr) -> bool {
-    fp_core::ast::resolved_expr_type(expr.id())
-        .as_ref()
-        .is_some_and(|ty| ty_contains_type_type(ty))
-}
-
-fn value_contains_quote(value: &ast::Value) -> bool {
-    match value {
-        ast::Value::QuoteToken(_) => true,
-        ast::Value::List(list) => {
-            !list.values.is_empty() && list.values.iter().all(|value| value_contains_quote(value))
-        }
-        _ => false,
-    }
-}
-
-#[allow(dead_code)]
-fn value_contains_type_type(value: &ast::Value) -> bool {
-    match value {
-        ast::Value::Type(ty) => ty_contains_type_type(ty),
-        ast::Value::Expr(expr) => expr_contains_type_type(expr.as_ref()),
-        ast::Value::List(list) => list.values.iter().any(value_contains_type_type),
-        ast::Value::Struct(value) => value
-            .structural
-            .fields
-            .iter()
-            .any(|field| value_contains_type_type(&field.value)),
-        ast::Value::Structural(value) => value
-            .fields
-            .iter()
-            .any(|field| value_contains_type_type(&field.value)),
-        ast::Value::Tuple(value) => value
-            .values
-            .iter()
-            .any(|value| value_contains_type_type(value)),
-        _ => false,
-    }
-}
-
-/// Expands every item-position `macro_rules!` invocation reachable in
-/// `items` (recursing into inline `mod { .. }` bodies) against every
-/// `macro_rules!` definition collected from the same item list — real
-/// std's own idiom for batch-generating items (e.g. `alias_core_ffi! {
-/// c_int c_uint .. }` expanding to a `pub type X = core::ffi::X;` per
-/// name). An expanded item inherits its originating macro invocation's own
-/// `module_path` (it's generated *at* that source location, not at the
-/// package root — unlike closure-lowering's synthetic items). An
-/// invocation matching no known macro (a real compiler builtin, or one this
-/// package doesn't define) is left as an unexpanded `ItemKind::Macro`,
-/// exactly as before — still reaches `predeclare_items`'s existing "drop
-/// with a warning" handling unchanged.
-impl AstToHirLowerer {
-    fn expand_item_macros(
-        &self,
-        items: Vec<fp_core::ast::package::PackageItem>,
-    ) -> Vec<fp_core::ast::package::PackageItem> {
-        let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
-            return items;
-        };
-        // Single shared pass: each `macro_rules!` *definition* is inserted
-        // into `defs` the moment it's encountered, and each invocation is
-        // expanded immediately against whatever's in `defs` so far — no
-        // separate whole-tree "collect every definition first" walk. `depths`
-        // tracks the module-nesting depth of whichever definition currently
-        // occupies each name, so a same-named collision (real vendored
-        // std has two distinct `macro_rules! uint_impl` defs) can be
-        // arbitrated by `normalizer.prefer_macro_rules_def` right where it's
-        // found, the same way real Rust resolves textually/by declaration
-        // order rather than needing a global up-front index.
-        let mut defs: HashMap<String, fp_core::ast::MacroRulesDef> = HashMap::new();
-        let mut depths: HashMap<String, usize> = HashMap::new();
-        items
-            .into_iter()
-            .flat_map(|package_item| {
-                let module_path = package_item.module_path;
-                let depth = module_path.segments.len();
-                self.expand_item_macros_in_item(
-                    package_item.item,
-                    normalizer,
-                    &mut defs,
-                    &mut depths,
-                    depth,
-                )
-                .into_iter()
-                .map(move |item| fp_core::ast::package::PackageItem {
-                    module_path: module_path.clone(),
-                    item,
-                })
-                .collect::<Vec<_>>()
-            })
-            .collect()
-    }
-
-    fn expand_item_macros_in_item(
-        &self,
-        item: ast::Item,
-        normalizer: &dyn IntrinsicNormalizer,
-        defs: &mut HashMap<String, fp_core::ast::MacroRulesDef>,
-        depths: &mut HashMap<String, usize>,
-        depth: usize,
-    ) -> Vec<ast::Item> {
-        match item.kind {
-            ItemKind::Macro(ref item_macro) if item_macro.declared_name.is_some() => {
-                let name = item_macro
-                    .declared_name
-                    .as_ref()
-                    .expect("declared_name.is_some() checked above")
-                    .as_str()
-                    .to_string();
-                let keep = match depths.get(&name) {
-                    Some(&existing_depth) => normalizer.prefer_macro_rules_def(existing_depth, depth),
-                    None => true,
-                };
-                if keep {
-                    let def = normalizer
-                        .parse_macro_rules_def(&name, &item_macro.invocation.token_trees);
-                    defs.insert(name.clone(), def);
-                    depths.insert(name, depth);
-                }
-                vec![item]
-            }
-            ItemKind::Macro(ref item_macro) => {
-                match normalizer.expand_item_macro(&item_macro.invocation, defs) {
-                    Some(expanded) => expanded
-                        .into_iter()
-                        .flat_map(|expanded_item| {
-                            self.expand_item_macros_in_item(
-                                expanded_item,
-                                normalizer,
-                                defs,
-                                depths,
-                                depth,
-                            )
-                        })
-                        .collect(),
-                    None => vec![item],
-                }
-            }
-            ItemKind::Module(module) => {
-                let mut module = module;
-                module.items = module
-                    .items
-                    .into_iter()
-                    .flat_map(|inner| {
-                        self.expand_item_macros_in_item(inner, normalizer, defs, depths, depth + 1)
-                    })
-                    .collect();
-                vec![ast::Item::from(ItemKind::Module(module))]
-            }
-            // An `impl` block's own item list can itself contain macro
-            // invocations (real std's `impl u32 { int_impl! { .. } }`,
-            // `impl u8 { uint_impl! { .. } }` — every integer primitive's
-            // inherent methods, wrapping_add/checked_sub/rotate_left/
-            // swap_bytes/etc., are generated exactly this way, one macro
-            // invocation per impl). Previously only `Module` bodies were
-            // recursed into here, so every impl-nested invocation was left
-            // as an unexpanded `ItemKind::Macro` and silently dropped by
-            // `predeclare_items`'s "unknown item macro" handling — the
-            // dominant cause of "method `X` was not found" for primitive
-            // methods in the full corpus.
-            ItemKind::Impl(mut impl_block) => {
-                impl_block.items = impl_block
-                    .items
-                    .into_iter()
-                    .flat_map(|inner| {
-                        self.expand_item_macros_in_item(inner, normalizer, defs, depths, depth)
-                    })
-                    .collect();
-                vec![ast::Item::from(ItemKind::Impl(impl_block))]
-            }
-            kind => vec![ast::Item { kind, ..item }],
-        }
-    }
-}
-
 /// Decomposes every `ExprKind::Closure` reachable from `items` into an
 /// ordinary `__ClosureN` struct + `__closureN_call` function pair
 /// (`ClosureLowering`) — run once, up front, over a package's flattened
@@ -5047,1617 +3726,5 @@ fn expand_intrinsic_collection(expr: &mut ast::Expr) -> bool {
         true
     } else {
         false
-    }
-}
-
-#[derive(Clone)]
-struct ClosureInfo {
-    env_struct_ident: ast::Ident,
-    env_struct_ty: ast::Ty,
-    call_fn_ident: ast::Ident,
-}
-
-#[derive(Clone)]
-struct Capture {
-    name: ast::Ident,
-    ty: ast::Ty,
-}
-
-struct ClosureLowering {
-    counter: usize,
-    function_infos: HashMap<String, ClosureInfo>,
-    struct_infos: HashMap<String, ClosureInfo>,
-    variable_infos: HashMap<String, ClosureInfo>,
-    generated_items: Vec<ast::Item>,
-    diagnostics: Vec<Diagnostic>,
-    /// Struct name -> (field name, declared field type), collected once up
-    /// front over the whole package — used only to derive a closure
-    /// argument's real parameter type at its call site (see
-    /// `closure_param_ty_for_invoke`), never mutated afterward.
-    struct_field_types: HashMap<String, Vec<(String, ast::Ty)>>,
-    /// The enclosing top-level function's own parameter name -> declared
-    /// type, while rewriting its body (see `rewrite_usage`) — the other
-    /// half of the same closure-argument-type derivation. Does not cover
-    /// `impl` method receivers/params or `let`-bound locals; a receiver
-    /// expression built from those simply doesn't resolve here, same as
-    /// any other unhandled shape.
-    current_param_types: HashMap<String, ast::Ty>,
-}
-// TODO: move to new file
-impl ClosureLowering {
-    fn new() -> Self {
-        Self {
-            counter: 0,
-            function_infos: HashMap::new(),
-            struct_infos: HashMap::new(),
-            variable_infos: HashMap::new(),
-            generated_items: Vec::new(),
-            diagnostics: Vec::new(),
-            struct_field_types: HashMap::new(),
-            current_param_types: HashMap::new(),
-        }
-    }
-
-    /// One-time pre-pass collecting every struct's declared field types,
-    /// so `closure_param_ty_for_invoke` can resolve a field-access chain
-    /// (`node.stats`) back to its real type without a full type checker.
-    fn collect_struct_field_types(&mut self, items: &[ast::Item]) {
-        for item in items {
-            match item.kind() {
-                ast::ItemKind::Module(module) => self.collect_struct_field_types(&module.items),
-                ast::ItemKind::DefStruct(def) => {
-                    let fields = def
-                        .value
-                        .fields
-                        .iter()
-                        .map(|field| (field.name.as_str().to_string(), field.value.clone()))
-                        .collect();
-                    self.struct_field_types
-                        .insert(def.name.as_str().to_string(), fields);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Best-effort, deliberately narrow structural type lookup for a
-    /// receiver expression — not a general type checker, just enough to
-    /// resolve the two shapes real call sites need: a tracked function
-    /// parameter's own declared type, and field access through a known
-    /// struct definition. Returns `None` for anything else.
-    fn infer_static_expr_ty(&self, expr: &ast::Expr) -> Option<ast::Ty> {
-        match expr.kind() {
-            ast::ExprKind::Name(name) => self
-                .current_param_types
-                .get(name.as_ident()?.as_str())
-                .cloned(),
-            ast::ExprKind::Select(select) => {
-                let base_ty = self.infer_static_expr_ty(&select.obj)?;
-                let struct_name = Self::struct_name_of(&base_ty)?;
-                self.struct_field_types
-                    .get(&struct_name)?
-                    .iter()
-                    .find(|(name, _)| name == select.field.as_str())
-                    .map(|(_, ty)| ty.clone())
-            }
-            _ => None,
-        }
-    }
-
-    /// The struct name a type ultimately names, stripping reference
-    /// wrappers and unwrapping the `Ty::Expr(Name(..))` shape a bare
-    /// (non-generic) struct reference parses as.
-    fn struct_name_of(ty: &ast::Ty) -> Option<String> {
-        match ty {
-            ast::Ty::Reference(r) => Self::struct_name_of(&r.ty),
-            ast::Ty::Struct(s) => Some(s.name.as_str().to_string()),
-            ast::Ty::Expr(expr) => match expr.kind() {
-                ast::ExprKind::Name(name) => name.as_ident().map(|i| i.as_str().to_string()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// The `index`-th generic type argument of a parameterized type
-    /// reference (`Option<T>`'s `T` is index 0, `Result<T, E>`'s `E` is
-    /// index 1) — generic types parse as `Ty::Expr` wrapping a
-    /// `Name::ParameterPath` whose segment carries the type args
-    /// directly (see `fp-lang/src/ast/types.rs`'s `parse_simple_type`).
-    fn generic_type_arg_at(ty: &ast::Ty, index: usize) -> Option<ast::Ty> {
-        let ast::Ty::Expr(expr) = ty else {
-            return None;
-        };
-        let ast::ExprKind::Name(ast::Name::ParameterPath(path)) = expr.kind() else {
-            return None;
-        };
-        path.segments.last()?.args.get(index).cloned()
-    }
-
-    /// Resolves a call receiver's static type, peeling through at most one
-    /// trailing `.as_ref()`/`.as_mut()` — common right before a
-    /// closure-taking method (`opt.as_ref().map_or(..)`) — and reporting
-    /// whether the generic argument later extracted from it should be
-    /// reference-wrapped to match (`.as_ref()` turns `Option<T>` access
-    /// into effectively `Option<&T>` for the closure's purposes).
-    fn receiver_ty_for_closure_arg(&self, expr: &ast::Expr) -> (Option<ast::Ty>, bool) {
-        if let ast::ExprKind::Invoke(invoke) = expr.kind() {
-            if let ast::ExprInvokeTarget::Method(sel) = &invoke.target {
-                if invoke.args.is_empty() && matches!(sel.field.name.as_str(), "as_ref" | "as_mut")
-                {
-                    return (self.infer_static_expr_ty(&sel.obj), true);
-                }
-            }
-        }
-        (self.infer_static_expr_ty(expr), false)
-    }
-
-    /// Derives the real parameter type for a closure passed to one of the
-    /// handful of `Option`/`Result` methods whose Kotlin codegen needs a
-    /// literal closure (see `fp-kotlin`'s `map_or`/`map_err` special
-    /// cases) — `None` if the receiver's type isn't structurally
-    /// resolvable, or the method isn't one of these.
-    /// Returns `(param_ty, ret_ty)` for the closure argument of a
-    /// `map_or`/`map`/`map_err`/`and_then` call — the closure's own return
-    /// type also needs to be a real type, not `Unknown`: leaving it
-    /// `Unknown` reproduces the exact same "silently resolves to a null
-    /// placeholder" failure mode this whole derivation exists to avoid,
-    /// just one step later (at the synthetic `__closureN_call` function's
-    /// own return position instead of its parameter). The full body
-    /// wouldn't need type inference to get this right in general, but
-    /// `map_or`'s `default` argument is frequently a literal with an
-    /// obvious static type, which covers the common case cheaply.
-    fn closure_param_ty_for_invoke(&self, invoke: &ast::ExprInvoke) -> (Option<ast::Ty>, Option<ast::Ty>) {
-        let ast::ExprInvokeTarget::Method(sel) = &invoke.target else {
-            return (None, None);
-        };
-        let arg_index = match sel.field.name.as_str() {
-            "map_or" | "map" | "and_then" => 0,
-            "map_err" => 1,
-            _ => return (None, None),
-        };
-        let (receiver_ty, by_ref) = self.receiver_ty_for_closure_arg(&sel.obj);
-        let Some(inner) = receiver_ty.and_then(|ty| Self::generic_type_arg_at(&ty, arg_index)) else {
-            return (None, None);
-        };
-        let param_ty = if by_ref {
-            ast::Ty::Reference(
-                ast::TypeReference {
-                    ty: Box::new(inner),
-                    mutability: None,
-                    lifetime: None,
-                }
-                .into(),
-            )
-        } else {
-            inner
-        };
-        let ret_ty = if sel.field.name.as_str() == "map_or" {
-            invoke.args.first().and_then(Self::literal_expr_ty)
-        } else {
-            None
-        };
-        (Some(param_ty), ret_ty)
-    }
-
-    /// The static type of an integer/float/bool/string literal expression
-    /// — used only as a best-effort return-type hint (see
-    /// `closure_param_ty_for_invoke`), not a general literal-type table.
-    fn literal_expr_ty(expr: &ast::Expr) -> Option<ast::Ty> {
-        let ast::ExprKind::Value(value) = expr.kind() else {
-            return None;
-        };
-        Some(match value.as_ref() {
-            ast::Value::Int(_) => ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
-            ast::Value::Decimal(_) => {
-                ast::Ty::Primitive(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
-            }
-            ast::Value::Bool(_) => ast::Ty::Primitive(ast::TypePrimitive::Bool),
-            ast::Value::String(_) => ast::Ty::Primitive(ast::TypePrimitive::String),
-            _ => return None,
-        })
-    }
-
-    fn add_error(&mut self, diag: Diagnostic) {
-        self.diagnostics.push(diag);
-    }
-
-    fn block_stmt_expr(expr: ast::Expr, has_value: bool) -> ast::BlockStmt {
-        ast::BlockStmt::Expr(ast::BlockStmtExpr::new(expr).with_semicolon(!has_value))
-    }
-
-    fn desugar_block_defer(&mut self, block: &mut ast::ExprBlock) -> bool {
-        let defer_index = block
-            .stmts
-            .iter()
-            .position(|stmt| matches!(stmt, ast::BlockStmt::Defer(_)));
-        let Some(index) = defer_index else {
-            return false;
-        };
-        let ast::BlockStmt::Defer(stmt_defer) = block.stmts.remove(index) else {
-            return false;
-        };
-        let suffix = block.stmts.split_off(index);
-        let has_value = match suffix.last() {
-            Some(ast::BlockStmt::Expr(expr_stmt)) => expr_stmt.has_value(),
-            _ => false,
-        };
-        let wrapped = ast::Expr::new(ast::ExprKind::Try(ast::ExprTry {
-            span: stmt_defer.span(),
-            expr: Box::new(ast::Expr::new(ast::ExprKind::Block(
-                ast::ExprBlock::new_stmts(suffix),
-            ))),
-            catches: Vec::new(),
-            elze: None,
-            finally: Some(stmt_defer.expr),
-        }));
-        block.stmts.push(Self::block_stmt_expr(wrapped, has_value));
-        true
-    }
-
-    fn find_and_transform_functions(&mut self, items: &mut [ast::Item]) -> Result<()> {
-        for item in items {
-            match item.kind_mut() {
-                ast::ItemKind::Module(module) => {
-                    self.find_and_transform_functions(&mut module.items)?;
-                }
-                ast::ItemKind::DefFunction(func) => {
-                    if let Some(info) = self.transform_function(func)? {
-                        self.function_infos
-                            .insert(func.name.as_str().to_string(), info.clone());
-                        self.struct_infos
-                            .insert(info.env_struct_ident.as_str().to_string(), info);
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
-    fn transform_function(
-        &mut self,
-        func: &mut ast::ItemDefFunction,
-    ) -> Result<Option<ClosureInfo>> {
-        if let Some(last_expr) = func.body.last_expr_mut()
-            && let Some(info) = self.transform_closure_expr(last_expr)?
-        {
-            let env_ret_ty = info.env_struct_ty.clone();
-
-            if let Some(ty_fn) = func.ty.as_mut() {
-                ty_fn.ret_ty = Some(Box::new(env_ret_ty.clone()));
-            }
-
-            if func.ty.is_none() {
-                func.ty = Some(ast::TypeFunction {
-                    params: func
-                        .sig
-                        .params
-                        .iter()
-                        .map(|param| param.ty.clone())
-                        .collect(),
-                    generics_params: func.sig.generics_params.clone(),
-                    ret_ty: Some(Box::new(env_ret_ty.clone())),
-                });
-            }
-
-            if func.ty_annotation.is_some() || func.ty.is_some() {
-                func.ty_annotation = func
-                    .ty
-                    .as_ref()
-                    .map(|ty_fn| ast::Ty::Function(ty_fn.clone()));
-            }
-
-            if let Some(ret_slot) = func.sig.ret_ty.as_mut() {
-                *ret_slot = env_ret_ty.clone();
-            } else {
-                func.sig.ret_ty = Some(env_ret_ty.clone());
-            }
-
-            return Ok(Some(info));
-        }
-
-        Ok(None)
-    }
-
-    /// `transform_closure_expr` only decomposes a closure literal that
-    /// already carries a `Ty::Function` type — true for a function's own
-    /// tail expression (its declared return-type annotation is copied
-    /// onto the tail by an earlier pass), but never true for a closure
-    /// passed as a call *argument*: this pre-pass runs before typecheck,
-    /// so the callee's parameter type isn't resolved yet, and previously
-    /// nothing else ever gave the closure a type here either. Left
-    /// unaddressed, such a closure falls through every other lowering
-    /// path all the way to `transform_expr_to_hir_inner`'s
-    /// `ExprKind::Closure` arm, which has no implementation and silently
-    /// discards it (an empty HIR block, plus an error diagnostic nothing
-    /// currently surfaces).
-    ///
-    /// The real parameter/return types aren't needed to decompose the
-    /// closure correctly — only its *arity* is, and that's already known
-    /// from the closure literal itself, with no inference required.
-    /// `transform_closure_expr` already tolerates missing per-parameter
-    /// and return types gracefully (falling back to `Any`/`Unknown`), so
-    /// synthesizing a same-arity placeholder `Ty::Function` here is
-    /// sufficient to let it decompose the closure like any other.
-    fn ensure_closure_has_function_ty(
-        expr: &mut ast::Expr,
-        param_ty: Option<&ast::Ty>,
-        ret_ty: Option<&ast::Ty>,
-    ) {
-        let ast::ExprKind::Closure(closure) = expr.kind() else {
-            return;
-        };
-        if matches!(
-            fp_core::ast::resolved_expr_type(expr.id()),
-            Some(ast::Ty::Function(_))
-        ) {
-            return;
-        }
-        // Prefer the real, structurally-derived parameter type
-        // (`closure_param_ty_for_invoke`) when the closure takes exactly
-        // one parameter (true for every method this derivation currently
-        // covers) — falling back to an `Any`-typed, arity-only
-        // placeholder otherwise. `Any` is only safe for a closure body
-        // that does nothing type-dependent with its parameter (e.g. it's
-        // ignored, or just returned) — a body doing real field/method
-        // access on an `Any`-typed parameter would silently resolve to an
-        // error placeholder instead of erroring loudly, so callers should
-        // supply a real type whenever one is derivable.
-        let params = match (param_ty, closure.params.len()) {
-            (Some(ty), 1) => vec![ty.clone()],
-            _ => vec![ast::Ty::Any(ast::TypeAny); closure.params.len()],
-        };
-        // Same reasoning applies to the closure's own return type — left
-        // `Unknown`, it reproduces the identical "silently becomes a null
-        // placeholder" failure one step later, now at the synthetic
-        // `__closureN_call` function's return position.
-        let ret_ty = ret_ty.cloned().unwrap_or(ast::Ty::Unknown(ast::TypeUnknown));
-        fp_core::ast::set_resolved_expr_type(
-            expr.id(),
-            ast::Ty::Function(ast::TypeFunction {
-                params,
-                generics_params: Vec::new(),
-                ret_ty: Some(Box::new(ret_ty)),
-            }),
-        );
-    }
-
-    fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
-        let Some(expr_ty) = fp_core::ast::resolved_expr_type(expr.id()) else {
-            return Ok(None);
-        };
-        let ast::Ty::Function(fn_ty) = expr_ty.clone() else {
-            return Ok(None);
-        };
-
-        let ast::ExprKind::Closure(closure) = expr.kind_mut() else {
-            return Ok(None);
-        };
-
-        let mut param_names = Vec::new();
-        let mut param_set = HashSet::new();
-        for param in &closure.params {
-            if let ast::PatternKind::Ident(ident) = param.kind() {
-                let name = ident.ident.name.as_str().to_string();
-                param_set.insert(name.clone());
-                param_names.push(name);
-            } else {
-                self.add_error(
-                    Diagnostic::error(
-                        "only simple identifier parameters are supported in closures".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(param.span()),
-                );
-                return Ok(None);
-            }
-        }
-
-        let captures = self.collect_captures(closure.body.as_ref(), &param_set)?;
-
-        let struct_ident = ast::Ident::new(format!("__Closure{}", self.counter));
-        let call_ident = ast::Ident::new(format!("__closure{}_call", self.counter));
-        self.counter += 1;
-
-        let mut struct_fields: Vec<ast::StructuralField> = captures
-            .iter()
-            .map(|capture| ast::StructuralField::new(capture.name.clone(), capture.ty.clone()))
-            .collect();
-        if struct_fields.is_empty() {
-            struct_fields.push(ast::StructuralField::new(
-                ast::Ident::new(DUMMY_CAPTURE_NAME),
-                ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I8)),
-            ));
-        }
-        let struct_decl = ast::TypeStruct {
-            name: struct_ident.clone(),
-            generics_params: Vec::new(),
-            repr: ast::ReprOptions::default(),
-            fields: struct_fields,
-        };
-        let env_struct_ty = ast::Ty::Struct(struct_decl.clone());
-
-        let struct_item = ast::Item::new(ast::ItemKind::DefStruct(ast::ItemDefStruct {
-            attrs: Vec::new(),
-            visibility: ast::Visibility::Private,
-            name: struct_ident.clone(),
-            value: struct_decl.clone(),
-        }));
-        fp_core::ast::set_resolved_item_type(struct_item.id(), ast::Ty::Struct(struct_decl.clone()));
-        let env_param_ident = ast::Ident::new("__env");
-        let mut fn_params = Vec::new();
-        let mut fn_param_tys = Vec::new();
-        fn_params.push(ast::FunctionParam::new(
-            env_param_ident.clone(),
-            env_struct_ty.clone(),
-        ));
-        fn_param_tys.push(env_struct_ty.clone());
-        for (idx, name) in param_names.iter().enumerate() {
-            let ty = fn_ty
-                .params
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
-            fn_params.push(ast::FunctionParam::new(
-                ast::Ident::new(name.clone()),
-                ty.clone(),
-            ));
-            fn_param_tys.push(ty);
-        }
-
-        let mut rewritten_body = (*closure.body).clone();
-        let inferred_ret_ty = fn_ty
-            .ret_ty
-            .as_ref()
-            .and_then(|ty| {
-                if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
-                    None
-                } else {
-                    Some(ty.as_ref().clone())
-                }
-            })
-            .or_else(|| {
-                fp_core::ast::resolved_expr_type(closure.body.id())
-                    .or_else(|| fp_core::ast::resolved_expr_type(rewritten_body.id()))
-                    .and_then(|ty| {
-                        if matches!(ty, ast::Ty::Unknown(_)) {
-                            None
-                        } else {
-                            Some(ty)
-                        }
-                    })
-            });
-        let fallback_ret_ty = fn_ty.ret_ty.as_ref().and_then(|ty| {
-            if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
-                None
-            } else {
-                Some(ty.as_ref().clone())
-            }
-        });
-        let call_ret_ty = inferred_ret_ty
-            .clone()
-            .or(fallback_ret_ty)
-            .unwrap_or_else(|| ast::Ty::Unknown(ast::TypeUnknown));
-
-        self.rewrite_captured_usage(&mut rewritten_body, &captures, &env_param_ident);
-
-        let mut fn_item_ast = ast::ItemDefFunction::new_simple(
-            call_ident.clone(),
-            ast::ExprBlock::new_expr(rewritten_body),
-        );
-        fn_item_ast.visibility = ast::Visibility::Private;
-        fn_item_ast.sig.params = fn_params;
-        fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());
-        fn_item_ast.ty = Some(ast::TypeFunction {
-            params: fn_param_tys.clone(),
-            generics_params: Vec::new(),
-            ret_ty: Some(Box::new(call_ret_ty.clone())),
-        });
-        fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| ast::Ty::Function(ty_fn));
-
-        let fn_item = ast::Item::new(ast::ItemKind::DefFunction(fn_item_ast));
-
-        self.generated_items.push(struct_item);
-        self.generated_items.push(fn_item);
-
-        let mut fields = Vec::new();
-        for capture in &captures {
-            let value_expr = ast::Expr::ident(capture.name.clone());
-            fp_core::ast::set_resolved_expr_type(value_expr.id(), capture.ty.clone());
-            fields.push(ast::ExprField::new(capture.name.clone(), value_expr));
-        }
-        if fields.is_empty() {
-            let value_expr = ast::Expr::value(ast::Value::int(0));
-            fp_core::ast::set_resolved_expr_type(
-                value_expr.id(),
-                ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I8)),
-            );
-            fields.push(ast::ExprField::new(
-                ast::Ident::new(DUMMY_CAPTURE_NAME),
-                value_expr,
-            ));
-        }
-
-        let struct_name_expr = ast::Expr::ident(struct_ident.clone());
-
-        let mut struct_expr = ast::Expr::new(ast::ExprKind::Struct(ast::ExprStruct {
-            span: fp_core::span::Span::null(),
-            name: struct_name_expr.into(),
-            fields,
-            update: None,
-        }));
-        struct_expr.id = expr.id();
-        fp_core::ast::set_resolved_expr_type(struct_expr.id(), env_struct_ty.clone());
-
-        *expr = struct_expr;
-
-        let info = ClosureInfo {
-            env_struct_ident: struct_ident,
-            env_struct_ty,
-            call_fn_ident: call_ident,
-        };
-
-        Ok(Some(info))
-    }
-
-    fn rewrite_usage(&mut self, items: &mut [ast::Item]) -> Result<()> {
-        for item in items {
-            match item.kind_mut() {
-                ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
-                ast::ItemKind::DefFunction(func) => {
-                    let previous = std::mem::replace(
-                        &mut self.current_param_types,
-                        func.sig
-                            .params
-                            .iter()
-                            .map(|param| (param.name.as_str().to_string(), param.ty.clone()))
-                            .collect(),
-                    );
-                    self.rewrite_in_block(&mut func.body)?;
-                    self.current_param_types = previous;
-                }
-                ast::ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
-                ast::ItemKind::DefStatic(def) => self.rewrite_in_expr(def.value.as_mut())?,
-                ast::ItemKind::Expr(expr) => self.rewrite_in_expr(expr)?,
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-    // FIXME: rewrite things is sus, you should be finishing this during a pas
-    fn rewrite_in_expr(&mut self, expr: &mut ast::Expr) -> Result<()> {
-        if expand_intrinsic_collection(expr) {
-            return self.rewrite_in_expr(expr);
-        }
-
-        if let Some(info) = self.transform_closure_expr(expr)? {
-            self.struct_infos
-                .insert(info.env_struct_ident.as_str().to_string(), info);
-            return self.rewrite_in_expr(expr);
-        }
-
-        match expr.kind_mut() {
-            ast::ExprKind::Block(block) => {
-                for stmt in &mut block.stmts {
-                    self.rewrite_in_stmt(stmt)?;
-                }
-                while self.desugar_block_defer(block) {
-                    self.rewrite_in_expr(expr)?;
-                    return Ok(());
-                }
-                if let Some(last) = block.last_expr_mut() {
-                    self.rewrite_in_expr(last)?;
-                }
-            }
-            ast::ExprKind::If(expr_if) => {
-                self.rewrite_in_expr(expr_if.cond.as_mut())?;
-                self.rewrite_in_expr(expr_if.then.as_mut())?;
-                if let Some(elze) = expr_if.elze.as_mut() {
-                    self.rewrite_in_expr(elze)?;
-                }
-            }
-            ast::ExprKind::Loop(expr_loop) => self.rewrite_in_expr(expr_loop.body.as_mut())?,
-            ast::ExprKind::While(expr_while) => {
-                self.rewrite_in_expr(expr_while.cond.as_mut())?;
-                self.rewrite_in_expr(expr_while.body.as_mut())?;
-            }
-            ast::ExprKind::With(expr_with) => {
-                self.rewrite_in_expr(expr_with.context.as_mut())?;
-                self.rewrite_in_expr(expr_with.body.as_mut())?;
-            }
-            ast::ExprKind::Return(expr_return) => {
-                if let Some(value) = expr_return.value.as_mut() {
-                    self.rewrite_in_expr(value)?;
-                }
-            }
-            ast::ExprKind::Break(expr_break) => {
-                if let Some(value) = expr_break.value.as_mut() {
-                    self.rewrite_in_expr(value)?;
-                }
-            }
-            ast::ExprKind::Continue(_) => {}
-            ast::ExprKind::ConstBlock(const_block) => {
-                self.rewrite_in_expr(const_block.expr.as_mut())?;
-            }
-            ast::ExprKind::Match(expr_match) => {
-                for case in &mut expr_match.cases {
-                    self.rewrite_in_expr(case.cond.as_mut())?;
-                    self.rewrite_in_expr(case.body.as_mut())?;
-                }
-            }
-            ast::ExprKind::For(expr_for) => {
-                self.rewrite_in_expr(expr_for.iter.as_mut())?;
-                self.rewrite_in_expr(expr_for.body.as_mut())?;
-            }
-            ast::ExprKind::Let(expr_let) => self.rewrite_in_expr(expr_let.expr.as_mut())?,
-            ast::ExprKind::Macro(_) => {}
-            ast::ExprKind::Quote(q) => {
-                for stmt in &mut q.block.stmts {
-                    self.rewrite_in_stmt(stmt)?;
-                }
-                if let Some(last) = q.block.clone().last_expr_mut() {
-                    let mut last_clone = last.clone();
-                    self.rewrite_in_expr(&mut last_clone)?;
-                }
-            }
-            ast::ExprKind::Splice(s) => {
-                self.rewrite_in_expr(s.token.as_mut())?;
-            }
-            ast::ExprKind::SplicePending(p) => {
-                self.rewrite_in_expr(p.token.as_mut())?;
-            }
-            ast::ExprKind::Invoke(invoke) => {
-                // A closure literal passed as a call argument (as opposed
-                // to a function's own tail expression, whose declared
-                // return-type annotation an earlier pass already copies
-                // onto it) never carries a `Ty::Function` type at this
-                // pre-typecheck stage — give it one so
-                // `transform_closure_expr` (called from `rewrite_in_expr`
-                // below) can still decompose it instead of silently
-                // discarding it later. Prefer the real, structurally
-                // derived parameter type when this call is one
-                // `closure_param_ty_for_invoke` covers; computed once per
-                // invoke (not per arg, since it depends on the whole call,
-                // not any individual argument).
-                let (closure_param_ty, closure_ret_ty) = self.closure_param_ty_for_invoke(invoke);
-                for arg in &mut invoke.args {
-                    // Scoped to exactly this position (not applied to
-                    // every closure `rewrite_in_expr` visits) since
-                    // closures still nested inside an unexpanded macro's
-                    // argument tokens must not be touched here.
-                    Self::ensure_closure_has_function_ty(
-                        arg,
-                        closure_param_ty.as_ref(),
-                        closure_ret_ty.as_ref(),
-                    );
-                    self.rewrite_in_expr(arg)?;
-                }
-                match &mut invoke.target {
-                    ast::ExprInvokeTarget::Expr(target) => {
-                        self.rewrite_in_expr(target.as_mut())?;
-                        if let Some(info) = self.closure_info_from_expr(target.as_ref()) {
-                            let call_name = ast::Name::ident(info.call_fn_ident.clone());
-                            let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
-                            new_args.push(*target.clone());
-                            new_args.extend(invoke.args.iter().cloned());
-                            invoke.target = ast::ExprInvokeTarget::Function(call_name);
-                            invoke.args = new_args;
-                        }
-                    }
-                    ast::ExprInvokeTarget::Function(name) => {
-                        if let Some(ident) = name.as_ident() {
-                            let info = self
-                                .variable_infos
-                                .get(ident.as_str())
-                                .cloned()
-                                .or_else(|| self.struct_infos.get(ident.as_str()).cloned());
-                            if let Some(info) = info {
-                                let env_expr =
-                                    ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                                let call_name = ast::Name::ident(info.call_fn_ident.clone());
-                                let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
-                                new_args.push(env_expr);
-                                new_args.extend(invoke.args.iter().cloned());
-                                invoke.target = ast::ExprInvokeTarget::Function(call_name);
-                                invoke.args = new_args;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            ast::ExprKind::Await(await_expr) => {
-                self.rewrite_in_expr(await_expr.base.as_mut())?;
-            }
-            ast::ExprKind::Async(async_expr) => {
-                self.rewrite_in_expr(async_expr.expr.as_mut())?;
-            }
-            ast::ExprKind::Assign(assign) => {
-                self.rewrite_in_expr(assign.target.as_mut())?;
-                self.rewrite_in_expr(assign.value.as_mut())?;
-            }
-            ast::ExprKind::Select(select) => self.rewrite_in_expr(select.obj.as_mut())?,
-            ast::ExprKind::Struct(struct_expr) => {
-                self.rewrite_in_expr(struct_expr.name.as_mut())?;
-                for field in &mut struct_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.rewrite_in_expr(value)?;
-                    }
-                }
-            }
-            ast::ExprKind::Structural(struct_expr) => {
-                for field in &mut struct_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.rewrite_in_expr(value)?;
-                    }
-                }
-            }
-            ast::ExprKind::Array(array) => {
-                for value in &mut array.values {
-                    self.rewrite_in_expr(value)?;
-                }
-            }
-            ast::ExprKind::ArrayRepeat(array_repeat) => {
-                self.rewrite_in_expr(array_repeat.elem.as_mut())?;
-                self.rewrite_in_expr(array_repeat.len.as_mut())?;
-            }
-            ast::ExprKind::Tuple(tuple) => {
-                for value in &mut tuple.values {
-                    self.rewrite_in_expr(value)?;
-                }
-            }
-            ast::ExprKind::Reference(reference) => {
-                self.rewrite_in_expr(reference.referee.as_mut())?;
-            }
-            ast::ExprKind::Dereference(deref) => {
-                self.rewrite_in_expr(deref.referee.as_mut())?;
-            }
-            ast::ExprKind::Cast(cast) => self.rewrite_in_expr(cast.expr.as_mut())?,
-            ast::ExprKind::Index(index) => {
-                self.rewrite_in_expr(index.obj.as_mut())?;
-                self.rewrite_in_expr(index.index.as_mut())?;
-            }
-            ast::ExprKind::BinOp(binop) => {
-                self.rewrite_in_expr(binop.lhs.as_mut())?;
-                self.rewrite_in_expr(binop.rhs.as_mut())?;
-            }
-            ast::ExprKind::UnOp(unop) => self.rewrite_in_expr(unop.val.as_mut())?,
-            ast::ExprKind::Range(range) => {
-                if let Some(start) = range.start.as_mut() {
-                    self.rewrite_in_expr(start.as_mut())?;
-                }
-                if let Some(end) = range.end.as_mut() {
-                    self.rewrite_in_expr(end.as_mut())?;
-                }
-                if let Some(step) = range.step.as_mut() {
-                    self.rewrite_in_expr(step.as_mut())?;
-                }
-            }
-            ast::ExprKind::FormatString(format) => {
-                let _ = format;
-            }
-            ast::ExprKind::Try(expr_try) => {
-                self.rewrite_in_expr(expr_try.expr.as_mut())?;
-                for catch in &mut expr_try.catches {
-                    self.rewrite_in_expr(catch.body.as_mut())?;
-                }
-                if let Some(elze) = expr_try.elze.as_mut() {
-                    self.rewrite_in_expr(elze.as_mut())?;
-                }
-                if let Some(finally) = expr_try.finally.as_mut() {
-                    self.rewrite_in_expr(finally.as_mut())?;
-                }
-            }
-            ast::ExprKind::Value(value) => match value.as_mut() {
-                ast::Value::Expr(expr) => self.rewrite_in_expr(expr.as_mut())?,
-                ast::Value::Function(func) => self.rewrite_in_expr(func.body.as_mut())?,
-                _ => {}
-            },
-            ast::ExprKind::Splat(splat) => self.rewrite_in_expr(splat.iter.as_mut())?,
-            ast::ExprKind::SplatDict(dict) => self.rewrite_in_expr(dict.dict.as_mut())?,
-            ast::ExprKind::Item(item) => self.rewrite_in_item(item.as_mut())?,
-            ast::ExprKind::IntrinsicCall(call) => {
-                for arg in &mut call.args {
-                    self.rewrite_in_expr(arg)?;
-                }
-                for kwarg in &mut call.kwargs {
-                    self.rewrite_in_expr(&mut kwarg.value)?;
-                }
-            }
-            ast::ExprKind::Paren(paren) => self.rewrite_in_expr(paren.expr.as_mut())?,
-            ast::ExprKind::IntrinsicContainer(_) => {
-                unreachable!("intrinsic collections should have been expanded")
-            }
-            ast::ExprKind::Name(_) | ast::ExprKind::Closured(_) => {}
-            ast::ExprKind::Closure(_) | ast::ExprKind::Id(_) => {}
-        }
-        Ok(())
-    }
-
-    fn rewrite_in_block(&mut self, block: &mut ast::ExprBlock) -> Result<()> {
-        for stmt in &mut block.stmts {
-            self.rewrite_in_stmt(stmt)?;
-        }
-        while self.desugar_block_defer(block) {
-            for stmt in &mut block.stmts {
-                self.rewrite_in_stmt(stmt)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn rewrite_in_stmt(&mut self, stmt: &mut ast::BlockStmt) -> Result<()> {
-        match stmt {
-            ast::BlockStmt::Expr(expr_stmt) => self.rewrite_in_expr(expr_stmt.expr.as_mut())?,
-            ast::BlockStmt::Defer(stmt_defer) => self.rewrite_in_expr(stmt_defer.expr.as_mut())?,
-            ast::BlockStmt::Let(stmt_let) => {
-                if let Some(init) = stmt_let.init.as_mut() {
-                    self.rewrite_in_expr(init)?;
-                    if let Some(info) = self.closure_info_from_expr(init) {
-                        let mut names = Vec::new();
-                        collect_pattern_idents(&stmt_let.pat, &mut names);
-                        for name in names {
-                            self.variable_infos.insert(name, info.clone());
-                        }
-                    }
-                }
-                if let Some(diverge) = stmt_let.diverge.as_mut() {
-                    self.rewrite_in_expr(diverge)?;
-                }
-            }
-            ast::BlockStmt::Item(item) => self.rewrite_in_item(item.as_mut())?,
-            ast::BlockStmt::Noop => {}
-        }
-        Ok(())
-    }
-
-    fn rewrite_in_item(&mut self, item: &mut ast::Item) -> Result<()> {
-        match item.kind_mut() {
-            ast::ItemKind::Expr(expr) => self.rewrite_in_expr(expr)?,
-            ast::ItemKind::DefConst(def) => {
-                self.rewrite_in_expr(def.value.as_mut())?;
-                if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
-                    self.variable_infos
-                        .insert(def.name.as_str().to_string(), info.clone());
-                    def.ty = Some(info.env_struct_ty.clone());
-                    def.ty_annotation = Some(info.env_struct_ty.clone());
-                }
-            }
-            ast::ItemKind::DefStatic(def) => {
-                self.rewrite_in_expr(def.value.as_mut())?;
-                if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
-                    self.variable_infos
-                        .insert(def.name.as_str().to_string(), info.clone());
-                    def.ty = info.env_struct_ty.clone();
-                    def.ty_annotation = Some(info.env_struct_ty.clone());
-                }
-            }
-            ast::ItemKind::DefFunction(func) => self.rewrite_in_block(&mut func.body)?,
-            ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn closure_info_from_expr(&self, expr: &ast::Expr) -> Option<ClosureInfo> {
-        match expr.kind() {
-            ast::ExprKind::Struct(struct_expr) => extract_ident(struct_expr.name.as_ref())
-                .and_then(|ident| self.struct_infos.get(ident.as_str()).cloned()),
-            ast::ExprKind::Invoke(invoke) => {
-                if let ast::ExprInvokeTarget::Function(name) = &invoke.target {
-                    name.as_ident()
-                        .and_then(|ident| self.function_infos.get(ident.as_str()).cloned())
-                } else {
-                    None
-                }
-            }
-            ast::ExprKind::Name(name) => name
-                .as_ident()
-                .and_then(|ident| self.variable_infos.get(ident.as_str()).cloned()),
-            ast::ExprKind::Paren(paren) => self.closure_info_from_expr(paren.expr.as_ref()),
-            _ => None,
-        }
-    }
-
-    fn collect_captures(&self, expr: &ast::Expr, params: &HashSet<String>) -> Result<Vec<Capture>> {
-        let mut collector = CaptureCollector::new(params.clone());
-        collector.visit(expr);
-        Ok(collector.into_captures())
-    }
-
-    fn rewrite_captured_usage(
-        &self,
-        expr: &mut ast::Expr,
-        captures: &[Capture],
-        env_ident: &ast::Ident,
-    ) {
-        let mut replacer = CaptureReplacer::new(captures, env_ident.clone());
-        replacer.visit(expr);
-    }
-}
-
-struct CaptureCollector {
-    scope: Vec<HashSet<String>>,
-    captures: Vec<(String, ast::Ty)>,
-    seen: HashSet<String>,
-}
-
-impl CaptureCollector {
-    fn new(params: HashSet<String>) -> Self {
-        Self {
-            scope: vec![params],
-            captures: Vec::new(),
-            seen: HashSet::new(),
-        }
-    }
-
-    fn visit(&mut self, expr: &ast::Expr) {
-        match expr.kind() {
-            ast::ExprKind::Quote(q) => {
-                self.scope.push(HashSet::new());
-                for stmt in &q.block.stmts {
-                    self.visit_stmt(stmt);
-                }
-                if let Some(last) = q.block.last_expr() {
-                    self.visit(last);
-                }
-                self.scope.pop();
-            }
-            ast::ExprKind::Splice(s) => {
-                self.visit(s.token.as_ref());
-            }
-            ast::ExprKind::SplicePending(p) => {
-                self.visit(p.token.as_ref());
-            }
-            ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
-            ast::ExprKind::IntrinsicContainer(collection) => {
-                let expanded = collection.clone().into_const_expr();
-                self.visit(&expanded);
-            }
-            ast::ExprKind::Block(block) => {
-                self.scope.push(HashSet::new());
-                for stmt in &block.stmts {
-                    self.visit_stmt(stmt);
-                }
-                if let Some(last) = block.last_expr() {
-                    self.visit(last);
-                }
-                self.scope.pop();
-            }
-            ast::ExprKind::Let(expr_let) => {
-                self.visit(expr_let.expr.as_ref());
-                let mut names = Vec::new();
-                collect_pattern_idents(&expr_let.pat, &mut names);
-                if let Some(scope) = self.scope.last_mut() {
-                    for name in names {
-                        scope.insert(name);
-                    }
-                }
-            }
-            ast::ExprKind::Macro(_) => {}
-            ast::ExprKind::Invoke(invoke) => {
-                match &invoke.target {
-                    ast::ExprInvokeTarget::Expr(target) => self.visit(target.as_ref()),
-                    ast::ExprInvokeTarget::Method(select) => self.visit(select.obj.as_ref()),
-                    _ => {}
-                }
-                for arg in &invoke.args {
-                    self.visit(arg);
-                }
-            }
-            ast::ExprKind::Assign(assign) => {
-                self.visit(assign.target.as_ref());
-                self.visit(assign.value.as_ref());
-            }
-            ast::ExprKind::Await(await_expr) => {
-                self.visit(await_expr.base.as_ref());
-            }
-            ast::ExprKind::Async(async_expr) => {
-                self.visit(async_expr.expr.as_ref());
-            }
-            ast::ExprKind::BinOp(binop) => {
-                self.visit(binop.lhs.as_ref());
-                self.visit(binop.rhs.as_ref());
-            }
-            ast::ExprKind::UnOp(unop) => self.visit(unop.val.as_ref()),
-            ast::ExprKind::Select(select) => self.visit(select.obj.as_ref()),
-            ast::ExprKind::Struct(struct_expr) => {
-                self.visit(struct_expr.name.as_ref());
-                for field in &struct_expr.fields {
-                    if let Some(value) = field.value.as_ref() {
-                        self.visit(value);
-                    }
-                }
-            }
-            ast::ExprKind::Structural(struct_expr) => {
-                for field in &struct_expr.fields {
-                    if let Some(value) = field.value.as_ref() {
-                        self.visit(value);
-                    }
-                }
-            }
-            ast::ExprKind::Array(array) => {
-                for value in &array.values {
-                    self.visit(value);
-                }
-            }
-            ast::ExprKind::ArrayRepeat(array_repeat) => {
-                self.visit(array_repeat.elem.as_ref());
-                self.visit(array_repeat.len.as_ref());
-            }
-            ast::ExprKind::Tuple(tuple) => {
-                for value in &tuple.values {
-                    self.visit(value);
-                }
-            }
-            ast::ExprKind::Reference(reference) => self.visit(reference.referee.as_ref()),
-            ast::ExprKind::Dereference(deref) => self.visit(deref.referee.as_ref()),
-            ast::ExprKind::Cast(cast) => self.visit(cast.expr.as_ref()),
-            ast::ExprKind::Index(index) => {
-                self.visit(index.obj.as_ref());
-                self.visit(index.index.as_ref());
-            }
-            ast::ExprKind::If(expr_if) => {
-                self.visit(expr_if.cond.as_ref());
-                self.visit(expr_if.then.as_ref());
-                if let Some(elze) = expr_if.elze.as_ref() {
-                    self.visit(elze);
-                }
-            }
-            ast::ExprKind::Loop(expr_loop) => self.visit(expr_loop.body.as_ref()),
-            ast::ExprKind::While(expr_while) => {
-                self.visit(expr_while.cond.as_ref());
-                self.visit(expr_while.body.as_ref());
-            }
-            ast::ExprKind::With(expr_with) => {
-                self.visit(expr_with.context.as_ref());
-                self.visit(expr_with.body.as_ref());
-            }
-            ast::ExprKind::Return(expr_return) => {
-                if let Some(value) = expr_return.value.as_ref() {
-                    self.visit(value.as_ref());
-                }
-            }
-            ast::ExprKind::Break(expr_break) => {
-                if let Some(value) = expr_break.value.as_ref() {
-                    self.visit(value.as_ref());
-                }
-            }
-            ast::ExprKind::Continue(_) => {}
-            ast::ExprKind::ConstBlock(const_block) => {
-                self.visit(const_block.expr.as_ref());
-            }
-            ast::ExprKind::For(expr_for) => {
-                self.visit(expr_for.iter.as_ref());
-                self.visit(expr_for.body.as_ref());
-            }
-            ast::ExprKind::Match(expr_match) => {
-                for case in &expr_match.cases {
-                    self.visit(case.cond.as_ref());
-                    self.visit(case.body.as_ref());
-                }
-            }
-            ast::ExprKind::FormatString(format) => {
-                let _ = format;
-            }
-            ast::ExprKind::Range(range) => {
-                if let Some(start) = range.start.as_ref() {
-                    self.visit(start.as_ref());
-                }
-                if let Some(end) = range.end.as_ref() {
-                    self.visit(end.as_ref());
-                }
-                if let Some(step) = range.step.as_ref() {
-                    self.visit(step.as_ref());
-                }
-            }
-            ast::ExprKind::Try(expr_try) => {
-                self.visit(expr_try.expr.as_ref());
-                for catch in &expr_try.catches {
-                    self.visit(catch.body.as_ref());
-                }
-                if let Some(elze) = expr_try.elze.as_ref() {
-                    self.visit(elze.as_ref());
-                }
-                if let Some(finally) = expr_try.finally.as_ref() {
-                    self.visit(finally.as_ref());
-                }
-            }
-            ast::ExprKind::Value(value) => match value.as_ref() {
-                ast::Value::Expr(expr) => self.visit(expr.as_ref()),
-                ast::Value::Function(func) => self.visit(func.body.as_ref()),
-                _ => {}
-            },
-            ast::ExprKind::Paren(paren) => self.visit(paren.expr.as_ref()),
-            ast::ExprKind::Name(name) => {
-                if let Some(ident) = name.as_ident() {
-                    let name = ident.as_str();
-                    if !self.is_in_scope(name) && !self.seen.contains(name) {
-                        let ty = fp_core::ast::resolved_expr_type(expr.id())
-                            .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
-                        self.seen.insert(name.to_string());
-                        self.captures.push((name.to_string(), ty));
-                    }
-                }
-            }
-            ast::ExprKind::Splat(splat) => self.visit(splat.iter.as_ref()),
-            ast::ExprKind::SplatDict(dict) => self.visit(dict.dict.as_ref()),
-            ast::ExprKind::Item(item) => self.visit_item(item.as_ref()),
-            ast::ExprKind::IntrinsicCall(call) => {
-                for arg in &call.args {
-                    self.visit(arg);
-                }
-                for kwarg in &call.kwargs {
-                    self.visit(&kwarg.value);
-                }
-            }
-            ast::ExprKind::Id(_) => {}
-        }
-    }
-
-    fn visit_stmt(&mut self, stmt: &ast::BlockStmt) {
-        match stmt {
-            ast::BlockStmt::Expr(expr_stmt) => self.visit(expr_stmt.expr.as_ref()),
-            ast::BlockStmt::Defer(stmt_defer) => self.visit(stmt_defer.expr.as_ref()),
-            ast::BlockStmt::Let(stmt_let) => {
-                if let Some(init) = stmt_let.init.as_ref() {
-                    self.visit(init);
-                }
-                if let Some(diverge) = stmt_let.diverge.as_ref() {
-                    self.visit(diverge);
-                }
-                let mut names = Vec::new();
-                collect_pattern_idents(&stmt_let.pat, &mut names);
-                if let Some(scope) = self.scope.last_mut() {
-                    for name in names {
-                        scope.insert(name);
-                    }
-                }
-            }
-            ast::BlockStmt::Item(item) => self.visit_item(item.as_ref()),
-            ast::BlockStmt::Noop => {}
-        }
-    }
-
-    fn visit_block(&mut self, block: &ast::ExprBlock) {
-        for stmt in &block.stmts {
-            self.visit_stmt(stmt);
-        }
-    }
-
-    fn visit_item(&mut self, item: &ast::Item) {
-        match item.kind() {
-            ast::ItemKind::Expr(expr) => self.visit(expr),
-            ast::ItemKind::DefConst(def) => self.visit(def.value.as_ref()),
-            ast::ItemKind::DefStatic(def) => self.visit(def.value.as_ref()),
-            ast::ItemKind::DefFunction(func) => self.visit_block(&func.body),
-            ast::ItemKind::Module(module) => {
-                for item in &module.items {
-                    self.visit_item(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn is_in_scope(&self, name: &str) -> bool {
-        self.scope.iter().rev().any(|scope| scope.contains(name))
-    }
-
-    fn into_captures(self) -> Vec<Capture> {
-        self.captures
-            .into_iter()
-            .map(|(name, ty)| Capture {
-                name: ast::Ident::new(name),
-                ty,
-            })
-            .collect()
-    }
-}
-
-fn collect_pattern_idents(pat: &ast::Pattern, out: &mut Vec<String>) {
-    match pat.kind() {
-        ast::PatternKind::Ident(ident) => out.push(ident.ident.name.as_str().to_string()),
-        ast::PatternKind::Bind(bind) => {
-            out.push(bind.ident.ident.name.as_str().to_string());
-            collect_pattern_idents(&bind.pattern, out);
-        }
-        ast::PatternKind::Tuple(pat_tuple) => {
-            for pat in &pat_tuple.patterns {
-                collect_pattern_idents(pat, out);
-            }
-        }
-        ast::PatternKind::Struct(pat_struct) => {
-            for field in &pat_struct.fields {
-                if let Some(rename) = field.rename.as_ref() {
-                    collect_pattern_idents(rename.as_ref(), out);
-                } else {
-                    out.push(field.name.as_str().to_string());
-                }
-            }
-        }
-        ast::PatternKind::TupleStruct(pat_tuple) => {
-            for pat in &pat_tuple.patterns {
-                collect_pattern_idents(pat, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-struct CaptureReplacer {
-    captures: HashMap<String, ast::Ty>,
-    env_ident: ast::Ident,
-}
-
-impl CaptureReplacer {
-    fn new(captures: &[Capture], env_ident: ast::Ident) -> Self {
-        let mut capture_map = HashMap::new();
-        for capture in captures {
-            capture_map.insert(capture.name.as_str().to_string(), capture.ty.clone());
-        }
-        Self {
-            captures: capture_map,
-            env_ident,
-        }
-    }
-
-    fn visit(&mut self, expr: &mut ast::Expr) {
-        match expr.kind_mut() {
-            ast::ExprKind::Name(name) => {
-                if let Some(ident) = name.as_ident() {
-                    if let Some(capture_ty) = self.captures.get(ident.as_str()) {
-                        let mut expr_struct =
-                            ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
-                                span: fp_core::span::Span::null(),
-                                obj: ast::Expr::ident(self.env_ident.clone()).into(),
-                                field: ident.clone(),
-                                select: ast::ExprSelectType::Field,
-                            }));
-                        expr_struct.id = expr.id();
-                        fp_core::ast::set_resolved_expr_type(expr_struct.id(), capture_ty.clone());
-                        *expr = expr_struct;
-                    }
-                }
-            }
-            ast::ExprKind::Block(block) => {
-                for stmt in &mut block.stmts {
-                    self.visit_stmt(stmt);
-                }
-                if let Some(last) = block.last_expr_mut() {
-                    self.visit(last);
-                }
-            }
-            ast::ExprKind::If(expr_if) => {
-                self.visit(expr_if.cond.as_mut());
-                self.visit(expr_if.then.as_mut());
-                if let Some(elze) = expr_if.elze.as_mut() {
-                    self.visit(elze);
-                }
-            }
-            ast::ExprKind::Loop(expr_loop) => self.visit(expr_loop.body.as_mut()),
-            ast::ExprKind::While(expr_while) => {
-                self.visit(expr_while.cond.as_mut());
-                self.visit(expr_while.body.as_mut());
-            }
-            ast::ExprKind::With(expr_with) => {
-                self.visit(expr_with.context.as_mut());
-                self.visit(expr_with.body.as_mut());
-            }
-            ast::ExprKind::Return(expr_return) => {
-                if let Some(value) = expr_return.value.as_mut() {
-                    self.visit(value.as_mut());
-                }
-            }
-            ast::ExprKind::Break(expr_break) => {
-                if let Some(value) = expr_break.value.as_mut() {
-                    self.visit(value.as_mut());
-                }
-            }
-            ast::ExprKind::Continue(_) => {}
-            ast::ExprKind::ConstBlock(const_block) => {
-                self.visit(const_block.expr.as_mut());
-            }
-            ast::ExprKind::Match(expr_match) => {
-                for case in &mut expr_match.cases {
-                    self.visit(case.cond.as_mut());
-                    self.visit(case.body.as_mut());
-                }
-            }
-            ast::ExprKind::For(expr_for) => {
-                self.visit(expr_for.iter.as_mut());
-                self.visit(expr_for.body.as_mut());
-            }
-            ast::ExprKind::Let(expr_let) => self.visit(expr_let.expr.as_mut()),
-            ast::ExprKind::Macro(_) => {}
-            ast::ExprKind::Invoke(invoke) => {
-                for arg in &mut invoke.args {
-                    self.visit(arg);
-                }
-                match &mut invoke.target {
-                    ast::ExprInvokeTarget::Expr(target) => {
-                        self.visit(target.as_mut());
-                    }
-                    ast::ExprInvokeTarget::Function(name) => {
-                        if let Some(ident) = name.as_ident() {
-                            if let Some(capture_ty) = self.captures.get(ident.as_str()) {
-                                let expr_struct =
-                                    ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
-                                        span: fp_core::span::Span::null(),
-                                        obj: ast::Expr::ident(self.env_ident.clone()).into(),
-                                        field: ident.clone(),
-                                        select: ast::ExprSelectType::Field,
-                                    }));
-                                fp_core::ast::set_resolved_expr_type(
-                                    expr_struct.id(),
-                                    capture_ty.clone(),
-                                );
-                                invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());
-                            }
-                        }
-                    }
-                    ast::ExprInvokeTarget::Method(select) => {
-                        self.visit(select.obj.as_mut());
-                    }
-                    _ => {}
-                }
-            }
-            ast::ExprKind::Await(await_expr) => {
-                self.visit(await_expr.base.as_mut());
-            }
-            ast::ExprKind::Async(async_expr) => {
-                self.visit(async_expr.expr.as_mut());
-            }
-            ast::ExprKind::Assign(assign) => {
-                self.visit(assign.target.as_mut());
-                self.visit(assign.value.as_mut());
-            }
-            ast::ExprKind::Select(select) => self.visit(select.obj.as_mut()),
-            ast::ExprKind::Struct(struct_expr) => {
-                self.visit(struct_expr.name.as_mut());
-                for field in &mut struct_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.visit(value);
-                    }
-                }
-            }
-            ast::ExprKind::Structural(struct_expr) => {
-                for field in &mut struct_expr.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        self.visit(value);
-                    }
-                }
-            }
-            ast::ExprKind::Array(array) => {
-                for value in &mut array.values {
-                    self.visit(value);
-                }
-            }
-            ast::ExprKind::ArrayRepeat(array_repeat) => {
-                self.visit(array_repeat.elem.as_mut());
-                self.visit(array_repeat.len.as_mut());
-            }
-            ast::ExprKind::Tuple(tuple) => {
-                for value in &mut tuple.values {
-                    self.visit(value);
-                }
-            }
-            ast::ExprKind::Reference(reference) => self.visit(reference.referee.as_mut()),
-            ast::ExprKind::Dereference(deref) => self.visit(deref.referee.as_mut()),
-            ast::ExprKind::Cast(cast) => self.visit(cast.expr.as_mut()),
-            ast::ExprKind::Index(index) => {
-                self.visit(index.obj.as_mut());
-                self.visit(index.index.as_mut());
-            }
-            ast::ExprKind::BinOp(binop) => {
-                self.visit(binop.lhs.as_mut());
-                self.visit(binop.rhs.as_mut());
-            }
-            ast::ExprKind::UnOp(unop) => self.visit(unop.val.as_mut()),
-            ast::ExprKind::Range(range) => {
-                if let Some(start) = range.start.as_mut() {
-                    self.visit(start.as_mut());
-                }
-                if let Some(end) = range.end.as_mut() {
-                    self.visit(end.as_mut());
-                }
-                if let Some(step) = range.step.as_mut() {
-                    self.visit(step.as_mut());
-                }
-            }
-            ast::ExprKind::FormatString(format) => {
-                let _ = format;
-            }
-            ast::ExprKind::Try(expr_try) => {
-                self.visit(expr_try.expr.as_mut());
-                for catch in &mut expr_try.catches {
-                    self.visit(catch.body.as_mut());
-                }
-                if let Some(elze) = expr_try.elze.as_mut() {
-                    self.visit(elze.as_mut());
-                }
-                if let Some(finally) = expr_try.finally.as_mut() {
-                    self.visit(finally.as_mut());
-                }
-            }
-            ast::ExprKind::Value(value) => match value.as_mut() {
-                ast::Value::Expr(expr) => self.visit(expr.as_mut()),
-                ast::Value::Function(func) => self.visit(func.body.as_mut()),
-                _ => {}
-            },
-            ast::ExprKind::Paren(paren) => self.visit(paren.expr.as_mut()),
-            ast::ExprKind::Splat(splat) => self.visit(splat.iter.as_mut()),
-            ast::ExprKind::SplatDict(dict) => self.visit(dict.dict.as_mut()),
-            ast::ExprKind::Item(item) => self.visit_item(item.as_mut()),
-            ast::ExprKind::IntrinsicCall(call) => {
-                for arg in &mut call.args {
-                    self.visit(arg);
-                }
-                for kwarg in &mut call.kwargs {
-                    self.visit(&mut kwarg.value);
-                }
-            }
-            ast::ExprKind::Quote(q) => {
-                for stmt in &mut q.block.stmts {
-                    self.visit_stmt(stmt);
-                }
-                if let Some(last) = q.block.last_expr_mut() {
-                    self.visit(last);
-                }
-            }
-            ast::ExprKind::Splice(s) => {
-                self.visit(s.token.as_mut());
-            }
-            ast::ExprKind::SplicePending(p) => {
-                self.visit(p.token.as_mut());
-            }
-            ast::ExprKind::IntrinsicContainer(container) => {
-                let mut new_expr = container.take_into_const_expr();
-                self.visit(&mut new_expr);
-                new_expr.id = expr.id();
-                *expr = new_expr;
-            }
-            ast::ExprKind::Id(_)
-            | ast::ExprKind::Closure(_)
-            | ast::ExprKind::Closured(_) => {}
-        }
-    }
-
-    fn visit_stmt(&mut self, stmt: &mut ast::BlockStmt) {
-        match stmt {
-            ast::BlockStmt::Expr(expr_stmt) => self.visit(expr_stmt.expr.as_mut()),
-            ast::BlockStmt::Defer(stmt_defer) => self.visit(stmt_defer.expr.as_mut()),
-            ast::BlockStmt::Let(stmt_let) => {
-                if let Some(init) = stmt_let.init.as_mut() {
-                    self.visit(init);
-                }
-                if let Some(diverge) = stmt_let.diverge.as_mut() {
-                    self.visit(diverge);
-                }
-            }
-            ast::BlockStmt::Item(item) => self.visit_item(item.as_mut()),
-            ast::BlockStmt::Noop => {}
-        }
-    }
-
-    fn visit_block(&mut self, block: &mut ast::ExprBlock) {
-        for stmt in &mut block.stmts {
-            self.visit_stmt(stmt);
-        }
-    }
-
-    fn visit_item(&mut self, item: &mut ast::Item) {
-        match item.kind_mut() {
-            ast::ItemKind::Expr(expr) => self.visit(expr),
-            ast::ItemKind::DefConst(def) => self.visit(def.value.as_mut()),
-            ast::ItemKind::DefStatic(def) => self.visit(def.value.as_mut()),
-            ast::ItemKind::DefFunction(func) => self.visit_block(&mut func.body),
-            ast::ItemKind::Module(module) => {
-                for item in &mut module.items {
-                    self.visit_item(item);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn extract_ident(expr: &ast::Expr) -> Option<&ast::Ident> {
-    if let ast::ExprKind::Name(name) = expr.kind() {
-        name.as_ident()
-    } else {
-        None
-    }
-}
-
-/// Strips `#[doc = "..."]`/`///` attributes from every item (recursing
-/// into modules and impl blocks) — HIR carries no doc-comment concept, so
-/// backends that lower through it never see these; only callers that skip
-/// HIR-based typechecking and hand items to a renderer more directly
-/// (`fp-shell`'s roundtrip) need to strip them explicitly first.
-pub(crate) fn strip_doc_attrs_in_items(items: &mut [ast::Item]) {
-    for item in items {
-        strip_doc_attrs_in_item(item);
-    }
-}
-
-fn strip_doc_attrs_in_item(item: &mut ast::Item) {
-    if let Some(attrs) = item_attrs_mut(item) {
-        attrs.retain(|attr| !is_doc_attr(attr));
-    }
-
-    match item.kind_mut() {
-        ItemKind::Module(module) => strip_doc_attrs_in_items(&mut module.items),
-        ItemKind::Impl(impl_block) => strip_doc_attrs_in_items(&mut impl_block.items),
-        _ => {}
-    }
-}
-
-fn item_attrs_mut(item: &mut ast::Item) -> Option<&mut Vec<ast::Attribute>> {
-    match item.kind_mut() {
-        ItemKind::Module(module) => Some(&mut module.attrs),
-        ItemKind::DefStruct(def) => Some(&mut def.attrs),
-        ItemKind::DefStructural(def) => Some(&mut def.attrs),
-        ItemKind::DefEnum(def) => Some(&mut def.attrs),
-        ItemKind::DefType(def) => Some(&mut def.attrs),
-        ItemKind::DefConst(def) => Some(&mut def.attrs),
-        ItemKind::DefStatic(def) => Some(&mut def.attrs),
-        ItemKind::DefFunction(def) => Some(&mut def.attrs),
-        ItemKind::DefTrait(def) => Some(&mut def.attrs),
-        ItemKind::Import(import) => Some(&mut import.attrs),
-        ItemKind::Impl(impl_block) => Some(&mut impl_block.attrs),
-        _ => None,
-    }
-}
-
-fn attrs_has_name(attrs: &[ast::Attribute], name: &str) -> bool {
-    attrs.iter().any(|attr| attr_has_name(attr, name))
-}
-
-/// True if `function`'s lowered body is nothing but a bare
-/// `compile_error!(...)` call — the established convention (throughout
-/// `crates/fp-lang/src/std/**/*.fp`) for a function whose real
-/// implementation the compiler synthesizes elsewhere, with the `.fp`-level
-/// body existing only to satisfy the type checker's signature
-/// requirements. See the `ItemKind::DefFunction` caller for why this can't
-/// just be type-checked/lowered normally.
-fn function_body_is_compiler_intrinsic_marker(function: &hir::Function) -> bool {
-    let Some(body) = &function.body else {
-        return false;
-    };
-    // Marker bodies are allowed any number of leading `let _ = param;`
-    // statements (silencing "unused parameter" for params only meaningful
-    // to the real, compiler-synthesized implementation) before the bare
-    // `compile_error!(...)` marker call itself.
-    let all_leading_stmts_are_discards = body.stmts.iter().all(|stmt| {
-        matches!(
-            &stmt.kind,
-            hir::StmtKind::Local(local) if matches!(local.pat.kind, hir::PatKind::Wild)
-        )
-    });
-    if !all_leading_stmts_are_discards {
-        return false;
-    }
-    matches!(
-        body.expr.as_deref().map(|expr| &expr.kind),
-        Some(hir::ExprKind::IntrinsicCall(call))
-            if call.kind == fp_core::intrinsics::CallKind::Intrinsic(IntrinsicKind::CompileError)
-    )
-}
-
-fn attr_has_name(attr: &ast::Attribute, name: &str) -> bool {
-    match &attr.meta {
-        ast::AttrMeta::Path(path) => path.last().as_str() == name,
-        ast::AttrMeta::List(list) => list.name.last().as_str() == name,
-        ast::AttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
-    }
-}
-
-fn is_doc_attr(attr: &ast::Attribute) -> bool {
-    match &attr.meta {
-        ast::AttrMeta::Path(path) => path.last().as_str() == "doc",
-        ast::AttrMeta::List(list) => list.name.last().as_str() == "doc",
-        ast::AttrMeta::NameValue(nv) => nv.name.last().as_str() == "doc",
     }
 }

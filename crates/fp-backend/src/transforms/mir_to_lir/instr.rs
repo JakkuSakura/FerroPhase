@@ -1,38 +1,35 @@
+use crate::abi;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicKind;
-use fp_core::mir::ty::{
-    ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
-};
+use fp_core::mir::ty::{FloatTy, IntTy, Ty, TyKind, TypeAndMut, UintTy};
 use fp_core::{lir, mir};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
-
-use crate::abi;
 
 // Internal submodules; items are used via inherent methods
 
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct MirToLirLowerer {
     package_id: fp_core::ast::package::PackageId,
-    data_layout: lir::LirDataLayout,
+    pub(super) data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
-    next_label: u32,
-    register_map: HashMap<mir::LocalId, lir::LirValue>,
-    current_function: Option<lir::LirFunction>,
+    pub(super) next_label: u32,
+    pub(super) register_map: HashMap<mir::LocalId, lir::LirValue>,
+    pub(super) current_function: Option<lir::LirFunction>,
     pub(crate) const_values: HashMap<mir::LocalId, lir::LirConstant>,
-    extra_globals: Vec<lir::LirGlobal>,
-    const_global_counter: u64,
-    const_string_globals: HashMap<String, lir::Name>,
-    local_types: Vec<Ty>,
-    current_return_type: Option<lir::LirType>,
-    return_local: Option<mir::LocalId>,
-    mutable_locals: HashSet<mir::LocalId>,
-    local_storage: HashMap<mir::LocalId, LocalStorage>,
-    entry_allocas: Vec<lir::LirInstruction>,
-    queued_instructions: Vec<lir::LirInstruction>,
+    pub(super) extra_globals: Vec<lir::LirGlobal>,
+    pub(super) const_global_counter: u64,
+    pub(super) const_string_globals: HashMap<String, lir::Name>,
+    pub(super) local_types: Vec<Ty>,
+    pub(super) current_return_type: Option<lir::LirType>,
+    pub(super) return_local: Option<mir::LocalId>,
+    pub(super) mutable_locals: HashSet<mir::LocalId>,
+    pub(super) local_storage: HashMap<mir::LocalId, LocalStorage>,
+    pub(super) entry_allocas: Vec<lir::LirInstruction>,
+    pub(super) queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
-    struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
+    pub(super) struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -63,22 +60,22 @@ pub struct MirToLirLowerer {
 }
 
 #[derive(Clone)]
-struct LocalStorage {
-    ptr_value: lir::LirValue,
-    element_type: lir::LirType,
-    alignment: u32,
+pub(super) struct LocalStorage {
+    pub(super) ptr_value: lir::LirValue,
+    pub(super) element_type: lir::LirType,
+    pub(super) alignment: u32,
 }
 
 #[derive(Clone)]
-struct PlaceAddress {
-    ptr: lir::LirValue,
-    ty: Ty,
-    lir_ty: lir::LirType,
-    alignment: u32,
+pub(super) struct PlaceAddress {
+    pub(super) ptr: lir::LirValue,
+    pub(super) ty: Ty,
+    pub(super) lir_ty: lir::LirType,
+    pub(super) alignment: u32,
 }
 
 #[derive(Clone)]
-enum PlaceAccess {
+pub(super) enum PlaceAccess {
     Address(PlaceAddress),
     Value {
         value: lir::LirValue,
@@ -136,7 +133,7 @@ impl MirToLirLowerer {
         self
     }
 
-    fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
+    pub(super) fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
         self.mir_program
             .packages
             .values()
@@ -148,7 +145,7 @@ impl MirToLirLowerer {
     /// full_layouts` (this package's own first, then every other loaded
     /// package's, same search order as `lookup_adt_def`), instead of a
     /// private copy of the same map handed to this generator up front.
-    fn lookup_full_layout(&self, key: &(mir::DefId, Vec<mir::Ty>)) -> Option<Vec<mir::Ty>> {
+    pub(super) fn lookup_full_layout(&self, key: &(mir::DefId, Vec<mir::Ty>)) -> Option<Vec<mir::Ty>> {
         self.mir_program
             .packages
             .values()
@@ -158,18 +155,18 @@ impl MirToLirLowerer {
     /// Byte size for an opaque enum-payload-slot placeholder, by its own
     /// synthetic variant name — same idea as `lookup_full_layout`, off
     /// `mir::MirPackage::opaque_payload_sizes`.
-    fn lookup_opaque_payload_size(&self, name: &str) -> Option<u64> {
+    pub(super) fn lookup_opaque_payload_size(&self, name: &str) -> Option<u64> {
         self.mir_program
             .packages
             .values()
             .find_map(|package| package.borrow().opaque_payload_sizes.get(name).copied())
     }
 
-    fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
+    pub(super) fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
         lir::Name::new(path.to_string())
     }
 
-    fn function_value(&self, name: String) -> Result<lir::LirValue> {
+    pub(super) fn function_value(&self, name: String) -> Result<lir::LirValue> {
         let signature = self.function_signatures.get(&name).ok_or_else(|| {
             fp_core::error::Error::from(format!("missing LIR signature for function `{name}`"))
         })?;
@@ -203,7 +200,7 @@ impl MirToLirLowerer {
     /// register the signature only matter for `function_declarations`
     /// bookkeeping — the `Call` instruction built here always uses the
     /// types the caller actually needs).
-    fn call_extern_c_function(
+    pub(super) fn call_extern_c_function(
         &mut self,
         name: &str,
         args: Vec<(lir::LirValue, lir::LirType)>,
@@ -345,13 +342,15 @@ impl MirToLirLowerer {
             let mut item_blob = self.transform_item(item, &mir_program.bodies)?;
             lir_program.functions.append(&mut item_blob.functions);
             lir_program.globals.append(&mut item_blob.globals);
-            lir_program.type_definitions.append(&mut item_blob.type_definitions);
+            lir_program
+                .type_definitions
+                .append(&mut item_blob.type_definitions);
             lir_program.queries.append(&mut item_blob.queries);
         }
         Ok(lir_program)
     }
 
-    fn predeclare_function_signatures(&mut self, program: &mir::MirCodeUnit) {
+    pub(super) fn predeclare_function_signatures(&mut self, program: &mir::MirCodeUnit) {
         self.predeclare_function_signatures_impl(program, None);
     }
 
@@ -392,7 +391,7 @@ impl MirToLirLowerer {
     /// that condition here too, recursively, so predeclaring a function
     /// that merely *references* an unregistered ADT is caught here rather
     /// than crashing deep inside `lir_type_from_ty`'s field expansion.
-    fn contains_unresolved_param(&self, ty: &Ty) -> bool {
+    pub(super) fn contains_unresolved_param(&self, ty: &Ty) -> bool {
         match &ty.kind {
             // An unconstrained inference variable (e.g. `build_type`'s own
             // `-> type<_>` — a stub declaration whose body is dropped and
@@ -406,9 +405,7 @@ impl MirToLirLowerer {
             TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 self.contains_unresolved_param(inner)
             }
-            TyKind::Slice(inner) | TyKind::Array(inner, _) => {
-                self.contains_unresolved_param(inner)
-            }
+            TyKind::Slice(inner) | TyKind::Array(inner, _) => self.contains_unresolved_param(inner),
             TyKind::Tuple(elements) => elements.iter().any(|e| self.contains_unresolved_param(e)),
             TyKind::Adt(adt, substs) => {
                 let substs_types: Vec<mir::Ty> = substs
@@ -447,7 +444,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn predeclare_function_signatures_impl(
+    pub(super) fn predeclare_function_signatures_impl(
         &mut self,
         program: &mir::MirCodeUnit,
         package_id: Option<fp_core::ast::package::PackageId>,
@@ -466,7 +463,7 @@ impl MirToLirLowerer {
     /// `transform_operand`'s `FnDef` arm). Returns `None` (registering
     /// nothing) for a still-generic template signature — only a concrete,
     /// fully-substituted `mir::Function` can be given a real LIR type.
-    fn register_function_signature(
+    pub(super) fn register_function_signature(
         &mut self,
         func: &mir::Function,
         package_id: Option<fp_core::ast::package::PackageId>,
@@ -518,7 +515,7 @@ impl MirToLirLowerer {
     }
 
     /// Transform a MIR function to LIR
-    fn transform_function_with_bodies(
+    pub(super) fn transform_function_with_bodies(
         &mut self,
         mir_func: mir::Function,
         bodies: &std::collections::HashMap<mir::BodyId, mir::Body>,
@@ -630,7 +627,7 @@ impl MirToLirLowerer {
         Ok(lir_func)
     }
 
-    fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
+    pub(super) fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
         let base = if !mir_func.name.as_str().is_empty() {
             String::from(mir_func.name.clone())
         } else {
@@ -683,7 +680,7 @@ impl MirToLirLowerer {
         final_name
     }
 
-    fn sanitize_symbol(name: &str) -> String {
+    pub(super) fn sanitize_symbol(name: &str) -> String {
         let mut result = String::with_capacity(name.len());
         for ch in name.chars() {
             if ch.is_ascii_alphanumeric() || ch == '_' {
@@ -707,7 +704,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn calling_convention_for_abi(&self, abi: &mir::ty::Abi) -> lir::CallingConvention {
+    pub(super) fn calling_convention_for_abi(&self, abi: &mir::ty::Abi) -> lir::CallingConvention {
         match abi {
             mir::ty::Abi::Rust => lir::CallingConvention::C,
             mir::ty::Abi::C { .. } => lir::CallingConvention::C,
@@ -716,836 +713,8 @@ impl MirToLirLowerer {
         }
     }
 
-    /// Transform a MIR static to LIR global
-    fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
-        let name = lir::Name::new(mir_static.name.as_str().to_string());
-        let lir_ty = self.lir_type_from_ty(&mir_static.ty);
-        let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
-        let (initializer, relocations) =
-            self.canonicalize_global_initializer(raw_initializer, &lir_ty)?;
-        let alignment = self.alignment_for_lir_type(&lir_ty).max(1);
-
-        Ok(lir::LirGlobal {
-            name,
-            ty: lir_ty,
-            initializer: Some(initializer),
-            relocations,
-            linkage: lir::Linkage::Internal,
-            visibility: lir::Visibility::Hidden,
-            is_constant: matches!(mir_static.mutability, mir::Mutability::Not),
-            alignment: Some(alignment),
-            section: None,
-        })
-    }
-
-    fn convert_static_initializer(
-        &mut self,
-        init: &mir::Operand,
-        ty: &Ty,
-    ) -> Result<lir::LirConstant> {
-        match init {
-            mir::Operand::Constant(constant) => self.constant_to_lir_constant(constant, ty),
-            other => Err(fp_core::error::Error::from(format!(
-                "unsupported static initializer operand: {:?}",
-                other
-            ))),
-        }
-    }
-
-    fn constant_to_lir_constant(
-        &mut self,
-        constant: &mir::Constant,
-        ty_hint: &Ty,
-    ) -> Result<lir::LirConstant> {
-        let target_ty = self.lir_type_from_ty(ty_hint);
-        let lir_constant = match &constant.literal {
-            mir::ConstantKind::Bool(value) => {
-                lir::LirConstant::integer(target_ty.clone(), lir::LirInteger::I1(*value))
-                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?
-            }
-            mir::ConstantKind::Int(value) => {
-                self.integer_constant(&target_ty, *value).map_err(|error| {
-                    fp_core::error::Error::from(format!(
-                        "constant at {:?}: {}",
-                        constant.span, error
-                    ))
-                })?
-            }
-            mir::ConstantKind::UInt(value) => {
-                self.unsigned_constant(&target_ty, *value)
-                    .map_err(|error| {
-                        fp_core::error::Error::from(format!(
-                            "constant at {:?}: {}",
-                            constant.span, error
-                        ))
-                    })?
-            }
-            mir::ConstantKind::Float(value) => self.float_constant(&target_ty, *value)?,
-            mir::ConstantKind::Str(value) => {
-                let needs_fat_ptr = matches!(&ty_hint.kind, TyKind::Slice(_))
-                    || matches!(&ty_hint.kind, TyKind::Ref(_, inner, _) if matches!(&inner.kind, TyKind::Slice(_)));
-                if needs_fat_ptr {
-                    let elem_lir_ty = lir::LirType::I8;
-                    let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                    let ptr_const = self.const_string_ptr(value);
-                    let len_const =
-                        self.unsigned_constant(&lir::LirType::I64, value.len() as u64)?;
-                    lir::LirConstant::aggregate(
-                        slice_ty,
-                        lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
-                    )
-                } else {
-                    self.const_string_ptr(value)
-                }
-            }
-            mir::ConstantKind::Null => lir::LirConstant::null(target_ty.clone()),
-            mir::ConstantKind::Undef => lir::LirConstant::undef(target_ty.clone()),
-            mir::ConstantKind::Val(value) => {
-                self.const_value_to_lir_constant(value, &constant.ty)?
-            }
-            mir::ConstantKind::FnDef(_, _) => {
-                return Err(fp_core::error::Error::from(
-                    "function definition references are not valid static initializer data",
-                ));
-            }
-            mir::ConstantKind::Fn(name) => lir::LirConstant::function_address(
-                target_ty.clone(),
-                lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
-            ),
-            mir::ConstantKind::Global(path) => lir::LirConstant::global_address(
-                target_ty.clone(),
-                self.resolve_global_symbol(path),
-            ),
-            mir::ConstantKind::Ty(_) => {
-                return Err(fp_core::error::Error::from(
-                    "type-only constant is not a valid static initializer",
-                ));
-            }
-            mir::ConstantKind::TokenStream { .. } => {
-                return Err(fp_core::error::Error::from(
-                    "token stream is not a valid LIR constant",
-                ));
-            }
-        };
-
-        if lir_constant.ty != target_ty {
-            return Err(fp_core::error::Error::from(format!(
-                "typed constant mismatch at {:?}: MIR type {:?}, literal {:?}, LIR value {:?}, target {:?}",
-                constant.span, constant.ty, constant.literal, lir_constant.ty, target_ty
-            )));
-        }
-        Ok(lir_constant)
-    }
-
-    /// A fieldless (C-like) enum's variant literal (e.g. `Value::C`) is
-    /// sometimes const-folded straight to its bare discriminant scalar,
-    /// while the enum's own registered layout (used everywhere else it
-    /// appears, e.g. as a struct field) is the canonical
-    /// `Struct{fields:[tag_ty]}` shape every enum gets, even a payload-
-    /// less one, for consistency with enums that do carry a payload. Both
-    /// describe the same value — when a scalar integer constant is asked
-    /// for against such a single-field struct type, build it against the
-    /// struct's own field type and wrap it, instead of every caller
-    /// needing to special-case this itself (three call sites already
-    /// needed exactly this before it was centralized here).
-    fn single_field_struct_tag_ty<'a>(ty: &'a lir::LirType) -> Option<&'a lir::LirType> {
-        match ty {
-            lir::LirType::Struct { fields, .. } => match fields.as_slice() {
-                [tag_ty] => Some(tag_ty),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn integer_constant(&self, ty: &lir::LirType, value: i64) -> Result<lir::LirConstant> {
-        if let Some(tag_ty) = Self::single_field_struct_tag_ty(ty) {
-            let inner = self.integer_constant(tag_ty, value)?;
-            return Ok(lir::LirConstant::aggregate(
-                ty.clone(),
-                lir::LirConstantAggregate::Struct(vec![inner]),
-            ));
-        }
-        let integer =
-            match ty {
-                lir::LirType::I1 => lir::LirInteger::I1(value != 0),
-                lir::LirType::I8 => lir::LirInteger::I8(u8::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i8")
-                })?),
-                lir::LirType::I16 => lir::LirInteger::I16(u16::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i16")
-                })?),
-                lir::LirType::I32 => lir::LirInteger::I32(u32::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i32")
-                })?),
-                lir::LirType::I64 => lir::LirInteger::I64(value as u64),
-                lir::LirType::I128 => lir::LirInteger::I128(value as i128 as u128),
-                lir::LirType::Integer(width) => {
-                    let bits = value as i128 as u128;
-                    let words = vec![bits as u64; (*width).div_ceil(64) as usize];
-                    lir::LirInteger::Arbitrary(
-                        lir::LirApInt::from_words(*width, words).ok_or_else(|| {
-                            fp_core::error::Error::from("invalid arbitrary integer constant")
-                        })?,
-                    )
-                }
-                _ => {
-                    return Err(fp_core::error::Error::from(format!(
-                        "integer constant {value} requires integer type, got {ty:?}"
-                    )));
-                }
-            };
-        lir::LirConstant::integer(ty.clone(), integer)
-            .map_err(|error| fp_core::error::Error::from(error.to_string()))
-    }
-
-    fn unsigned_constant(&self, ty: &lir::LirType, value: u64) -> Result<lir::LirConstant> {
-        if let Some(tag_ty) = Self::single_field_struct_tag_ty(ty) {
-            let inner = self.unsigned_constant(tag_ty, value)?;
-            return Ok(lir::LirConstant::aggregate(
-                ty.clone(),
-                lir::LirConstantAggregate::Struct(vec![inner]),
-            ));
-        }
-        let integer =
-            match ty {
-                lir::LirType::I1 => lir::LirInteger::I1(value != 0),
-                lir::LirType::I8 => lir::LirInteger::I8(u8::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i8")
-                })?),
-                lir::LirType::I16 => lir::LirInteger::I16(u16::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i16")
-                })?),
-                lir::LirType::I32 => lir::LirInteger::I32(u32::try_from(value).map_err(|_| {
-                    fp_core::error::Error::from("integer constant does not fit i32")
-                })?),
-                lir::LirType::I64 => lir::LirInteger::I64(value),
-                lir::LirType::I128 => lir::LirInteger::I128(u128::from(value)),
-                lir::LirType::Integer(width) => {
-                    let words = vec![value; (*width).div_ceil(64) as usize];
-                    lir::LirInteger::Arbitrary(
-                        lir::LirApInt::from_words(*width, words).ok_or_else(|| {
-                            fp_core::error::Error::from("invalid arbitrary integer constant")
-                        })?,
-                    )
-                }
-                _ => {
-                    return Err(fp_core::error::Error::from(format!(
-                        "unsigned integer constant {value} requires integer type, got {ty:?}"
-                    )));
-                }
-            };
-        lir::LirConstant::integer(ty.clone(), integer)
-            .map_err(|error| fp_core::error::Error::from(error.to_string()))
-    }
-
-    fn float_constant(&self, ty: &lir::LirType, value: f64) -> Result<lir::LirConstant> {
-        let float = match ty {
-            lir::LirType::F32 => lir::LirFloat::F32((value as f32).to_bits()),
-            lir::LirType::F64 => lir::LirFloat::F64(value.to_bits()),
-            _ => {
-                return Err(fp_core::error::Error::from(
-                    "floating constant requires float type",
-                ));
-            }
-        };
-        lir::LirConstant::float(ty.clone(), float)
-            .map_err(|error| fp_core::error::Error::from(error.to_string()))
-    }
-
-    fn const_value_to_lir_constant(
-        &mut self,
-        value: &mir::ConstValue,
-        ty: &Ty,
-    ) -> Result<lir::LirConstant> {
-        match value {
-            mir::ConstValue::Unit => Ok(lir::LirConstant::undef(self.lir_type_from_ty(ty))),
-            mir::ConstValue::Bool(value) => Ok(lir::LirConstant::integer(
-                self.lir_type_from_ty(ty),
-                lir::LirInteger::I1(*value),
-            )
-            .map_err(|error| fp_core::error::Error::from(error.to_string()))?),
-            mir::ConstValue::Int(value) => {
-                self.integer_constant(&self.lir_type_from_ty(ty), *value)
-            }
-            mir::ConstValue::UInt(value) => {
-                self.unsigned_constant(&self.lir_type_from_ty(ty), *value)
-            }
-            mir::ConstValue::Float(value) => {
-                self.float_constant(&self.lir_type_from_ty(ty), *value)
-            }
-            mir::ConstValue::Str(value) => {
-                if let Some(elem_ty) = Self::slice_ref_element_ty(ty) {
-                    let elem_lir_ty = self.lir_type_from_ty(elem_ty);
-                    let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                    let ptr_const = self.const_string_ptr(value);
-                    let len_const =
-                        self.unsigned_constant(&lir::LirType::I64, value.len() as u64)?;
-                    return Ok(lir::LirConstant::aggregate(
-                        slice_ty,
-                        lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
-                    ));
-                }
-                Ok(self.const_string_ptr(value))
-            }
-            mir::ConstValue::Null => Ok(lir::LirConstant::null(self.lir_type_from_ty(ty))),
-            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::function_address(
-                self.lir_type_from_ty(ty),
-                lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
-            )),
-            // `ty.kind` isn't always `TyKind::Tuple` for a `ConstValue::
-            // Tuple` payload — `fp-interpret` stores every register-
-            // resident aggregate this way regardless of nominal type, so a
-            // struct/enum-typed comptime result (e.g. `Vec::new()`'s
-            // `{ptr,len,capacity}`) arrives here as `Tuple` even when `ty`
-            // is `TyKind::Adt`. Delegate to `lir_type_from_ty` (which
-            // already resolves `Adt` via the substitution-aware
-            // `struct_layouts`/`full_layouts` cache, computing on demand
-            // via `instantiate_ty` rather than guessing from an
-            // unsubstituted or mismatched-instantiation field list) and
-            // the generic `LirType`-driven converter below, instead of
-            // requiring `ty.kind` to literally be `Tuple`.
-            mir::ConstValue::Tuple(elements) => {
-                let lir_ty = self.lir_type_from_ty(ty);
-                self.const_value_to_lir_constant_with_lir_type(
-                    &mir::ConstValue::Tuple(elements.clone()),
-                    &lir_ty,
-                )
-            }
-            mir::ConstValue::Array(elements) => {
-                let elem_ty = match &ty.kind {
-                    TyKind::Array(inner, _) => inner.as_ref(),
-                    _ => {
-                        return Err(fp_core::error::Error::from(format!(
-                            "array constant requires array type hint, got `{ty}`"
-                        )));
-                    }
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.const_value_to_lir_constant(element, elem_ty)?);
-                }
-                Ok(lir::LirConstant::aggregate(
-                    self.lir_type_from_ty(ty),
-                    lir::LirConstantAggregate::Array(lowered),
-                ))
-            }
-            mir::ConstValue::Struct(fields) => {
-                let lir_ty = self.lir_type_from_ty(ty);
-                let lir::LirType::Struct {
-                    fields: lir_fields, ..
-                } = &lir_ty
-                else {
-                    return Err(fp_core::error::Error::from(
-                        "struct constant requires a struct layout in LIR",
-                    ));
-                };
-                if lir_fields.len() != fields.len() {
-                    return Err(fp_core::error::Error::from(format!(
-                        "struct constant field count mismatch: expected {}, got {}",
-                        lir_fields.len(),
-                        fields.len()
-                    )));
-                }
-                let mut lowered = Vec::with_capacity(fields.len());
-                for (idx, field) in fields.iter().enumerate() {
-                    let field_lir_ty = lir_fields
-                        .get(idx)
-                        .ok_or_else(|| {
-                            fp_core::error::Error::from("struct constant field type missing")
-                        })?
-                        .clone();
-                    lowered.push(
-                        self.const_value_to_lir_constant_with_lir_type(field, &field_lir_ty)?,
-                    );
-                }
-                Ok(lir::LirConstant::aggregate(
-                    lir_ty,
-                    lir::LirConstantAggregate::Struct(lowered),
-                ))
-            }
-            mir::ConstValue::List { elements, elem_ty } => {
-                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.const_value_to_lir_constant(element, elem_ty)?);
-                }
-                let data_global = self.allocate_const_array_global(elem_lir_ty.clone(), lowered);
-                let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
-                let ptr_const = lir::LirConstant::get_element_ptr(
-                    ptr_ty,
-                    lir::LirConstant::global_address(
-                        lir::LirType::Ptr(Box::new(elem_lir_ty.clone())),
-                        data_global.name.clone(),
-                    ),
-                    Vec::new(),
-                    true,
-                );
-                let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                let len_const =
-                    self.unsigned_constant(&lir::LirType::I64, elements.len() as u64)?;
-                Ok(lir::LirConstant::aggregate(
-                    slice_ty,
-                    lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
-                ))
-            }
-            mir::ConstValue::Map {
-                entries,
-                key_ty,
-                value_ty,
-            } => {
-                let key_lir_ty = self.lir_type_from_ty(key_ty);
-                let value_lir_ty = self.lir_type_from_ty(value_ty);
-                let entry_lir_ty = lir::LirType::Struct {
-                    fields: vec![key_lir_ty.clone(), value_lir_ty.clone()],
-                    packed: false,
-                    name: Some("__map_entry".to_string()),
-                };
-                let mut lowered_entries = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    let key_val = self.const_value_to_lir_constant(key, key_ty)?;
-                    let value_val = self.const_value_to_lir_constant(value, value_ty)?;
-                    lowered_entries.push(lir::LirConstant::aggregate(
-                        entry_lir_ty.clone(),
-                        lir::LirConstantAggregate::Struct(vec![key_val, value_val]),
-                    ));
-                }
-                let data_global =
-                    self.allocate_const_array_global(entry_lir_ty.clone(), lowered_entries);
-                let ptr_ty = lir::LirType::Ptr(Box::new(entry_lir_ty.clone()));
-                let ptr_const = lir::LirConstant::get_element_ptr(
-                    ptr_ty,
-                    lir::LirConstant::global_address(
-                        lir::LirType::Ptr(Box::new(entry_lir_ty.clone())),
-                        data_global.name.clone(),
-                    ),
-                    Vec::new(),
-                    true,
-                );
-                let slice_ty = self.slice_lir_type(&entry_lir_ty);
-                let len_const = self.unsigned_constant(&lir::LirType::I64, entries.len() as u64)?;
-                Ok(lir::LirConstant::aggregate(
-                    slice_ty,
-                    lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
-                ))
-            }
-        }
-    }
-
-    fn const_value_to_lir_constant_with_lir_type(
-        &mut self,
-        value: &mir::ConstValue,
-        lir_ty: &lir::LirType,
-    ) -> Result<lir::LirConstant> {
-        match value {
-            mir::ConstValue::Unit => Ok(lir::LirConstant::undef(lir_ty.clone())),
-            mir::ConstValue::Bool(value) => Ok(lir::LirConstant::integer(
-                lir_ty.clone(),
-                lir::LirInteger::I1(*value),
-            )
-            .map_err(|error| fp_core::error::Error::from(error.to_string()))?),
-            mir::ConstValue::Int(value) => self.integer_constant(lir_ty, *value),
-            mir::ConstValue::UInt(value) => self.unsigned_constant(lir_ty, *value),
-            mir::ConstValue::Float(value) => self.float_constant(lir_ty, *value),
-            mir::ConstValue::Str(value) => {
-                if let lir::LirType::Struct { fields, .. } = lir_ty {
-                    if fields.len() == 2
-                        && matches!(&fields[0], lir::LirType::Ptr(inner) if **inner == lir::LirType::I8)
-                        && fields[1] == lir::LirType::I64
-                    {
-                        let ptr_const = self.const_string_ptr(value);
-                        let len_const =
-                            self.unsigned_constant(&lir::LirType::I64, value.len() as u64)?;
-                        return Ok(lir::LirConstant::aggregate(
-                            lir_ty.clone(),
-                            lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
-                        ));
-                    }
-                }
-                Ok(self.const_string_ptr(value))
-            }
-            mir::ConstValue::Null => Ok(lir::LirConstant::null(lir_ty.clone())),
-            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::function_address(
-                lir_ty.clone(),
-                lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
-            )),
-            mir::ConstValue::Array(elements) => {
-                let lir::LirType::Array(elem_ty, _len) = lir_ty else {
-                    return Err(fp_core::error::Error::from(
-                        "array constant requires an array type in LIR",
-                    ));
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(
-                        self.const_value_to_lir_constant_with_lir_type(element, elem_ty.as_ref())?,
-                    );
-                }
-                Ok(lir::LirConstant::aggregate(
-                    lir_ty.clone(),
-                    lir::LirConstantAggregate::Array(lowered),
-                ))
-            }
-            mir::ConstValue::Tuple(elements) | mir::ConstValue::Struct(elements) => {
-                let lir::LirType::Struct { fields, .. } = lir_ty else {
-                    return Err(fp_core::error::Error::from(
-                        "tuple/struct constant requires a struct type in LIR",
-                    ));
-                };
-                if fields.len() != elements.len() {
-                    return Err(fp_core::error::Error::from(format!(
-                        "tuple/struct constant field count mismatch: expected {}, got {}",
-                        fields.len(),
-                        elements.len()
-                    )));
-                }
-                let mut lowered = Vec::with_capacity(elements.len());
-                for (idx, element) in elements.iter().enumerate() {
-                    let field_ty = fields
-                        .get(idx)
-                        .ok_or_else(|| {
-                            fp_core::error::Error::from("struct constant field type missing")
-                        })?
-                        .clone();
-                    lowered
-                        .push(self.const_value_to_lir_constant_with_lir_type(element, &field_ty)?);
-                }
-                Ok(lir::LirConstant::aggregate(
-                    lir_ty.clone(),
-                    lir::LirConstantAggregate::Struct(lowered),
-                ))
-            }
-            mir::ConstValue::List { .. } | mir::ConstValue::Map { .. } => Err(
-                fp_core::error::Error::from("container constants require MIR type information"),
-            ),
-        }
-    }
-
-    fn allocate_const_array_global(
-        &mut self,
-        elem_ty: lir::LirType,
-        elements: Vec<lir::LirConstant>,
-    ) -> lir::LirGlobal {
-        let name = lir::Name::new(format!("__const_data_{}", self.const_global_counter));
-        self.const_global_counter += 1;
-        let array_ty = lir::LirType::Array(Box::new(elem_ty), elements.len() as u64);
-        let initializer_constant = lir::LirConstant::aggregate(
-            array_ty.clone(),
-            lir::LirConstantAggregate::Array(elements),
-        );
-        let (initializer, relocations) = self
-            .canonicalize_global_initializer(initializer_constant, &array_ty)
-            .expect("constant array initializer must have a valid layout");
-        let align = self.alignment_for_lir_type(&array_ty);
-        let global = lir::LirGlobal {
-            name,
-            ty: array_ty,
-            initializer: Some(initializer),
-            relocations,
-            linkage: lir::Linkage::Internal,
-            visibility: lir::Visibility::Hidden,
-            is_constant: true,
-            alignment: Some(align),
-            section: None,
-        };
-        self.extra_globals.push(global.clone());
-        global
-    }
-
-    fn canonicalize_global_initializer(
-        &self,
-        initializer: lir::LirConstant,
-        ty: &lir::LirType,
-    ) -> Result<(lir::LirConstant, Vec<lir::LirGlobalRelocation>)> {
-        match &initializer.kind {
-            lir::LirConstantKind::Aggregate(_) | lir::LirConstantKind::Data(_) => {
-                let (bytes, relocations) =
-                    self.try_encode_global_initializer_bytes(&initializer, ty)?;
-                Ok((lir::LirConstant::bytes(ty.clone(), bytes), relocations))
-            }
-            lir::LirConstantKind::GlobalAddress { global } => {
-                let size = self
-                    .data_layout
-                    .size_of(&initializer.ty)
-                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?
-                    as usize;
-                let reloc = lir::LirGlobalRelocation {
-                    offset: 0,
-                    kind: lir::LirRelocationKind::Abs64,
-                    target: lir::LirRelocationTarget::Global(global.clone()),
-                    addend: 0,
-                };
-                Ok((
-                    lir::LirConstant::bytes(ty.clone(), vec![0u8; size]),
-                    vec![reloc],
-                ))
-            }
-            lir::LirConstantKind::FunctionAddress(function) => {
-                let size = self
-                    .data_layout
-                    .size_of(&initializer.ty)
-                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?
-                    as usize;
-                let lir::LirFunctionRef::Name(name) = function else {
-                    return Err(fp_core::error::Error::from(
-                        "unsupported non-name function relocation",
-                    ));
-                };
-                let reloc = lir::LirGlobalRelocation {
-                    offset: 0,
-                    kind: lir::LirRelocationKind::Abs64,
-                    target: lir::LirRelocationTarget::Function(name.clone()),
-                    addend: 0,
-                };
-                Ok((
-                    lir::LirConstant::bytes(ty.clone(), vec![0u8; size]),
-                    vec![reloc],
-                ))
-            }
-            lir::LirConstantKind::Null | lir::LirConstantKind::Undef => {
-                let (bytes, relocations) =
-                    self.try_encode_global_initializer_bytes(&initializer, ty)?;
-                Ok((lir::LirConstant::bytes(ty.clone(), bytes), relocations))
-            }
-            lir::LirConstantKind::Expr(lir::LirConstantExpr::GetElementPtr {
-                base,
-                indices,
-                ..
-            }) if indices.is_empty() => self.canonicalize_global_initializer((**base).clone(), ty),
-            lir::LirConstantKind::Poison | lir::LirConstantKind::Expr(_) => {
-                Err(fp_core::error::Error::from(
-                    "unsupported constant expression in global initializer",
-                ))
-            }
-        }
-    }
-
-    fn try_encode_global_initializer_bytes(
-        &self,
-        constant: &lir::LirConstant,
-        ty: &lir::LirType,
-    ) -> Result<(Vec<u8>, Vec<lir::LirGlobalRelocation>)> {
-        let mut bytes = vec![
-            0u8;
-            self.data_layout
-                .size_of(ty)
-                .map_err(|error| fp_core::error::Error::from(error.to_string()))?
-                as usize
-        ];
-        let mut relocations = Vec::new();
-        self.encode_global_initializer_into(&mut bytes, &mut relocations, 0, constant, ty)
-            .ok_or_else(|| {
-                fp_core::error::Error::from(format!(
-                    "invalid global initializer: constant {:?}, target {:?}",
-                    constant, ty
-                ))
-            })?;
-        Ok((bytes, relocations))
-    }
-
-    fn encode_global_initializer_into(
-        &self,
-        out: &mut [u8],
-        relocations: &mut Vec<lir::LirGlobalRelocation>,
-        base: usize,
-        constant: &lir::LirConstant,
-        ty: &lir::LirType,
-    ) -> Option<()> {
-        match &constant.kind {
-            lir::LirConstantKind::Data(lir::LirConstantData::Integer(value)) => {
-                Self::write_initializer_integer(out, base, value, &constant.ty)?;
-            }
-            lir::LirConstantKind::Data(lir::LirConstantData::Float(value)) => {
-                let bits = match value {
-                    lir::LirFloat::F32(bits) => u64::from(*bits),
-                    lir::LirFloat::F64(bits) => *bits,
-                };
-                Self::write_initializer_int(
-                    out,
-                    base,
-                    u128::from(bits),
-                    self.data_layout.size_of(&constant.ty).ok()? as usize,
-                    false,
-                )?;
-            }
-            lir::LirConstantKind::Data(lir::LirConstantData::Bytes(bytes)) => {
-                let end = base.checked_add(bytes.len())?;
-                out.get_mut(base..end)?.copy_from_slice(bytes);
-            }
-            lir::LirConstantKind::Aggregate(lir::LirConstantAggregate::Array(elements)) => {
-                let lir::LirType::Array(elem_ty, len) = ty else {
-                    return None;
-                };
-                if elements.len() > *len as usize {
-                    return None;
-                }
-                let elem_size = self.data_layout.size_of(elem_ty).ok()? as usize;
-                for (idx, element) in elements.iter().enumerate() {
-                    self.encode_global_initializer_into(
-                        out,
-                        relocations,
-                        base + idx * elem_size,
-                        element,
-                        elem_ty,
-                    )?;
-                }
-            }
-            lir::LirConstantKind::Aggregate(lir::LirConstantAggregate::Struct(fields)) => {
-                let lir::LirType::Struct {
-                    fields: field_tys, ..
-                } = ty
-                else {
-                    return None;
-                };
-                if fields.len() > field_tys.len() {
-                    return None;
-                }
-                let struct_layout = self.data_layout.struct_layout(ty).ok()??;
-                for (idx, field) in fields.iter().enumerate() {
-                    let field_ty = field_tys.get(idx)?;
-                    let field_offset = *struct_layout.field_offsets.get(idx)? as usize;
-                    self.encode_global_initializer_into(
-                        out,
-                        relocations,
-                        base + field_offset,
-                        field,
-                        field_ty,
-                    )?;
-                }
-            }
-            lir::LirConstantKind::GlobalAddress { global } => {
-                Self::write_initializer_int(
-                    out,
-                    base,
-                    0,
-                    self.data_layout.size_of(&constant.ty).ok()? as usize,
-                    false,
-                )?;
-                relocations.push(lir::LirGlobalRelocation {
-                    offset: base as u64,
-                    kind: lir::LirRelocationKind::Abs64,
-                    target: lir::LirRelocationTarget::Global(global.clone()),
-                    addend: 0,
-                });
-            }
-            lir::LirConstantKind::FunctionAddress(lir::LirFunctionRef::Name(name)) => {
-                Self::write_initializer_int(
-                    out,
-                    base,
-                    0,
-                    self.data_layout.size_of(&constant.ty).ok()? as usize,
-                    false,
-                )?;
-                relocations.push(lir::LirGlobalRelocation {
-                    offset: base as u64,
-                    kind: lir::LirRelocationKind::Abs64,
-                    target: lir::LirRelocationTarget::Function(name.clone()),
-                    addend: 0,
-                });
-            }
-            lir::LirConstantKind::Expr(lir::LirConstantExpr::GetElementPtr {
-                base: inner,
-                indices,
-                ..
-            }) if indices.is_empty() => {
-                self.encode_global_initializer_into(out, relocations, base, inner, ty)?;
-            }
-            lir::LirConstantKind::Null | lir::LirConstantKind::Undef => {
-                let size = self.data_layout.size_of(&constant.ty).ok()? as usize;
-                let end = base.checked_add(size)?;
-                let slot = out.get_mut(base..end)?;
-                slot.fill(0);
-            }
-            _ => return None,
-        }
-        Some(())
-    }
-
-    fn write_initializer_integer(
-        out: &mut [u8],
-        offset: usize,
-        value: &lir::LirInteger,
-        ty: &lir::LirType,
-    ) -> Option<()> {
-        let bits = match value {
-            lir::LirInteger::I1(value) => u128::from(*value as u8),
-            lir::LirInteger::I8(value) => u128::from(*value),
-            lir::LirInteger::I16(value) => u128::from(*value),
-            lir::LirInteger::I32(value) => u128::from(*value),
-            lir::LirInteger::I64(value) => u128::from(*value),
-            lir::LirInteger::I128(value) => *value,
-            lir::LirInteger::Arbitrary(value) => {
-                let mut bits = 0u128;
-                for (idx, word) in value.words.iter().take(2).enumerate() {
-                    bits |= u128::from(*word) << (idx * 64);
-                }
-                bits
-            }
-        };
-        let size = match ty {
-            lir::LirType::Integer(width) => usize::try_from(width.div_ceil(8)).ok()?,
-            lir::LirType::I1 | lir::LirType::I8 => 1,
-            lir::LirType::I16 => 2,
-            lir::LirType::I32 => 4,
-            lir::LirType::I64 => 8,
-            lir::LirType::I128 => 16,
-            _ => return None,
-        };
-        Self::write_initializer_int(out, offset, bits, size, false)
-    }
-
-    fn write_initializer_int(
-        out: &mut [u8],
-        offset: usize,
-        value: u128,
-        size: usize,
-        signed: bool,
-    ) -> Option<()> {
-        let end = offset.checked_add(size)?;
-        let slot = out.get_mut(offset..end)?;
-        let mut bits = value;
-        if signed && size < 16 {
-            let mask = (1u128 << (size * 8)) - 1;
-            bits &= mask;
-        }
-        for (idx, byte) in slot.iter_mut().enumerate() {
-            *byte = (bits >> (idx * 8)) as u8;
-        }
-        Some(())
-    }
-
-    fn const_string_ptr(&mut self, value: &str) -> lir::LirConstant {
-        let name = if let Some(existing) = self.const_string_globals.get(value) {
-            existing.clone()
-        } else {
-            let mut bytes = Vec::with_capacity(value.len() + 1);
-            for byte in value.as_bytes() {
-                bytes.push(
-                    self.unsigned_constant(&lir::LirType::I8, u64::from(*byte))
-                        .expect("byte must fit i8"),
-                );
-            }
-            bytes.push(
-                self.unsigned_constant(&lir::LirType::I8, 0)
-                    .expect("zero must fit i8"),
-            );
-            let global = self.allocate_const_array_global(lir::LirType::I8, bytes);
-            let name = global.name.clone();
-            self.const_string_globals
-                .insert(value.to_string(), name.clone());
-            name
-        };
-
-        lir::LirConstant::get_element_ptr(
-            lir::LirType::Ptr(Box::new(lir::LirType::I8)),
-            lir::LirConstant::global_address(lir::LirType::Ptr(Box::new(lir::LirType::I8)), name),
-            Vec::new(),
-            true,
-        )
-    }
-
     /// Transform a basic block
-    fn transform_basic_block(
+    pub(super) fn transform_basic_block(
         &mut self,
         bb_id: u32,
         bb_data: &mir::BasicBlockData,
@@ -1620,7 +789,7 @@ impl MirToLirLowerer {
     }
 
     /// Transform a MIR statement to LIR instructions
-    fn transform_statement(&mut self, stmt: &mir::Statement) -> Result<Vec<lir::LirInstruction>> {
+    pub(super) fn transform_statement(&mut self, stmt: &mir::Statement) -> Result<Vec<lir::LirInstruction>> {
         match &stmt.kind {
             mir::StatementKind::Assign(place, rvalue) => self.transform_assign(place, rvalue),
             mir::StatementKind::IntrinsicCall { kind, format, args } => {
@@ -1688,7 +857,7 @@ impl MirToLirLowerer {
 
     /// Transform an assignment
     #[allow(unused_assignments)]
-    fn transform_assign(
+    pub(super) fn transform_assign(
         &mut self,
         place: &mir::Place,
         rvalue: &mir::Rvalue,
@@ -2699,8 +1868,12 @@ impl MirToLirLowerer {
 
                 let slice_value = self.transform_operand(container)?;
                 instructions.extend(self.take_queued_instructions());
-                let old_ptr =
-                    self.extract_slice_field(slice_value.clone(), 0, ptr_ty.clone(), &mut instructions);
+                let old_ptr = self.extract_slice_field(
+                    slice_value.clone(),
+                    0,
+                    ptr_ty.clone(),
+                    &mut instructions,
+                );
                 let old_len =
                     self.extract_slice_field(slice_value, 1, lir::LirType::I64, &mut instructions);
 
@@ -3134,80 +2307,8 @@ impl MirToLirLowerer {
     }
 
     /// Transform a MIR terminator to LIR terminator
-    fn transform_terminator(
-        &mut self,
-        terminator: &mir::Terminator,
-        block: &mut lir::LirBasicBlock,
-    ) -> Result<lir::LirTerminator> {
-        match &terminator.kind {
-            mir::TerminatorKind::Return => Ok(lir::LirTerminator::Return(
-                self.prepare_return_value(block)?,
-            )),
-            mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
-            mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
-            mir::TerminatorKind::Call {
-                func,
-                args,
-                destination,
-                cleanup,
-                ..
-            } => self.transform_call_terminator(func, args, destination, cleanup, block),
-            mir::TerminatorKind::SwitchInt {
-                discr,
-                switch_ty,
-                targets,
-            } => {
-                let discr_value = self.transform_operand(discr)?;
-                block.instructions.extend(self.take_queued_instructions());
-                if targets.values.len() == 1 {
-                    let true_target = targets.targets[0];
-                    let false_target = targets.otherwise;
-                    let switch_lir_ty = self.lir_type_from_ty(switch_ty);
-                    let case_value = self.switch_constant_for_value(
-                        switch_ty,
-                        targets.values[0],
-                        &switch_lir_ty,
-                    )?;
-                    let cmp_id = self.next_id();
-                    block.instructions.push(lir::LirInstruction {
-                        id: cmp_id,
-                        kind: lir::LirInstructionKind::Eq(
-                            discr_value,
-                            lir::LirValue::constant(case_value),
-                        ),
-                        result: Some(lir::LirRegister {
-                            id: cmp_id,
-                            ty: lir::LirType::I1,
-                        }),
-                        debug_info: None,
-                    });
-                    Ok(lir::LirTerminator::CondBr {
-                        condition: lir::LirValue::register(cmp_id, lir::LirType::I1),
-                        if_true: true_target,
-                        if_false: false_target,
-                    })
-                } else {
-                    let cases = targets
-                        .values
-                        .iter()
-                        .zip(targets.targets.iter())
-                        .map(|(value, target)| (*value as u64, *target))
-                        .collect();
-                    Ok(lir::LirTerminator::Switch {
-                        value: discr_value,
-                        default: targets.otherwise,
-                        cases,
-                    })
-                }
-            }
-            other => Err(crate::error::optimization_error(format!(
-                "unhandled MIR terminator: {other:?}"
-            ))),
-        }
-    }
-
     /// Transform a MIR operand to LIR value
-    fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
+    pub(super) fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
         match operand {
             mir::Operand::Move(place) | mir::Operand::Copy(place) => {
                 let access = self.resolve_place(place)?;
@@ -3256,17 +2357,19 @@ impl MirToLirLowerer {
                                 .and_then(|package| package.borrow().sigs.get(def_id).cloned())
                                 .map(|func| (func, None))
                                 .or_else(|| {
-                                    self.mir_program.packages.iter().find_map(|(dep_id, dep_package)| {
-                                        if dep_id == &self.package_id {
-                                            return None;
-                                        }
-                                        dep_package
-                                            .borrow()
-                                            .sigs
-                                            .get(def_id)
-                                            .cloned()
-                                            .map(|func| (func, Some(dep_id.clone())))
-                                    })
+                                    self.mir_program.packages.iter().find_map(
+                                        |(dep_id, dep_package)| {
+                                            if dep_id == &self.package_id {
+                                                return None;
+                                            }
+                                            dep_package
+                                                .borrow()
+                                                .sigs
+                                                .get(def_id)
+                                                .cloned()
+                                                .map(|func| (func, Some(dep_id.clone())))
+                                        },
+                                    )
                                 });
                             let (func, package_id) = resolved.ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
@@ -3359,7 +2462,7 @@ impl MirToLirLowerer {
     /// same generic struct/enum (e.g. `Option<i64>` vs.
     /// `Option<CommandMockMatch>`) can have entirely different field
     /// layouts and must never share a cache entry keyed by `DefId` alone.
-    fn adt_substs_types(substs: &[mir::ty::GenericArg]) -> Vec<mir::Ty> {
+    pub(super) fn adt_substs_types(substs: &[mir::ty::GenericArg]) -> Vec<mir::Ty> {
         substs
             .iter()
             .filter_map(|arg| match arg {
@@ -3369,219 +2472,7 @@ impl MirToLirLowerer {
             .collect()
     }
 
-    fn reset_for_new_function(&mut self) {
-        self.next_label = 0;
-        self.register_map.clear();
-        self.current_function = None;
-        self.const_values.clear();
-        self.local_types.clear();
-        self.current_return_type = None;
-        self.return_local = None;
-        self.mutable_locals.clear();
-        self.local_storage.clear();
-        self.entry_allocas.clear();
-        self.queued_instructions.clear();
-    }
-
-    fn collect_struct_layouts(&mut self, body: &mir::Body) {
-        for block in &body.basic_blocks {
-            for statement in &block.statements {
-                match &statement.kind {
-                    mir::StatementKind::Assign(place, value) => {
-                        self.collect_place_struct_layout(place, body);
-                        self.collect_rvalue_struct_layouts(value, body);
-                    }
-                    mir::StatementKind::IntrinsicCall { args, .. } => {
-                        for arg in args {
-                            self.collect_operand_struct_layout(arg, body);
-                        }
-                    }
-                    mir::StatementKind::SetDiscriminant { place, .. }
-                    | mir::StatementKind::Retag(_, place)
-                    | mir::StatementKind::AscribeUserType(place, _, _) => {
-                        self.collect_place_struct_layout(place, body);
-                    }
-                    mir::StatementKind::StorageLive(_)
-                    | mir::StatementKind::StorageDead(_)
-                    | mir::StatementKind::Nop => {}
-                }
-            }
-
-            let Some(terminator) = &block.terminator else {
-                continue;
-            };
-            match &terminator.kind {
-                mir::TerminatorKind::SwitchInt { discr, .. }
-                | mir::TerminatorKind::Assert { cond: discr, .. } => {
-                    self.collect_operand_struct_layout(discr, body);
-                }
-                mir::TerminatorKind::Drop { place, .. } => {
-                    self.collect_place_struct_layout(place, body);
-                }
-                mir::TerminatorKind::DropAndReplace { place, value, .. } => {
-                    self.collect_place_struct_layout(place, body);
-                    self.collect_operand_struct_layout(value, body);
-                }
-                mir::TerminatorKind::Call {
-                    func,
-                    args,
-                    destination,
-                    ..
-                } => {
-                    self.collect_operand_struct_layout(func, body);
-                    for arg in args {
-                        self.collect_operand_struct_layout(arg, body);
-                    }
-                    if let Some((place, _)) = destination {
-                        self.collect_place_struct_layout(place, body);
-                    }
-                }
-                mir::TerminatorKind::Yield {
-                    value, resume_arg, ..
-                } => {
-                    self.collect_operand_struct_layout(value, body);
-                    self.collect_place_struct_layout(resume_arg, body);
-                }
-                mir::TerminatorKind::Goto { .. }
-                | mir::TerminatorKind::Resume
-                | mir::TerminatorKind::Abort
-                | mir::TerminatorKind::Return
-                | mir::TerminatorKind::Unreachable
-                | mir::TerminatorKind::GeneratorDrop
-                | mir::TerminatorKind::FalseEdge { .. }
-                | mir::TerminatorKind::FalseUnwind { .. }
-                | mir::TerminatorKind::InlineAsm { .. } => {}
-            }
-        }
-    }
-
-    fn collect_rvalue_struct_layouts(&mut self, value: &mir::Rvalue, body: &mir::Body) {
-        match value {
-            mir::Rvalue::Use(operand)
-            | mir::Rvalue::Repeat(operand, _)
-            | mir::Rvalue::Cast(_, operand, _)
-            | mir::Rvalue::UnaryOp(_, operand)
-            | mir::Rvalue::ShallowInitBox(operand, _) => {
-                self.collect_operand_struct_layout(operand, body);
-            }
-            mir::Rvalue::IntrinsicCall { args, .. }
-            | mir::Rvalue::Aggregate(_, args)
-            | mir::Rvalue::ContainerLiteral { elements: args, .. } => {
-                for arg in args {
-                    self.collect_operand_struct_layout(arg, body);
-                }
-            }
-            mir::Rvalue::BinaryOp(_, left, right)
-            | mir::Rvalue::CheckedBinaryOp(_, left, right) => {
-                self.collect_operand_struct_layout(left, body);
-                self.collect_operand_struct_layout(right, body);
-            }
-            mir::Rvalue::ContainerMapLiteral { entries, .. } => {
-                for (key, value) in entries {
-                    self.collect_operand_struct_layout(key, body);
-                    self.collect_operand_struct_layout(value, body);
-                }
-            }
-            mir::Rvalue::ContainerLen { container, .. } => {
-                self.collect_operand_struct_layout(container, body);
-            }
-            mir::Rvalue::ContainerGet { container, key, .. } => {
-                self.collect_operand_struct_layout(container, body);
-                self.collect_operand_struct_layout(key, body);
-            }
-            mir::Rvalue::ContainerPush {
-                container, value, ..
-            } => {
-                self.collect_operand_struct_layout(container, body);
-                self.collect_operand_struct_layout(value, body);
-            }
-            mir::Rvalue::StrFromRawParts { ptr, len } => {
-                self.collect_operand_struct_layout(ptr, body);
-                self.collect_operand_struct_layout(len, body);
-            }
-            mir::Rvalue::Ref(_, _, place)
-            | mir::Rvalue::AddressOf(_, place)
-            | mir::Rvalue::Len(place)
-            | mir::Rvalue::Discriminant(place) => {
-                self.collect_place_struct_layout(place, body);
-            }
-            mir::Rvalue::Query(_)
-            | mir::Rvalue::ThreadLocalRef(_)
-            | mir::Rvalue::NullaryOp(_, _) => {}
-        }
-    }
-
-    fn collect_operand_struct_layout(&mut self, operand: &mir::Operand, body: &mir::Body) {
-        match operand {
-            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-                self.collect_place_struct_layout(place, body);
-            }
-            mir::Operand::Constant(_) => {}
-        }
-    }
-
-    fn collect_place_struct_layout(&mut self, place: &mir::Place, body: &mir::Body) {
-        let Some(mut ty) = body
-            .locals
-            .get(place.local as usize)
-            .map(|local| local.ty.clone())
-        else {
-            return;
-        };
-        for projection in &place.projection {
-            match projection {
-                mir::PlaceElem::Field(index, field_ty) => {
-                    // Enums are deliberately excluded here. Their payload
-                    // slot(s) already have a dedicated, correct layout
-                    // computed elsewhere (`full_layouts`/
-                    // `opaque_payload_sizes`/`lookup_adt_def`) — one that
-                    // accounts for *all* variants at once, using an opaque
-                    // byte-array union slot when variants disagree on the
-                    // payload's shape (e.g. `json::Value`, whose variants
-                    // carry a `bool`, a `Number`, a `&str`, a `Vec<Value>`,
-                    // etc.). A place projection only ever sees *one*
-                    // variant's concrete field type at a time (e.g.
-                    // `Value::Array(values)`'s pattern binding projects
-                    // `Vec<Value>` specifically) — caching that here, keyed
-                    // only by the enum's `DefId`, would clobber the
-                    // correct union-slot type with whichever variant's
-                    // field type happened to be observed last across the
-                    // whole program (nondeterministically, since functions
-                    // are processed in HashMap-derived order).
-                    if let TyKind::Adt(adt, substs) = &ty.kind {
-                        if !adt.flags.contains(mir::ty::AdtFlags::IS_ENUM) {
-                            let field_lir_ty = self.lir_type_from_ty(field_ty);
-                            let key = (adt.did.clone(), Self::adt_substs_types(substs));
-                            let mut layouts = self.struct_layouts.borrow_mut();
-                            let fields = layouts.entry(key).or_default();
-                            if fields.len() <= *index {
-                                fields.resize(index + 1, None);
-                            }
-                            fields[*index] = Some(field_lir_ty);
-                        }
-                    }
-                    ty = field_ty.clone();
-                }
-                mir::PlaceElem::Deref => match ty.kind {
-                    TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
-                        ty = *inner;
-                    }
-                    _ => return,
-                },
-                mir::PlaceElem::Index(_index) => {
-                    ty = match ty.kind {
-                        TyKind::Array(element, _) | TyKind::Slice(element) => *element,
-                        _ => return,
-                    };
-                }
-                mir::PlaceElem::ConstantIndex { .. }
-                | mir::PlaceElem::Subslice { .. }
-                | mir::PlaceElem::Downcast(_, _) => {}
-            }
-        }
-    }
-
-    fn compute_mutable_locals(&self, mir_body: &mir::Body) -> HashSet<mir::LocalId> {
+    pub(super) fn compute_mutable_locals(&self, mir_body: &mir::Body) -> HashSet<mir::LocalId> {
         let mut assignment_counts: HashMap<mir::LocalId, usize> = HashMap::new();
         for basic_block in &mir_body.basic_blocks {
             for stmt in &basic_block.statements {
@@ -3597,7 +2488,7 @@ impl MirToLirLowerer {
             .collect()
     }
 
-    fn initialize_local_storage(&mut self, mir_body: &mir::Body) {
+    pub(super) fn initialize_local_storage(&mut self, mir_body: &mir::Body) {
         self.entry_allocas.clear();
         self.local_storage.clear();
 
@@ -3669,794 +2560,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
-        if let Some(storage) = self.local_storage.get(&place.local) {
-            return Ok(storage.ptr_value.clone());
-        }
-        let existing_reg = self.register_map.get(&place.local).cloned();
-
-        if let Some(place_ty) = self.lookup_place_type(place) {
-            if Self::is_zero_sized(&place_ty) {
-                // Use a dedicated empty-struct constant for zero-sized values to avoid
-                // creating "struct ptr i8 { }" constants when the place type lowers to Ptr(I8).
-                let empty_ty = lir::LirType::Struct {
-                    fields: Vec::new(),
-                    packed: false,
-                    name: None,
-                };
-                let value = lir::LirValue::constant(lir::LirConstant::aggregate(
-                    empty_ty.clone(),
-                    lir::LirConstantAggregate::Struct(Vec::new()),
-                ));
-                self.register_map.insert(place.local, value.clone());
-                return Ok(value);
-            }
-
-            let lir_ty = self.lir_type_from_ty(&place_ty);
-            let mut alloca_elem_ty = lir_ty.clone();
-            let mut alloca_count = 1i64;
-            if !matches!(place_ty.kind, TyKind::Array(_, _)) {
-                if let Some(existing) = existing_reg.as_ref() {
-                    if let lir::LirType::Array(elem, len) = &existing.ty {
-                        alloca_elem_ty = elem.as_ref().clone();
-                        alloca_count = *len as i64;
-                    }
-                }
-            }
-            let alignment = self.alignment_for_lir_type(&alloca_elem_ty);
-            if alignment > 0 {
-                let pointer_type = lir::LirType::Ptr(Box::new(alloca_elem_ty.clone()));
-                let size_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I32, alloca_count)?,
-                );
-                let alloca_id = self.next_id();
-                self.queued_instructions.push(lir::LirInstruction {
-                    id: alloca_id,
-                    kind: lir::LirInstructionKind::Alloca {
-                        size: size_value,
-                        alignment,
-                    },
-                    result: Some(lir::LirRegister {
-                        id: alloca_id,
-                        ty: pointer_type.clone(),
-                    }),
-                    debug_info: None,
-                });
-
-                let ptr_value = lir::LirValue::register(alloca_id, pointer_type);
-                self.local_storage.insert(
-                    place.local,
-                    LocalStorage {
-                        ptr_value: ptr_value.clone(),
-                        element_type: alloca_elem_ty,
-                        alignment,
-                    },
-                );
-
-                if let Some(existing) = existing_reg {
-                    let store_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: store_id,
-                        kind: lir::LirInstructionKind::Store {
-                            value: existing,
-                            address: ptr_value.clone(),
-                            alignment: Some(alignment),
-                            volatile: false,
-                        },
-                        result: None,
-                        debug_info: None,
-                    });
-                }
-
-                return Ok(ptr_value);
-            }
-        }
-        Err(crate::error::optimization_error(format!(
-            "MIR→LIR: missing value for local {} (place={:?}); cannot lower MIR",
-            place.local, place
-        )))
-    }
-
-    fn resolve_place(&mut self, place: &mir::Place) -> Result<PlaceAccess> {
-        if place.projection.is_empty() {
-            let ty = self
-                .local_types
-                .get(place.local as usize)
-                .cloned()
-                .ok_or_else(|| {
-                    crate::error::optimization_error(format!(
-                        "MIR→LIR: no type information for local {}",
-                        place.local
-                    ))
-                })?;
-
-            if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                return Ok(PlaceAccess::Address(PlaceAddress {
-                    ptr: storage.ptr_value,
-                    ty,
-                    lir_ty: storage.element_type,
-                    alignment: storage.alignment,
-                }));
-            }
-
-            if let Some(value) = self.register_map.get(&place.local).cloned() {
-                let lir_ty = self.lir_type_from_ty(&ty);
-                return Ok(PlaceAccess::Value { value, ty, lir_ty });
-            }
-
-            if let Ok(value) = self.get_or_create_register_for_place(place) {
-                if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                    return Ok(PlaceAccess::Address(PlaceAddress {
-                        ptr: storage.ptr_value,
-                        ty,
-                        lir_ty: storage.element_type,
-                        alignment: storage.alignment,
-                    }));
-                }
-                let lir_ty = self.lir_type_from_ty(&ty);
-                return Ok(PlaceAccess::Value { value, ty, lir_ty });
-            }
-
-            return Err(crate::error::optimization_error(format!(
-                "MIR→LIR: unresolved place local {} — no register or storage allocated",
-                place.local
-            )));
-        }
-
-        let mut base_place = place.clone();
-        let last_projection = base_place
-            .projection
-            .pop()
-            .expect("projection should be non-empty here");
-        let base_access = self.resolve_place(&base_place)?;
-
-        match last_projection {
-            mir::PlaceElem::Deref => self.apply_deref_projection(&base_place, base_access),
-            mir::PlaceElem::Field(idx, field_ty) => {
-                self.apply_field_projection(&base_place, base_access, place.local, idx, &field_ty)
-            }
-            mir::PlaceElem::Index(index_local) => {
-                self.apply_index_projection(&base_place, base_access, index_local)
-            }
-            mir::PlaceElem::ConstantIndex {
-                offset, from_end, ..
-            } => {
-                if from_end {
-                    return Err(crate::error::optimization_error(
-                        "MIR→LIR: from_end constant index is not yet supported",
-                    ));
-                }
-                let index_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I64, offset as i64)
-                        .expect("constant index must fit i64"),
-                );
-                self.apply_index_projection_value(&base_place, base_access, index_value)
-            }
-            mir::PlaceElem::Subslice { from, to, from_end } => {
-                let base_ty = self.lookup_place_type(&base_place).ok_or_else(|| {
-                    crate::error::optimization_error("MIR→LIR: missing type for subslice")
-                })?;
-                let element_ty = match &base_ty.kind {
-                    TyKind::Array(elem, _) => *elem.clone(),
-                    TyKind::Slice(elem) => *elem.clone(),
-                    _ => {
-                        return Err(crate::error::optimization_error(
-                            "MIR→LIR: subslice requires array or slice type",
-                        ));
-                    }
-                };
-
-                let start_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I64, from as i64)
-                        .expect("subslice offset must fit i64"),
-                );
-                let base_access_for_len = base_access.clone();
-                let slice_ptr_access =
-                    self.apply_index_projection_value(&base_place, base_access, start_value)?;
-                let slice_ptr = match slice_ptr_access {
-                    PlaceAccess::Address(addr) => addr.ptr,
-                    PlaceAccess::Value { .. } => {
-                        return Err(crate::error::optimization_error(
-                            "MIR→LIR: subslice base did not resolve to address",
-                        ));
-                    }
-                };
-
-                let elem_lir_ty = self.lir_type_from_ty(&element_ty);
-
-                match &base_ty.kind {
-                    TyKind::Array(_, len) => {
-                        let base_len = self.array_length_from_const(len);
-                        let end = if from_end {
-                            base_len.saturating_sub(to)
-                        } else {
-                            to
-                        };
-                        let slice_len = end.saturating_sub(from);
-                        let mut instructions = Vec::new();
-                        let slice_value = self.build_slice_value(
-                            slice_ptr,
-                            slice_len,
-                            &elem_lir_ty,
-                            &mut instructions,
-                        )?;
-                        self.queued_instructions.extend(instructions);
-                        Ok(PlaceAccess::Value {
-                            value: slice_value,
-                            ty: base_ty,
-                            lir_ty: self.slice_lir_type(&elem_lir_ty),
-                        })
-                    }
-                    TyKind::Slice(_) => {
-                        let mut instructions = Vec::new();
-                        let slice_value = match base_access_for_len {
-                            PlaceAccess::Address(addr) => {
-                                let load_id = self.next_id();
-                                instructions.push(lir::LirInstruction {
-                                    id: load_id,
-                                    kind: lir::LirInstructionKind::Load {
-                                        address: addr.ptr,
-                                        alignment: Some(addr.alignment),
-                                        volatile: false,
-                                    },
-                                    result: Some(lir::LirRegister {
-                                        id: load_id,
-                                        ty: addr.lir_ty.clone(),
-                                    }),
-                                    debug_info: None,
-                                });
-                                lir::LirValue::register(load_id, addr.lir_ty)
-                            }
-                            PlaceAccess::Value { value, .. } => value,
-                        };
-                        let mut len_value = self.extract_slice_field(
-                            slice_value,
-                            1,
-                            lir::LirType::I64,
-                            &mut instructions,
-                        );
-                        len_value = self.ensure_i64_value(len_value, &mut instructions);
-
-                        let end_value = if from_end {
-                            let to_value = lir::LirValue::constant(
-                                self.integer_constant(&lir::LirType::I64, to as i64)
-                                    .expect("subslice bound must fit i64"),
-                            );
-                            let sub_id = self.next_id();
-                            instructions.push(lir::LirInstruction {
-                                id: sub_id,
-                                kind: lir::LirInstructionKind::Sub(len_value, to_value),
-                                result: Some(lir::LirRegister {
-                                    id: sub_id,
-                                    ty: lir::LirType::I64,
-                                }),
-                                debug_info: None,
-                            });
-                            lir::LirValue::register(sub_id, lir::LirType::I64)
-                        } else {
-                            lir::LirValue::constant(
-                                self.integer_constant(&lir::LirType::I64, to as i64)
-                                    .expect("subslice bound must fit i64"),
-                            )
-                        };
-
-                        let slice_len = if from == 0 {
-                            end_value
-                        } else {
-                            let start_value = lir::LirValue::constant(
-                                self.integer_constant(&lir::LirType::I64, from as i64)
-                                    .expect("subslice offset must fit i64"),
-                            );
-                            let sub_id = self.next_id();
-                            instructions.push(lir::LirInstruction {
-                                id: sub_id,
-                                kind: lir::LirInstructionKind::Sub(end_value, start_value),
-                                result: Some(lir::LirRegister {
-                                    id: sub_id,
-                                    ty: lir::LirType::I64,
-                                }),
-                                debug_info: None,
-                            });
-                            lir::LirValue::register(sub_id, lir::LirType::I64)
-                        };
-
-                        let slice_value = self.build_slice_value_with_len_value(
-                            slice_ptr,
-                            slice_len,
-                            &elem_lir_ty,
-                            &mut instructions,
-                        )?;
-                        self.queued_instructions.extend(instructions);
-                        Ok(PlaceAccess::Value {
-                            value: slice_value,
-                            ty: base_ty,
-                            lir_ty: self.slice_lir_type(&elem_lir_ty),
-                        })
-                    }
-                    _ => Err(crate::error::optimization_error(
-                        "MIR→LIR: subslice requires array or slice type",
-                    )),
-                }
-            }
-            mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
-                "MIR→LIR: downcast place projection is not supported",
-            )),
-        }
-    }
-
-    fn apply_deref_projection(
-        &mut self,
-        base_place: &mir::Place,
-        access: PlaceAccess,
-    ) -> Result<PlaceAccess> {
-        let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
-            crate::error::optimization_error("MIR→LIR: missing type for deref projection")
-        })?;
-
-        // A reference to an unsized slice (`&str`/`&[T]`) is represented in
-        // this backend as the `{ptr, len}` fat-pointer value directly — see
-        // `lir_type_from_ty`, where both `TyKind::Slice(_)` and
-        // `TyKind::Ref(_, Slice(_), _)` map to the same `__slice` struct.
-        // There is no separate, further-indirected pointee to load through:
-        // the reference's own storage *is* the slice value's storage.
-        // Dereferencing such a place is a type-level no-op — reuse the same
-        // address/value, just retagged with the pointee type — rather than
-        // treating it like a thin pointer (which would load a bogus "pointer
-        // value" out of the first 8 bytes of the fat pointer and then
-        // dereference that garbage address).
-        if let TyKind::Ref(_, inner, _) = &base_ty.kind {
-            if Self::slice_ref_element_ty(inner).is_some() {
-                let pointee_ty = (**inner).clone();
-                let pointee_lir_ty = self.lir_type_from_ty(&pointee_ty);
-                return Ok(match access {
-                    PlaceAccess::Address(addr) => PlaceAccess::Address(PlaceAddress {
-                        ptr: addr.ptr,
-                        ty: pointee_ty,
-                        lir_ty: pointee_lir_ty,
-                        alignment: addr.alignment,
-                    }),
-                    PlaceAccess::Value { value, .. } => PlaceAccess::Value {
-                        value,
-                        ty: pointee_ty,
-                        lir_ty: pointee_lir_ty,
-                    },
-                });
-            }
-        }
-
-        let (inner_ty, pointer_lir_ty) = match base_ty.kind {
-            TyKind::Ref(_, inner, _) => {
-                let pointee = (*inner).clone();
-                let lir = self.lir_type_from_ty(&pointee);
-                (pointee, lir::LirType::Ptr(Box::new(lir.clone())))
-            }
-            TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
-                let pointee = (*inner).clone();
-                let lir = self.lir_type_from_ty(&pointee);
-                (pointee, lir::LirType::Ptr(Box::new(lir.clone())))
-            }
-            _ => {
-                return Err(crate::error::optimization_error(
-                    "MIR→LIR: cannot dereference non-pointer place",
-                ));
-            }
-        };
-
-        let pointer_value = match access {
-            PlaceAccess::Address(addr) => {
-                let load_id = self.next_id();
-                self.queued_instructions.push(lir::LirInstruction {
-                    id: load_id,
-                    kind: lir::LirInstructionKind::Load {
-                        address: addr.ptr,
-                        alignment: Some(addr.alignment),
-                        volatile: false,
-                    },
-                    result: Some(lir::LirRegister {
-                        id: load_id,
-                        ty: pointer_lir_ty.clone(),
-                    }),
-                    debug_info: None,
-                });
-                lir::LirValue::register(load_id, pointer_lir_ty)
-            }
-            PlaceAccess::Value { value, .. } => value,
-        };
-
-        let pointee_lir_ty = self.lir_type_from_ty(&inner_ty);
-
-        let alignment = self.alignment_for_lir_type(&pointee_lir_ty);
-        Ok(PlaceAccess::Address(PlaceAddress {
-            ptr: pointer_value,
-            ty: inner_ty,
-            lir_ty: pointee_lir_ty,
-            alignment,
-        }))
-    }
-
-    fn apply_field_projection(
-        &mut self,
-        _base_place: &mir::Place,
-        access: PlaceAccess,
-        _local: mir::LocalId,
-        field_index: usize,
-        field_ty: &Ty,
-    ) -> Result<PlaceAccess> {
-        let base_addr = match access {
-            PlaceAccess::Address(addr) => addr,
-            PlaceAccess::Value { value, ty, lir_ty } => {
-                let alignment = self.alignment_for_lir_type(&lir_ty).max(1);
-                let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
-                let size_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I32, 1)
-                        .expect("one must fit i32"),
-                );
-                let alloca_id = self.next_id();
-                self.queued_instructions.push(lir::LirInstruction {
-                    id: alloca_id,
-                    kind: lir::LirInstructionKind::Alloca {
-                        size: size_value,
-                        alignment,
-                    },
-                    result: Some(lir::LirRegister {
-                        id: alloca_id,
-                        ty: pointer_type.clone(),
-                    }),
-                    debug_info: None,
-                });
-                let ptr_value = lir::LirValue::register(alloca_id, pointer_type);
-
-                let store_id = self.next_id();
-                self.queued_instructions.push(lir::LirInstruction {
-                    id: store_id,
-                    kind: lir::LirInstructionKind::Store {
-                        value,
-                        address: ptr_value.clone(),
-                        alignment: Some(alignment),
-                        volatile: false,
-                    },
-                    result: None,
-                    debug_info: None,
-                });
-
-                PlaceAddress {
-                    ptr: ptr_value,
-                    ty,
-                    lir_ty,
-                    alignment,
-                }
-            }
-        };
-
-        let field_lir_ty = self.lir_type_from_ty(field_ty);
-
-        let offset = if let Some(layout) = self
-            .data_layout
-            .struct_layout(&base_addr.lir_ty)
-            .ok()
-            .flatten()
-        {
-            *layout.field_offsets.get(field_index).ok_or_else(|| {
-                crate::error::optimization_error(format!(
-                    "MIR→LIR: field index {} out of bounds for LIR struct",
-                    field_index
-                ))
-            })?
-        } else if let TyKind::Tuple(elements) = &base_addr.ty.kind {
-            let mut offset = 0u64;
-            for elem_ty in elements.iter().take(field_index) {
-                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
-                offset = offset.saturating_add(self.size_of_lir_type(&elem_lir_ty));
-            }
-            offset
-        } else if field_index == 0 {
-            // No real struct/tuple layout to consult — this is expected
-            // for an enum's opaque, byte-blob-shaped shared payload slot
-            // (heterogeneous per-variant types collapse to a plain
-            // `Array(I8, N)` at the LIR level, with no field structure of
-            // its own). Field 0 of *anything* starts at offset 0
-            // regardless of the base's shape, so this needs no layout
-            // lookup at all — only a non-zero index on a genuinely
-            // unstructured base is a real error (below).
-            0
-        } else {
-            return Err(crate::error::optimization_error(
-                "MIR→LIR: field projection requires a struct/tuple layout",
-            ));
-        };
-
-        let desired_ptr_ty = lir::LirType::Ptr(Box::new(field_lir_ty.clone()));
-        let target_ptr = if offset == 0 {
-            let cast_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: cast_id,
-                kind: lir::LirInstructionKind::Bitcast(
-                    base_addr.ptr.clone(),
-                    desired_ptr_ty.clone(),
-                ),
-                result: Some(lir::LirRegister {
-                    id: cast_id,
-                    ty: desired_ptr_ty.clone(),
-                }),
-                debug_info: None,
-            });
-            lir::LirValue::register(cast_id, desired_ptr_ty.clone())
-        } else {
-            let i8_ptr_ty = lir::LirType::Ptr(Box::new(lir::LirType::I8));
-            let base_i8_ptr_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: base_i8_ptr_id,
-                kind: lir::LirInstructionKind::Bitcast(base_addr.ptr.clone(), i8_ptr_ty.clone()),
-                result: Some(lir::LirRegister {
-                    id: base_i8_ptr_id,
-                    ty: i8_ptr_ty.clone(),
-                }),
-                debug_info: None,
-            });
-            let base_i8_ptr = lir::LirValue::register(base_i8_ptr_id, i8_ptr_ty.clone());
-
-            let offset_value = lir::LirValue::constant(
-                self.integer_constant(&lir::LirType::I64, offset as i64)
-                    .expect("field offset must fit i64"),
-            );
-
-            let gep_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: gep_id,
-                kind: lir::LirInstructionKind::GetElementPtr {
-                    ptr: base_i8_ptr,
-                    indices: vec![offset_value],
-                    inbounds: true,
-                },
-                result: Some(lir::LirRegister {
-                    id: gep_id,
-                    ty: i8_ptr_ty.clone(),
-                }),
-                debug_info: None,
-            });
-
-            let cast_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: cast_id,
-                kind: lir::LirInstructionKind::Bitcast(
-                    lir::LirValue::register(gep_id, i8_ptr_ty.clone()),
-                    desired_ptr_ty.clone(),
-                ),
-                result: Some(lir::LirRegister {
-                    id: cast_id,
-                    ty: desired_ptr_ty.clone(),
-                }),
-                debug_info: None,
-            });
-            lir::LirValue::register(cast_id, desired_ptr_ty)
-        };
-
-        let alignment = self.alignment_for_lir_type(&field_lir_ty);
-        Ok(PlaceAccess::Address(PlaceAddress {
-            ptr: target_ptr,
-            ty: field_ty.clone(),
-            lir_ty: field_lir_ty,
-            alignment,
-        }))
-    }
-
-    fn apply_index_projection(
-        &mut self,
-        base_place: &mir::Place,
-        access: PlaceAccess,
-        index_local: mir::LocalId,
-    ) -> Result<PlaceAccess> {
-        let index_place = mir::Place::from_local(index_local);
-        let index_operand = mir::Operand::Copy(index_place);
-        let mut index_value = self.transform_operand(&index_operand)?;
-        let index_lir_ty = self
-            .type_of_operand(&index_operand)
-            .ok_or_else(|| crate::error::optimization_error("index operand has no type"))?;
-        if index_lir_ty != lir::LirType::I64 {
-            let cast_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: cast_id,
-                kind: lir::LirInstructionKind::SextOrTrunc(index_value.clone(), lir::LirType::I64),
-                result: Some(lir::LirRegister {
-                    id: cast_id,
-                    ty: lir::LirType::I64,
-                }),
-                debug_info: None,
-            });
-            index_value = lir::LirValue::register(cast_id, lir::LirType::I64);
-        }
-
-        self.apply_index_projection_value(base_place, access, index_value)
-    }
-
-    fn apply_index_projection_value(
-        &mut self,
-        base_place: &mir::Place,
-        access: PlaceAccess,
-        index_value: lir::LirValue,
-    ) -> Result<PlaceAccess> {
-        let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
-            crate::error::optimization_error("MIR→LIR: missing type for index projection")
-        })?;
-
-        let element_ty = match &base_ty.kind {
-            TyKind::Array(elem, _) => *elem.clone(),
-            TyKind::Slice(elem) => *elem.clone(),
-            _ => {
-                return Err(crate::error::optimization_error(
-                    "MIR→LIR: index projection requires array or slice type",
-                ));
-            }
-        };
-
-        let element_lir_ty = self.lir_type_from_ty(&element_ty);
-        let element_alignment = self.alignment_for_lir_type(&element_lir_ty);
-
-        let slice_ptr_ty = lir::LirType::Ptr(Box::new(element_lir_ty.clone()));
-        let base_ptr = match access {
-            PlaceAccess::Address(addr) => match base_ty.kind {
-                TyKind::Slice(_) => {
-                    let load_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: load_id,
-                        kind: lir::LirInstructionKind::Load {
-                            address: addr.ptr.clone(),
-                            alignment: Some(addr.alignment),
-                            volatile: false,
-                        },
-                        result: Some(lir::LirRegister {
-                            id: load_id,
-                            ty: addr.lir_ty.clone(),
-                        }),
-                        debug_info: None,
-                    });
-                    let extract_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: extract_id,
-                        kind: lir::LirInstructionKind::ExtractValue {
-                            aggregate: lir::LirValue::register(load_id, addr.lir_ty.clone()),
-                            indices: vec![0],
-                        },
-                        result: Some(lir::LirRegister {
-                            id: extract_id,
-                            ty: slice_ptr_ty.clone(),
-                        }),
-                        debug_info: None,
-                    });
-                    lir::LirValue::register(extract_id, slice_ptr_ty.clone())
-                }
-                _ => addr.ptr,
-            },
-            PlaceAccess::Value { value, lir_ty, .. } => match base_ty.kind {
-                TyKind::Slice(_) => {
-                    let extract_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: extract_id,
-                        kind: lir::LirInstructionKind::ExtractValue {
-                            aggregate: value,
-                            indices: vec![0],
-                        },
-                        result: Some(lir::LirRegister {
-                            id: extract_id,
-                            ty: slice_ptr_ty.clone(),
-                        }),
-                        debug_info: None,
-                    });
-                    lir::LirValue::register(extract_id, slice_ptr_ty.clone())
-                }
-                _ => {
-                    let alignment = self.alignment_for_lir_type(&lir_ty).max(1);
-                    let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
-                    let size_value = lir::LirValue::constant(
-                        self.integer_constant(&lir::LirType::I32, 1)
-                            .expect("one must fit i32"),
-                    );
-                    let alloca_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: alloca_id,
-                        kind: lir::LirInstructionKind::Alloca {
-                            size: size_value,
-                            alignment,
-                        },
-                        result: Some(lir::LirRegister {
-                            id: alloca_id,
-                            ty: pointer_type.clone(),
-                        }),
-                        debug_info: None,
-                    });
-                    let ptr_value = lir::LirValue::register(alloca_id, pointer_type);
-
-                    let store_id = self.next_id();
-                    self.queued_instructions.push(lir::LirInstruction {
-                        id: store_id,
-                        kind: lir::LirInstructionKind::Store {
-                            value,
-                            address: ptr_value.clone(),
-                            alignment: Some(alignment),
-                            volatile: false,
-                        },
-                        result: None,
-                        debug_info: None,
-                    });
-
-                    ptr_value
-                }
-            },
-        };
-
-        let element_size = self.size_of_lir_type(&element_lir_ty);
-        let offset_value = if element_size == 1 {
-            index_value
-        } else {
-            let scale = lir::LirValue::constant(
-                self.integer_constant(&lir::LirType::I64, element_size as i64)
-                    .expect("element size must fit i64"),
-            );
-            let mul_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: mul_id,
-                kind: lir::LirInstructionKind::Mul(index_value, scale),
-                result: Some(lir::LirRegister {
-                    id: mul_id,
-                    ty: lir::LirType::I64,
-                }),
-                debug_info: None,
-            });
-            lir::LirValue::register(mul_id, lir::LirType::I64)
-        };
-
-        let i8_ptr_ty = lir::LirType::Ptr(Box::new(lir::LirType::I8));
-        let base_i8_ptr_id = self.next_id();
-        self.queued_instructions.push(lir::LirInstruction {
-            id: base_i8_ptr_id,
-            kind: lir::LirInstructionKind::Bitcast(base_ptr.clone(), i8_ptr_ty.clone()),
-            result: Some(lir::LirRegister {
-                id: base_i8_ptr_id,
-                ty: i8_ptr_ty.clone(),
-            }),
-            debug_info: None,
-        });
-        let base_i8_ptr = lir::LirValue::register(base_i8_ptr_id, i8_ptr_ty.clone());
-
-        let gep_id = self.next_id();
-        self.queued_instructions.push(lir::LirInstruction {
-            id: gep_id,
-            kind: lir::LirInstructionKind::GetElementPtr {
-                ptr: base_i8_ptr,
-                indices: vec![offset_value],
-                inbounds: true,
-            },
-            result: Some(lir::LirRegister {
-                id: gep_id,
-                ty: i8_ptr_ty.clone(),
-            }),
-            debug_info: None,
-        });
-
-        let target_ptr_ty = lir::LirType::Ptr(Box::new(element_lir_ty.clone()));
-        let cast_id = self.next_id();
-        self.queued_instructions.push(lir::LirInstruction {
-            id: cast_id,
-            kind: lir::LirInstructionKind::Bitcast(
-                lir::LirValue::register(gep_id, i8_ptr_ty.clone()),
-                target_ptr_ty.clone(),
-            ),
-            result: Some(lir::LirRegister {
-                id: cast_id,
-                ty: target_ptr_ty.clone(),
-            }),
-            debug_info: None,
-        });
-
-        Ok(PlaceAccess::Address(PlaceAddress {
-            ptr: lir::LirValue::register(cast_id, target_ptr_ty),
-            ty: element_ty.clone(),
-            lir_ty: element_lir_ty,
-            alignment: element_alignment,
-        }))
-    }
-
-    fn slice_lir_type(&self, elem_lir: &lir::LirType) -> lir::LirType {
+    pub(super) fn slice_lir_type(&self, elem_lir: &lir::LirType) -> lir::LirType {
         lir::LirType::Struct {
             fields: vec![
                 lir::LirType::Ptr(Box::new(elem_lir.clone())),
@@ -4467,7 +2571,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn container_element_lir_type(&self, kind: &mir::ContainerKind) -> lir::LirType {
+    pub(super) fn container_element_lir_type(&self, kind: &mir::ContainerKind) -> lir::LirType {
         match kind {
             mir::ContainerKind::List { elem_ty, .. } => self.lir_type_from_ty(elem_ty),
             mir::ContainerKind::Map {
@@ -4484,14 +2588,14 @@ impl MirToLirLowerer {
         }
     }
 
-    fn container_len(&self, kind: &mir::ContainerKind) -> u64 {
+    pub(super) fn container_len(&self, kind: &mir::ContainerKind) -> u64 {
         match kind {
             mir::ContainerKind::List { len, .. } => *len,
             mir::ContainerKind::Map { len, .. } => *len,
         }
     }
 
-    fn ensure_i64_value(
+    pub(super) fn ensure_i64_value(
         &mut self,
         value: lir::LirValue,
         instructions: &mut Vec<lir::LirInstruction>,
@@ -4513,7 +2617,7 @@ impl MirToLirLowerer {
         lir::LirValue::register(cast_id, lir::LirType::I64)
     }
 
-    fn element_ptr_at(
+    pub(super) fn element_ptr_at(
         &mut self,
         base_ptr: lir::LirValue,
         element_ty: &lir::LirType,
@@ -4587,7 +2691,7 @@ impl MirToLirLowerer {
         lir::LirValue::register(cast_id, elem_ptr_ty)
     }
 
-    fn build_slice_value(
+    pub(super) fn build_slice_value(
         &mut self,
         ptr: lir::LirValue,
         len: u64,
@@ -4633,7 +2737,7 @@ impl MirToLirLowerer {
         Ok(lir::LirValue::register(len_insert, slice_ty))
     }
 
-    fn build_slice_value_with_len_value(
+    pub(super) fn build_slice_value_with_len_value(
         &mut self,
         ptr: lir::LirValue,
         len: lir::LirValue,
@@ -4672,7 +2776,7 @@ impl MirToLirLowerer {
         Ok(lir::LirValue::register(len_insert, slice_ty))
     }
 
-    fn slice_element_type(expected: &lir::LirType) -> Option<lir::LirType> {
+    pub(super) fn slice_element_type(expected: &lir::LirType) -> Option<lir::LirType> {
         let lir::LirType::Struct { fields, name, .. } = expected else {
             return None;
         };
@@ -4688,7 +2792,7 @@ impl MirToLirLowerer {
         Some((**elem).clone())
     }
 
-    fn extract_slice_field(
+    pub(super) fn extract_slice_field(
         &mut self,
         value: lir::LirValue,
         field_index: u32,
@@ -4711,15 +2815,15 @@ impl MirToLirLowerer {
         lir::LirValue::register(extract_id, field_ty)
     }
 
-    fn size_of_lir_type(&self, ty: &lir::LirType) -> u64 {
+    pub(super) fn size_of_lir_type(&self, ty: &lir::LirType) -> u64 {
         self.data_layout.size_of(ty).unwrap_or(0)
     }
 
-    fn alignment_for_lir_type(&self, ty: &lir::LirType) -> u32 {
+    pub(super) fn alignment_for_lir_type(&self, ty: &lir::LirType) -> u32 {
         self.data_layout.align_of(ty).unwrap_or(1).max(1)
     }
 
-    fn emit_load_from_address(
+    pub(super) fn emit_load_from_address(
         &mut self,
         addr: PlaceAddress,
         block: &mut lir::LirBasicBlock,
@@ -4744,7 +2848,7 @@ impl MirToLirLowerer {
         lir::LirValue::register(load_id, addr.lir_ty)
     }
 
-    fn materialize_pointer_from_value(
+    pub(super) fn materialize_pointer_from_value(
         &mut self,
         value: lir::LirValue,
         value_ty: lir::LirType,
@@ -4787,7 +2891,7 @@ impl MirToLirLowerer {
         Ok(ptr_value)
     }
 
-    fn adjust_call_argument(
+    pub(super) fn adjust_call_argument(
         &mut self,
         value: lir::LirValue,
         source_ty: Option<&Ty>,
@@ -4831,7 +2935,7 @@ impl MirToLirLowerer {
         Ok(self.promote_vararg_argument(value, source_ty, source_lir_ty, block))
     }
 
-    fn build_slice_from_array_ptr(
+    pub(super) fn build_slice_from_array_ptr(
         &mut self,
         array_ptr: lir::LirValue,
         elem_lir_ty: lir::LirType,
@@ -4901,7 +3005,7 @@ impl MirToLirLowerer {
         Ok(lir::LirValue::register(insert_len_id, slice_ty))
     }
 
-    fn build_slice_from_array_value(
+    pub(super) fn build_slice_from_array_value(
         &mut self,
         value: lir::LirValue,
         elem_lir_ty: lir::LirType,
@@ -4913,7 +3017,7 @@ impl MirToLirLowerer {
         self.build_slice_from_array_ptr(array_ptr, elem_lir_ty, len, block)
     }
 
-    fn promote_vararg_argument(
+    pub(super) fn promote_vararg_argument(
         &mut self,
         value: lir::LirValue,
         source_ty: Option<&Ty>,
@@ -4936,7 +3040,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn cast_value_to_type(
+    pub(super) fn cast_value_to_type(
         &mut self,
         value: lir::LirValue,
         from_ty: lir::LirType,
@@ -5066,7 +3170,7 @@ impl MirToLirLowerer {
         Ok(lir::LirValue::register(id, target_ty))
     }
 
-    fn cast_struct_value_to_struct_type(
+    pub(super) fn cast_struct_value_to_struct_type(
         &mut self,
         value: lir::LirValue,
         from_fields: &[lir::LirType],
@@ -5146,7 +3250,7 @@ impl MirToLirLowerer {
         Ok(current)
     }
 
-    fn extend_integer_value(
+    pub(super) fn extend_integer_value(
         &mut self,
         value: lir::LirValue,
         from_ty: lir::LirType,
@@ -5175,7 +3279,7 @@ impl MirToLirLowerer {
         lir::LirValue::register(id, target_ty)
     }
 
-    fn extend_float_value(
+    pub(super) fn extend_float_value(
         &mut self,
         value: lir::LirValue,
         target_ty: lir::LirType,
@@ -5194,17 +3298,18 @@ impl MirToLirLowerer {
         lir::LirValue::register(id, target_ty)
     }
 
-    fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
+    pub(super) fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
         std::mem::take(&mut self.queued_instructions)
     }
 
-    fn next_id(&mut self) -> lir::LirId {
+    pub(super) fn next_id(&mut self) -> lir::LirId {
         let id = self.next_lir_id;
         self.next_lir_id += 1;
         id
     }
 
-    fn handle_aggregate(
+    /* moved to aggregates.rs
+    pub(super) fn handle_aggregate(
         &mut self,
         place: &mir::Place,
         kind: &mir::AggregateKind,
@@ -5420,7 +3525,8 @@ impl MirToLirLowerer {
         Ok((instructions, None))
     }
 
-    fn expected_aggregate_element_types(
+    */
+    pub(super) fn expected_aggregate_element_types(
         &self,
         place_ty: Option<&Ty>,
         aggregate_ty: Option<&lir::LirType>,
@@ -5461,7 +3567,7 @@ impl MirToLirLowerer {
             .unwrap_or_default()
     }
 
-    fn adjust_constants_for_aggregate(
+    pub(super) fn adjust_constants_for_aggregate(
         &self,
         constants: Vec<lir::LirConstant>,
         expected_field_tys: &[lir::LirType],
@@ -5479,7 +3585,7 @@ impl MirToLirLowerer {
             .collect::<Result<Vec<_>>>()
     }
 
-    fn coerce_aggregate_value_with_source(
+    pub(super) fn coerce_aggregate_value_with_source(
         &mut self,
         value: lir::LirValue,
         source_ty: Option<&lir::LirType>,
@@ -5505,7 +3611,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn cast_runtime_value_to_lir_type_with_source(
+    pub(super) fn cast_runtime_value_to_lir_type_with_source(
         &mut self,
         value: lir::LirValue,
         source_ty: Option<&lir::LirType>,
@@ -5620,7 +3726,7 @@ impl MirToLirLowerer {
         )))
     }
 
-    fn require_constant_type(
+    pub(super) fn require_constant_type(
         &self,
         constant: lir::LirConstant,
         target_ty: &lir::LirType,
@@ -5674,7 +3780,7 @@ impl MirToLirLowerer {
         Ok(constant)
     }
 
-    fn coerce_assignment_value(
+    pub(super) fn coerce_assignment_value(
         &mut self,
         value: lir::LirValue,
         expected_ty: &lir::LirType,
@@ -5693,7 +3799,7 @@ impl MirToLirLowerer {
         )
     }
 
-    fn lower_call_argument(
+    pub(super) fn lower_call_argument(
         &mut self,
         operand: &mir::Operand,
         expected_ty: Option<&lir::LirType>,
@@ -5777,7 +3883,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn build_lir_locals(&self, mir_body: &mir::Body) -> Vec<lir::LirLocal> {
+    pub(super) fn build_lir_locals(&self, mir_body: &mir::Body) -> Vec<lir::LirLocal> {
         let arg_count = mir_body.arg_count;
         mir_body
             .locals
@@ -5800,7 +3906,7 @@ impl MirToLirLowerer {
             .collect()
     }
 
-    fn seed_argument_registers(&mut self, mir_body: &mir::Body) {
+    pub(super) fn seed_argument_registers(&mut self, mir_body: &mir::Body) {
         for arg_index in 0..mir_body.arg_count {
             let local_id = (arg_index as mir::LocalId) + 1;
             let local_ty = self.lir_type_from_ty(&mir_body.locals[local_id as usize].ty);
@@ -5810,7 +3916,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn populate_block_edges(&self, blocks: &mut Vec<lir::LirBasicBlock>) {
+    pub(super) fn populate_block_edges(&self, blocks: &mut Vec<lir::LirBasicBlock>) {
         let mut predecessors: HashMap<lir::BasicBlockId, Vec<lir::BasicBlockId>> = HashMap::new();
 
         for block in blocks.iter_mut() {
@@ -5828,7 +3934,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn successors_from_terminator(terminator: &lir::LirTerminator) -> Vec<lir::BasicBlockId> {
+    pub(super) fn successors_from_terminator(terminator: &lir::LirTerminator) -> Vec<lir::BasicBlockId> {
         match terminator {
             lir::LirTerminator::Br(target) => vec![*target],
             lir::LirTerminator::CondBr {
@@ -5845,7 +3951,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn transform_call_terminator(
+    pub(super) fn transform_call_terminator(
         &mut self,
         func: &mir::Operand,
         args: &[mir::Operand],
@@ -6030,7 +4136,7 @@ impl MirToLirLowerer {
         ))
     }
 
-    fn normalize_callee_value(
+    pub(super) fn normalize_callee_value(
         &mut self,
         func_operand: &mir::Operand,
         value: lir::LirValue,
@@ -6065,7 +4171,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn resolve_function_symbol(&self, name: &str) -> String {
+    pub(super) fn resolve_function_symbol(&self, name: &str) -> String {
         let logical = self
             .function_symbol_map
             .get(name)
@@ -6083,14 +4189,14 @@ impl MirToLirLowerer {
         logical
     }
 
-    fn operand_place(operand: &mir::Operand) -> Option<&mir::Place> {
+    pub(super) fn operand_place(operand: &mir::Operand) -> Option<&mir::Place> {
         match operand {
             mir::Operand::Move(place) | mir::Operand::Copy(place) => Some(place),
             _ => None,
         }
     }
 
-    fn prepare_return_value(
+    pub(super) fn prepare_return_value(
         &mut self,
         block: &mut lir::LirBasicBlock,
     ) -> Result<Option<lir::LirValue>> {
@@ -6160,7 +4266,7 @@ impl MirToLirLowerer {
         ))
     }
 
-    fn compute_block_order(&self, mir_body: &mir::Body) -> Vec<usize> {
+    pub(super) fn compute_block_order(&self, mir_body: &mir::Body) -> Vec<usize> {
         let mut order = Vec::new();
         let block_count = mir_body.basic_blocks.len();
         if block_count == 0 {
@@ -6194,7 +4300,7 @@ impl MirToLirLowerer {
         order
     }
 
-    fn mir_successors(bb: &mir::BasicBlockData) -> Vec<mir::BasicBlockId> {
+    pub(super) fn mir_successors(bb: &mir::BasicBlockData) -> Vec<mir::BasicBlockId> {
         let mut successors = Vec::new();
         if let Some(terminator) = &bb.terminator {
             match &terminator.kind {
@@ -6273,7 +4379,7 @@ impl MirToLirLowerer {
         successors
     }
 
-    fn constant_from_aggregate(
+    pub(super) fn constant_from_aggregate(
         &self,
         kind: &mir::AggregateKind,
         constants: Vec<lir::LirConstant>,
@@ -6316,7 +4422,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn lookup_place_type(&self, place: &mir::Place) -> Option<Ty> {
+    pub(super) fn lookup_place_type(&self, place: &mir::Place) -> Option<Ty> {
         let mut ty = self.local_types.get(place.local as usize)?.clone();
         for elem in &place.projection {
             match elem {
@@ -6354,359 +4460,19 @@ impl MirToLirLowerer {
         Some(ty)
     }
 
-    fn is_zero_sized(ty: &Ty) -> bool {
-        matches!(ty.kind, TyKind::Tuple(ref elements) if elements.is_empty())
-            || matches!(ty.kind, TyKind::Never)
+    pub(super) fn is_zero_sized(ty: &Ty) -> bool {
+        super::type_helpers::is_zero_sized(ty)
     }
 
-    /// Replaces every `TyKind::Param(ParamTy{index, ..})` occurrence in
-    /// `ty` with `substs[index]` — the same "instantiate a generic
-    /// declaration's field types with a specific instantiation's concrete
-    /// arguments" step rustc's own `layout_of` always performs (via
-    /// `tcx.type_of(field.did).instantiate(tcx, args)`) before ever
-    /// computing a layout, rather than caching one instantiation's already-
-    /// substituted fields and reusing them (wrongly) for a different one.
-    /// `ParamTy::index` is positional, so no separate generic-parameter
-    /// name list is needed — see `lir_type_from_ty`'s `TyKind::Adt` arm,
-    /// the sole caller.
-    fn instantiate_ty(ty: &Ty, substs: &[mir::ty::GenericArg]) -> Ty {
-        let kind = match &ty.kind {
-            TyKind::Param(param) => {
-                return match substs.get(param.index as usize) {
-                    Some(mir::ty::GenericArg::Type(concrete)) => concrete.clone(),
-                    _ => ty.clone(),
-                };
-            }
-            TyKind::RawPtr(TypeAndMut { ty: inner, mutbl }) => TyKind::RawPtr(TypeAndMut {
-                ty: Box::new(Self::instantiate_ty(inner, substs)),
-                mutbl: *mutbl,
-            }),
-            TyKind::Ref(region, inner, mutbl) => TyKind::Ref(
-                region.clone(),
-                Box::new(Self::instantiate_ty(inner, substs)),
-                *mutbl,
-            ),
-            TyKind::Slice(inner) => TyKind::Slice(Box::new(Self::instantiate_ty(inner, substs))),
-            TyKind::Array(inner, len) => {
-                TyKind::Array(Box::new(Self::instantiate_ty(inner, substs)), len.clone())
-            }
-            TyKind::Tuple(elements) => TyKind::Tuple(
-                elements
-                    .iter()
-                    .map(|elem| Box::new(Self::instantiate_ty(elem, substs)))
-                    .collect(),
-            ),
-            TyKind::Adt(adt, inner_substs) => {
-                let instantiated: Vec<mir::ty::GenericArg> = inner_substs
-                    .iter()
-                    .map(|arg| match arg {
-                        mir::ty::GenericArg::Type(inner) => {
-                            mir::ty::GenericArg::Type(Self::instantiate_ty(inner, substs))
-                        }
-                        other => other.clone(),
-                    })
-                    .collect();
-                TyKind::Adt(adt.clone(), instantiated)
-            }
-            // Every other kind either can't nest a struct field's own
-            // `Param` (primitives, `Never`) or isn't a shape real
-            // FerroPhase struct fields are declared with (function
-            // pointers, trait objects, closures, ...) — pass through
-            // unchanged rather than guessing at a substitution rule with
-            // nothing to verify it against.
-            other => other.clone(),
-        };
-        Ty { kind }
+    pub(super) fn instantiate_ty(ty: &Ty, substs: &[mir::ty::GenericArg]) -> Ty {
+        super::type_helpers::instantiate_ty(ty, substs)
     }
 
-    fn lir_type_from_ty(&self, ty: &Ty) -> lir::LirType {
-        match &ty.kind {
-            TyKind::Bool => lir::LirType::I1,
-            TyKind::Char => lir::LirType::I32,
-            TyKind::Int(int_ty) => match int_ty {
-                IntTy::I8 => lir::LirType::I8,
-                IntTy::I16 => lir::LirType::I16,
-                IntTy::I32 => lir::LirType::I32,
-                IntTy::I64 => lir::LirType::I64,
-                IntTy::I128 => lir::LirType::I128,
-                IntTy::Isize => lir::LirType::I64,
-            },
-            TyKind::Uint(uint_ty) => match uint_ty {
-                UintTy::U8 => lir::LirType::I8,
-                UintTy::U16 => lir::LirType::I16,
-                UintTy::U32 => lir::LirType::I32,
-                UintTy::U64 => lir::LirType::I64,
-                UintTy::U128 => lir::LirType::I128,
-                UintTy::Usize => lir::LirType::I64,
-            },
-            TyKind::Float(float_ty) => match float_ty {
-                // `LirType`/downstream backends (LLVM, JVM, bytecode) only
-                // model f32/f64 storage; f16/f128 lower lossily to their
-                // nearest supported width rather than failing codegen.
-                // Full native f16/f128 codegen is out of scope here — see
-                // HIR-level `hir::ty::FloatTy`, which keeps the precise
-                // width through typechecking.
-                FloatTy::F16 => lir::LirType::F32,
-                FloatTy::F32 => lir::LirType::F32,
-                FloatTy::F64 => lir::LirType::F64,
-                FloatTy::F128 => lir::LirType::F64,
-            },
-            TyKind::Tuple(elements) if elements.is_empty() => lir::LirType::Void,
-            TyKind::Tuple(elements) => lir::LirType::Struct {
-                fields: elements
-                    .iter()
-                    .map(|elem| self.lir_type_from_ty(elem))
-                    .collect(),
-                packed: false,
-                name: None,
-            },
-            TyKind::Array(element_ty, len) => lir::LirType::Array(
-                Box::new(self.lir_type_from_ty(element_ty)),
-                self.array_length_from_const(len),
-            ),
-            TyKind::Slice(element_ty) => {
-                let elem_lir = self.lir_type_from_ty(element_ty);
-                self.slice_lir_type(&elem_lir)
-            }
-            TyKind::Ref(_, inner, _) => {
-                if let Some(elem_ty) = Self::slice_ref_element_ty(inner) {
-                    let elem_lir = self.lir_type_from_ty(elem_ty);
-                    self.slice_lir_type(&elem_lir)
-                } else if let TyKind::Adt(adt, substs) = &inner.kind {
-                    // A reference to a struct that's really just an opaque/
-                    // extern-style pointer wrapper — either genuinely empty
-                    // (zero fields), or a single-field newtype whose one
-                    // field is itself a pointer (e.g. `&std::ffi::CStr`,
-                    // `pub struct CStr { ptr: *const char }`) — is not a
-                    // real, independently-sized value to point *at*, unlike
-                    // Rust's own `&CStr` (an unsized type: a thin pointer
-                    // directly at the C string's bytes, not a pointer to a
-                    // struct that itself holds a pointer). Lowering it the
-                    // normal way gives `Ptr(Struct{fields:[Ptr(I8)]})` (or
-                    // `Ptr(Struct{fields:[]})` for the empty case), a
-                    // pointer to a wrapper — but the actual value flowing
-                    // through this reference (e.g. a `c"..."` literal's own
-                    // constant, materialized as a bare `Ptr(I8)`) is the
-                    // pointer itself, not a pointer to a boxed pointer.
-                    // Treat both shapes as a bare pointer, matching how
-                    // this backend already represents other raw/opaque
-                    // pointers.
-                    let is_opaque_wrapper = self
-                        .struct_layouts
-                        .borrow()
-                        .get(&(adt.did.clone(), Self::adt_substs_types(substs)))
-                        .map(|fields| {
-                            fields.is_empty()
-                                || (fields.len() == 1
-                                    && matches!(fields[0], Some(lir::LirType::Ptr(_))))
-                        })
-                        .unwrap_or(false);
-                    if is_opaque_wrapper {
-                        lir::LirType::Ptr(Box::new(lir::LirType::I8))
-                    } else {
-                        lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
-                    }
-                } else {
-                    lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
-                }
-            }
-            TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
-                lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
-            }
-            // An opaque enum-payload-slot placeholder (`HirToMirLowerer::
-            // opaque_ty`, minted for a slot where variants disagree on the
-            // payload type) has a synthetic `DefId` matching nothing in
-            // `struct_layouts`/`full_layouts`/`adt_defs` — it was never a
-            // real struct/enum, just a byte count for
-            // whichever variant's payload is actually stored there at
-            // runtime. Recognized by its single synthetic variant's ident,
-            // the same name `opaque_payload_sizes` is keyed by.
-            TyKind::Adt(adt, _)
-                if adt
-                    .variants
-                    .first()
-                    .is_some_and(|variant| self.lookup_opaque_payload_size(variant.ident.as_str()).is_some()) =>
-            {
-                let size = self
-                    .lookup_opaque_payload_size(adt.variants[0].ident.as_str())
-                    .expect("checked by this arm's own guard");
-                lir::LirType::Array(Box::new(lir::LirType::I8), size)
-            }
-            TyKind::Adt(adt, substs)
-                if self
-                    .struct_layouts
-                    .borrow()
-                    .contains_key(&(adt.did.clone(), Self::adt_substs_types(substs))) =>
-            {
-                let key = (adt.did.clone(), Self::adt_substs_types(substs));
-                let fields = self.struct_layouts.borrow().get(&key).unwrap().clone();
-                lir::LirType::Struct {
-                    fields: fields
-                        .iter()
-                        .map(|field| {
-                            field.clone().unwrap_or_else(|| {
-                                panic!(
-                                    "MIR-to-LIR ICE: missing layout for field of ADT {}",
-                                    adt.did
-                                )
-                            })
-                        })
-                        .collect(),
-                    packed: false,
-                    name: None,
-                }
-            }
-            TyKind::Adt(adt, substs) => {
-                let key = (adt.did.clone(), Self::adt_substs_types(substs));
-                // `full_layouts` is an exact-instantiation cache (keyed by
-                // `(DefId, substs)`, like `struct_layouts` above) — when
-                // this exact instantiation has already been computed
-                // elsewhere, reuse it directly.
-                if let Some(field_tys) = self.lookup_full_layout(&key) {
-                    // Mirror the cache-miss guard below: a cached entry can
-                    // only be poisoned this way if it was produced by a
-                    // no-context fallback that deliberately manufactures
-                    // placeholders (e.g. a layout-for-display helper with
-                    // no real instantiation to substitute) rather than a
-                    // genuine instantiation. Reusing it here would
-                    // otherwise recurse into `lir_type_from_ty` on the
-                    // unresolved field and panic several frames deeper
-                    // with only the bare field `Ty` to go on — fail right
-                    // here instead, attributing it to the exact ADT/substs
-                    // this cache entry came from.
-                    if field_tys.iter().any(|ty| {
-                        matches!(
-                            ty.kind,
-                            TyKind::Infer(_) | TyKind::Error(_) | TyKind::Param(_)
-                        )
-                    }) {
-                        panic!(
-                            "MIR-to-LIR ICE: cached layout for {} (substs {:?}) contains an unresolved field type: {:?}",
-                            adt.did, substs, field_tys
-                        );
-                    }
-                    let fields: Vec<Option<lir::LirType>> = field_tys
-                        .iter()
-                        .map(|ty| Some(self.lir_type_from_ty(ty)))
-                        .collect();
-                    let struct_fields: Vec<lir::LirType> =
-                        fields.iter().map(|f| f.clone().unwrap()).collect();
-                    self.struct_layouts.borrow_mut().insert(key, fields);
-                    return lir::LirType::Struct {
-                        fields: struct_fields,
-                        packed: false,
-                        name: None,
-                    };
-                }
-                // Otherwise, compute it — the same way rustc's own
-                // `layout_of` always does (`tcx.type_of(field.did)
-                // .instantiate(tcx, args)`), instead of reusing a
-                // *different* instantiation's already-substituted fields.
-                // `lookup_adt_def` returns the struct's real, registered
-                // declaration (`finalize_adt_definitions` populates
-                // `AdtDef.variants[0].fields[i].ty` with the *generic*,
-                // unsubstituted field types — the same for every
-                // instantiation, unlike `struct_layouts`/`full_layouts`),
-                // so substituting its `Param`s with this call's own
-                // `substs` via `instantiate_ty` gives the correct fields
-                // for *this* instantiation specifically, computed on
-                // demand and cached for reuse. There is deliberately no
-                // further fallback beyond this: a `DefId` `lookup_adt_def`
-                // has never even heard of is a genuine "this type is
-                // unknown" error, not something to guess an answer for.
-                if substs.iter().any(|arg| {
-                    matches!(
-                        arg,
-                        mir::ty::GenericArg::Type(ty) if matches!(ty.kind, TyKind::Infer(_))
-                    )
-                }) {
-                    panic!(
-                        "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
-                        adt.did, ty
-                    );
-                }
-                if let Some(populated) = self.lookup_adt_def(&adt.did) {
-                    if let Some(variant) = populated.variants.first() {
-                        let fields: Vec<Option<lir::LirType>> = variant
-                            .fields
-                            .iter()
-                            .map(|f| Some(self.lir_type_from_ty(&Self::instantiate_ty(&f.ty, substs))))
-                            .collect();
-                        let struct_fields: Vec<lir::LirType> =
-                            fields.iter().map(|f| f.clone().unwrap()).collect();
-                        self.struct_layouts.borrow_mut().insert(key, fields);
-                        return lir::LirType::Struct {
-                            fields: struct_fields,
-                            packed: false,
-                            name: None,
-                        };
-                    }
-                }
-                panic!("MIR-to-LIR ICE: unknown ADT {} — never registered by any compiled package", adt.did)
-            }
-            TyKind::FnDef(def_id, substs) => panic!(
-                "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
-                def_id, substs
-            ),
-            // An immutable handle into the comptime interpreter's own type
-            // pool — not a plain integer, so it can't be a scalar int/float
-            // destination (the generic "runtime value conversion" coercion
-            // path has no rule for boxing one, and shouldn't need one:
-            // every real operation on a `type` value is a dedicated
-            // `ComptimeOp` LIR instruction, never ordinary arithmetic).
-            // `Ptr(Void)` is exactly the shape `fp-interpret`'s own
-            // `Value::Type` storage already expects (its `encode_storage_word`
-            // auto-boxes into the object table whenever the destination is
-            // `Ptr(_)` or an aggregate), so this is what makes a `type`-typed
-            // struct field/local/return value round-trip correctly.
-            TyKind::Type => lir::LirType::Ptr(Box::new(lir::LirType::Void)),
-            // `any` — a fixed, concrete, fully type-erased value. Same
-            // storage strategy as `TyKind::Type`: always boxed/pointer-sized,
-            // never a scalar destination — see `TyKind::Any`'s own doc
-            // comment for why this must be handled here rather than falling
-            // into the `Infer`/`Param`/... "unresolved" panic arm below.
-            TyKind::Any => lir::LirType::Ptr(Box::new(lir::LirType::Void)),
-            TyKind::Dynamic(_, _)
-            | TyKind::Closure(_, _)
-            | TyKind::Generator(_, _, _)
-            | TyKind::GeneratorWitness(_)
-            | TyKind::Projection(_)
-            | TyKind::Opaque(_, _)
-            | TyKind::Param(_)
-            | TyKind::Bound(_, _)
-            | TyKind::Placeholder(_)
-            | TyKind::Infer(_)
-            | TyKind::Error(_) => {
-                panic!("MIR-to-LIR ICE: unsupported unresolved type in typed MIR: {ty:?}")
-            }
-            TyKind::Never => lir::LirType::Void,
-            TyKind::FnPtr(poly_fn_sig) => {
-                let fn_sig = &poly_fn_sig.binder.value;
-                lir::LirType::Ptr(Box::new(lir::LirType::Function {
-                    return_type: Box::new(self.lir_type_from_ty(&fn_sig.output)),
-                    param_types: fn_sig
-                        .inputs
-                        .iter()
-                        .map(|ty| self.lir_type_from_ty(ty))
-                        .collect(),
-                    is_variadic: fn_sig.c_variadic,
-                }))
-            }
-        }
+    pub(super) fn slice_ref_element_ty(ty: &Ty) -> Option<&Ty> {
+        super::type_helpers::slice_ref_element_ty(ty)
     }
 
-    fn slice_ref_element_ty(ty: &Ty) -> Option<&Ty> {
-        match &ty.kind {
-            TyKind::Slice(elem_ty) => Some(elem_ty),
-            TyKind::Ref(_, inner, _) => match &inner.kind {
-                TyKind::Slice(elem_ty) => Some(elem_ty),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn lower_binary_op(
+    pub(super) fn lower_binary_op(
         &self,
         bin_op: mir::BinOp,
         lhs: lir::LirValue,
@@ -6735,7 +4501,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn lower_unary_op(
+    pub(super) fn lower_unary_op(
         &self,
         op: mir::UnOp,
         operand: lir::LirValue,
@@ -6752,7 +4518,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn lower_cast(
+    pub(super) fn lower_cast(
         &self,
         cast_kind: mir::CastKind,
         source: lir::LirValue,
@@ -6819,7 +4585,7 @@ impl MirToLirLowerer {
         }
     }
 
-    fn switch_constant_for_value(
+    pub(super) fn switch_constant_for_value(
         &self,
         switch_ty: &Ty,
         value: u128,
@@ -6839,102 +4605,5 @@ impl MirToLirLowerer {
             }
         };
         Ok(self.require_constant_type(constant, lir_ty)?)
-    }
-
-    fn array_length_from_const(&self, len: &ConstKind) -> u64 {
-        match len {
-            ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => int.data as u64,
-            other => {
-                tracing::warn!(
-                    "MIR→LIR: array length {:?} not evaluated; defaulting to 0",
-                    other
-                );
-                0
-            }
-        }
-    }
-
-    fn zero_value_for_lir_type(&self, ty: &lir::LirType) -> Option<lir::LirValue> {
-        match ty {
-            lir::LirType::I1
-            | lir::LirType::I8
-            | lir::LirType::I16
-            | lir::LirType::I32
-            | lir::LirType::I64
-            | lir::LirType::I128 => self
-                .integer_constant(ty, 0)
-                .ok()
-                .map(lir::LirValue::constant),
-            lir::LirType::F32 | lir::LirType::F64 => self
-                .float_constant(ty, 0.0)
-                .ok()
-                .map(lir::LirValue::constant),
-            lir::LirType::Ptr(_) => {
-                Some(lir::LirValue::constant(lir::LirConstant::null(ty.clone())))
-            }
-            _ => None,
-        }
-    }
-
-    fn zero_constant_for_lir_type(&self, ty: &lir::LirType) -> Option<lir::LirConstant> {
-        match ty {
-            lir::LirType::I1
-            | lir::LirType::I8
-            | lir::LirType::I16
-            | lir::LirType::I32
-            | lir::LirType::I64
-            | lir::LirType::I128 => self.integer_constant(ty, 0).ok(),
-            lir::LirType::F32 | lir::LirType::F64 => self.float_constant(ty, 0.0).ok(),
-            lir::LirType::Ptr(_) => Some(lir::LirConstant::null(ty.clone())),
-            _ => None,
-        }
-    }
-
-    fn type_of_operand(&self, operand: &mir::Operand) -> Option<lir::LirType> {
-        match operand {
-            mir::Operand::Move(place) | mir::Operand::Copy(place) => self
-                .lookup_place_type(place)
-                .map(|ty| self.lir_type_from_ty(&ty)),
-            mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
-                mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),
-                mir::ConstantKind::Float(_) => Some(lir::LirType::F64),
-                mir::ConstantKind::Fn(_) | mir::ConstantKind::Global(_) => {
-                    Some(self.lir_type_from_ty(&constant.ty))
-                }
-                mir::ConstantKind::Null => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
-                _ => None,
-            },
-        }
-    }
-
-    fn is_integral_type(&self, ty: &lir::LirType) -> bool {
-        matches!(
-            ty,
-            lir::LirType::I1
-                | lir::LirType::I8
-                | lir::LirType::I16
-                | lir::LirType::I32
-                | lir::LirType::I64
-                | lir::LirType::I128
-        )
-    }
-
-    fn is_float_type(&self, ty: &lir::LirType) -> bool {
-        matches!(ty, lir::LirType::F32 | lir::LirType::F64)
-    }
-
-    fn type_bit_width(&self, ty: &lir::LirType) -> Option<u32> {
-        match ty {
-            lir::LirType::I1 => Some(1),
-            lir::LirType::I8 => Some(8),
-            lir::LirType::I16 => Some(16),
-            lir::LirType::I32 => Some(32),
-            lir::LirType::I64 => Some(64),
-            lir::LirType::I128 => Some(128),
-            lir::LirType::F32 => Some(32),
-            lir::LirType::F64 => Some(64),
-            _ => None,
-        }
     }
 }

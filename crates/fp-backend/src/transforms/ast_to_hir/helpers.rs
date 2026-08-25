@@ -415,7 +415,9 @@ impl AstToHirLowerer {
         // trailing segment against the current `self_types` scope; see
         // its own doc comment for why that handler, not this one, turned
         // out to be where the real bug was.
-        if segments.len() > 1 && path_prefix == PathPrefix::Plain && segments[0].name.as_str() == "Self"
+        if segments.len() > 1
+            && path_prefix == PathPrefix::Plain
+            && segments[0].name.as_str() == "Self"
         {
             return Ok(hir::Path {
                 segments,
@@ -510,13 +512,17 @@ impl AstToHirLowerer {
                         );
                         let absolute = QualifiedPath::new(absolute_segments);
                         if let Some(res) = self.lookup_global_res(&absolute, scope) {
-                            return Ok(hir::Path { segments, res: Some(res) });
+                            return Ok(hir::Path {
+                                segments,
+                                res: Some(res),
+                            });
                         }
                     }
                 }
             }
             if let Some(first) = segments.first() {
-                let debug = std::env::var("FP_DEBUG_ASSOC").is_ok() && first.name.as_str() == "String";
+                let debug =
+                    std::env::var("FP_DEBUG_ASSOC").is_ok() && first.name.as_str() == "String";
                 if debug {
                     eprintln!(
                         "DEBUG assoc-path first={:?} resolve_type_symbol={:?}",
@@ -558,8 +564,7 @@ impl AstToHirLowerer {
                                 for (_module_path, hir_program, _exports) in
                                     hir_program.hir_definitions()
                                 {
-                                    if let Some(def_path) =
-                                        hir_program.def_paths.get(&type_def_id)
+                                    if let Some(def_path) = hir_program.def_paths.get(&type_def_id)
                                     {
                                         type_paths.push(def_path.join("::"));
                                     }
@@ -568,7 +573,9 @@ impl AstToHirLowerer {
                         }
                         type_paths.sort();
                         if debug {
-                            eprintln!("DEBUG assoc-path type_def_id={type_def_id:?} type_paths={type_paths:?}");
+                            eprintln!(
+                                "DEBUG assoc-path type_def_id={type_def_id:?} type_paths={type_paths:?}"
+                            );
                         }
                         for type_path in type_paths {
                             let mut associated_path = Self::parse_path(&type_path)
@@ -626,7 +633,9 @@ impl AstToHirLowerer {
                     }
                     let canonical_path = QualifiedPath::new(canonical.clone());
                     let mut canonical_res = self.lookup_global_res(&canonical_path, scope);
-                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical_path) {
+                    if canonical_res.is_none()
+                        && self.package.module_tree.module_exists(&canonical_path)
+                    {
                         canonical_res = Some(hir::Res::Module(canonical.clone()));
                     }
                     return Ok(hir::Path {
@@ -680,7 +689,8 @@ impl AstToHirLowerer {
                     resolved.clone()
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
-                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical) {
+                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical)
+                    {
                         canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                     }
                     canonical_res
@@ -799,7 +809,8 @@ impl AstToHirLowerer {
         // single-segment name that isn't a type either falls through
         // unresolved exactly as before — this is purely additive.
         if resolved.is_none() && path_prefix == PathPrefix::Plain {
-            if let Some(hir::Res::Def(def_id)) = self.resolve_type_symbol(segments[0].name.as_str()) {
+            if let Some(hir::Res::Def(def_id)) = self.resolve_type_symbol(segments[0].name.as_str())
+            {
                 resolved = Some(hir::Res::Def(def_id));
             } else if is_primitive_type_name(segments[0].name.as_str()) {
                 // A primitive named directly (`u8::MAX`, `u8::from_str_

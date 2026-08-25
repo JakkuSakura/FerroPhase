@@ -1,4 +1,10 @@
 use super::*;
+mod extern_items;
+mod where_clauses;
+use extern_items::*;
+pub(crate) use extern_items::{parse_extern_block_items, parse_prefixed_unsafe_extern_block_items};
+use macro_items::*;
+use where_clauses::*;
 
 pub(crate) fn parse_items_tokens(
     tokens: &[Token],
@@ -613,9 +619,7 @@ fn skip_trait_modifiers(input: &mut &[Token]) {
             Some(token) if token.kind == TokenKind::Keyword(Keyword::Unsafe) => {
                 *input = &input[1..]
             }
-            Some(token) if token.kind == TokenKind::Keyword(Keyword::Const) => {
-                *input = &input[1..]
-            }
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Const) => *input = &input[1..],
             Some(token) if token.kind == TokenKind::Ident && token.lexeme == "auto" => {
                 *input = &input[1..]
             }
@@ -1333,17 +1337,8 @@ fn starts_const_impl(input: &[Token]) -> bool {
 
 /// A `where` clause's own predicate list, parsed for real (rather than
 /// merely skipped — see `skip_where_clause` below, still used at every
-/// call site that has nowhere to put a parsed bound) — real `std` code
-/// overwhelmingly spells a generic parameter's trait bounds this way
-/// (`fn foo<F, R>(...) where F: FnOnce() -> R`) rather than inline
-/// (`fn foo<F: FnOnce() -> R, R>(...)`), so a checker that only reads
-/// inline bounds (`GenericParam::bounds`) almost never actually sees one.
-/// Only the common `Name: Bound1 + Bound2` predicate shape is extracted;
-/// anything else (a lifetime bound, a qualified-path bounded type like
-/// `<T as Trait>::Assoc: Bound`, ...) is skipped exactly like
-/// `skip_where_clause` already treats every predicate, carrying no
-/// meaning this checker models beyond that one shape.
-fn parse_where_clause_predicates(input: &mut &[Token]) -> ModalResult<Vec<(Ident, TypeBounds)>> {
+/* where-clause parsing moved to where_clauses.rs */
+/*
     let mut predicates = Vec::new();
     loop {
         if input.is_empty() || matches!(peek_symbol(*input), Some("{") | Some(";")) {
@@ -1489,6 +1484,7 @@ fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
     }
     Err(ErrMode::Cut(ContextError::new()))
 }
+*/
 
 fn parse_use_item(
     input: &mut &[Token],
@@ -1506,6 +1502,7 @@ fn parse_use_item(
     })))
 }
 
+/* Legacy inline external-item parser moved to extern_items.rs.
 fn parse_extern_crate_item(
     input: &mut &[Token],
     visibility: Visibility,
@@ -1618,7 +1615,10 @@ fn parse_extern_fn_item(
     })))
 }
 
-pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
+pub(super) fn parse_extern_block_items(
+    input: &mut &[Token],
+    file: FileId,
+) -> ModalResult<Vec<Item>> {
     let abi = parse_extern_abi(input)?;
     skip_symbol(input, "{")?;
     let mut items = Vec::new();
@@ -1772,6 +1772,7 @@ fn parse_abi_fn_item(
     })))
 }
 
+*/
 fn parse_enum_item(
     input: &mut &[Token],
     file: FileId,
@@ -1970,74 +1971,6 @@ pub(super) fn starts_macro_2_def(input: &[Token]) -> bool {
 /// separate limitation for whatever already fails to resolve a
 /// `macro_rules!` invocation — this only needs to stop that limitation
 /// from *also* taking down the rest of the file's otherwise-valid parse.
-fn parse_macro_2_def(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
-    skip_ident(input, "macro")?;
-    let name = ident_like(input)?;
-    if peek_symbol(*input) == Some("(") {
-        skip_balanced_delimiters(input, "(", ")")?;
-    }
-    skip_balanced_delimiters(input, "{", "}")?;
-    Ok(Item::from(ItemKind::Macro(ItemMacro {
-        invocation: MacroInvocation::new(
-            Path::from_ident(name.clone()),
-            MacroDelimiter::Brace,
-            String::new(),
-        ),
-        declared_name: Some(name),
-    })))
-}
-
-fn skip_ident(input: &mut &[Token], expected: &str) -> ModalResult<()> {
-    match input.first() {
-        Some(token) if token.kind == TokenKind::Ident && token.lexeme == expected => {
-            *input = &input[1..];
-            Ok(())
-        }
-        _ => Err(ErrMode::Backtrack(ContextError::new())),
-    }
-}
-
-/// Consume a `open ... close` run starting at `input`'s current position,
-/// tracking nesting depth so an inner occurrence of `open`/`close` (e.g.
-/// a nested `{ }` block inside a macro 2.0 body) doesn't close the outer
-/// group early.
-fn skip_balanced_delimiters(input: &mut &[Token], open: &str, close: &str) -> ModalResult<()> {
-    let mut probe = *input;
-    skip_symbol(&mut probe, open)?;
-    let mut depth = 1usize;
-    while depth > 0 {
-        if probe.is_empty() {
-            return Err(ErrMode::Cut(ContextError::new()));
-        }
-        match peek_symbol(probe) {
-            Some(s) if s == open => depth += 1,
-            Some(s) if s == close => depth -= 1,
-            _ => {}
-        }
-        probe = &probe[1..];
-    }
-    *input = probe;
-    Ok(())
-}
-
-fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
-    let path = parse_macro_path(input)?;
-    skip_symbol(input, "!")?;
-    let declared_name = if path.segments.last().map(Ident::as_str) == Some("macro_rules") {
-        Some(ident_like(input)?)
-    } else {
-        None
-    };
-    let (delimiter, group_span, token_trees, text) = parse_macro_group(input)?;
-    let _ = expect_symbol(input, ";");
-    Ok(Item::from(ItemKind::Macro(ItemMacro {
-        invocation: MacroInvocation::new(path, delimiter, text)
-            .with_token_trees(token_trees)
-            .with_span(group_span),
-        declared_name,
-    })))
-}
-
 fn parse_visibility(input: &mut &[Token]) -> ModalResult<Visibility> {
     let mut probe = *input;
     if skip_keyword(&mut probe, Keyword::Pub).is_err() {
@@ -2220,3 +2153,4 @@ pub(super) fn looks_like_item_macro(input: &[Token]) -> bool {
     }
     saw_segment
 }
+mod macro_items;

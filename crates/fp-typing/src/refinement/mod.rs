@@ -46,7 +46,7 @@ pub fn implicit_hypotheses(base: &Ty, binder: &hir::Symbol) -> Vec<hir::Expr> {
         let path_expr = path_expr(binder.as_str());
         let zero = literal_int(0);
         vec![hir::Expr::new(
-            hir::HirId::new(hir::PackageId::new("test"), 0),
+            hir::HirId::new(hir::OwnerId::root(hir::PackageId::new("test")), 0),
             hir::ExprKind::Binary(hir::BinOp::Ge, Box::new(path_expr), Box::new(zero)),
             Span::default(),
         )]
@@ -57,7 +57,7 @@ pub fn implicit_hypotheses(base: &Ty, binder: &hir::Symbol) -> Vec<hir::Expr> {
 
 fn path_expr(name: &str) -> hir::Expr {
     hir::Expr::new(
-        hir::HirId::new(hir::PackageId::new("test"), 0),
+        hir::HirId::new(hir::OwnerId::root(hir::PackageId::new("test")), 0),
         hir::ExprKind::Path(hir::Path {
             segments: vec![hir::PathSegment {
                 name: name.into(),
@@ -71,7 +71,7 @@ fn path_expr(name: &str) -> hir::Expr {
 
 fn literal_int(v: i64) -> hir::Expr {
     hir::Expr::new(
-        hir::HirId::new(hir::PackageId::new("test"), 0),
+        hir::HirId::new(hir::OwnerId::root(hir::PackageId::new("test")), 0),
         hir::ExprKind::Literal(hir::Lit::Integer(v)),
         fp_core::span::Span::default(),
     )
@@ -139,12 +139,12 @@ pub fn discharge(
 /// `omega`'s unit tests.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use fp_core::hir::{BinOp, Expr, ExprKind, HirId, Lit, PackageId, Path, PathSegment};
+    use fp_core::hir::{BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment};
     use fp_core::span::Span;
 
     pub fn lit_int(v: i64) -> Expr {
         Expr::new(
-            HirId::new(PackageId::new("test"), 0),
+            HirId::new(OwnerId::root(PackageId::new("test")), 0),
             ExprKind::Literal(Lit::Integer(v)),
             Span::default(),
         )
@@ -152,7 +152,7 @@ pub(crate) mod test_support {
 
     pub fn path(name: &str) -> Expr {
         Expr::new(
-            HirId::new(PackageId::new("test"), 0),
+            HirId::new(OwnerId::root(PackageId::new("test")), 0),
             ExprKind::Path(Path {
                 segments: vec![PathSegment {
                     name: name.into(),
@@ -166,7 +166,7 @@ pub(crate) mod test_support {
 
     pub fn binop(op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
         Expr::new(
-            HirId::new(PackageId::new("test"), 0),
+            HirId::new(OwnerId::root(PackageId::new("test")), 0),
             ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
             Span::default(),
         )

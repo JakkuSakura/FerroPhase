@@ -13,9 +13,7 @@ use fp_core::hir::place::{
     HirAssignTargetBase, HirAssignTargetProjection, project_hir_assign_target,
 };
 
-pub(crate) fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
-    args.iter().map(|arg| &arg.value).collect()
-}
+pub(crate) use super::call_args::values as call_arg_values;
 use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
     AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, GenericArg, IntTy,
@@ -24,9 +22,8 @@ use fp_core::mir::ty::{
 };
 use fp_core::mir::{
     self, ConstInfo, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantDef, EnumVariantInfo,
-    FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, StructDefinition, StructFieldDef, StructLayout, StructLayoutKey,
-    StructuralLayoutKey, Symbol,
+    FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef, MethodLoweringInfo,
+    StructDefinition, StructFieldDef, StructLayout, StructLayoutKey, StructuralLayoutKey, Symbol,
 };
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
@@ -38,7 +35,7 @@ use super::body::BodyBuilder;
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
 
 fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
-    fn lower_const(value: &hir::ty::ConstKind) -> Result<mir::ty::ConstKind> {
+    pub(super) fn lower_const(value: &hir::ty::ConstKind) -> Result<mir::ty::ConstKind> {
         Ok(match value {
             hir::ty::ConstKind::Infer(hir::ty::InferConst::Fresh(id)) => {
                 mir::ty::ConstKind::Infer(mir::ty::InferConst::Fresh(*id))
@@ -88,7 +85,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
         })
     }
 
-    fn lower_arg(arg: &hir::ty::GenericArg) -> Result<mir::ty::GenericArg> {
+    pub(super) fn lower_arg(arg: &hir::ty::GenericArg) -> Result<mir::ty::GenericArg> {
         Ok(match arg {
             hir::ty::GenericArg::Type(ty) => mir::ty::GenericArg::Type(lower_hir_ty(ty)?),
             hir::ty::GenericArg::Const(value) => mir::ty::GenericArg::Const(lower_const(value)?),
@@ -135,7 +132,9 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                         ident: variant.ident.clone().into(),
                         discr: match variant.discr {
                             hir::ty::VariantDiscr::Relative(value) => VariantDiscr::Relative(value),
-                            hir::ty::VariantDiscr::Explicit(ref value) => VariantDiscr::Explicit(value.clone()),
+                            hir::ty::VariantDiscr::Explicit(ref value) => {
+                                VariantDiscr::Explicit(value.clone())
+                            }
                         },
                         fields: Vec::new(),
                         ctor_kind: match variant.ctor_kind {
@@ -279,8 +278,8 @@ fn assoc_types_from_impl_items(items: &[hir::ImplItem]) -> HashMap<String, hir::
 
 #[derive(Clone)]
 pub(crate) struct StructFieldInfo {
-    name: String,
-    ty: Ty,
+    pub(super) name: String,
+    pub(super) ty: Ty,
 }
 
 #[derive(Clone)]
@@ -290,7 +289,7 @@ pub(crate) enum ConstContainerArgs {
 }
 
 pub struct HirToMirLowerer {
-    diagnostics: DiagnosticManager,
+    pub(super) diagnostics: DiagnosticManager,
     /// Every struct/enum definition, layout, method table, specialization
     /// cache, const value, and ADT def this instance computes while lowering
     /// the current package — the *exact same* shared handle
@@ -313,7 +312,7 @@ pub struct HirToMirLowerer {
     /// both are also populated by signature-only registration (the
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
-    lowered_items: HashSet<hir::DefId>,
+    pub(super) lowered_items: HashSet<hir::DefId>,
     /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
     /// taken once at the top of `lower_program`/`transform`. Lets
@@ -333,12 +332,12 @@ pub struct HirToMirLowerer {
     /// under the same id — so every lookup method (`hir_item`,
     /// `hir_def_path`, `hir_all_items`) reads straight off this map with no
     /// separate "current package first" fallback.
-    hir_program: std::rc::Rc<hir::HirProgram>,
+    pub(super) hir_program: std::rc::Rc<hir::HirProgram>,
     /// The id of the package this instance is currently lowering — its HIR
     /// lives in `hir_program.packages` under this id (`new`/`transform`
     /// insert it there), so all HIR access routes through `hir_program`
     /// with no separate `current_package` handle.
-    current_package_id: mir::package::PackageId,
+    pub(super) current_package_id: mir::package::PackageId,
     /// Qualified path of whichever item's body/signature is currently
     /// being lowered — set by `ensure_function_lowered`/
     /// `ensure_method_lowered`/`lower_const` right before they start, and
@@ -349,7 +348,7 @@ pub struct HirToMirLowerer {
     /// guess. Not exhaustive — lazily-triggered lowering from an unusual
     /// call site may leave this stale or `None` — but covers the ordinary
     /// top-level item-lowering loop in `lower_program`.
-    current_item_path: Option<String>,
+    pub(super) current_item_path: Option<String>,
 }
 
 impl HirToMirLowerer {
@@ -410,7 +409,7 @@ impl HirToMirLowerer {
     /// Same dispatch as `hir_item`, for `def_paths` — used by
     /// `def_path_str`, which every `register_struct`/`register_enum` call
     /// now goes through instead of being handed a whole `def_paths` map.
-    fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
+    pub(super) fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
         self.hir_program.def_path(def_id)
     }
 
@@ -444,12 +443,17 @@ impl HirToMirLowerer {
     /// cached by their typed `(DefId, SubstsRef)` identity. Keeping this boundary
     /// async lets the compiler driver own executor progress without making
     /// every recursive expression operation an artificial future.
-    pub async fn transform_async(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
+    pub async fn transform_async(
+        &mut self,
+        hir_program: hir::HirPackage,
+    ) -> Result<mir::MirCodeUnit> {
         self.transform(hir_program)
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
-        if !self.mir_package.borrow().struct_defs.contains_key(&def_id) && !self.mir_package.borrow().enum_defs.contains_key(&def_id) {
+        if !self.mir_package.borrow().struct_defs.contains_key(&def_id)
+            && !self.mir_package.borrow().enum_defs.contains_key(&def_id)
+        {
             self.try_lazily_register_adt(def_id.clone(), span);
         }
         // `def_id` is either a struct or an enum, never both — calling both
@@ -487,7 +491,7 @@ impl HirToMirLowerer {
     /// still surfaces normally the moment something in the current
     /// compile actually uses the offending enum, via the ordinary
     /// `finalize_adt_definitions`/on-demand layout paths below.
-    fn register_all_dependency_adts(&mut self) {
+    pub(super) fn register_all_dependency_adts(&mut self) {
         let diagnostics_before = self.diagnostics.snapshot();
         // Only `Struct`/`Enum` items are ever registered below — cloning
         // every item regardless of kind (as this used to) paid for a
@@ -509,7 +513,12 @@ impl HirToMirLowerer {
         // `&mut self` conflict left to work around here at all.
         let items: Vec<hir::Item> = self
             .hir_all_items()
-            .filter(|item| matches!(&item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)))
+            .filter(|item| {
+                matches!(
+                    &item.kind,
+                    hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
+                )
+            })
             .cloned()
             .collect();
         for item in &items {
@@ -544,7 +553,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
+    pub(super) fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
                 for a in substs {
@@ -555,8 +564,8 @@ impl HirToMirLowerer {
                 let types: Vec<Ty> = substs
                     .iter()
                     .filter_map(|a| match a {
-                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                    _ => None,
+                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                        _ => None,
                     })
                     .collect();
                 self.compute_adt_layout(adt.did.clone(), &types, span);
@@ -576,7 +585,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_body_locals(&mut self, program: &mir::MirCodeUnit, body_id: mir::BodyId) {
+    pub(super) fn compute_body_locals(&mut self, program: &mir::MirCodeUnit, body_id: mir::BodyId) {
         if let Some(body) = program.bodies.get(&body_id) {
             for local in &body.locals {
                 self.compute_ty_layout(&local.ty, Span::null());
@@ -592,7 +601,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_stmt_layouts(&mut self, body: &mir::Body, stmt: &mir::Statement) {
+    pub(super) fn compute_stmt_layouts(&mut self, body: &mir::Body, stmt: &mir::Statement) {
         match &stmt.kind {
             mir::StatementKind::Assign(place, rv) => {
                 self.compute_place_layouts(body, place);
@@ -612,7 +621,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_terminator_layouts(&mut self, body: &mir::Body, term: &mir::Terminator) {
+    pub(super) fn compute_terminator_layouts(&mut self, body: &mir::Body, term: &mir::Terminator) {
         match &term.kind {
             mir::TerminatorKind::Call {
                 func,
@@ -649,7 +658,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_place_layouts(&mut self, body: &mir::Body, place: &mir::Place) {
+    pub(super) fn compute_place_layouts(&mut self, body: &mir::Body, place: &mir::Place) {
         let Some(mut ty) = body.locals.get(place.local as usize).map(|l| l.ty.clone()) else {
             return;
         };
@@ -661,19 +670,19 @@ impl HirToMirLowerer {
                     ty = field_ty.clone();
                 }
                 mir::PlaceElem::Deref => match &ty.kind {
-                        TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
-                            let inner = inner.clone();
-                            self.compute_ty_layout(&inner, Span::null());
-                            ty = *inner;
-                        }
-                        _ => return,
+                    TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                        let inner = inner.clone();
+                        self.compute_ty_layout(&inner, Span::null());
+                        ty = *inner;
+                    }
+                    _ => return,
                 },
                 _ => {}
             }
         }
     }
 
-    fn compute_operand_layouts(&mut self, body: &mir::Body, op: &mir::Operand) {
+    pub(super) fn compute_operand_layouts(&mut self, body: &mir::Body, op: &mir::Operand) {
         match op {
             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                 self.compute_place_layouts(body, place);
@@ -684,7 +693,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_rvalue_layouts(&mut self, rv: &mir::Rvalue) {
+    pub(super) fn compute_rvalue_layouts(&mut self, rv: &mir::Rvalue) {
         match rv {
             mir::Rvalue::Cast(_, _, ty) => {
                 self.compute_ty_layout(ty, Span::null());
@@ -694,8 +703,8 @@ impl HirToMirLowerer {
                     let substs_types: Vec<Ty> = substs
                         .iter()
                         .filter_map(|a| match a {
-                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                        _ => None,
+                            mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                            _ => None,
                         })
                         .collect();
                     self.compute_adt_layout(adt.did.clone(), &substs_types, Span::null());
@@ -714,7 +723,7 @@ impl HirToMirLowerer {
                     }
                     self.compute_ty_layout(&func.sig.output, Span::null());
                     self.compute_body_locals(program, func.body_id);
-                    }
+                }
                 mir::ItemKind::ExecutableConst(ec) => {
                     self.compute_ty_layout(&ec.ty, Span::null());
                     self.compute_body_locals(program, ec.body_id);
@@ -782,12 +791,22 @@ impl HirToMirLowerer {
     /// resolution is skipped (a partial arg list would be nonsensical).
     pub(crate) fn typeck_generic_call_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
         let resolution = self.hir_program.generic_call_arg(hir_id)?;
-        resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
+        resolution
+            .args
+            .iter()
+            .map(lower_hir_ty)
+            .collect::<Result<Vec<_>>>()
+            .ok()
     }
 
-    fn typeck_generic_method_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
+    pub(super) fn typeck_generic_method_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
         let resolution = self.hir_program.generic_method_arg(hir_id)?;
-        resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
+        resolution
+            .args
+            .iter()
+            .map(lower_hir_ty)
+            .collect::<Result<Vec<_>>>()
+            .ok()
     }
 
     /// Convert a comptime-evaluated `Value` (from `const { ... }` block
@@ -798,7 +817,11 @@ impl HirToMirLowerer {
     /// `fp_backend::transforms::lir_to_mir`) — an empty package list is
     /// correct here since only scalar shapes ever reach this path (no Adt
     /// lookup can trigger).
-    fn const_block_value_to_mir_constant(&self, value: &Value, span: Span) -> Option<mir::Constant> {
+    pub(super) fn const_block_value_to_mir_constant(
+        &self,
+        value: &Value,
+        span: Span,
+    ) -> Option<mir::Constant> {
         let ty = match value {
             Value::Int(_) => Ty {
                 kind: TyKind::Int(IntTy::I64),
@@ -826,7 +849,7 @@ impl HirToMirLowerer {
         Some(constant)
     }
 
-    fn const_key(&self, name: &str, span: Span) -> String {
+    pub(super) fn const_key(&self, name: &str, span: Span) -> String {
         let file = fp_core::source_map::source_map()
             .file(span.file)
             .map(|file| file.path.display().to_string())
@@ -834,14 +857,14 @@ impl HirToMirLowerer {
         format!("{file}:{}:{}:{name}", span.lo, span.hi)
     }
 
-    fn synthetic_const_function_name(&self, name: &hir::Symbol, key: &str) -> String {
+    pub(super) fn synthetic_const_function_name(&self, name: &hir::Symbol, key: &str) -> String {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash = hasher.finish();
         format!("__fp_comptime_const_{}_{}", name.as_str(), hash)
     }
 
-    fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirCodeUnit> {
+    pub(super) fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirCodeUnit> {
         // `current_package_id` is already set (and `program` inserted into
         // `hir_program`) by `transform` (the only caller) before this runs.
         let mut mir_program = mir::MirCodeUnit::new();
@@ -950,7 +973,7 @@ impl HirToMirLowerer {
         Ok(mir_program)
     }
 
-    fn lower_query(&mut self, item: &hir::Item, query: &hir::Query) -> mir::Item {
+    pub(super) fn lower_query(&mut self, item: &hir::Item, query: &hir::Query) -> mir::Item {
         let mir_item = mir::Item {
             mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Query(mir::Query {
@@ -962,7 +985,7 @@ impl HirToMirLowerer {
         mir_item
     }
 
-    fn flush_extra_items(&mut self, program: &mut mir::MirCodeUnit) {
+    pub(super) fn flush_extra_items(&mut self, program: &mut mir::MirCodeUnit) {
         for item in self.extra_items.drain(..) {
             program.items.push(item);
         }
@@ -1111,7 +1134,7 @@ impl HirToMirLowerer {
     /// already use, so a driver-level comptime request resolves through
     /// this one call, the same as any other item, with no separate
     /// setup/entry point of its own.
-    fn ensure_const_block_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+    pub(super) fn ensure_const_block_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }
@@ -1178,1471 +1201,7 @@ impl HirToMirLowerer {
     /// generics. A miss (unknown `def_id`, or a non-`Function` item) is not
     /// an error here — the caller's own resolution path already reports a
     /// real diagnostic when nothing usable comes back.
-    pub(crate) fn ensure_function_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
-        if self.lowered_items.contains(&def_id) {
-            return Ok(());
-        }
-        // `def_id` isn't necessarily a *function* — `resolve_callee_path`
-        // calls this unconditionally for any `Res::Def`, including a
-        // method's `impl_item.def_id` (never present in `hir_def_map`;
-        // `ensure_method_lowered` owns that case instead). Only claim
-        // `lowered_items` once we've confirmed this really is a function —
-        // marking it here on a miss would permanently block
-        // `ensure_method_lowered` from ever getting a real chance at the
-        // same `def_id` afterwards.
-        let Some(item) = self.hir_item(def_id.clone()).cloned() else {
-            return Ok(());
-        };
-        let hir::ItemKind::Function(function) = &item.kind else {
-            return Ok(());
-        };
-        self.lowered_items.insert(def_id.clone());
-        if def_id.package_id != self.current_package_id {
-            // A dependency package's own function — that package
-            // compiles its own body separately, in its own
-            // `HirToMirLowerer` instance (own struct/enum/const
-            // registrations); lowering it here would build it against
-            // *this* package's registrations instead, silently
-            // producing a wrong/incomplete body the moment it
-            // references anything this package never registered. Only
-            // this call site's own operand needs a signature — the
-            // real body is supplied later, correctly, by
-            // `predeclare_dependency_function_signatures` reading that
-            // package's own compiled MIR.
-            let sig = self.lower_function_sig(&function.sig, None);
-            self.mir_package.borrow_mut().function_sigs.insert(def_id, sig);
-            return Ok(());
-        }
-        if !function.sig.generics.params.is_empty() {
-            // Generic: raw HIR registration only, lowered per call site via
-            // `ensure_function_specialization` — this function doesn't own
-            // that path.
-            self.register_generic_function(def_id, function);
-            return Ok(());
-        }
-        let previous_item_path = self.current_item_path.take();
-        self.current_item_path = self.hir_def_path(def_id).map(|path| path.join("::"));
-        let result = self.lower_function(&item, function);
-        self.current_item_path = previous_item_path;
-        let (mir_item, body_id, body) = result?;
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, body));
-        Ok(())
-    }
-
-    /// On-demand counterpart to `lower_impl`'s per-method loop, for a single
-    /// non-generic method: lowers `def_id`'s body at most once (guarded by
-    /// `lowered_items`) from the raw HIR `register_impl_signatures`'s
-    /// signature-only pre-pass already stashed in `method_hir_defs`,
-    /// pushing the result into `extra_items`/`extra_bodies`. See
-    /// `ensure_function_lowered`'s doc comment — same pattern, same two
-    /// caller shapes. A miss (unknown `def_id`, e.g. a generic method —
-    /// those are lowered per call site via `ensure_method_specialization`
-    /// instead) is not an error here, for the same reason.
-    pub(crate) fn ensure_method_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
-        if self.lowered_items.contains(&def_id) {
-            return Ok(());
-        }
-        // Same reasoning as `ensure_function_lowered`: only claim
-        // `lowered_items` once we've confirmed `def_id` really is a
-        // non-generic method — `resolve_callee_path`'s `Res::Def` branch
-        // tries `ensure_function_lowered` on every def_id first (a plain
-        // function, by far the common case), which correctly leaves
-        // `lowered_items` untouched on its own miss so this function still
-        // gets a real chance afterwards.
-        let Some(method_ref) = self.mir_package.borrow().method_hir_defs.get(&def_id).cloned() else {
-            return Ok(());
-        };
-        self.lowered_items.insert(def_id.clone());
-        if def_id.package_id != self.current_package_id {
-            // Same reasoning as `ensure_function_lowered`'s
-            // cross-package guard — this method's own package compiles
-            // its body separately.
-            let sig = self.lower_function_sig(
-                &method_ref.function.sig,
-                method_ref.method_context.as_ref(),
-            );
-            self.mir_package.borrow_mut().function_sigs.insert(def_id, sig);
-            return Ok(());
-        }
-        let previous_item_path = self.current_item_path.take();
-        self.current_item_path = self.hir_def_path(def_id.clone()).map(|path| path.join("::"));
-        let result = self.lower_method(
-            def_id,
-            &method_ref.function,
-            method_ref.span,
-            method_ref.method_context.as_ref(),
-        );
-        self.current_item_path = previous_item_path;
-        let (mir_item, body_id, body, _sig) = result?;
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, body));
-        Ok(())
-    }
-
-    pub(crate) fn lower_function(
-        &mut self,
-        item: &hir::Item,
-        function: &hir::Function,
-    ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
-        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
-
-        let sig = self.lower_function_sig(&function.sig, None);
-        self.mir_package.borrow_mut().function_sigs.insert(item.def_id.clone(), sig.clone());
-        let span = function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(item.span);
-        let mir_body = if function.body.is_none() {
-            self.stub_body(&sig, span)
-        } else {
-            self.lower_body(item, function, &sig, None)?
-        };
-
-        let mir_function = mir::Function {
-            name: mir::Symbol::new(
-                self.def_path_str(item.def_id.clone(), function.sig.name.as_str()),
-            ),
-            def_id: Some(item.def_id.clone()),
-            substs: Vec::new(),
-            sig,
-            body_id,
-            abi: self.map_abi(&function.sig.abi),
-            is_extern: function.is_extern,
-            attrs: function.attrs.clone(),
-        };
-
-        let mir_item = mir::Item {
-            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
-            kind: mir::ItemKind::Function(mir_function),
-        };
-
-        Ok((mir_item, body_id, mir_body))
-    }
-
-    fn stub_body(&mut self, sig: &mir::FunctionSig, span: Span) -> mir::Body {
-        let mut locals = Vec::new();
-        locals.push(self.make_local_decl(&sig.output, span));
-        for input in &sig.inputs {
-            locals.push(self.make_local_decl(input, span));
-        }
-
-        let block = mir::BasicBlockData::new(Some(mir::Terminator {
-            source_info: span,
-            kind: mir::TerminatorKind::Unreachable,
-        }));
-
-        mir::Body::new(vec![block], locals, sig.inputs.len(), span)
-    }
-
-    fn catch_unwind_default_constant_for_ty(&self, ty: &Ty) -> Result<mir::ConstantKind> {
-        match &ty.kind {
-            TyKind::Bool => Ok(mir::ConstantKind::Bool(false)),
-            TyKind::Int(_) => Ok(mir::ConstantKind::Int(0)),
-            TyKind::Uint(_) => Ok(mir::ConstantKind::UInt(0)),
-            TyKind::Float(_) => Ok(mir::ConstantKind::Float(0.0)),
-            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) => Ok(mir::ConstantKind::UInt(0)),
-            _ => Err(fp_core::error::Error::from(format!(
-                "catch_unwind_result cannot synthesize unwind value for type `{ty}`"
-            ))),
-        }
-    }
-
-    fn register_generic_function(&mut self, def_id: hir::DefId, function: &hir::Function) {
-        if self.mir_package.borrow().generic_function_defs.contains_key(&def_id) {
-            return;
-        }
-        let sig = self.lower_function_sig(&function.sig, None);
-        self.mir_package.borrow_mut().function_sigs.insert(def_id.clone(), sig);
-        self.mir_package.borrow_mut().generic_function_defs.insert(def_id, function.clone());
-    }
-
-    fn lower_function_with_substs(
-        &mut self,
-        item_def_id: hir::DefId,
-        item_span: Span,
-        function: &hir::Function,
-        sig: &mir::FunctionSig,
-        substs: HashMap<String, Ty>,
-        name_override: &str,
-        function_substs: mir::ty::SubstsRef,
-    ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
-        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
-
-        let span = function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(item_span);
-
-        let mir_body = BodyBuilder::new(self, function, sig, span, None, substs).lower()?;
-
-        let mir_function = mir::Function {
-            name: mir::Symbol::new(name_override),
-            def_id: Some(item_def_id),
-            substs: function_substs,
-            sig: sig.clone(),
-            body_id,
-            abi: self.map_abi(&function.sig.abi),
-            is_extern: false,
-            attrs: Vec::new(),
-        };
-
-        let mir_item = mir::Item {
-            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
-            kind: mir::ItemKind::Function(mir_function),
-        };
-
-        Ok((mir_item, body_id, mir_body))
-    }
-
-    pub(crate) fn ensure_function_specialization(
-        &mut self,
-        def_id: hir::DefId,
-        function: &hir::Function,
-        explicit_args: &[Ty],
-        arg_types: &[Ty],
-        expected_return: Option<&Ty>,
-        span: Span,
-    ) -> Result<FunctionSpecializationInfo> {
-        let pre_key = (
-            def_id.clone(),
-            explicit_args.to_vec(),
-            arg_types.to_vec(),
-            expected_return.cloned(),
-        );
-        if let Some(info) = self.mir_package.borrow().function_specialization_call_cache.get(&pre_key).cloned() {
-            return Ok(info.clone());
-        }
-        let info = self.ensure_function_specialization_uncached(
-            def_id,
-            function,
-            explicit_args,
-            arg_types,
-            expected_return,
-            span,
-        )?;
-        self.mir_package.borrow_mut().function_specialization_call_cache
-            .insert(pre_key, info.clone());
-        Ok(info)
-    }
-
-    fn ensure_function_specialization_uncached(
-        &mut self,
-        def_id: hir::DefId,
-        function: &hir::Function,
-        explicit_args: &[Ty],
-        arg_types: &[Ty],
-        expected_return: Option<&Ty>,
-        span: Span,
-    ) -> Result<FunctionSpecializationInfo> {
-        let generics = function
-            .sig
-            .generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string())
-            .collect::<Vec<_>>();
-        let is_result_ctor = function.sig.name.as_str() == "Ok"
-            || function.sig.name.as_str() == "Err"
-            || function.sig.name.as_str().ends_with("::Ok")
-            || function.sig.name.as_str().ends_with("::Err");
-        let mut fallback_expected_return = None;
-        let mut expected_return_for_infer = expected_return;
-        if is_result_ctor {
-            let needs_fallback = expected_return_for_infer
-                .map(|ty| self.has_unresolved_ty(ty))
-                .unwrap_or(true);
-            if needs_fallback {
-                let fallback = self.lower_type_expr(&function.sig.output);
-                fallback_expected_return = Some(fallback);
-                expected_return_for_infer = fallback_expected_return.as_ref();
-            }
-            let needs_sig_fallback = expected_return_for_infer
-                .and_then(|ty| self.explicit_args_from_expected_result_ty(ty))
-                .is_none();
-            if needs_sig_fallback {
-                let fallback = self.lower_type_expr(&function.sig.output);
-                fallback_expected_return = Some(fallback);
-                expected_return_for_infer = fallback_expected_return.as_ref();
-            }
-        }
-
-        let mut explicit_args = explicit_args.to_vec();
-        if is_result_ctor && explicit_args.is_empty() {
-            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
-            if let Some(fallback_ty) = fallback_ty {
-                if let Some(mut fallback_args) =
-                    self.explicit_args_from_expected_result_ty(fallback_ty)
-                {
-                    if fallback_args.len() == generics.len() {
-                        let is_unresolved =
-                            |ty: &Ty| matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_));
-                        if let Some(arg_ty) = arg_types.get(0) {
-                            let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
-                            if !is_unresolved(arg_ty) {
-                                match function.sig.name.as_str() {
-                                    "Ok" => fallback_args[0] = arg_ty.clone(),
-                                    "Err" if fallback_args.len() > 1 => {
-                                        fallback_args[1] = arg_ty.clone();
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        for (idx, name) in generics.iter().enumerate() {
-                            if let Some(arg) = fallback_args.get_mut(idx) {
-                                if !is_unresolved(arg) {
-                                    continue;
-                                }
-                                match name.as_str() {
-                                    "T" => *arg = Self::unit_ty(),
-                                    "E" => *arg = self.error_ty(),
-                                    _ => {}
-                                }
-                            }
-                        }
-                        if fallback_args
-                            .iter()
-                            .any(|ty| !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
-                        {
-                            return self.ensure_function_specialization_from_explicit_args(
-                                def_id,
-                                function,
-                                &fallback_args,
-                                span,
-                            );
-                        }
-                    }
-                }
-            }
-            if explicit_args.is_empty() && !generics.is_empty() {
-                let mut inferred = vec![
-                    Ty {
-                        kind: TyKind::Infer(mir::ty::InferTy::FreshTy(0)),
-                    };
-                    generics.len()
-                ];
-                if let Some(arg_ty) = arg_types.get(0) {
-                    let arg_ty = self.unwrap_expr_actual_ty(arg_ty);
-                    if !matches!(arg_ty.kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                        match function.sig.name.as_str() {
-                            "Ok" => inferred[0] = arg_ty.clone(),
-                            "Err" if inferred.len() > 1 => inferred[1] = arg_ty.clone(),
-                            _ => {}
-                        }
-                    }
-                }
-                for (idx, name) in generics.iter().enumerate() {
-                    if !matches!(inferred[idx].kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                        continue;
-                    }
-                    match name.as_str() {
-                        "T" => inferred[idx] = Self::unit_ty(),
-                        "E" => inferred[idx] = self.error_ty(),
-                        _ => {}
-                    }
-                }
-                if inferred
-                    .iter()
-                    .any(|ty| !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
-                {
-                    explicit_args = inferred;
-                }
-            }
-        }
-        if is_result_ctor {
-            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
-            if let Some(fallback_ty) = fallback_ty {
-                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty)
-                {
-                    if fallback_args.len() == generics.len()
-                        && explicit_args.len() == generics.len()
-                    {
-                        for (idx, explicit_arg) in explicit_args.iter_mut().enumerate() {
-                            if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                                continue;
-                            }
-                            let Some(fallback_arg) = fallback_args.get(idx) else {
-                                continue;
-                            };
-                            if matches!(fallback_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                                continue;
-                            }
-                            *explicit_arg = fallback_arg.clone();
-                        }
-                    }
-                }
-            }
-        }
-        if is_result_ctor && explicit_args.len() == generics.len() {
-            for (idx, name) in generics.iter().enumerate() {
-                if let Some(explicit_arg) = explicit_args.get_mut(idx) {
-                    if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                        continue;
-                    }
-                    match name.as_str() {
-                        "T" => *explicit_arg = Self::unit_ty(),
-                        "E" => *explicit_arg = self.error_ty(),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        let substs = self.build_substs_from_args(
-            &generics,
-            None,
-            None,
-            &function.sig.inputs,
-            Some(&function.sig.output),
-            &explicit_args,
-            arg_types,
-            expected_return_for_infer,
-            span,
-        )?;
-        let args_in_order = generics
-            .iter()
-            .filter_map(|name| substs.get(name).cloned())
-            .collect::<Vec<_>>();
-        let function_substs = args_in_order
-            .iter()
-            .cloned()
-            .map(mir::ty::GenericArg::Type)
-            .collect::<mir::ty::SubstsRef>();
-        let key = (def_id.clone(), function_substs.clone());
-
-        if let Some(info) = self.mir_package.borrow().function_specializations.get(&key).cloned() {
-            return Ok(info.clone());
-        }
-
-        let sig = self.lower_function_sig_with_substs(&function.sig, None, &substs);
-        let suffix = self.specialization_suffix(&args_in_order);
-        let name = format!("{}__{}_{}", function.sig.name.as_str(), suffix, def_id);
-        let fn_ty = self.function_pointer_ty(&sig);
-
-        let item_span = self
-            .hir_item(def_id.clone())
-            .map(|item| item.span)
-            .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
-        let (mir_item, body_id, body) = self.lower_function_with_substs(
-            def_id.clone(),
-            item_span,
-            function,
-            &sig,
-            substs,
-            &name,
-            function_substs.clone(),
-        )?;
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, body));
-
-        let info = FunctionSpecializationInfo {
-            def_id,
-            substs: function_substs,
-            name: name.clone(),
-            sig: sig.clone(),
-            fn_ty: fn_ty.clone(),
-        };
-        self.mir_package.borrow_mut().function_specializations.insert(key, info.clone());
-        Ok(info)
-    }
-
-    fn ensure_function_specialization_from_explicit_args(
-        &mut self,
-        def_id: hir::DefId,
-        function: &hir::Function,
-        explicit_args: &[Ty],
-        span: Span,
-    ) -> Result<FunctionSpecializationInfo> {
-        let generics = function
-            .sig
-            .generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string())
-            .collect::<Vec<_>>();
-        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
-        let args_in_order = generics
-            .iter()
-            .filter_map(|name| substs.get(name).cloned())
-            .collect::<Vec<_>>();
-        let function_substs = args_in_order
-            .iter()
-            .cloned()
-            .map(mir::ty::GenericArg::Type)
-            .collect::<mir::ty::SubstsRef>();
-        let key = (def_id.clone(), function_substs.clone());
-
-        if let Some(info) = self.mir_package.borrow().function_specializations.get(&key).cloned() {
-            return Ok(info.clone());
-        }
-
-        let sig = self.lower_function_sig_with_substs(&function.sig, None, &substs);
-        let suffix = self.specialization_suffix(&args_in_order);
-        let name = format!("{}__{}_{}", function.sig.name.as_str(), suffix, def_id);
-        let fn_ty = self.function_pointer_ty(&sig);
-
-        let item_span = self
-            .hir_item(def_id.clone())
-            .map(|item| item.span)
-            .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
-        let (mir_item, body_id, body) = self.lower_function_with_substs(
-            def_id.clone(),
-            item_span,
-            function,
-            &sig,
-            substs,
-            &name,
-            function_substs.clone(),
-        )?;
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, body));
-
-        let info = FunctionSpecializationInfo {
-            def_id,
-            substs: function_substs,
-            name: name.clone(),
-            sig: sig.clone(),
-            fn_ty: fn_ty.clone(),
-        };
-        self.mir_package.borrow_mut().function_specializations.insert(key, info.clone());
-        Ok(info)
-    }
-
-    pub(crate) fn ensure_method_specialization(
-        &mut self,
-        def: &MethodDefinition,
-        explicit_args: &[Ty],
-        arg_types: &[Ty],
-        expected_return: Option<&Ty>,
-        span: Span,
-    ) -> Result<MethodLoweringInfo> {
-        let pre_key = (
-            def.def_id.clone(),
-            explicit_args.to_vec(),
-            arg_types.to_vec(),
-            expected_return.cloned(),
-        );
-        if let Some(info) = self.mir_package.borrow().method_specialization_call_cache.get(&pre_key).cloned() {
-            return Ok(info.clone());
-        }
-        let info = self.ensure_method_specialization_uncached(
-            def,
-            explicit_args,
-            arg_types,
-            expected_return,
-            span,
-        )?;
-        self.mir_package.borrow_mut().method_specialization_call_cache
-            .insert(pre_key, info.clone());
-        Ok(info)
-    }
-
-    fn ensure_method_specialization_uncached(
-        &mut self,
-        def: &MethodDefinition,
-        explicit_args: &[Ty],
-        arg_types: &[Ty],
-        expected_return: Option<&Ty>,
-        span: Span,
-    ) -> Result<MethodLoweringInfo> {
-        let impl_generics = def
-            .impl_generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let method_generics = def
-            .function
-            .sig
-            .generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
-
-        let is_result_ctor = def.method_name == "Ok"
-            || def.method_name == "Err"
-            || def.method_name.ends_with("::Ok")
-            || def.method_name.ends_with("::Err");
-        let mut fallback_expected_return = None;
-        let mut expected_return_for_infer = expected_return;
-        if is_result_ctor {
-            let needs_fallback = expected_return_for_infer
-                .map(|ty| self.has_unresolved_ty(ty))
-                .unwrap_or(true);
-            if needs_fallback {
-                let fallback = self.lower_type_expr(&def.function.sig.output);
-                fallback_expected_return = Some(fallback);
-                expected_return_for_infer = fallback_expected_return.as_ref();
-            }
-        }
-        if expected_return_for_infer.is_none() && is_result_ctor {
-            let fallback = self.lower_type_expr(&def.function.sig.output);
-            fallback_expected_return = Some(fallback);
-            expected_return_for_infer = fallback_expected_return.as_ref();
-        }
-        if is_result_ctor {
-            let needs_sig_fallback = expected_return_for_infer
-                .and_then(|ty| self.explicit_args_from_expected_result_ty(ty))
-                .is_none();
-            if needs_sig_fallback {
-                let fallback = self.lower_type_expr(&def.function.sig.output);
-                fallback_expected_return = Some(fallback);
-                expected_return_for_infer = fallback_expected_return.as_ref();
-            }
-        }
-        let has_receiver = def
-            .function
-            .sig
-            .inputs
-            .first()
-            .and_then(|param| match &param.pat.kind {
-                hir::PatKind::Binding { name, .. } => Some(name.as_str() == "self"),
-                _ => None,
-            })
-            .unwrap_or(false);
-        let mut self_arg_ty = if has_receiver {
-            arg_types.first()
-        } else {
-            expected_return_for_infer
-        };
-        if !has_receiver {
-            if let Some(candidate) = self_arg_ty {
-                if let Some(inner) = self.expr_inner_actual_ty(candidate) {
-                    self_arg_ty = Some(inner);
-                }
-            }
-        }
-        let mut explicit_args = explicit_args.to_vec();
-        if is_result_ctor && explicit_args.is_empty() {
-            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
-            if let Some(fallback_ty) = fallback_ty {
-                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty)
-                {
-                    if fallback_args.len() == generics.len()
-                        && fallback_args
-                            .iter()
-                            .any(|ty| !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)))
-                    {
-                        return self.ensure_method_specialization_from_explicit_args(
-                            def,
-                            &fallback_args,
-                            span,
-                        );
-                    }
-                }
-            }
-        }
-        if is_result_ctor {
-            let fallback_ty = expected_return_for_infer.or(fallback_expected_return.as_ref());
-            if let Some(fallback_ty) = fallback_ty {
-                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(fallback_ty)
-                {
-                    if fallback_args.len() == generics.len() {
-                        if explicit_args.is_empty() {
-                            explicit_args = fallback_args;
-                        } else if explicit_args.len() == generics.len() {
-                            for (idx, explicit_arg) in explicit_args.iter_mut().enumerate() {
-                                if !matches!(explicit_arg.kind, TyKind::Infer(_) | TyKind::Error(_))
-                                {
-                                    continue;
-                                }
-                                let Some(fallback_arg) = fallback_args.get(idx) else {
-                                    continue;
-                                };
-                                if matches!(fallback_arg.kind, TyKind::Infer(_) | TyKind::Error(_))
-                                {
-                                    continue;
-                                }
-                                *explicit_arg = fallback_arg.clone();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let substs = self.build_substs_from_args(
-            &generics,
-            Some(&def.self_ty),
-            self_arg_ty,
-            &def.function.sig.inputs,
-            Some(&def.function.sig.output),
-            &explicit_args,
-            arg_types,
-            expected_return_for_infer,
-            span,
-        )?;
-        let args_in_order = generics
-            .iter()
-            .filter_map(|name| substs.get(name).cloned())
-            .collect::<Vec<_>>();
-        let method_substs = args_in_order
-            .iter()
-            .cloned()
-            .map(mir::ty::GenericArg::Type)
-            .collect::<mir::ty::SubstsRef>();
-        self.finish_method_specialization(def, substs, &args_in_order, method_substs, span, true)
-    }
-
-    fn ensure_method_specialization_from_explicit_args(
-        &mut self,
-        def: &MethodDefinition,
-        explicit_args: &[Ty],
-        span: Span,
-    ) -> Result<MethodLoweringInfo> {
-        let impl_generics = def
-            .impl_generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let method_generics = def
-            .function
-            .sig
-            .generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
-
-        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
-        let args_in_order = generics
-            .iter()
-            .filter_map(|name| substs.get(name).cloned())
-            .collect::<Vec<_>>();
-        let method_substs = args_in_order
-            .iter()
-            .cloned()
-            .map(mir::ty::GenericArg::Type)
-            .collect::<mir::ty::SubstsRef>();
-        self.finish_method_specialization(def, substs, &args_in_order, method_substs, span, false)
-    }
-
-    /// Shared tail of `ensure_method_specialization_uncached`/
-    /// `_from_explicit_args`: once a concrete `substs` map is known —
-    /// however it was derived, from call-site argument/return-type
-    /// inference or from fully-explicit turbofish args — building and
-    /// caching the specialized `MethodLoweringInfo`/MIR body is identical.
-    /// `carries_def_id` is the one real difference between the two
-    /// callers (the explicit-args path's resulting `MethodLoweringInfo`
-    /// omits `def_id`, matching its own prior behavior) — kept as a
-    /// parameter rather than unified further since it's the only place
-    /// that distinction matters.
-    fn finish_method_specialization(
-        &mut self,
-        def: &MethodDefinition,
-        substs: HashMap<String, Ty>,
-        args_in_order: &[Ty],
-        method_substs: mir::ty::SubstsRef,
-        span: Span,
-        carries_def_id: bool,
-    ) -> Result<MethodLoweringInfo> {
-        let key = (def.def_id.clone(), method_substs.clone());
-
-        if let Some(info) = self.mir_package.borrow().method_specializations.get(&key).cloned() {
-            return Ok(info.clone());
-        }
-
-        let mut method_context = if let hir::TypeExprKind::Path(path) = &def.self_ty.kind {
-            let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
-            Some(MethodContext {
-                def_id: def.self_def.clone(),
-                path: path.segments.clone(),
-                mir_self_ty,
-                assoc_types: def.assoc_types.clone(),
-            })
-        } else {
-            None
-        };
-
-        let sig = self.lower_function_sig_with_substs(
-            &def.function.sig,
-            method_context.as_ref(),
-            &substs,
-        );
-        let suffix = self.specialization_suffix(args_in_order);
-        let name = format!("{}__{}", def.method_name, suffix);
-        let fn_ty = self.function_pointer_ty(&sig);
-
-        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
-
-        let span = def
-            .function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(span);
-        let mir_body = BodyBuilder::new(
-            self,
-            &def.function,
-            &sig,
-            span,
-            method_context.take(),
-            substs,
-        )
-        .lower()?;
-
-        let mir_function = mir::Function {
-            name: mir::Symbol::new(name.clone()),
-            def_id: Some(def.def_id.clone()),
-            substs: method_substs.clone(),
-            sig: sig.clone(),
-            body_id,
-            abi: self.map_abi(&def.function.sig.abi),
-            is_extern: false,
-            attrs: Vec::new(),
-        };
-        let mir_item = mir::Item {
-            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
-            kind: mir::ItemKind::Function(mir_function),
-        };
-
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, mir_body));
-
-        let info = MethodLoweringInfo {
-            def_id: if carries_def_id { Some(def.def_id.clone()) } else { None },
-            substs: method_substs,
-            sig,
-            fn_name: name.clone(),
-            fn_ty,
-            struct_def: def.self_def.clone(),
-        };
-        self.mir_package.borrow_mut().method_specializations.insert(key, info.clone());
-        Ok(info)
-    }
-
-    pub(crate) fn lower_function_sig(
-        &mut self,
-        sig: &hir::FunctionSig,
-        method_context: Option<&MethodContext>,
-    ) -> mir::FunctionSig {
-        mir::FunctionSig {
-            inputs: sig
-                .inputs
-                .iter()
-                .map(|param| {
-                    self.lower_type_expr_with_context_for_abi(&param.ty, method_context, &sig.abi)
-                })
-                .collect(),
-            output: self.lower_type_expr_with_context_for_abi(
-                &sig.output,
-                method_context,
-                &sig.abi,
-            ),
-        }
-    }
-
-    fn lower_function_sig_with_substs(
-        &mut self,
-        sig: &hir::FunctionSig,
-        method_context: Option<&MethodContext>,
-        substs: &HashMap<String, Ty>,
-    ) -> mir::FunctionSig {
-        mir::FunctionSig {
-            inputs: sig
-                .inputs
-                .iter()
-                .map(|param| {
-                    self.lower_type_expr_with_context_and_substs_for_abi(
-                        &param.ty,
-                        method_context,
-                        substs,
-                        &sig.abi,
-                    )
-                })
-                .collect(),
-            output: self.lower_type_expr_with_context_and_substs_for_abi(
-                &sig.output,
-                method_context,
-                substs,
-                &sig.abi,
-            ),
-        }
-    }
-
-    fn lower_type_expr_with_context_for_abi(
-        &mut self,
-        ty: &hir::TypeExpr,
-        method_context: Option<&MethodContext>,
-        abi: &hir::Abi,
-    ) -> Ty {
-        if matches!(abi, hir::Abi::C { .. } | hir::Abi::System { .. }) {
-            match &ty.kind {
-                hir::TypeExprKind::Ref(inner) => {
-                    let inner_ty = self.lower_type_expr_with_context(inner, method_context);
-                    return Ty {
-                        kind: TyKind::RawPtr(TypeAndMut {
-                            ty: Box::new(inner_ty),
-                            mutbl: Mutability::Not,
-                        }),
-                    };
-                }
-                hir::TypeExprKind::Ptr(inner) => {
-                    let inner_ty = self.lower_type_expr_with_context(inner, method_context);
-                    return Ty {
-                        kind: TyKind::RawPtr(TypeAndMut {
-                            ty: Box::new(inner_ty),
-                            mutbl: Mutability::Mut,
-                        }),
-                    };
-                }
-                _ => {}
-            }
-        }
-        self.lower_type_expr_with_context(ty, method_context)
-    }
-
-    fn lower_type_expr_with_context_and_substs_for_abi(
-        &mut self,
-        ty: &hir::TypeExpr,
-        method_context: Option<&MethodContext>,
-        substs: &HashMap<String, Ty>,
-        abi: &hir::Abi,
-    ) -> Ty {
-        if matches!(abi, hir::Abi::C { .. } | hir::Abi::System { .. }) {
-            match &ty.kind {
-                hir::TypeExprKind::Ref(inner) => {
-                    let inner_ty =
-                        self.lower_type_expr_with_context_and_substs(inner, method_context, substs);
-                    return Ty {
-                        kind: TyKind::RawPtr(TypeAndMut {
-                            ty: Box::new(inner_ty),
-                            mutbl: Mutability::Not,
-                        }),
-                    };
-                }
-                hir::TypeExprKind::Ptr(inner) => {
-                    let inner_ty =
-                        self.lower_type_expr_with_context_and_substs(inner, method_context, substs);
-                    return Ty {
-                        kind: TyKind::RawPtr(TypeAndMut {
-                            ty: Box::new(inner_ty),
-                            mutbl: Mutability::Mut,
-                        }),
-                    };
-                }
-                _ => {}
-            }
-        }
-        self.lower_type_expr_with_context_and_substs(ty, method_context, substs)
-    }
-
-    fn map_abi(&self, abi: &hir::Abi) -> mir::ty::Abi {
-        match abi {
-            hir::Abi::Rust => mir::ty::Abi::Rust,
-            hir::Abi::C { unwind } => mir::ty::Abi::C { unwind: *unwind },
-            hir::Abi::Named(_) => mir::ty::Abi::Rust,
-            hir::Abi::System { unwind } => mir::ty::Abi::System { unwind: *unwind },
-            _ => mir::ty::Abi::Rust,
-        }
-    }
-
-    fn specialization_suffix(&self, args: &[Ty]) -> String {
-        let mut hasher = DefaultHasher::new();
-        for ty in args {
-            ty.hash(&mut hasher);
-        }
-        format!("mono_{:x}", hasher.finish())
-    }
-
-    fn build_substs_from_args(
-        &mut self,
-        generics: &[String],
-        self_ty: Option<&hir::TypeExpr>,
-        self_arg_ty: Option<&Ty>,
-        params: &[hir::Param],
-        return_ty: Option<&hir::TypeExpr>,
-        explicit_args: &[Ty],
-        arg_types: &[Ty],
-        expected_return: Option<&Ty>,
-        span: Span,
-    ) -> Result<HashMap<String, Ty>> {
-        if params.len() != arg_types.len() {
-            self.emit_error(
-                span,
-                format!(
-                    "generic call argument count mismatch: expected {}, got {}",
-                    params.len(),
-                    arg_types.len()
-                ),
-            );
-            return Err(crate::error::optimization_error(
-                "generic call argument count mismatch",
-            ));
-        }
-        if !explicit_args.is_empty() && explicit_args.len() != generics.len() {
-            self.emit_error(
-                span,
-                format!(
-                    "expected {} generic arguments, got {}",
-                    generics.len(),
-                    explicit_args.len()
-                ),
-            );
-            return Err(crate::error::optimization_error(
-                "generic argument count mismatch",
-            ));
-        }
-
-        let mut substs = HashMap::new();
-        for (name, ty) in generics.iter().zip(explicit_args.iter().cloned()) {
-            if matches!(ty.kind, TyKind::Infer(_)) {
-                continue;
-            }
-            substs.insert(name.clone(), ty);
-        }
-
-        let has_explicit_substitutions = explicit_args.len() == generics.len();
-        let return_ty = return_ty.map(|ty| self.unwrap_expr_type_expr(ty));
-        let expected_return = expected_return.map(|ty| self.unwrap_expr_actual_ty(ty));
-        if !has_explicit_substitutions {
-            if let (Some(self_ty), Some(self_arg_ty)) = (self_ty, self_arg_ty) {
-                self.infer_generic_from_type_expr(
-                    self_ty,
-                    self_arg_ty,
-                    generics,
-                    &mut substs,
-                    span,
-                )?;
-            }
-
-            for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
-                self.infer_generic_from_type_expr(
-                    &param.ty,
-                    actual_ty,
-                    generics,
-                    &mut substs,
-                    span,
-                )?;
-            }
-            if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
-                self.infer_generic_from_type_expr(
-                    return_ty,
-                    expected_return,
-                    generics,
-                    &mut substs,
-                    span,
-                )?;
-            }
-        }
-        if substs.len() != generics.len() {
-            if let (Some(return_ty), Some(expected_return)) = (return_ty, expected_return) {
-                self.fill_missing_substs_from_expected_return(
-                    return_ty,
-                    expected_return,
-                    generics,
-                    &mut substs,
-                );
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(expected_return) = expected_return {
-                let expected_return = match &expected_return.kind {
-                    TyKind::Ref(_, inner, _) => inner.as_ref(),
-                    TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
-                    _ => expected_return,
-                };
-                let mut actual_type_args = match &expected_return.kind {
-                    TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => substs
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            mir::ty::GenericArg::Type(ty) => Some(self.unwrap_expr_actual_ty(ty)),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                };
-                if actual_type_args.is_empty() {
-                    let layout = self
-                        .enum_layout_for_ty_exact(expected_return)
-                        .or_else(|| self.enum_layout_for_ty(expected_return));
-                    if let Some(layout) = layout {
-                        actual_type_args = layout
-                            .args
-                            .iter()
-                            .map(|ty| self.unwrap_expr_actual_ty(ty))
-                            .collect::<Vec<_>>();
-                    }
-                }
-                if actual_type_args.len() == generics.len() {
-                    for (name, actual_arg) in generics.iter().zip(actual_type_args) {
-                        if substs.contains_key(name) {
-                            continue;
-                        }
-                        if matches!(actual_arg.kind, TyKind::Infer(_)) {
-                            continue;
-                        }
-                        substs.insert(name.to_string(), actual_arg.clone());
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(self_arg_ty) = self_arg_ty {
-                if let Some(actual_args) = self.explicit_args_from_expected_result_ty(self_arg_ty) {
-                    if actual_args.len() == generics.len() {
-                        for (name, actual_arg) in generics.iter().zip(actual_args) {
-                            if substs.contains_key(name) {
-                                continue;
-                            }
-                            if matches!(actual_arg.kind, TyKind::Infer(_)) {
-                                continue;
-                            }
-                            substs.insert(name.to_string(), actual_arg);
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(expected_return) = expected_return {
-                let expected_return = self.unwrap_expr_actual_ty(expected_return);
-                let expected_return = match &expected_return.kind {
-                    TyKind::Ref(_, inner, _) => inner.as_ref(),
-                    TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
-                    _ => expected_return,
-                };
-                let layout = self
-                    .enum_layout_for_ty_exact(expected_return)
-                    .or_else(|| self.enum_layout_for_ty(expected_return));
-                if let Some(layout) = layout {
-                    let is_result_layout = self.mir_package.borrow().enum_defs
-                        .get(&layout.def_id)
-                        .map(|def| {
-                            def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
-                        })
-                        .unwrap_or(false);
-                    if is_result_layout && generics.len() >= 2 {
-                        if let Some(def) = self.mir_package.borrow().enum_defs.get(&layout.def_id).cloned() {
-                            let mut ok_payload = None;
-                            let mut err_payload = None;
-                            for variant in &def.variants {
-                                if variant.name.as_str() == "Ok"
-                                    || variant.name.as_str().ends_with("::Ok")
-                                {
-                                    if let Some(payloads) =
-                                        layout.variant_payloads.get(&variant.def_id)
-                                    {
-                                        if payloads.len() == 1 {
-                                            ok_payload = Some(payloads[0].clone());
-                                        }
-                                    }
-                                    continue;
-                                }
-                                if variant.name.as_str() == "Err"
-                                    || variant.name.as_str().ends_with("::Err")
-                                {
-                                    if let Some(payloads) =
-                                        layout.variant_payloads.get(&variant.def_id)
-                                    {
-                                        if payloads.len() == 1 {
-                                            err_payload = Some(payloads[0].clone());
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(name) = generics.get(0) {
-                                if !substs.contains_key(name) {
-                                    if let Some(ok) = ok_payload.as_ref() {
-                                        if !matches!(ok.kind, TyKind::Infer(_) | TyKind::Error(_)) {
-                                            substs.insert(name.to_string(), ok.clone());
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(name) = generics.get(1) {
-                                if !substs.contains_key(name) {
-                                    if let Some(err) = err_payload.as_ref() {
-                                        if !matches!(err.kind, TyKind::Infer(_) | TyKind::Error(_))
-                                        {
-                                            substs.insert(name.to_string(), err.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
-                    if self.is_result_path(path) {
-                        let fallback = self.lower_type_expr(return_ty);
-                        // JUSTIFY: best-effort inference from Result path;
-                        // a separate fallback below uses explicit_args_from_expected_result_ty.
-                        if let Err(e) = self.infer_generic_from_type_expr(
-                            return_ty,
-                            &fallback,
-                            generics,
-                            &mut substs,
-                            span,
-                        ) {
-                            self.emit_warning(span, format!("generic type inference error: {e}"));
-                        }
-                        let fallback = self.lower_type_expr(return_ty);
-                        if let Some(fallback_args) =
-                            self.explicit_args_from_expected_result_ty(&fallback)
-                        {
-                            if fallback_args.len() == generics.len() {
-                                for (name, fallback_arg) in
-                                    generics.iter().zip(fallback_args.into_iter())
-                                {
-                                    if substs.contains_key(name) {
-                                        continue;
-                                    }
-                                    if matches!(fallback_arg.kind, TyKind::Infer(_)) {
-                                        continue;
-                                    }
-                                    substs.insert(name.to_string(), fallback_arg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
-                    if path
-                        .segments
-                        .last()
-                        .map(|seg| seg.name.as_str() == "Self")
-                        .unwrap_or(false)
-                    {
-                        let mut fallback_ty =
-                            expected_return.map(|ty| self.unwrap_expr_actual_ty(ty).clone());
-                        if fallback_ty.is_none() {
-                            fallback_ty = Some(self.lower_type_expr(return_ty));
-                        }
-                        if let Some(fallback_ty) = fallback_ty.as_ref() {
-                            if let Some(fallback_args) =
-                                self.explicit_args_from_expected_result_ty(fallback_ty)
-                            {
-                                if fallback_args.len() == generics.len() {
-                                    for (name, fallback_arg) in
-                                        generics.iter().zip(fallback_args.into_iter())
-                                    {
-                                        if substs.contains_key(name) {
-                                            continue;
-                                        }
-                                        if matches!(fallback_arg.kind, TyKind::Infer(_)) {
-                                            continue;
-                                        }
-                                        substs.insert(name.to_string(), fallback_arg);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(self_arg_ty) = self_arg_ty {
-                let layout = self
-                    .enum_layout_for_ty_exact(self_arg_ty)
-                    .or_else(|| self.enum_layout_for_ty(self_arg_ty));
-                if let Some(layout) = layout {
-                    let is_result_layout = self.mir_package.borrow().enum_defs
-                        .get(&layout.def_id)
-                        .map(|def| {
-                            def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
-                        })
-                        .unwrap_or(false);
-                    if is_result_layout {
-                        if let Some(return_ty) = return_ty {
-                            let fallback = self.lower_type_expr(return_ty);
-                            if let Some(fallback_args) =
-                                self.explicit_args_from_expected_result_ty(&fallback)
-                            {
-                                if fallback_args.len() == generics.len() {
-                                    for (name, fallback_arg) in
-                                        generics.iter().zip(fallback_args.into_iter())
-                                    {
-                                        if substs.contains_key(name) {
-                                            continue;
-                                        }
-                                        if matches!(fallback_arg.kind, TyKind::Infer(_)) {
-                                            continue;
-                                        }
-                                        substs.insert(name.to_string(), fallback_arg);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                let mut output_ty = return_ty;
-                while let Some(inner) = self.expr_inner_type_expr(output_ty) {
-                    output_ty = inner;
-                }
-                if let hir::TypeExprKind::Path(path) = &output_ty.kind {
-                    if self.is_result_path(path) {
-                        if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
-                            let mut output_args = Vec::new();
-                            for arg in &args.args {
-                                let hir::GenericArg::Type(type_arg) = arg else {
-                                    continue;
-                                };
-                                output_args.push(self.lower_type_expr(type_arg));
-                            }
-                            if output_args.len() == generics.len() {
-                                for (name, output_arg) in
-                                    generics.iter().zip(output_args.into_iter())
-                                {
-                                    if substs.contains_key(name) {
-                                        continue;
-                                    }
-                                    if matches!(output_arg.kind, TyKind::Infer(_)) {
-                                        if substs.is_empty() {
-                                            continue;
-                                        }
-                                    }
-                                    substs.insert(name.to_string(), output_arg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                if let hir::TypeExprKind::Path(path) = &return_ty.kind {
-                    if self.is_result_path(path) {
-                        if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
-                            let mut output_args = Vec::new();
-                            for arg in &args.args {
-                                let hir::GenericArg::Type(type_arg) = arg else {
-                                    continue;
-                                };
-                                output_args.push(self.lower_type_expr(type_arg));
-                            }
-                            if output_args.len() == generics.len() {
-                                for (name, output_arg) in
-                                    generics.iter().zip(output_args.into_iter())
-                                {
-                                    if substs.contains_key(name) {
-                                        continue;
-                                    }
-                                    substs.insert(name.to_string(), output_arg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                let mut output_ty = return_ty;
-                while let Some(inner) = self.expr_inner_type_expr(output_ty) {
-                    output_ty = inner;
-                }
-                if let hir::TypeExprKind::Path(path) = &output_ty.kind {
-                    if self.is_result_path(path) {
-                        let fallback = self.lower_type_expr(return_ty);
-                        if let Some(fallback_args) =
-                            self.explicit_args_from_expected_result_ty(&fallback)
-                        {
-                            if fallback_args.len() == generics.len() {
-                                for (name, fallback_arg) in
-                                    generics.iter().zip(fallback_args.into_iter())
-                                {
-                                    if substs.contains_key(name) {
-                                        continue;
-                                    }
-                                    if matches!(fallback_arg.kind, TyKind::Infer(_)) {
-                                        continue;
-                                    }
-                                    substs.insert(name.to_string(), fallback_arg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if substs.len() != generics.len() {
-            if let Some(return_ty) = return_ty {
-                let fallback = self.lower_type_expr(return_ty);
-                if let Some(fallback_args) = self.explicit_args_from_expected_result_ty(&fallback) {
-                    if fallback_args.len() >= generics.len() {
-                        for (idx, name) in generics.iter().enumerate() {
-                            if substs.contains_key(name) {
-                                continue;
-                            }
-                            let Some(fallback_arg) = fallback_args.get(idx) else {
-                                continue;
-                            };
-                            if matches!(fallback_arg.kind, TyKind::Infer(_)) {
-                                continue;
-                            }
-                            substs.insert(name.to_string(), fallback_arg.clone());
-                        }
-                    }
-                }
-            }
-        }
-        for name in generics {
-            if substs.contains_key(name) {
-                continue;
-            }
-            if name.as_str() == "T" {
-                substs.insert(name.to_string(), Self::unit_ty());
-            } else if name.as_str() == "E" {
-                substs.insert(name.to_string(), self.error_ty());
-            }
-        }
-        if substs.len() != generics.len() {
-            let missing = generics
-                .iter()
-                .filter(|name| !substs.contains_key(*name))
-                .collect::<Vec<_>>();
-            if missing.len() == 1 && missing[0].as_str() == "E" {
-                substs.insert("E".to_string(), self.error_ty());
-            }
-        }
-
-        for name in generics {
-            if !substs.contains_key(name) {
-                match name.as_str() {
-                    "T" => {
-                        substs.insert(name.to_string(), Self::unit_ty());
-                        continue;
-                    }
-                    "E" => {
-                        substs.insert(name.to_string(), self.error_ty());
-                        continue;
-                    }
-                    _ => {}
-                }
-                self.emit_error(
-                    span,
-                    format!(
-                        "unable to infer generic parameter `{}`; add explicit type arguments",
-                        name
-                    ),
-                );
-                return Err(crate::error::optimization_error(
-                    "generic parameter inference failed",
-                ));
-            }
-        }
-
-        Ok(substs)
-    }
-
-    fn fill_missing_substs_from_expected_return(
+    pub(super) fn fill_missing_substs_from_expected_return(
         &self,
         return_ty: &hir::TypeExpr,
         expected_return: &Ty,
@@ -2780,7 +1339,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn build_substs_from_explicit_args(
+    pub(super) fn build_substs_from_explicit_args(
         &mut self,
         generics: &[String],
         explicit_args: &[Ty],
@@ -2814,7 +1373,7 @@ impl HirToMirLowerer {
             .unwrap_or(false)
     }
 
-    fn explicit_args_from_expected_result_ty(&self, expected_ty: &Ty) -> Option<Vec<Ty>> {
+    pub(super) fn explicit_args_from_expected_result_ty(&self, expected_ty: &Ty) -> Option<Vec<Ty>> {
         let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
         let expected_ty = match &expected_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -2826,7 +1385,10 @@ impl HirToMirLowerer {
             TyKind::Opaque(def_id, substs) => (def_id, substs),
             _ => {
                 let layout = self.enum_layout_for_ty(expected_ty)?;
-                let is_result = self.mir_package.borrow().enum_defs
+                let is_result = self
+                    .mir_package
+                    .borrow()
+                    .enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -2845,18 +1407,29 @@ impl HirToMirLowerer {
                 return Some(args);
             }
         };
-        let is_result = self.mir_package.borrow().enum_defs
+        let is_result = self
+            .mir_package
+            .borrow()
+            .enum_defs
             .get(adt)
             .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
             .or_else(|| {
-                self.mir_package.borrow().struct_defs.get(adt).cloned().map(|def| {
-                    def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
-                })
+                self.mir_package
+                    .borrow()
+                    .struct_defs
+                    .get(adt)
+                    .cloned()
+                    .map(|def| {
+                        def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
+                    })
             })
             .unwrap_or(false);
         if !is_result {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self.mir_package.borrow().enum_defs
+                let is_result_layout = self
+                    .mir_package
+                    .borrow()
+                    .enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -2887,7 +1460,10 @@ impl HirToMirLowerer {
         }
         if args.len() < 2 {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self.mir_package.borrow().enum_defs
+                let is_result_layout = self
+                    .mir_package
+                    .borrow()
+                    .enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -2911,7 +1487,13 @@ impl HirToMirLowerer {
                         }
                     }
                     if args.len() < 2 {
-                        if let Some(def) = self.mir_package.borrow().enum_defs.get(&layout.def_id).cloned() {
+                        if let Some(def) = self
+                            .mir_package
+                            .borrow()
+                            .enum_defs
+                            .get(&layout.def_id)
+                            .cloned()
+                        {
                             let mut ok_payload = None;
                             let mut err_payload = None;
                             for variant in &def.variants {
@@ -2958,7 +1540,10 @@ impl HirToMirLowerer {
         }
         if args.is_empty() {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self.mir_package.borrow().enum_defs
+                let is_result_layout = self
+                    .mir_package
+                    .borrow()
+                    .enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -2978,7 +1563,10 @@ impl HirToMirLowerer {
         Some(args)
     }
 
-    pub(crate) fn expr_inner_type_expr<'a>(&self, ty_expr: &'a hir::TypeExpr) -> Option<&'a hir::TypeExpr> {
+    pub(crate) fn expr_inner_type_expr<'a>(
+        &self,
+        ty_expr: &'a hir::TypeExpr,
+    ) -> Option<&'a hir::TypeExpr> {
         let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
             return None;
         };
@@ -2998,17 +1586,23 @@ impl HirToMirLowerer {
         Some(inner)
     }
 
-    fn expr_inner_actual_ty<'a>(&self, actual_ty: &'a Ty) -> Option<&'a Ty> {
+    pub(super) fn expr_inner_actual_ty<'a>(&self, actual_ty: &'a Ty) -> Option<&'a Ty> {
         let (def_id, substs) = match &actual_ty.kind {
             TyKind::Adt(adt, substs) => (adt.did.clone(), substs),
             TyKind::Opaque(def_id, substs) => (def_id.clone(), substs),
             _ => return None,
         };
-        let is_expr = self.mir_package.borrow().struct_defs
+        let is_expr = self
+            .mir_package
+            .borrow()
+            .struct_defs
             .get(&def_id)
             .map(|def| def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr"))
             .unwrap_or(false)
-            || self.mir_package.borrow().enum_defs
+            || self
+                .mir_package
+                .borrow()
+                .enum_defs
                 .get(&def_id)
                 .map(|def| def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr"))
                 .unwrap_or(false)
@@ -3030,7 +1624,7 @@ impl HirToMirLowerer {
         Some(inner)
     }
 
-    fn unwrap_expr_type_expr<'a>(&self, mut ty_expr: &'a hir::TypeExpr) -> &'a hir::TypeExpr {
+    pub(super) fn unwrap_expr_type_expr<'a>(&self, mut ty_expr: &'a hir::TypeExpr) -> &'a hir::TypeExpr {
         while let Some(inner) = self.expr_inner_type_expr(ty_expr) {
             ty_expr = inner;
         }
@@ -3044,7 +1638,7 @@ impl HirToMirLowerer {
         actual_ty
     }
 
-    fn infer_generic_from_type_expr(
+    pub(super) fn infer_generic_from_type_expr(
         &mut self,
         ty_expr: &hir::TypeExpr,
         actual_ty: &Ty,
@@ -3087,30 +1681,35 @@ impl HirToMirLowerer {
             hir::TypeExprKind::Path(path) => {
                 let variant_enum_def = path.res.as_ref().and_then(|res| {
                     if let hir::Res::Def(def_id) = res {
-                        self.mir_package.borrow().enum_variants
+                        self.mir_package
+                            .borrow()
+                            .enum_variants
                             .get(def_id)
                             .map(|variant| variant.enum_def.clone())
                     } else {
                         None
                     }
                 });
-                if let Some((actual_def_id, actual_substs, actual_is_opaque)) =
-                    match &actual_ty.kind {
-                        TyKind::Adt(adt, substs) => Some((Some(adt.did.clone()), substs, false)),
-                        TyKind::Opaque(def_id, substs) => Some((Some(def_id.clone()), substs, true)),
-                        _ => None,
-                    }
+                if let Some((actual_def_id, actual_substs, actual_is_opaque)) = match &actual_ty
+                    .kind
                 {
+                    TyKind::Adt(adt, substs) => Some((Some(adt.did.clone()), substs, false)),
+                    TyKind::Opaque(def_id, substs) => Some((Some(def_id.clone()), substs, true)),
+                    _ => None,
+                } {
                     let mut matches_def = false;
                     if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
                         if let Some(ref actual_def_id) = actual_def_id {
-                            matches_def =
-                                *def_id == *actual_def_id || variant_enum_def == Some(actual_def_id.clone());
+                            matches_def = *def_id == *actual_def_id
+                                || variant_enum_def == Some(actual_def_id.clone());
                         }
                         if !matches_def {
                             if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
                                 if let Some(actual_def_id) = actual_def_id {
-                                    matches_def = self.mir_package.borrow().enum_defs
+                                    matches_def = self
+                                        .mir_package
+                                        .borrow()
+                                        .enum_defs
                                         .get(&actual_def_id)
                                         .map(|def| {
                                             def.name.as_str() == name
@@ -3120,7 +1719,10 @@ impl HirToMirLowerer {
                                                     .ends_with(&format!("::{}", name))
                                         })
                                         .unwrap_or(false)
-                                        || self.mir_package.borrow().struct_defs
+                                        || self
+                                            .mir_package
+                                            .borrow()
+                                            .struct_defs
                                             .get(&actual_def_id)
                                             .map(|def| {
                                                 def.name.as_str() == name
@@ -3135,14 +1737,20 @@ impl HirToMirLowerer {
                         }
                     } else if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
                         if let Some(actual_def_id) = actual_def_id {
-                            matches_def = self.mir_package.borrow().enum_defs
+                            matches_def = self
+                                .mir_package
+                                .borrow()
+                                .enum_defs
                                 .get(&actual_def_id)
                                 .map(|def| {
                                     def.name.as_str() == name
                                         || def.name.as_str().ends_with(&format!("::{}", name))
                                 })
                                 .unwrap_or(false)
-                                || self.mir_package.borrow().struct_defs
+                                || self
+                                    .mir_package
+                                    .borrow()
+                                    .struct_defs
                                     .get(&actual_def_id)
                                     .map(|def| {
                                         def.name.as_str() == name
@@ -3222,9 +1830,9 @@ impl HirToMirLowerer {
                     path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
                 {
                     let def_id = path.res.as_ref().and_then(|res| match res {
-                            hir::Res::Def(def_id) => Some(def_id.clone()),
-                            _ => None,
-                        });
+                        hir::Res::Def(def_id) => Some(def_id.clone()),
+                        _ => None,
+                    });
                     if let Some(def_id) = def_id {
                         // Prefer the exact reverse-index lookup over the
                         // fuzzy scan (`enum_layout_for_ty`, which treats
@@ -3237,7 +1845,8 @@ impl HirToMirLowerer {
                             .enum_layout_for_ty_exact(actual_ty)
                             .or_else(|| self.enum_layout_for_ty(actual_ty));
                         if let Some(layout) = layout {
-                            let enum_def_id = variant_enum_def.clone().unwrap_or_else(|| def_id.clone());
+                            let enum_def_id =
+                                variant_enum_def.clone().unwrap_or_else(|| def_id.clone());
                             if layout.def_id == enum_def_id {
                                 let layout_args = layout.args.clone();
                                 let path_type_args = path_args
@@ -3420,7 +2029,9 @@ impl HirToMirLowerer {
                 }
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                    if let Some(struct_def) = self.mir_package.borrow().struct_defs.get(def_id).cloned() {
+                    if let Some(struct_def) =
+                        self.mir_package.borrow().struct_defs.get(def_id).cloned()
+                    {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
                                 struct_def.fields.iter().zip(elements.iter())
@@ -3524,7 +2135,8 @@ impl HirToMirLowerer {
                         return Ok(());
                     }
                     TyKind::FnDef(def_id, _) => {
-                        let sig = match self.mir_package.borrow().function_sigs.get(def_id).cloned() {
+                        let sig = match self.mir_package.borrow().function_sigs.get(def_id).cloned()
+                        {
                             Some(sig) => sig,
                             None => return Ok(()),
                         };
@@ -3554,1314 +2166,7 @@ impl HirToMirLowerer {
         Ok(())
     }
 
-    pub(crate) fn lower_type_expr_with_context_and_substs(
-        &mut self,
-        ty_expr: &hir::TypeExpr,
-        method_context: Option<&MethodContext>,
-        substs: &HashMap<String, Ty>,
-    ) -> Ty {
-        if let Some(ctx) = method_context {
-            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-                if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
-                    // `Self::AssocName` (e.g. `Index::index`'s `-> Self::
-                    // Output`) is a *projection* through this impl's own
-                    // `type AssocName = ...;` binding, not `Self` itself —
-                    // resolve it via that binding (substituted with this
-                    // specialization's own `substs`, e.g. `T` -> `BenchCase`)
-                    // before falling back to treating a bare `Self` as the
-                    // whole receiver type.
-                    if path.segments.len() > 1 {
-                        if let Some(assoc_name) = path.segments.get(1) {
-                            if let Some(assoc_ty) =
-                                ctx.assoc_types.get(assoc_name.name.as_str())
-                            {
-                                return self.lower_type_expr_with_substs(assoc_ty, substs);
-                            }
-                        }
-                    } else {
-                        return ctx.mir_self_ty.clone();
-                    }
-                }
-            }
-        }
-        if substs.is_empty() {
-            return self.lower_type_expr_with_context(ty_expr, method_context);
-        }
-        self.lower_type_expr_with_substs(ty_expr, substs)
-    }
-
-    fn lower_type_expr_with_context(
-        &mut self,
-        ty_expr: &hir::TypeExpr,
-        method_context: Option<&MethodContext>,
-    ) -> Ty {
-        if let Some(ctx) = method_context {
-            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-                if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
-                    if path.segments.len() > 1 {
-                        if let Some(assoc_name) = path.segments.get(1) {
-                            if let Some(assoc_ty) =
-                                ctx.assoc_types.get(assoc_name.name.as_str()).cloned()
-                            {
-                                return self.lower_type_expr_with_context(
-                                    &assoc_ty,
-                                    method_context,
-                                );
-                            }
-                        }
-                        return self.error_ty();
-                    }
-                    return ctx.mir_self_ty.clone();
-                }
-            }
-        }
-
-        match &ty_expr.kind {
-            hir::TypeExprKind::Ref(inner) => {
-                if self.is_string_slice_ref(inner) {
-                    return self.string_slice_ty();
-                }
-                let inner_ty = self.lower_type_expr_with_context(inner, method_context);
-                Ty {
-                    kind: TyKind::Ref(
-                        mir::ty::Region::ReErased,
-                        Box::new(inner_ty),
-                        Mutability::Not,
-                    ),
-                }
-            }
-            hir::TypeExprKind::Ptr(inner) => {
-                let inner_ty = self.lower_type_expr_with_context(inner, method_context);
-                Ty {
-                    kind: TyKind::RawPtr(TypeAndMut {
-                        ty: Box::new(inner_ty),
-                        mutbl: Mutability::Not,
-                    }),
-                }
-            }
-            _ => self.lower_type_expr(ty_expr),
-        }
-    }
-
-    fn lower_body(
-        &mut self,
-        item: &hir::Item,
-        function: &hir::Function,
-        sig: &mir::FunctionSig,
-        method_context: Option<MethodContext>,
-    ) -> Result<mir::Body> {
-        let span = function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(item.span);
-
-        BodyBuilder::new(self, function, sig, span, method_context, HashMap::new()).lower()
-    }
-
-    pub(crate) fn lower_const(
-        &mut self,
-        def_id: hir::DefId,
-        konst: &hir::Const,
-    ) -> Result<mir::Item> {
-        let declared_ty = self.lower_type_expr(&konst.ty);
-        let ty = match declared_ty.clone() {
-            Ty {
-                kind: TyKind::Adt(adt, args),
-            } => {
-                let type_args = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
-                        mir::ty::GenericArg::Lifetime(_) | mir::ty::GenericArg::Const(_) => None,
-                    })
-                    .collect::<Vec<_>>();
-                self.struct_layout_for_instance(adt.did, &type_args, konst.ty.span)
-                    .map(|layout| layout.ty)
-                    .unwrap_or(declared_ty)
-            }
-            ty => ty,
-        };
-        let container_args = self.container_args_from_type_expr(&konst.ty);
-        let folded = self
-            .lower_const_expr(&konst.body.value, Some(&ty), container_args.as_ref())
-            .or_else(|| {
-                // On a relower pass (after `CompilerDriver::evaluate_
-                // comptime_lir` has run this const's own `ExecutableConst`
-                // comptime entry through the real interpreter and
-                // recorded its answer via `record_const_block_value`),
-                // this is now foldable after all — without this check,
-                // `lower_const` would keep producing the same
-                // `ExecutableConst` placeholder forever, and this const
-                // would never actually become a real global.
-                let value = self.hir_program.const_block_value(def_id.clone())?;
-                self.const_block_value_to_mir_constant(&value, konst.body.value.span)
-            });
-        let Some(init_constant) = folded else {
-            // Not the same `key` as the foldable path below — this const
-            // isn't folding inline, it becomes a real `Global` reference
-            // elsewhere in the program until a relower pass replaces it,
-            // and a `Global` operand must be addressed by exactly the
-            // same string the interpreter later publishes its resolved
-            // value under. Source-span/surface-name strings (`const_key`)
-            // aren't a stable identity for that; `def_id` already is —
-            // see `DefId::comptime_const_symbol`'s own doc comment. Every
-            // reference site (`lower_operand`'s `executable_consts.
-            // get(def_id)` branches) derives the exact same string fresh
-            // from this same `def_id`, so there's only ever one name.
-            //
-            // `Some(..)` for the last argument (not `None`) is what makes
-            // `CompilerDriver::evaluate_comptime_lir_with` feed this
-            // entry's interpreted result back via `record_const_block_
-            // value` at all (it gates on `entry.const_block_hir_id.
-            // is_some()`, `driver.rs:1240`) — without it, this const's
-            // `ExecutableConst` placeholder never gets a chance to become
-            // a real folded global on the relower pass above.
-            return self.lower_executable_const(
-                def_id.clone(),
-                konst,
-                ty,
-                def_id.comptime_const_symbol(),
-                Some(konst.body.hir_id.clone()),
-            );
-        };
-        let init = mir::Operand::Constant(init_constant.clone());
-
-        self.mir_package.borrow_mut().const_values.insert(
-            def_id.clone(),
-            ConstInfo {
-                ty: ty.clone(),
-                value: init_constant.clone(),
-            },
-        );
-        let mir_static = mir::Static {
-            name: konst.name.clone().into(),
-            ty,
-            init,
-            mutability: mir::Mutability::Not,
-        };
-
-        let mir_item = mir::Item {
-            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
-            kind: mir::ItemKind::Static(mir_static),
-        };
-
-        Ok(mir_item)
-    }
-
-    fn lower_executable_const(
-        &mut self,
-        def_id: hir::DefId,
-        konst: &hir::Const,
-        ty: Ty,
-        key: String,
-        const_block_hir_id: Option<hir::HirId>,
-    ) -> Result<mir::Item> {
-        // Not `konst.name` (its bare surface name) — a `Global` operand
-        // referencing this const elsewhere must be addressed by exactly
-        // the same string the interpreter later publishes its resolved
-        // value under (see `lower_const`'s own comment on this same
-        // point). `DefId::comptime_const_symbol` is that one shared
-        // identity, called fresh from `def_id` at every site that needs
-        // to name this same entity.
-        self.mir_package.borrow_mut().executable_consts
-            .insert(def_id.clone(), (mir::Symbol::new(def_id.comptime_const_symbol()), ty.clone()));
-        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
-
-        let fn_name = self.synthetic_const_function_name(&konst.name, &key);
-        let synthetic_item = hir::Item {
-            hir_id: konst.body.hir_id.clone(),
-            def_id: def_id.clone(),
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Function(hir::Function {
-                sig: hir::FunctionSig {
-                    name: hir::Symbol::new(fn_name.clone()),
-                    inputs: Vec::new(),
-                    output: konst.ty.clone(),
-                    generics: hir::Generics {
-                        params: Vec::new(),
-                        where_clause: None,
-                    },
-                    abi: hir::Abi::Rust,
-                },
-                body: Some(hir::Block {
-                    hir_id: konst.body.hir_id.clone(),
-                    stmts: Vec::new(),
-                    expr: Some(Box::new(konst.body.value.clone())),
-                }),
-                is_const: true,
-                is_extern: false,
-                is_async: false,
-                attrs: Vec::new(),
-            }),
-            span: konst.body.value.span,
-        };
-        let hir::ItemKind::Function(function) = &synthetic_item.kind else {
-            unreachable!();
-        };
-
-        let sig = mir::FunctionSig {
-            inputs: Vec::new(),
-            output: ty.clone(),
-        };
-        let body = self.lower_body(&synthetic_item, function, &sig, None)?;
-        self.extra_bodies.push((body_id, body));
-
-        let mir_item = mir::Item {
-            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
-            kind: mir::ItemKind::ExecutableConst(mir::ExecutableConst {
-                name: mir::Symbol::from(&konst.name),
-                function_name: mir::Symbol::new(fn_name),
-                ty,
-                body_id,
-                key,
-                span: konst.body.value.span,
-                const_block_hir_id,
-                def_id,
-            }),
-        };
-        Ok(mir_item)
-    }
-
-    pub(crate) fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
-        if let hir::TypeExprKind::Ref(inner) = &ty_expr.kind {
-            if self.is_string_slice_ref(inner) {
-                return self.string_slice_ty();
-            }
-        }
-        if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-            if path.segments.last().is_some_and(|segment| {
-                matches!(
-                    segment.name.as_str(),
-                    "bool"
-                        | "char"
-                        | "str"
-                        | "i8"
-                        | "i16"
-                        | "i32"
-                        | "i64"
-                        | "i128"
-                        | "isize"
-                        | "u8"
-                        | "u16"
-                        | "u32"
-                        | "u64"
-                        | "u128"
-                        | "usize"
-                        | "f16"
-                        | "f32"
-                        | "f64"
-                        | "f128"
-                )
-            }) {
-                return self.lower_path_type(path, ty_expr.span);
-            }
-        }
-        if let Some(ty) = self.typeck_type_expr_type(ty_expr.hir_id.clone()) {
-            return ty;
-        }
-        match &ty_expr.kind {
-            hir::TypeExprKind::Primitive(primitive) => {
-                self.lower_primitive_type(primitive, ty_expr.span)
-            }
-            hir::TypeExprKind::Structural(structural) => {
-                self.lower_structural_type_expr(structural, ty_expr.span)
-            }
-            hir::TypeExprKind::TypeBinaryOp(type_op) => {
-                self.lower_type_binary_op_expr(type_op, ty_expr.span)
-            }
-            hir::TypeExprKind::Tuple(elements) => Ty {
-                kind: TyKind::Tuple(
-                    elements
-                        .iter()
-                        .map(|elem| Box::new(self.lower_type_expr(elem)))
-                        .collect(),
-                ),
-            },
-            hir::TypeExprKind::Array(elem, len_expr) => {
-                let elem_ty = self.lower_type_expr(elem);
-                let len = len_expr
-                    .as_ref()
-                    .and_then(|expr| self.eval_type_length(expr))
-                    .unwrap_or(0);
-                Ty {
-                    kind: TyKind::Array(
-                        Box::new(elem_ty),
-                        ConstKind::Value(ConstValue::Scalar(Scalar::Int(ScalarInt {
-                            data: len as u128,
-                            size: 8,
-                        }))),
-                    ),
-                }
-            }
-            hir::TypeExprKind::Slice(elem) => {
-                let elem_ty = self.lower_type_expr(elem);
-                Ty {
-                    kind: TyKind::Slice(Box::new(elem_ty)),
-                }
-            }
-            hir::TypeExprKind::Ptr(inner) => {
-                let inner_ty = self.lower_type_expr(inner);
-                Ty {
-                    kind: TyKind::RawPtr(TypeAndMut {
-                        ty: Box::new(inner_ty),
-                        mutbl: Mutability::Not,
-                    }),
-                }
-            }
-            hir::TypeExprKind::Ref(inner) => {
-                if self.is_string_slice_ref(inner) {
-                    return self.string_slice_ty();
-                }
-                let inner_ty = self.lower_type_expr(inner);
-                Ty {
-                    kind: TyKind::Ref(
-                        mir::ty::Region::ReErased,
-                        Box::new(inner_ty),
-                        Mutability::Not,
-                    ),
-                }
-            }
-            hir::TypeExprKind::Path(path) => self.lower_path_type(path, ty_expr.span),
-            hir::TypeExprKind::FnPtr(fn_ptr) => {
-                let inputs = fn_ptr
-                    .inputs
-                    .iter()
-                    .map(|ty| Box::new(self.lower_type_expr(ty)))
-                    .collect();
-                let output = Box::new(self.lower_type_expr(&fn_ptr.output));
-                Ty {
-                    kind: TyKind::FnPtr(mir::ty::PolyFnSig {
-                        binder: mir::ty::Binder {
-                            value: mir::ty::FnSig {
-                                inputs,
-                                output,
-                                c_variadic: false,
-                                unsafety: mir::ty::Unsafety::Normal,
-                                abi: mir::ty::Abi::Rust,
-                            },
-                            bound_vars: Vec::new(),
-                        },
-                    }),
-                }
-            }
-            hir::TypeExprKind::Never => Ty {
-                kind: TyKind::Never,
-            },
-            hir::TypeExprKind::Infer => self.error_ty(),
-            hir::TypeExprKind::Error => self.error_ty(),
-            // The typeck-resolved type for this node is looked up via
-            // `typeck_type_expr_type` above (populated from the type
-            // checker's `resolve_pending_type_const_blocks`); reaching here
-            // means that lookup missed, so fall back the same way `Infer`
-            // does.
-            hir::TypeExprKind::ConstBlock(_, _) => self.error_ty(),
-            hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
-            hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
-            // Erases to `base`'s `TyKind` directly — there is deliberately
-            // no corresponding `TyKind::Refinement` (see the doc comment on
-            // `hir::TypeExprKind::Refinement`).
-            hir::TypeExprKind::Refinement { base, .. } => self.lower_type_expr(base),
-            // Erases to plain `str` — the typeck-resolved lookup above
-            // should always hit (populated by `fp_typing::check_type_expr`'s
-            // `LiteralString` arm); this is the same fallback shape as a
-            // normal `str`.
-            hir::TypeExprKind::LiteralString(_) => self.string_slice_ty(),
-        }
-    }
-
-    fn eval_type_length(&self, expr: &hir::Expr) -> Option<u64> {
-        match &expr.kind {
-            hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
-            hir::ExprKind::Path(path) => {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
-                    self.mir_package.borrow().const_values
-                        .get(def_id)
-                        .and_then(|info| match &info.value.literal {
-                            mir::ConstantKind::Int(value) => Some(*value as u64),
-                            mir::ConstantKind::UInt(value) => Some(*value),
-                            _ => None,
-                        })
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn lower_structural_type_expr(&mut self, structural: &hir::TypeStructural, span: Span) -> Ty {
-        let mut entries_ty: Option<&hir::TypeExpr> = None;
-        if structural.fields.len() == 1 {
-            if let Some(field) = structural.fields.first() {
-                if field.name.as_str() == "entries" {
-                    entries_ty = Some(field.ty.as_ref());
-                }
-            }
-        } else {
-            for field in &structural.fields {
-                if field.name.as_str() == "entries" {
-                    entries_ty = Some(field.ty.as_ref());
-                    break;
-                }
-            }
-        }
-
-        if let Some(entries_ty) = entries_ty {
-            let mut entry_ty_expr: Option<&hir::TypeExpr> = None;
-            match &entries_ty.kind {
-                hir::TypeExprKind::Path(path) => {
-                    if let Some(tail) = path.segments.last() {
-                        if tail.name.as_str() == "Vec" {
-                            if let Some(args) = &tail.args {
-                                if args.args.len() == 1 {
-                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                        entry_ty_expr = Some(inner.as_ref());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                hir::TypeExprKind::Slice(inner) => {
-                    entry_ty_expr = Some(inner.as_ref());
-                }
-                _ => {}
-            }
-
-            if let Some(mut entry_ty_expr) = entry_ty_expr {
-                if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
-                    if let Some(tail) = path.segments.last() {
-                        if tail.name.as_str() == "Expr" {
-                            if let Some(args) = &tail.args {
-                                if args.args.len() == 1 {
-                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                        entry_ty_expr = inner.as_ref();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let mut key_ty_expr = None;
-                let mut value_ty_expr = None;
-                match &entry_ty_expr.kind {
-                    hir::TypeExprKind::Path(path) => {
-                        if let Some(tail) = path.segments.last() {
-                            if tail.name.as_str() == "HashMapEntry" {
-                                if let Some(args) = &tail.args {
-                                    if args.args.len() == 2 {
-                                        if let (
-                                            hir::GenericArg::Type(key),
-                                            hir::GenericArg::Type(value),
-                                        ) = (&args.args[0], &args.args[1])
-                                        {
-                                            key_ty_expr = Some(key.as_ref());
-                                            value_ty_expr = Some(value.as_ref());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    hir::TypeExprKind::Tuple(fields) => {
-                        if fields.len() == 2 {
-                            key_ty_expr = Some(fields[0].as_ref());
-                            value_ty_expr = Some(fields[1].as_ref());
-                        }
-                    }
-                    hir::TypeExprKind::Structural(structural) => {
-                        for field in &structural.fields {
-                            match field.name.as_str() {
-                                "key" => key_ty_expr = Some(field.ty.as_ref()),
-                                "value" => value_ty_expr = Some(field.ty.as_ref()),
-                                _ => {}
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-
-                if let (Some(key_ty_expr), Some(value_ty_expr)) = (key_ty_expr, value_ty_expr) {
-                    let key_ty = self.lower_type_expr(key_ty_expr);
-                    let value_ty = self.lower_type_expr(value_ty_expr);
-                    return Ty {
-                        kind: TyKind::Slice(Box::new(Ty {
-                            kind: TyKind::Tuple(vec![Box::new(key_ty), Box::new(value_ty)]),
-                        })),
-                    };
-                }
-            }
-        }
-
-        let mut fields = Vec::with_capacity(structural.fields.len());
-        for field in &structural.fields {
-            fields.push(StructFieldDef {
-                name: field.name.as_str().to_string(),
-                ty: (*field.ty).clone(),
-            });
-        }
-
-        let key_fields = fields
-            .iter()
-            .map(|field| (field.name.clone(), self.lower_type_expr(&field.ty)))
-            .collect::<Vec<_>>();
-        let key = StructuralLayoutKey { fields: key_fields };
-
-        let def_id = if let Some(def_id) = self.mir_package.borrow().structural_defs.get(&key).cloned() {
-            def_id
-        } else {
-            let def_id = self.mir_package.borrow_mut().fresh_synthetic_hir_def_id();
-            let mut field_index = HashMap::new();
-            for (idx, field) in fields.iter().enumerate() {
-                if field_index.insert(field.name.clone(), idx).is_some() {
-                    self.emit_error(span, format!("duplicate structural field `{}`", field.name));
-                }
-            }
-
-            let name = format!("__structural_{}", def_id);
-            self.mir_package.borrow_mut().struct_defs_by_tail_name
-                .entry(Self::name_tail(&name).to_string())
-                .or_default()
-                .push(def_id.clone());
-            self.mir_package.borrow_mut().struct_defs.insert(
-                def_id.clone(),
-                StructDefinition {
-                    name,
-                    generics: Vec::new(),
-                    fields: fields.clone(),
-                    field_index,
-                },
-            );
-            self.mir_package.borrow_mut().structural_defs.insert(key, def_id.clone());
-            def_id
-        };
-
-        self.struct_layout_for_instance(def_id, &[], span)
-            .map(|layout| layout.ty)
-            .unwrap_or_else(|| self.error_ty())
-    }
-
-    fn lower_type_binary_op_expr(&mut self, type_op: &hir::TypeBinaryOp, span: Span) -> Ty {
-        match type_op.kind {
-            TypeBinaryOpKind::Union => self.lower_union_type_expr(&type_op.lhs, &type_op.rhs, span),
-            TypeBinaryOpKind::Add | TypeBinaryOpKind::Intersect | TypeBinaryOpKind::Subtract => {
-                let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span);
-                let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span);
-                let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
-                    self.emit_error(
-                        span,
-                        "type arithmetic requires structural or named struct operands",
-                    );
-                    return self.error_ty();
-                };
-
-                let combined = match type_op.kind {
-                    TypeBinaryOpKind::Add => self.merge_structural_fields(span, lhs, rhs),
-                    TypeBinaryOpKind::Intersect => self.intersect_structural_fields(span, lhs, rhs),
-                    TypeBinaryOpKind::Subtract => self.subtract_structural_fields(span, lhs, rhs),
-                    TypeBinaryOpKind::Union => unreachable!("union handled above"),
-                };
-                let fields = combined
-                    .into_iter()
-                    .map(|field| hir::TypeStructuralField {
-                        name: hir::Symbol::new(field.name),
-                        ty: Box::new(field.ty),
-                    })
-                    .collect::<Vec<_>>();
-                self.lower_structural_type_expr(&hir::TypeStructural { fields }, span)
-            }
-        }
-    }
-
-    fn structural_fields_for_type_expr(
-        &mut self,
-        ty_expr: &hir::TypeExpr,
-        span: Span,
-    ) -> Option<Vec<StructFieldDef>> {
-        match &ty_expr.kind {
-            hir::TypeExprKind::Structural(structural) => Some(
-                structural
-                    .fields
-                    .iter()
-                    .map(|field| StructFieldDef {
-                        name: field.name.as_str().to_string(),
-                        ty: (*field.ty).clone(),
-                    })
-                    .collect(),
-            ),
-            hir::TypeExprKind::Path(path) => {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
-                    if let Some(def) = self.mir_package.borrow().struct_defs.get(def_id).cloned() {
-                        return Some(def.fields.clone());
-                    }
-                }
-                self.emit_error(
-                    span,
-                    "type arithmetic requires struct operands with known definitions",
-                );
-                None
-            }
-            hir::TypeExprKind::TypeBinaryOp(type_op) => match type_op.kind {
-                TypeBinaryOpKind::Add
-                | TypeBinaryOpKind::Intersect
-                | TypeBinaryOpKind::Subtract => {
-                    let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span)?;
-                    let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span)?;
-                    Some(match type_op.kind {
-                        TypeBinaryOpKind::Add => self.merge_structural_fields(span, lhs, rhs),
-                        TypeBinaryOpKind::Intersect => {
-                            self.intersect_structural_fields(span, lhs, rhs)
-                        }
-                        TypeBinaryOpKind::Subtract => {
-                            self.subtract_structural_fields(span, lhs, rhs)
-                        }
-                        TypeBinaryOpKind::Union => unreachable!("union handled separately"),
-                    })
-                }
-                TypeBinaryOpKind::Union => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn merge_structural_fields(
-        &mut self,
-        span: Span,
-        mut lhs: Vec<StructFieldDef>,
-        rhs: Vec<StructFieldDef>,
-    ) -> Vec<StructFieldDef> {
-        for rhs_field in rhs {
-            if let Some(existing) = lhs.iter().find(|field| field.name == rhs_field.name) {
-                if !self.type_exprs_equivalent(&existing.ty, &rhs_field.ty) {
-                    self.emit_error(
-                        span,
-                        format!(
-                            "conflicting field types for `{}` in structural merge",
-                            rhs_field.name
-                        ),
-                    );
-                }
-                continue;
-            }
-            lhs.push(rhs_field);
-        }
-        lhs
-    }
-
-    fn intersect_structural_fields(
-        &mut self,
-        span: Span,
-        lhs: Vec<StructFieldDef>,
-        rhs: Vec<StructFieldDef>,
-    ) -> Vec<StructFieldDef> {
-        lhs.into_iter()
-            .filter_map(|field| {
-                rhs.iter()
-                    .find(|rhs_field| rhs_field.name == field.name)
-                    .map(|rhs_field| {
-                        if !self.type_exprs_equivalent(&rhs_field.ty, &field.ty) {
-                            self.emit_error(
-                                span,
-                                format!(
-                                    "conflicting field types for `{}` in structural intersect",
-                                    field.name
-                                ),
-                            );
-                        }
-                        field.clone()
-                    })
-            })
-            .collect()
-    }
-
-    fn subtract_structural_fields(
-        &mut self,
-        _span: Span,
-        lhs: Vec<StructFieldDef>,
-        rhs: Vec<StructFieldDef>,
-    ) -> Vec<StructFieldDef> {
-        lhs.into_iter()
-            .filter(|field| !rhs.iter().any(|rhs_field| rhs_field.name == field.name))
-            .collect()
-    }
-
-    fn type_exprs_equivalent(&self, lhs: &hir::TypeExpr, rhs: &hir::TypeExpr) -> bool {
-        match (&lhs.kind, &rhs.kind) {
-            (hir::TypeExprKind::Primitive(a), hir::TypeExprKind::Primitive(b)) => a == b,
-            (hir::TypeExprKind::Path(a), hir::TypeExprKind::Path(b)) => {
-                if a.segments.len() != b.segments.len() {
-                    return false;
-                }
-                for (a_seg, b_seg) in a.segments.iter().zip(b.segments.iter()) {
-                    if a_seg.name != b_seg.name {
-                        return false;
-                    }
-                    match (&a_seg.args, &b_seg.args) {
-                        (None, None) => {}
-                        (Some(a_args), Some(b_args)) => {
-                            if a_args.args.len() != b_args.args.len() {
-                                return false;
-                            }
-                            for (a_arg, b_arg) in a_args.args.iter().zip(b_args.args.iter()) {
-                                match (a_arg, b_arg) {
-                                    (hir::GenericArg::Type(a_ty), hir::GenericArg::Type(b_ty)) => {
-                                        if !self.type_exprs_equivalent(a_ty, b_ty) {
-                                            return false;
-                                        }
-                                    }
-                                    (hir::GenericArg::Const(_), hir::GenericArg::Const(_)) => {}
-                                    _ => return false,
-                                }
-                            }
-                        }
-                        _ => return false,
-                    }
-                }
-                true
-            }
-            (hir::TypeExprKind::Structural(a), hir::TypeExprKind::Structural(b)) => {
-                if a.fields.len() != b.fields.len() {
-                    return false;
-                }
-                for (a_field, b_field) in a.fields.iter().zip(b.fields.iter()) {
-                    if a_field.name != b_field.name {
-                        return false;
-                    }
-                    if !self.type_exprs_equivalent(&a_field.ty, &b_field.ty) {
-                        return false;
-                    }
-                }
-                true
-            }
-            (hir::TypeExprKind::TypeBinaryOp(a), hir::TypeExprKind::TypeBinaryOp(b)) => {
-                a.kind == b.kind
-                    && self.type_exprs_equivalent(&a.lhs, &b.lhs)
-                    && self.type_exprs_equivalent(&a.rhs, &b.rhs)
-            }
-            (hir::TypeExprKind::Tuple(a), hir::TypeExprKind::Tuple(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                a.iter()
-                    .zip(b.iter())
-                    .all(|(a_ty, b_ty)| self.type_exprs_equivalent(a_ty, b_ty))
-            }
-            (hir::TypeExprKind::Array(a_elem, _), hir::TypeExprKind::Array(b_elem, _)) => {
-                self.type_exprs_equivalent(a_elem, b_elem)
-            }
-            (hir::TypeExprKind::Slice(a_elem), hir::TypeExprKind::Slice(b_elem)) => {
-                self.type_exprs_equivalent(a_elem, b_elem)
-            }
-            (hir::TypeExprKind::Ptr(a), hir::TypeExprKind::Ptr(b)) => {
-                self.type_exprs_equivalent(a, b)
-            }
-            (hir::TypeExprKind::Ref(a), hir::TypeExprKind::Ref(b)) => {
-                self.type_exprs_equivalent(a, b)
-            }
-            (hir::TypeExprKind::FnPtr(a), hir::TypeExprKind::FnPtr(b)) => {
-                if a.inputs.len() != b.inputs.len() {
-                    return false;
-                }
-                if !a
-                    .inputs
-                    .iter()
-                    .zip(b.inputs.iter())
-                    .all(|(a_ty, b_ty)| self.type_exprs_equivalent(a_ty, b_ty))
-                {
-                    return false;
-                }
-                self.type_exprs_equivalent(&a.output, &b.output)
-            }
-            (hir::TypeExprKind::Never, hir::TypeExprKind::Never) => true,
-            (hir::TypeExprKind::Infer, hir::TypeExprKind::Infer) => true,
-            (hir::TypeExprKind::Error, hir::TypeExprKind::Error) => true,
-            _ => false,
-        }
-    }
-
-    fn lower_union_type_expr(
-        &mut self,
-        lhs: &hir::TypeExpr,
-        rhs: &hir::TypeExpr,
-        span: Span,
-    ) -> Ty {
-        let def_id = self.mir_package.borrow_mut().fresh_synthetic_hir_def_id();
-        let enum_name = format!("__union_{}", def_id);
-
-        let lhs_name = self.union_variant_name(lhs, "Left");
-        let mut rhs_name = self.union_variant_name(rhs, "Right");
-        if lhs_name == rhs_name {
-            rhs_name = format!("{}_rhs", rhs_name);
-        }
-
-        let lhs_payload = match lhs.kind {
-            hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
-            _ if self.is_null_type_expr(lhs) => None,
-            _ => Some(lhs.clone()),
-        };
-        let rhs_payload = match rhs.kind {
-            hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
-            _ if self.is_null_type_expr(rhs) => None,
-            _ => Some(rhs.clone()),
-        };
-
-        let variants = vec![
-            EnumVariantDef {
-                def_id: self.mir_package.borrow_mut().fresh_synthetic_hir_def_id(),
-                name: lhs_name,
-                discriminant: 0,
-                payload: lhs_payload,
-            },
-            EnumVariantDef {
-                def_id: self.mir_package.borrow_mut().fresh_synthetic_hir_def_id(),
-                name: rhs_name,
-                discriminant: 1,
-                payload: rhs_payload,
-            },
-        ];
-
-        self.register_synthetic_enum(def_id.clone(), enum_name, variants, span);
-
-        match self.enum_layout_for_instance(def_id, &[], span) {
-            Some(layout) => self.nominal_enum_ty(&layout),
-            None => self.error_ty(),
-        }
-    }
-
-    fn union_variant_name(&self, ty_expr: &hir::TypeExpr, fallback: &str) -> String {
-        match &ty_expr.kind {
-            hir::TypeExprKind::Path(path) => path
-                .segments
-                .last()
-                .map(|seg| seg.name.as_str().to_string())
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| fallback.to_string()),
-            hir::TypeExprKind::Structural(structural) => {
-                let mut matches = self.mir_package.borrow().struct_defs
-                    .values()
-                    .filter(|def| def.fields.len() == structural.fields.len())
-                    .filter(|def| {
-                        def.fields.iter().zip(structural.fields.iter()).all(
-                            |(def_field, struct_field)| {
-                                def_field.name == struct_field.name.as_str()
-                                    && self.type_exprs_equivalent(&def_field.ty, &struct_field.ty)
-                            },
-                        )
-                    })
-                    .map(|def| def.name.clone())
-                    .collect::<Vec<_>>();
-                if let Some(name) = matches
-                    .iter()
-                    .find(|name| !name.starts_with("__structural_"))
-                {
-                    return name.clone();
-                }
-                matches.pop().unwrap_or_else(|| fallback.to_string())
-            }
-            _ => fallback.to_string(),
-        }
-    }
-
-    fn is_null_type_expr(&self, ty_expr: &hir::TypeExpr) -> bool {
-        match &ty_expr.kind {
-            hir::TypeExprKind::Path(path) => path
-                .segments
-                .last()
-                .map(|seg| seg.name.as_str() == "null")
-                .unwrap_or(false),
-            _ => false,
-        }
-    }
-
-    fn register_synthetic_enum(
-        &mut self,
-        def_id: hir::DefId,
-        name: String,
-        variants: Vec<EnumVariantDef>,
-        span: Span,
-    ) {
-        if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
-            return;
-        }
-
-        for variant in &variants {
-            let payload_def = variant.payload.as_ref().and_then(|payload| {
-                if let hir::TypeExprKind::Path(path) = &payload.kind {
-                    if let Some(hir::Res::Def(def_id)) = &path.res {
-                        return Some(def_id.clone());
-                    }
-                }
-                None
-            });
-            self.mir_package.borrow_mut().enum_variants.insert(
-                variant.def_id.clone(),
-                EnumVariantInfo {
-                    def_id: variant.def_id.clone(),
-                    enum_def: def_id.clone(),
-                    discriminant: variant.discriminant,
-                    payload_def,
-                },
-            );
-
-            let qualified_name = format!("{}::{}", name, variant.name);
-            self.mir_package.borrow_mut().enum_variant_names
-                .insert(qualified_name.clone(), variant.def_id.clone());
-            self.mir_package.borrow_mut().enum_variant_names
-                .entry(variant.name.clone())
-                .or_insert(variant.def_id.clone());
-        }
-
-        self.mir_package.borrow_mut().enum_defs_by_name
-            .entry(name.clone())
-            .or_insert(def_id.clone());
-        self.mir_package.borrow_mut().enum_defs.insert(
-            def_id.clone(),
-            EnumDefinition {
-                def_id: def_id.clone(),
-                name,
-                generics: Vec::new(),
-                variants,
-            },
-        );
-
-        // JUSTIFY: layout may be uncomputable for forward-referenced types
-        // during registration; computed lazily when needed later.
-        if self.enum_layout_for_instance(def_id, &[], span).is_none() {
-            self.emit_warning(
-                span,
-                "enum layout computation returned None during registration",
-            );
-        }
-    }
-
-    fn lower_primitive_type(&mut self, primitive: &TypePrimitive, span: Span) -> Ty {
-        match primitive {
-            TypePrimitive::Bool => Ty { kind: TyKind::Bool },
-            TypePrimitive::Char => Ty { kind: TyKind::Char },
-            TypePrimitive::Int(int_ty) => match int_ty {
-                TypeInt::I8 => Ty {
-                    kind: TyKind::Int(IntTy::I8),
-                },
-                TypeInt::I16 => Ty {
-                    kind: TyKind::Int(IntTy::I16),
-                },
-                TypeInt::I32 => Ty {
-                    kind: TyKind::Int(IntTy::I32),
-                },
-                TypeInt::I64 => Ty {
-                    kind: TyKind::Int(IntTy::I64),
-                },
-                TypeInt::I128 => Ty {
-                    kind: TyKind::Int(IntTy::I128),
-                },
-                TypeInt::U8 => Ty {
-                    kind: TyKind::Uint(UintTy::U8),
-                },
-                TypeInt::U16 => Ty {
-                    kind: TyKind::Uint(UintTy::U16),
-                },
-                TypeInt::U32 => Ty {
-                    kind: TyKind::Uint(UintTy::U32),
-                },
-                TypeInt::U64 => Ty {
-                    kind: TyKind::Uint(UintTy::U64),
-                },
-                TypeInt::U128 => Ty {
-                    kind: TyKind::Uint(UintTy::U128),
-                },
-                TypeInt::BigInt => {
-                    self.emit_error(span, "big integers are not yet supported in MIR");
-                    self.error_ty()
-                }
-            },
-            TypePrimitive::Decimal(decimal) => match decimal {
-                DecimalType::F32 => Ty {
-                    kind: TyKind::Float(FloatTy::F32),
-                },
-                DecimalType::F64 => Ty {
-                    kind: TyKind::Float(FloatTy::F64),
-                },
-                DecimalType::BigDecimal | DecimalType::Decimal { .. } => {
-                    self.emit_warning(span, "lowering arbitrary precision decimal to f64 in MIR");
-                    Ty {
-                        kind: TyKind::Float(FloatTy::F64),
-                    }
-                }
-            },
-            TypePrimitive::String => self.string_slice_ty(),
-            TypePrimitive::List => {
-                self.emit_warning(
-                    span,
-                    "treating list primitive as opaque type during MIR lowering",
-                );
-                self.opaque_ty("list")
-            }
-        }
-    }
-
-    pub(crate) fn resolve_path_def_id(&self, path: &hir::Path) -> Option<hir::DefId> {
-        match path.res {
-            Some(hir::Res::Def(ref def_id)) => Some(def_id.clone()),
-            _ => None,
-        }
-    }
-
-    fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
-        if let Some(def_id) = self.resolve_path_def_id(path) {
-            if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
-                let args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
-                    return layout.ty.clone();
-                }
-                return self.error_ty();
-            }
-            if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
-                let args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
-                    return self.nominal_enum_ty(&layout);
-                }
-                return self.error_ty();
-            }
-            if let Some(sig) = self.mir_package.borrow().function_sigs.get(&def_id).cloned() {
-                return Ty {
-                    kind: TyKind::FnPtr(mir::ty::PolyFnSig {
-                        binder: mir::ty::Binder {
-                            value: mir::ty::FnSig {
-                                inputs: sig.inputs.iter().map(|ty| Box::new(ty.clone())).collect(),
-                                output: Box::new(sig.output.clone()),
-                                c_variadic: false,
-                                unsafety: mir::ty::Unsafety::Normal,
-                                abi: mir::ty::Abi::C { unwind: false },
-                            },
-                            bound_vars: Vec::new(),
-                        },
-                    }),
-                };
-            }
-        }
-
-        if let Some(segment) = path.segments.last() {
-            let name = segment.name.as_str();
-            if name == "Vec" || name == "List" {
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(elem_ty) = args.first().cloned() {
-                    return Ty {
-                        kind: TyKind::Slice(Box::new(elem_ty)),
-                    };
-                }
-                self.emit_error(span, "Vec/List requires a single type argument");
-                return self.error_ty();
-            }
-            if name == "HashMap" {
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if args.len() == 2 {
-                    let entry_ty = Ty {
-                        kind: TyKind::Tuple(vec![
-                            Box::new(args[0].clone()),
-                            Box::new(args[1].clone()),
-                        ]),
-                    };
-                    return Ty {
-                        kind: TyKind::Slice(Box::new(entry_ty)),
-                    };
-                }
-                self.emit_error(span, "HashMap requires two type arguments");
-                return self.error_ty();
-            }
-        }
-
-        if let Some(res) = &path.res {
-            if let hir::Res::Def(def_id) = res {
-                if self.mir_package.borrow().struct_defs.contains_key(def_id) {
-                    let args = path
-                        .segments
-                        .last()
-                        .and_then(|segment| segment.args.as_ref())
-                        .map(|args| self.lower_generic_args(Some(args), span))
-                        .unwrap_or_default();
-                    if let Some(layout) = self.struct_layout_for_instance(def_id.clone(), &args, span) {
-                        return layout.ty.clone();
-                    }
-                    return self.error_ty();
-                }
-                if self.mir_package.borrow().enum_defs.contains_key(def_id) {
-                    let args = path
-                        .segments
-                        .last()
-                        .and_then(|segment| segment.args.as_ref())
-                        .map(|args| self.lower_generic_args(Some(args), span))
-                        .unwrap_or_default();
-                    if let Some(layout) = self.enum_layout_for_instance(def_id.clone(), &args, span) {
-                        return self.nominal_enum_ty(&layout);
-                    }
-                    return self.error_ty();
-                }
-                if let Some(sig) = self.mir_package.borrow().function_sigs.get(def_id).cloned() {
-                    // Treat function types as function pointers when referenced as types
-                    return Ty {
-                        kind: TyKind::FnPtr(mir::ty::PolyFnSig {
-                            binder: mir::ty::Binder {
-                                value: mir::ty::FnSig {
-                                    inputs: sig
-                                        .inputs
-                                        .iter()
-                                        .map(|ty| Box::new(ty.clone()))
-                                        .collect(),
-                                    output: Box::new(sig.output.clone()),
-                                    c_variadic: false,
-                                    unsafety: mir::ty::Unsafety::Normal,
-                                    abi: mir::ty::Abi::C { unwind: false },
-                                },
-                                bound_vars: Vec::new(),
-                            },
-                        }),
-                    };
-                }
-            }
-        }
-
-        if let Some(segment) = path.segments.last() {
-            let name = segment.name.clone();
-            match name.as_str() {
-                "i8" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::I8),
-                    };
-                }
-                "i16" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::I16),
-                    };
-                }
-                "i32" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::I32),
-                    };
-                }
-                "i64" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::I64),
-                    };
-                }
-                "i128" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::I128),
-                    };
-                }
-                "usize" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::Usize),
-                    };
-                }
-                "isize" => {
-                    return Ty {
-                        kind: TyKind::Int(IntTy::Isize),
-                    };
-                }
-                "u8" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::U8),
-                    };
-                }
-                "u16" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::U16),
-                    };
-                }
-                "u32" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::U32),
-                    };
-                }
-                "u64" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::U64),
-                    };
-                }
-                "u128" => {
-                    return Ty {
-                        kind: TyKind::Uint(UintTy::U128),
-                    };
-                }
-                "bool" => return Ty { kind: TyKind::Bool },
-                "char" => return Ty { kind: TyKind::Char },
-                "f16" => {
-                    return Ty {
-                        kind: TyKind::Float(FloatTy::F16),
-                    };
-                }
-                "f32" => {
-                    return Ty {
-                        kind: TyKind::Float(FloatTy::F32),
-                    };
-                }
-                "f64" => {
-                    return Ty {
-                        kind: TyKind::Float(FloatTy::F64),
-                    };
-                }
-                "f128" => {
-                    return Ty {
-                        kind: TyKind::Float(FloatTy::F128),
-                    };
-                }
-                "str" => {
-                    return Ty {
-                        kind: TyKind::Slice(Box::new(Ty {
-                            kind: TyKind::Int(IntTy::I8),
-                        })),
-                    };
-                }
-                "null" => {
-                    return self.raw_string_ptr_ty();
-                }
-                _ => {}
-            }
-        }
-
-        let display = path
-            .segments
-            .iter()
-            .map(|seg| seg.name.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
-        self.emit_error(span, format!("unresolved type path `{display}`"));
-        self.error_ty()
-    }
-
-    /// Qualified display name for a definition, sourced from
-    /// `hir::HirPackage::def_paths` (the item's `name` field is always bare —
-    /// see that table's doc comment). Falls back to the bare name itself
-    /// when no path is recorded (e.g. synthetic items). Takes the
-    /// `def_paths` table directly (not the whole `&hir::HirPackage`) so
-    /// `register_struct`/`register_enum` can be called from a context that
-    /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
-    /// lookup, which runs after the original `hir::HirPackage` is out of scope).
-    /// Dispatches through `hir_def_path` (reads straight off `hir_program`
-    /// — see its own doc comment),
-    /// so callers no longer need to carry around whichever specific
-    /// package's `def_paths` map happens to own `def_id`.
-    fn def_path_str(&self, def_id: hir::DefId, bare_name: &str) -> String {
+    pub(super) fn def_path_str(&self, def_id: hir::DefId, bare_name: &str) -> String {
         self.hir_def_path(def_id)
             .map(|path| path.to_string())
             .unwrap_or_else(|| bare_name.to_string())
@@ -4904,7 +2209,9 @@ impl HirToMirLowerer {
             .collect::<Vec<_>>();
 
         let name = self.def_path_str(def_id.clone(), strukt.name.as_str());
-        self.mir_package.borrow_mut().struct_defs_by_tail_name
+        self.mir_package
+            .borrow_mut()
+            .struct_defs_by_tail_name
             .entry(Self::name_tail(&name).to_string())
             .or_default()
             .push(def_id.clone());
@@ -4917,14 +2224,9 @@ impl HirToMirLowerer {
                 field_index,
             },
         );
-                }
+    }
 
-    pub(crate) fn register_enum(
-        &mut self,
-        def_id: hir::DefId,
-        enm: &hir::Enum,
-        _span: Span,
-    ) {
+    pub(crate) fn register_enum(&mut self, def_id: hir::DefId, enm: &hir::Enum, _span: Span) {
         if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
             return;
         }
@@ -4991,14 +2293,20 @@ impl HirToMirLowerer {
             );
 
             let qualified_name = format!("{}::{}", enum_qualified_name, variant.name.as_str());
-            self.mir_package.borrow_mut().enum_variant_names
+            self.mir_package
+                .borrow_mut()
+                .enum_variant_names
                 .insert(qualified_name.clone(), variant.def_id.clone());
-            self.mir_package.borrow_mut().enum_variant_names
+            self.mir_package
+                .borrow_mut()
+                .enum_variant_names
                 .entry(variant.name.as_str().to_string())
                 .or_insert(variant.def_id.clone());
         }
 
-        self.mir_package.borrow_mut().enum_defs_by_name
+        self.mir_package
+            .borrow_mut()
+            .enum_defs_by_name
             .entry(enum_qualified_name.clone())
             .or_insert(def_id.clone());
         self.mir_package.borrow_mut().enum_defs.insert(
@@ -5014,16 +2322,18 @@ impl HirToMirLowerer {
 
     // Resolve field types and layouts only after every canonical ADT identity
     // has been registered; dependency definitions arrive in hash-map order.
-    fn finalize_adt_definitions(&mut self, program: &hir::HirPackage) {
+    pub(super) fn finalize_adt_definitions(&mut self, program: &hir::HirPackage) {
         for item in &program.items {
-            self.current_item_path = self.hir_def_path(item.def_id.clone()).map(|path| path.join("::"));
+            self.current_item_path = self
+                .hir_def_path(item.def_id.clone())
+                .map(|path| path.join("::"));
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {
                     let mir_fields = strukt
                         .fields
                         .iter()
                         .map(|field| mir::ty::FieldDef {
-                            did: hir::DefId::new(item.def_id.package_id.clone(), field.hir_id.index),
+                            did: item.def_id.clone(),
                             ident: mir::Symbol::from(field.name.as_str()),
                             vis: mir::ty::Visibility::Public,
                             ty: self.lower_type_expr(&field.ty),
@@ -5052,9 +2362,10 @@ impl HirToMirLowerer {
                                 field_shuffle_seed: 0,
                             },
                         },
-                );
+                    );
                     if strukt.generics.params.is_empty() {
-                        let _ = self.struct_layout_for_instance(item.def_id.clone(), &[], item.span);
+                        let _ =
+                            self.struct_layout_for_instance(item.def_id.clone(), &[], item.span);
                     }
                 }
                 hir::ItemKind::Enum(enm) if enm.generics.params.is_empty() => {
@@ -5071,7 +2382,10 @@ impl HirToMirLowerer {
                         kind: TyKind::Adt(adt, _),
                     }) = self.adt_shell_ty(item.def_id.clone(), &[])
                     {
-                        self.mir_package.borrow_mut().adt_defs.insert(item.def_id.clone(), adt);
+                        self.mir_package
+                            .borrow_mut()
+                            .adt_defs
+                            .insert(item.def_id.clone(), adt);
                     }
                 }
                 _ => {}
@@ -5103,10 +2417,7 @@ impl HirToMirLowerer {
         if self.struct_layouts_in_progress.contains(&key) {
             self.emit_error(
                 span,
-                format!(
-                    "recursive type `{}` has infinite size",
-                    struct_def.name
-                ),
+                format!("recursive type `{}` has infinite size", struct_def.name),
             );
             let opaque = self.opaque_ty(&struct_def.name);
             return Some(StructLayout {
@@ -5149,23 +2460,30 @@ impl HirToMirLowerer {
             field_tys,
         };
 
-        self.mir_package.borrow_mut().struct_layouts.insert(key.clone(), layout.clone());
-        self.mir_package.borrow_mut().struct_layouts_by_ty.insert(struct_ty, key.clone());
+        self.mir_package
+            .borrow_mut()
+            .struct_layouts
+            .insert(key.clone(), layout.clone());
+        self.mir_package
+            .borrow_mut()
+            .struct_layouts_by_ty
+            .insert(struct_ty, key.clone());
         self.struct_layouts_in_progress.remove(&key);
 
         let field_tys = layout.field_tys.clone();
         for field_ty in &field_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
                 let is_struct = self.mir_package.borrow().struct_defs.contains_key(&adt.did);
-                let is_enum = !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
+                let is_enum =
+                    !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
                 if !is_struct && !is_enum {
                     continue;
                 }
                 let types: Vec<Ty> = substs
                     .iter()
                     .filter_map(|a| match a {
-                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                    _ => None,
+                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                        _ => None,
                     })
                     .collect();
                 // `adt.did` is either a struct or an enum, never both —
@@ -5183,7 +2501,12 @@ impl HirToMirLowerer {
     }
 
     pub(crate) fn struct_layout_for_ty(&self, ty: &Ty) -> Option<StructLayout> {
-        let key = self.mir_package.borrow().struct_layouts_by_ty.get(ty).cloned()?;
+        let key = self
+            .mir_package
+            .borrow()
+            .struct_layouts_by_ty
+            .get(ty)
+            .cloned()?;
         self.mir_package.borrow().struct_layouts.get(key).cloned()
     }
 
@@ -5193,11 +2516,16 @@ impl HirToMirLowerer {
     /// `EnumLayout.args`). Prefer this everywhere a concrete instantiation
     /// is expected; fall back to the fuzzy scan only when this misses.
     pub(crate) fn enum_layout_for_ty_exact(&self, ty: &Ty) -> Option<EnumLayout> {
-        let key = self.mir_package.borrow().enum_layouts_by_ty.get(ty).cloned()?;
+        let key = self
+            .mir_package
+            .borrow()
+            .enum_layouts_by_ty
+            .get(ty)
+            .cloned()?;
         self.mir_package.borrow().enum_layouts.get(key).cloned()
     }
 
-    fn enum_payload_types(
+    pub(super) fn enum_payload_types(
         &mut self,
         payload: &Option<hir::TypeExpr>,
         substs: &HashMap<String, Ty>,
@@ -5229,7 +2557,7 @@ impl HirToMirLowerer {
         vec![payload_ty]
     }
 
-    fn enum_payload_types_from_ty(&self, ty: &Ty) -> Vec<Ty> {
+    pub(super) fn enum_payload_types_from_ty(&self, ty: &Ty) -> Vec<Ty> {
         match &ty.kind {
             TyKind::Tuple(fields) => fields.iter().map(|f| (**f).clone()).collect(),
             _ if Self::is_unit_ty(ty) => Vec::new(),
@@ -5247,7 +2575,12 @@ impl HirToMirLowerer {
         // variant's own `payload` are actually needed below — clone just
         // those instead of the whole `EnumDefinition` (every variant of
         // the enum, needed or not).
-        let enum_def = self.mir_package.borrow().enum_defs.get(&variant.enum_def).cloned()?;
+        let enum_def = self
+            .mir_package
+            .borrow()
+            .enum_defs
+            .get(&variant.enum_def)
+            .cloned()?;
         if enum_def.generics.len() != args.len() {
             let name = enum_def.name.clone();
             let generics_len = enum_def.generics.len();
@@ -5431,7 +2764,10 @@ impl HirToMirLowerer {
                 if self.is_opaque_ty(&payload_layout[idx]) {
                     let opaque_name = format!("{}::payload{}", enum_def.name, idx);
                     let size = payload_slot_sizes[idx];
-                    self.mir_package.borrow_mut().opaque_ty_sizes.insert(opaque_name, size);
+                    self.mir_package
+                        .borrow_mut()
+                        .opaque_ty_sizes
+                        .insert(opaque_name, size);
                 }
             }
             variant_payloads.insert(variant.def_id.clone(), payload_tys);
@@ -5457,23 +2793,30 @@ impl HirToMirLowerer {
             variant_payloads,
         };
 
-        self.mir_package.borrow_mut().enum_layouts.insert(key.clone(), layout.clone());
-        self.mir_package.borrow_mut().enum_layouts_by_ty.insert(enum_ty.clone(), key.clone());
+        self.mir_package
+            .borrow_mut()
+            .enum_layouts
+            .insert(key.clone(), layout.clone());
+        self.mir_package
+            .borrow_mut()
+            .enum_layouts_by_ty
+            .insert(enum_ty.clone(), key.clone());
         self.enum_layouts_in_progress.remove(&key);
 
         let payload_tys = layout.payload_tys.clone();
         for field_ty in &payload_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
                 let is_struct = self.mir_package.borrow().struct_defs.contains_key(&adt.did);
-                let is_enum = !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
+                let is_enum =
+                    !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
                 if !is_struct && !is_enum {
                     continue;
                 }
                 let types: Vec<Ty> = substs
                     .iter()
                     .filter_map(|a| match a {
-                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                    _ => None,
+                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                        _ => None,
                     })
                     .collect();
                 // Same as above: `adt.did` is either a struct or an enum,
@@ -5489,7 +2832,12 @@ impl HirToMirLowerer {
 
         if !has_payload {
             for variant in &enum_def.variants {
-                if self.mir_package.borrow().const_values.contains_key(&variant.def_id) {
+                if self
+                    .mir_package
+                    .borrow()
+                    .const_values
+                    .contains_key(&variant.def_id)
+                {
                     continue;
                 }
                 let constant = mir::Constant {
@@ -5511,7 +2859,11 @@ impl HirToMirLowerer {
         Some(layout)
     }
 
-    pub(crate) fn lower_generic_args(&mut self, args: Option<&hir::GenericArgs>, span: Span) -> Vec<Ty> {
+    pub(crate) fn lower_generic_args(
+        &mut self,
+        args: Option<&hir::GenericArgs>,
+        span: Span,
+    ) -> Vec<Ty> {
         let Some(args) = args else {
             return Vec::new();
         };
@@ -5527,7 +2879,7 @@ impl HirToMirLowerer {
         lowered
     }
 
-    fn lower_type_expr_with_substs(
+    pub(super) fn lower_type_expr_with_substs(
         &mut self,
         ty_expr: &hir::TypeExpr,
         substs: &HashMap<String, Ty>,
@@ -5738,7 +3090,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn eval_int_expr(&mut self, expr: &hir::Expr) -> Option<i64> {
+    pub(super) fn eval_int_expr(&mut self, expr: &hir::Expr) -> Option<i64> {
         match &expr.kind {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value),
             hir::ExprKind::Unary(hir::UnOp::Neg, inner) => self.eval_int_expr(inner).map(|v| -v),
@@ -5805,7 +3157,7 @@ impl HirToMirLowerer {
         self.mir_package.borrow().const_values.get(&def_id).cloned()
     }
 
-    fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
+    pub(super) fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
         match &ty.kind {
             hir::TypeExprKind::Path(path) => path
                 .segments
@@ -5824,7 +3176,7 @@ impl HirToMirLowerer {
     /// the signature-registration path (`register_impl_signature_for_item`)
     /// and the real body-lowering path (`lower_impl`) so the two can never
     /// diverge on which methods this applies to.
-    fn is_hashmap_intrinsic_method(struct_name: Option<&str>, method_name: &str) -> bool {
+    pub(super) fn is_hashmap_intrinsic_method(struct_name: Option<&str>, method_name: &str) -> bool {
         let is_hashmap_impl = struct_name
             .map(|name| name.ends_with("HashMap"))
             .unwrap_or(false);
@@ -5855,7 +3207,7 @@ impl HirToMirLowerer {
     /// find and lower on demand regardless of order. Mirrors `lower_impl`'s
     /// own skip conditions (HashMap special-case) verbatim so this
     /// pre-pass never registers something the main pass would skip.
-    fn register_impl_signatures(&mut self, impl_block: &hir::Impl) {
+    pub(super) fn register_impl_signatures(&mut self, impl_block: &hir::Impl) {
         let struct_name = self.struct_name_from_type(&impl_block.self_ty);
         let method_context = self.make_method_context(
             &impl_block.self_ty,
@@ -5877,7 +3229,7 @@ impl HirToMirLowerer {
     /// share one implementation and can never drift apart, the same way
     /// `try_lazily_register_adt` reuses `register_struct`/`register_enum`
     /// rather than re-deriving their logic.
-    fn register_impl_signature_for_item(
+    pub(super) fn register_impl_signature_for_item(
         &mut self,
         struct_name: Option<&str>,
         method_context: Option<&MethodContext>,
@@ -5930,7 +3282,7 @@ impl HirToMirLowerer {
     /// resolves the owning impl via `HirProgram::member_owner` (the
     /// `member_to_owning_item` reverse index maintained during HIR
     /// building) and then finds the member within it by `DefId`.
-    fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
+    pub(super) fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
         let Some(owning_def_id) = self.hir_program.member_owner(def_id.clone()) else {
             return;
         };
@@ -5969,11 +3321,21 @@ impl HirToMirLowerer {
     /// method defined in this package or any dependency's resolves the
     /// same way, with no caller-visible distinction between the two.
     pub(crate) fn ensure_method_info(&mut self, def_id: hir::DefId) -> Option<MethodLoweringInfo> {
-        if let Some(info) = self.mir_package.borrow().method_lookup_by_def.get(&def_id).cloned() {
+        if let Some(info) = self
+            .mir_package
+            .borrow()
+            .method_lookup_by_def
+            .get(&def_id)
+            .cloned()
+        {
             return Some(info.clone());
         }
         self.try_lazily_register_method(def_id.clone());
-        self.mir_package.borrow().method_lookup_by_def.get(&def_id).cloned()
+        self.mir_package
+            .borrow()
+            .method_lookup_by_def
+            .get(&def_id)
+            .cloned()
     }
 
     /// Generic counterpart to `ensure_method_info` — same "check the
@@ -5983,12 +3345,25 @@ impl HirToMirLowerer {
     /// site — see `register_generic_method_definition`) instead of
     /// `method_lookup_by_def`. `try_lazily_register_method` itself
     /// already dispatches to whichever of the two a given method needs.
-    pub(crate) fn ensure_generic_method_def(&mut self, def_id: hir::DefId) -> Option<MethodDefinition> {
-        if let Some(def) = self.mir_package.borrow().method_defs_by_def.get(&def_id).cloned() {
+    pub(crate) fn ensure_generic_method_def(
+        &mut self,
+        def_id: hir::DefId,
+    ) -> Option<MethodDefinition> {
+        if let Some(def) = self
+            .mir_package
+            .borrow()
+            .method_defs_by_def
+            .get(&def_id)
+            .cloned()
+        {
             return Some(def.clone());
         }
         self.try_lazily_register_method(def_id.clone());
-        self.mir_package.borrow().method_defs_by_def.get(&def_id).cloned()
+        self.mir_package
+            .borrow()
+            .method_defs_by_def
+            .get(&def_id)
+            .cloned()
     }
 
     /// Shared by `register_impl_signatures` (order-independent pre-pass)
@@ -6005,7 +3380,7 @@ impl HirToMirLowerer {
     /// produce an identical `MethodDefinition` from the same immutable
     /// HIR, so it doesn't matter which one wins, only that neither panics
     /// or does redundant work.
-    fn register_generic_method_definition(
+    pub(super) fn register_generic_method_definition(
         &mut self,
         struct_name: Option<&str>,
         method_context: Option<&MethodContext>,
@@ -6027,14 +3402,22 @@ impl HirToMirLowerer {
             assoc_types: assoc_types_from_impl_items(&impl_block.items),
         };
         if let Some(ref self_def) = def.self_def {
-            self.mir_package.borrow_mut().method_defs_by_self_and_name
+            self.mir_package
+                .borrow_mut()
+                .method_defs_by_self_and_name
                 .entry((self_def.clone(), def.function.sig.name.as_str().to_string()))
                 .or_insert(impl_item.def_id.clone());
         }
-        self.mir_package.borrow_mut().method_defs_by_def
+        self.mir_package
+            .borrow_mut()
+            .method_defs_by_def
             .entry(impl_item.def_id.clone())
             .or_insert_with(|| def.clone());
-        self.mir_package.borrow_mut().method_defs.entry(qualified_name).or_insert(def);
+        self.mir_package
+            .borrow_mut()
+            .method_defs
+            .entry(qualified_name)
+            .or_insert(def);
     }
 
     /// Disambiguating suffix for a method's qualified/mangled name, when
@@ -6053,7 +3436,10 @@ impl HirToMirLowerer {
     /// `Vec__join`"). Hashes the fully resolved Self type (not just its
     /// raw HIR argument syntax) so aliases/paths that resolve to the same
     /// concrete type still collide the way they should.
-    fn method_self_type_spec_suffix(&self, method_context: Option<&MethodContext>) -> Option<String> {
+    pub(super) fn method_self_type_spec_suffix(
+        &self,
+        method_context: Option<&MethodContext>,
+    ) -> Option<String> {
         match method_context.map(|ctx| &ctx.mir_self_ty.kind) {
             Some(TyKind::Adt(_, substs)) if !substs.is_empty() => {
                 let mut hasher = DefaultHasher::new();
@@ -6066,7 +3452,7 @@ impl HirToMirLowerer {
 
     /// Shared by `register_impl_signatures` (signature-only pre-pass) and
     /// `lower_impl` (real lowering) so the two paths can never drift apart.
-    fn register_method_lowering_info(
+    pub(super) fn register_method_lowering_info(
         &mut self,
         struct_name: &str,
         method_context: Option<&MethodContext>,
@@ -6109,14 +3495,25 @@ impl HirToMirLowerer {
             struct_def,
         };
 
-        self.mir_package.borrow_mut().method_lookup_by_def
+        self.mir_package
+            .borrow_mut()
+            .method_lookup_by_def
             .insert(impl_item.def_id.clone(), info.clone());
-        self.mir_package.borrow_mut().method_lookup.insert(fn_name, info.clone());
-        self.mir_package.borrow_mut().method_lookup
+        self.mir_package
+            .borrow_mut()
+            .method_lookup
+            .insert(fn_name, info.clone());
+        self.mir_package
+            .borrow_mut()
+            .method_lookup
             .insert(format!("{}::{}", struct_name, method_name), info.clone());
-        self.mir_package.borrow_mut().method_lookup
+        self.mir_package
+            .borrow_mut()
+            .method_lookup
             .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
-        self.mir_package.borrow_mut().method_name_output_consensus
+        self.mir_package
+            .borrow_mut()
+            .method_name_output_consensus
             .entry(method_name.clone())
             .and_modify(|existing| {
                 if existing.as_ref() != Some(&info.sig.output) {
@@ -6124,7 +3521,9 @@ impl HirToMirLowerer {
                 }
             })
             .or_insert_with(|| Some(info.sig.output.clone()));
-        self.mir_package.borrow_mut().struct_methods
+        self.mir_package
+            .borrow_mut()
+            .struct_methods
             .entry(struct_name.to_string())
             .or_default()
             .insert(method_name, info);
@@ -6206,7 +3605,7 @@ impl HirToMirLowerer {
         Ok(())
     }
 
-    fn lower_method(
+    pub(super) fn lower_method(
         &mut self,
         def_id: hir::DefId,
         function: &hir::Function,
@@ -6299,7 +3698,12 @@ impl HirToMirLowerer {
         name: &str,
         span: Span,
     ) -> Option<(usize, StructFieldInfo)> {
-        let def = self.mir_package.borrow().struct_defs.get(&def_id).cloned()?;
+        let def = self
+            .mir_package
+            .borrow()
+            .struct_defs
+            .get(&def_id)
+            .cloned()?;
         let idx = *def.field_index.get(name)?;
         let layout = self
             .struct_layout_for_ty(struct_ty)
@@ -6376,924 +3780,6 @@ impl HirToMirLowerer {
         }
     }
 
-    pub(crate) fn lower_const_expr(
-        &mut self,
-        expr: &hir::Expr,
-        expected_ty: Option<&Ty>,
-        container_args: Option<&ConstContainerArgs>,
-    ) -> Option<mir::Constant> {
-        let constant_ty = expected_ty
-            .cloned()
-            .or_else(|| self.typeck_expr_type(expr.hir_id.clone()));
-        match &expr.kind {
-            hir::ExprKind::Literal(lit) => Some(mir::Constant {
-                span: expr.span,
-                ty: constant_ty.clone()?,
-                user_ty: None,
-                literal: self.lower_literal(lit),
-            }),
-            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
-                if let Some(inner) = &block.expr {
-                    return self.lower_const_expr(inner, expected_ty, container_args);
-                }
-                let ty = constant_ty.clone()?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
-                })
-            }
-            hir::ExprKind::Array(elements) => {
-                if let Some(container_args) = container_args {
-                    return self.lower_container_const(
-                        expr.span,
-                        elements,
-                        container_args,
-                    );
-                }
-                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
-                    return None;
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.lower_const_value(
-                        element,
-                        Some(elem_ty.as_ref()),
-                    )?);
-                }
-                let ty = constant_ty.clone()?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered)),
-                })
-            }
-            hir::ExprKind::ArrayRepeat { elem, len } => {
-                if let Some(container_args) = container_args {
-                    return self.lower_container_repeat_const(
-                        expr.span,
-                        elem,
-                        len,
-                        container_args,
-                    );
-                }
-                let repeat_len = self.eval_type_length(len)?;
-                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
-                    return None;
-                };
-                let value = self.lower_const_value(elem, Some(elem_ty.as_ref()))?;
-                let mut lowered = Vec::with_capacity(repeat_len as usize);
-                lowered.resize(repeat_len as usize, value);
-                let ty = constant_ty.clone()?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered)),
-                })
-            }
-            hir::ExprKind::Struct(_, _) => {
-                let value = self.lower_const_value(expr, expected_ty)?;
-                let ty = match constant_ty.clone()? {
-                    Ty {
-                        kind: TyKind::Adt(adt, args),
-                    } => {
-                        let type_args = args
-                            .iter()
-                            .filter_map(|arg| match arg {
-                                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
-                                mir::ty::GenericArg::Lifetime(_)
-                                | mir::ty::GenericArg::Const(_) => None,
-                            })
-                            .collect::<Vec<_>>();
-                        self.struct_layout_for_instance(adt.did.clone(), &type_args, expr.span)
-                            .map(|layout| layout.ty)
-                            .unwrap_or(Ty {
-                                kind: TyKind::Adt(adt, args),
-                            })
-                    }
-                    ty => ty,
-                };
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(value),
-                })
-            }
-            hir::ExprKind::Path(path) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-                if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
-                    return Some(const_info.typed_value());
-                }
-                let item = self.hir_item(def_id.clone())?;
-                let hir::ItemKind::Function(_function) = &item.kind else {
-                    return None;
-                };
-                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) = expected_ty.map(|ty| &ty.kind)?
-                else {
-                    return None;
-                };
-                let fn_ty = expected_ty.cloned()?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: fn_ty,
-                    user_ty: None,
-                    literal: mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
-                })
-            }
-            hir::ExprKind::Slice(slice) => {
-                let value = self.lower_const_string_slice(slice)?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: constant_ty.clone()?,
-                    user_ty: None,
-                    literal: mir::ConstantKind::Str(value),
-                })
-            }
-            hir::ExprKind::Index(base, index) => self
-                .lower_const_expr(base, None, container_args)
-                .and_then(|constant| self.const_index_value(expr.span, &constant, index))
-                .map(|(constant, _)| constant),
-            hir::ExprKind::FieldAccess(base, field) => {
-                self.lower_const_field_access(base, field.as_str(), expr.span)
-            }
-            hir::ExprKind::If(cond, then_expr, else_expr) => {
-                let branch = match self.lower_const_value(cond, None)? {
-                    mir::ConstValue::Bool(value) => {
-                        if value {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    mir::ConstValue::Int(value) => {
-                        if value != 0 {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    mir::ConstValue::UInt(value) => {
-                        if value != 0 {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    _ => return None,
-                };
-                self.lower_const_expr(branch, expected_ty, container_args)
-            }
-            hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                let ty = constant_ty.clone()?;
-                let value = self.lower_const_method_value(
-                    receiver,
-                    method_name.as_str(),
-                    args,
-                    expr.span,
-                )?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: self.const_value_to_constant(expr.span, &value, &ty).literal,
-                })
-            }
-            hir::ExprKind::Binary(op, lhs, rhs) => {
-                let kind = if let (Some(left), Some(right)) = (
-                    self.lower_const_expr(lhs, expected_ty, container_args),
-                    self.lower_const_expr(rhs, expected_ty, container_args),
-                ) {
-                    Self::lower_binary_op_const(op, &left, &right)
-                } else {
-                    let left = self.lower_const_value(lhs, expected_ty)?;
-                    let right = self.lower_const_value(rhs, expected_ty)?;
-                    Self::lower_binary_op_const_values(op, &left, &right)
-                }?;
-                Some(mir::Constant {
-                    span: expr.span,
-                    ty: constant_ty.clone()?,
-                    user_ty: None,
-                    literal: kind,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn lower_binary_op_const(
-        op: &hir::BinOp,
-        left: &mir::Constant,
-        right: &mir::Constant,
-    ) -> Option<mir::ConstantKind> {
-        match (&left.literal, &right.literal) {
-            (mir::ConstantKind::Int(l), mir::ConstantKind::Int(r)) => match op {
-                hir::BinOp::Add => Some(mir::ConstantKind::Int(l + r)),
-                hir::BinOp::Sub => Some(mir::ConstantKind::Int(l - r)),
-                hir::BinOp::Mul => Some(mir::ConstantKind::Int(l * r)),
-                hir::BinOp::Div => Some(mir::ConstantKind::Int(l / r)),
-                hir::BinOp::Gt => Some(mir::ConstantKind::Bool(l > r)),
-                hir::BinOp::Lt => Some(mir::ConstantKind::Bool(l < r)),
-                hir::BinOp::Ge => Some(mir::ConstantKind::Bool(l >= r)),
-                hir::BinOp::Le => Some(mir::ConstantKind::Bool(l <= r)),
-                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
-                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
-                _ => None,
-            },
-            (mir::ConstantKind::UInt(l), mir::ConstantKind::UInt(r)) => match op {
-                hir::BinOp::Add => Some(mir::ConstantKind::UInt(l + r)),
-                hir::BinOp::Sub => Some(mir::ConstantKind::UInt(l - r)),
-                hir::BinOp::Mul => Some(mir::ConstantKind::UInt(l * r)),
-                hir::BinOp::Div => Some(mir::ConstantKind::UInt(l / r)),
-                hir::BinOp::Gt => Some(mir::ConstantKind::Bool(l > r)),
-                hir::BinOp::Lt => Some(mir::ConstantKind::Bool(l < r)),
-                _ => None,
-            },
-            (mir::ConstantKind::Str(l), mir::ConstantKind::Str(r)) => match op {
-                hir::BinOp::Add => Some(mir::ConstantKind::Str(format!("{l}{r}"))),
-                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
-                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn lower_binary_op_const_values(
-        op: &hir::BinOp,
-        left: &mir::ConstValue,
-        right: &mir::ConstValue,
-    ) -> Option<mir::ConstantKind> {
-        match (left, right) {
-            (mir::ConstValue::Str(l), mir::ConstValue::Str(r)) => match op {
-                hir::BinOp::Add => Some(mir::ConstantKind::Str(format!("{l}{r}"))),
-                hir::BinOp::Eq => Some(mir::ConstantKind::Bool(l == r)),
-                hir::BinOp::Ne => Some(mir::ConstantKind::Bool(l != r)),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn lower_const_value(
-        &mut self,
-        expr: &hir::Expr,
-        expected_ty: Option<&Ty>,
-    ) -> Option<mir::ConstValue> {
-        match &expr.kind {
-            hir::ExprKind::Literal(lit) => Some(self.const_value_from_lit(lit)),
-            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
-                if let Some(inner) = &block.expr {
-                    return self.lower_const_value(inner, expected_ty);
-                }
-                Some(mir::ConstValue::Unit)
-            }
-            hir::ExprKind::Array(elements) => {
-                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
-                    return None;
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.lower_const_value(
-                        element,
-                        Some(elem_ty.as_ref()),
-                    )?);
-                }
-                Some(mir::ConstValue::Array(lowered))
-            }
-            hir::ExprKind::ArrayRepeat { elem, len } => {
-                let repeat_len = self.eval_type_length(len)?;
-                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
-                    return None;
-                };
-                let value = self.lower_const_value(elem, Some(elem_ty.as_ref()))?;
-                let mut lowered = Vec::with_capacity(repeat_len as usize);
-                lowered.resize(repeat_len as usize, value);
-                Some(mir::ConstValue::Array(lowered))
-            }
-            hir::ExprKind::Struct(path, fields) => {
-                let def_id = self.resolve_path_def_id(path)?;
-                let struct_def = self.mir_package.borrow().struct_defs.get(&def_id).cloned()?.clone();
-                let mut args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
-                    .map(|args| self.lower_generic_args(Some(args), expr.span))
-                    .unwrap_or_default();
-                if args.is_empty() && !struct_def.generics.is_empty() {
-                    // No explicit turbofish — read `fp-typing`'s own
-                    // already-resolved generic args for this literal
-                    // (`typeck_expr_type`) rather than re-deriving them here.
-                    // Top-level `const` items aren't themselves generic, so
-                    // there's no live specialization context to compose in
-                    // (empty substs map); if the cache has no entry, fall
-                    // through to today's behavior unchanged, letting
-                    // `struct_layout_for_instance`'s own arity check
-                    // surface the real diagnostic.
-                    if let Some(cached) =
-                        self.adt_ty_args_from_typeck_cache(expr.hir_id.clone(), def_id.clone(), &HashMap::new())
-                    {
-                        args = cached;
-                    }
-                }
-                let layout = self.struct_layout_for_instance(def_id, &args, expr.span);
-                let layout = match layout {
-                    Some(l) => l,
-                    None => return None,
-                };
-                let mut field_map: HashMap<String, &hir::Expr> = HashMap::new();
-                for field in fields {
-                    field_map.insert(field.name.as_str().to_string(), &field.expr);
-                }
-                let mut lowered = Vec::with_capacity(struct_def.fields.len());
-                for (idx, field_def) in struct_def.fields.iter().enumerate() {
-                    let Some(field_expr) = field_map.get(&field_def.name) else {
-                        self.emit_error(
-                            expr.span,
-                            format!("missing field `{}` in const struct literal", field_def.name),
-                        );
-                        return None;
-                    };
-                    let field_ty = layout.field_tys.get(idx)?;
-                    lowered.push(self.lower_const_value(field_expr, Some(field_ty))?);
-                }
-                Some(mir::ConstValue::Struct(lowered))
-            }
-            hir::ExprKind::Slice(slice) => Some(mir::ConstValue::Str(
-                self.lower_const_string_slice(slice)?,
-            )),
-            hir::ExprKind::Index(base, index) => self
-                .lower_const_expr(base, None, None)
-                .and_then(|constant| self.const_index_value(expr.span, &constant, index))
-                .and_then(|(constant, _)| self.const_value_from_constant(&constant)),
-            hir::ExprKind::FieldAccess(base, field) => self
-                .lower_const_field_access(base, field.as_str(), expr.span)
-                .and_then(|constant| self.const_value_from_constant(&constant)),
-            hir::ExprKind::If(cond, then_expr, else_expr) => {
-                let branch = match self.lower_const_value(cond, None)? {
-                    mir::ConstValue::Bool(value) => {
-                        if value {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    mir::ConstValue::Int(value) => {
-                        if value != 0 {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    mir::ConstValue::UInt(value) => {
-                        if value != 0 {
-                            then_expr.as_ref()
-                        } else {
-                            else_expr.as_deref()?
-                        }
-                    }
-                    _ => return None,
-                };
-                self.lower_const_value(branch, expected_ty)
-            }
-            hir::ExprKind::MethodCall(receiver, method_name, args) => self
-                .lower_const_method_value(receiver, method_name.as_str(), args, expr.span),
-            hir::ExprKind::Path(path) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-
-                // Check const_values first — function-local consts are
-                // registered here by lower_const but may not be in
-                // program.def_map.
-                if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
-                    return match &const_info.value.literal {
-                        mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
-                        mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
-                        mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
-                        mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
-                        mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-                        mir::ConstantKind::Val(v) => Some(v.clone()),
-                        _ => None,
-                    };
-                }
-
-                let item = self.hir_item(def_id.clone())?;
-                match &item.kind {
-                    hir::ItemKind::Function(function) => {
-                        let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
-                            expected_ty.map(|ty| &ty.kind)?
-                        else {
-                            return None;
-                        };
-                        Some(mir::ConstValue::Fn(mir::Symbol::new(
-                            function.sig.name.as_str(),
-                        )))
-                    }
-                    hir::ItemKind::Const(_) => {
-                        let const_info = self.ensure_const_info(def_id.clone())?;
-                        match &const_info.value.literal {
-                            mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
-                            mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
-                            mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
-                            mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
-                            mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-                            mir::ConstantKind::Val(v) => Some(v.clone()),
-                            _ => None,
-                        }
-                    }
-                    _ => return None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn lower_const_string_slice(
-        &mut self,
-        slice: &hir::SliceExpr,
-    ) -> Option<String> {
-        let base = self.const_string_from_expr(slice.base.as_ref())?;
-        let start = match slice.start.as_ref() {
-            Some(start) => self.const_index_u64(start.as_ref())? as usize,
-            None => 0,
-        };
-        let mut end = match slice.end.as_ref() {
-            Some(end) => self.const_index_u64(end.as_ref())? as usize,
-            None => base.len(),
-        };
-        if slice.inclusive {
-            end = end.checked_add(1)?;
-        }
-        if start > end || end > base.len() {
-            return None;
-        }
-        base.get(start..end).map(str::to_string)
-    }
-
-    fn lower_const_method_value(
-        &mut self,
-        receiver: &hir::Expr,
-        method_name: &str,
-        args: &[hir::CallArg],
-        _span: Span,
-    ) -> Option<mir::ConstValue> {
-        let matches_name =
-            |name: &str| method_name == name || method_name.ends_with(&format!("::{name}"));
-        let receiver_value = self.lower_const_value(receiver, None)?;
-
-        if matches_name("len") && args.is_empty() {
-            return match &receiver_value {
-                mir::ConstValue::Str(text) => Some(mir::ConstValue::UInt(text.len() as u64)),
-                mir::ConstValue::List { elements, .. } => {
-                    Some(mir::ConstValue::UInt(elements.len() as u64))
-                }
-                mir::ConstValue::Array(elements) => {
-                    Some(mir::ConstValue::UInt(elements.len() as u64))
-                }
-                mir::ConstValue::Tuple(fields) => Some(mir::ConstValue::UInt(fields.len() as u64)),
-                _ => None,
-            };
-        }
-
-        let receiver_text = match &receiver_value {
-            mir::ConstValue::Str(text) => Some(text.clone()),
-            _ => None,
-        };
-        let needle = match args.first() {
-            Some(arg) => self.const_string_from_expr(&arg.value)?,
-            None => return None,
-        };
-        if matches_name("starts_with") && args.len() == 1 {
-            let receiver_text = receiver_text?;
-            return Some(mir::ConstValue::Bool(receiver_text.starts_with(&needle)));
-        }
-        if matches_name("ends_with") && args.len() == 1 {
-            let receiver_text = receiver_text?;
-            return Some(mir::ConstValue::Bool(receiver_text.ends_with(&needle)));
-        }
-        if matches_name("contains") && args.len() == 1 {
-            if let Some(receiver_text) = receiver_text {
-                return Some(mir::ConstValue::Bool(receiver_text.contains(&needle)));
-            }
-            if let Some(items) = Self::const_string_items(&receiver_value) {
-                return Some(mir::ConstValue::Bool(
-                    items.iter().any(|item| item == &needle),
-                ));
-            }
-        }
-        None
-    }
-
-    fn lower_const_field_access(
-        &mut self,
-        base: &hir::Expr,
-        field: &str,
-        span: Span,
-    ) -> Option<mir::Constant> {
-        if let Some(constant) = self.lower_const_expr(base, None, None) {
-            if let Some(field_value) =
-                self.lower_const_struct_field_from_constant(&constant, field, span)
-            {
-                return Some(field_value);
-            }
-        }
-
-        let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
-            return None;
-        };
-        if call.kind.intrinsic_kind() != Some(IntrinsicKind::TypeOf) || call.callargs.len() != 1 {
-            return None;
-        }
-        let type_arg = &call.callargs[0].value;
-
-        let hir::ExprKind::Path(path) = &type_arg.kind else {
-            return None;
-        };
-        let struct_def_id = if let Some(hir::Res::Def(def_id)) = &path.res {
-            def_id.clone()
-        } else {
-            let name = path.segments.last()?.name.as_str();
-            let mut matches = self.mir_package.borrow().struct_defs
-                .iter()
-                .filter_map(|(def_id, info)| (info.name == name).then_some(def_id.clone()))
-                .collect::<Vec<_>>();
-            if matches.len() != 1 {
-                return None;
-            }
-            matches.pop()?
-        };
-        let struct_info = self.mir_package.borrow().struct_defs.get(&struct_def_id).cloned()?;
-        match field {
-            "fields" => {
-                let names = struct_info
-                    .fields
-                    .iter()
-                    .map(|field| field.name.clone())
-                    .collect::<Vec<_>>();
-                Some(self.string_list_constant(span, names))
-            }
-            "methods" => {
-                let method_names = self.mir_package.borrow().struct_methods
-                    .get(&struct_info.name)
-                    .map(|methods| methods.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default();
-                Some(self.string_list_constant(span, method_names))
-            }
-            _ => None,
-        }
-    }
-
-    fn lower_const_struct_field_from_constant(
-        &mut self,
-        constant: &mir::Constant,
-        field: &str,
-        span: Span,
-    ) -> Option<mir::Constant> {
-        let (values, ty) = match &constant.literal {
-            mir::ConstantKind::Val(mir::ConstValue::Struct(values)) => (values, &constant.ty),
-            _ => return None,
-        };
-
-        match &ty.kind {
-            // `adt_def.variants` is deliberately empty for several real
-            // construction paths (`adt_shell_ty`, the general Adt case in
-            // `lower_hir_ty`) — those only ever needed to convey type
-            // *identity*, not full field layout. `struct_field` is the
-            // authoritative, substitution-aware lookup (via `struct_defs`/
-            // `struct_layout_for_ty`/`struct_layout_for_instance`) already
-            // used elsewhere in this file for exactly this; never derive
-            // field info from `adt_def.variants` directly.
-            TyKind::Adt(adt_def, _) => {
-                let (field_index, field_info) = self.struct_field(adt_def.did.clone(), ty, field, span)?;
-                let field_value = values.get(field_index)?;
-                Some(self.const_value_to_constant(span, field_value, &field_info.ty))
-            }
-            TyKind::Tuple(field_tys) => {
-                if let Some(key) = self.mir_package.borrow().struct_layouts_by_ty.get(ty).cloned() {
-                    let field_index = self.mir_package.borrow().struct_defs
-                        .get(&key.def_id)?
-                        .field_index
-                        .get(field)
-                        .copied()?;
-                    let layout = self.mir_package.borrow().struct_layouts.get(key).cloned()?;
-                    let field_ty = layout.field_tys.get(field_index)?;
-                    let field_value = values.get(field_index)?;
-                    return Some(self.const_value_to_constant(span, field_value, field_ty));
-                }
-                let field_index = field.parse::<usize>().ok()?;
-                let field_ty = field_tys.get(field_index)?.as_ref();
-                let field_value = values.get(field_index)?;
-                Some(self.const_value_to_constant(span, field_value, field_ty))
-            }
-            _ => None,
-        }
-    }
-
-    fn string_list_constant(&self, span: Span, items: Vec<String>) -> mir::Constant {
-        let elem_ty = self.string_slice_ty();
-        let ty = Ty {
-            kind: TyKind::Slice(Box::new(elem_ty.clone())),
-        };
-        let elements = items.into_iter().map(mir::ConstValue::Str).collect();
-        mir::Constant {
-            span,
-            ty: ty.clone(),
-            user_ty: None,
-            literal: mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }),
-        }
-    }
-
-    fn const_value_from_constant(&self, constant: &mir::Constant) -> Option<mir::ConstValue> {
-        match &constant.literal {
-            mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
-            mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
-            mir::ConstantKind::Bool(v) => Some(mir::ConstValue::Bool(*v)),
-            mir::ConstantKind::Float(v) => Some(mir::ConstValue::Float(*v)),
-            mir::ConstantKind::Str(v) => Some(mir::ConstValue::Str(v.clone())),
-            mir::ConstantKind::Val(v) => Some(v.clone()),
-            _ => None,
-        }
-    }
-
-    fn const_string_items(value: &mir::ConstValue) -> Option<Vec<String>> {
-        let items = match value {
-            mir::ConstValue::List { elements, .. } | mir::ConstValue::Array(elements) => elements,
-            mir::ConstValue::Tuple(fields) => fields,
-            _ => return None,
-        };
-        let mut names = Vec::with_capacity(items.len());
-        for item in items {
-            let mir::ConstValue::Str(name) = item else {
-                return None;
-            };
-            names.push(name.clone());
-        }
-        Some(names)
-    }
-
-    fn const_string_from_expr(
-        &mut self,
-        expr: &hir::Expr,
-    ) -> Option<String> {
-        match self.lower_const_value(expr, None)? {
-            mir::ConstValue::Str(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    fn const_index_u64(&mut self, expr: &hir::Expr) -> Option<u64> {
-        match self.lower_const_value(expr, None)? {
-            mir::ConstValue::UInt(value) => Some(value),
-            mir::ConstValue::Int(value) if value >= 0 => Some(value as u64),
-            _ => None,
-        }
-    }
-
-    fn const_value_from_lit(&self, lit: &hir::Lit) -> mir::ConstValue {
-        match lit {
-            hir::Lit::Bool(value) => mir::ConstValue::Bool(*value),
-            hir::Lit::Integer(value) => mir::ConstValue::Int(*value),
-            hir::Lit::Float(value) => mir::ConstValue::Float(*value),
-            hir::Lit::Str(value) => mir::ConstValue::Str(value.clone()),
-            hir::Lit::Char(value) => mir::ConstValue::Int(*value as i64),
-            hir::Lit::Null => mir::ConstValue::Null,
-            // MIR constants have no raw-byte-buffer representation yet
-            // (only UTF-8 `Str`) — every current use of `b"..."`/`c"..."`
-            // in this codebase is plain ASCII, so this is lossy only for
-            // non-UTF-8 byte content, which nothing currently needs.
-            hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
-                mir::ConstValue::Str(String::from_utf8_lossy(bytes).into_owned())
-            }
-        }
-    }
-
-    fn lower_container_const(
-        &mut self,
-        span: Span,
-        elements: &[hir::Expr],
-        container_args: &ConstContainerArgs,
-    ) -> Option<mir::Constant> {
-        match container_args {
-            ConstContainerArgs::List { elem_ty } => {
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.lower_const_value(element, Some(elem_ty))?);
-                }
-                let ty = Ty {
-                    kind: TyKind::Slice(Box::new(elem_ty.clone())),
-                };
-                Some(mir::Constant {
-                    span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
-                        elements: lowered,
-                        elem_ty: elem_ty.clone(),
-                    }),
-                })
-            }
-            ConstContainerArgs::Map { key_ty, value_ty } => {
-                let mut entries = Vec::with_capacity(elements.len());
-                for element in elements {
-                    let (key_expr, value_expr) = match &element.kind {
-                        hir::ExprKind::Array(pair) if pair.len() == 2 => (&pair[0], &pair[1]),
-                        _ => {
-                            self.emit_error(
-                                span,
-                                "HashMap literal expects entries as [key, value]",
-                            );
-                            return None;
-                        }
-                    };
-                    let key = self.lower_const_value(key_expr, Some(key_ty))?;
-                    let value = self.lower_const_value(value_expr, Some(value_ty))?;
-                    entries.push((key, value));
-                }
-                let entry_ty = Ty {
-                    kind: TyKind::Tuple(vec![Box::new(key_ty.clone()), Box::new(value_ty.clone())]),
-                };
-                let ty = Ty {
-                    kind: TyKind::Slice(Box::new(entry_ty)),
-                };
-                Some(mir::Constant {
-                    span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::Map {
-                        entries,
-                        key_ty: key_ty.clone(),
-                        value_ty: value_ty.clone(),
-                    }),
-                })
-            }
-        }
-    }
-
-    fn lower_container_repeat_const(
-        &mut self,
-        span: Span,
-        elem: &hir::Expr,
-        len: &hir::Expr,
-        container_args: &ConstContainerArgs,
-    ) -> Option<mir::Constant> {
-        match container_args {
-            ConstContainerArgs::List { elem_ty } => {
-                let repeat_len = self.eval_type_length(len)?;
-                let value = self.lower_const_value(elem, Some(elem_ty))?;
-                let mut elements = Vec::with_capacity(repeat_len as usize);
-                elements.resize(repeat_len as usize, value);
-                let ty = Ty {
-                    kind: TyKind::Slice(Box::new(elem_ty.clone())),
-                };
-                Some(mir::Constant {
-                    span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
-                        elements,
-                        elem_ty: elem_ty.clone(),
-                    }),
-                })
-            }
-            ConstContainerArgs::Map { .. } => None,
-        }
-    }
-
-    fn container_args_from_type_expr(
-        &mut self,
-        ty_expr: &hir::TypeExpr,
-    ) -> Option<ConstContainerArgs> {
-        match &ty_expr.kind {
-            hir::TypeExprKind::Path(path) => {
-                let tail = path.segments.last()?;
-                let args = tail.args.as_ref()?;
-                match tail.name.as_str() {
-                    "Vec" if args.args.len() == 1 => {
-                        let hir::GenericArg::Type(elem) = &args.args[0] else {
-                            return None;
-                        };
-                        let elem_ty = self.lower_type_expr(elem.as_ref());
-                        Some(ConstContainerArgs::List { elem_ty })
-                    }
-                    "HashMap" if args.args.len() == 2 => {
-                        let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =
-                            (&args.args[0], &args.args[1])
-                        else {
-                            return None;
-                        };
-                        let key_ty = self.lower_type_expr(key.as_ref());
-                        let value_ty = self.lower_type_expr(value.as_ref());
-                        Some(ConstContainerArgs::Map { key_ty, value_ty })
-                    }
-                    _ => None,
-                }
-            }
-            hir::TypeExprKind::Slice(elem) => {
-                let elem_ty = self.lower_type_expr(elem.as_ref());
-                Some(ConstContainerArgs::List { elem_ty })
-            }
-            hir::TypeExprKind::Structural(structural) => {
-                let mut entries_ty: Option<&hir::TypeExpr> = None;
-                for field in &structural.fields {
-                    if field.name.as_str() == "entries" {
-                        entries_ty = Some(field.ty.as_ref());
-                        break;
-                    }
-                }
-                let Some(entries_ty) = entries_ty else {
-                    return None;
-                };
-                let mut entry_ty_expr: Option<&hir::TypeExpr> = None;
-                match &entries_ty.kind {
-                    hir::TypeExprKind::Path(path) => {
-                        let tail = path.segments.last()?;
-                        if tail.name.as_str() == "Vec" {
-                            let args = tail.args.as_ref()?;
-                            if args.args.len() == 1 {
-                                if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                    entry_ty_expr = Some(inner.as_ref());
-                                }
-                            }
-                        }
-                    }
-                    hir::TypeExprKind::Slice(inner) => {
-                        entry_ty_expr = Some(inner.as_ref());
-                    }
-                    _ => {}
-                }
-
-                let Some(mut entry_ty_expr) = entry_ty_expr else {
-                    return None;
-                };
-                if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
-                    let tail = path.segments.last()?;
-                    if tail.name.as_str() == "Expr" {
-                        let args = tail.args.as_ref()?;
-                        if args.args.len() == 1 {
-                            if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                entry_ty_expr = inner.as_ref();
-                            }
-                        }
-                    }
-                }
-
-                match &entry_ty_expr.kind {
-                    hir::TypeExprKind::Path(path) => {
-                        let tail = path.segments.last()?;
-                        if tail.name.as_str() == "HashMapEntry" {
-                            let args = tail.args.as_ref()?;
-                            if args.args.len() == 2 {
-                                if let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =
-                                    (&args.args[0], &args.args[1])
-                                {
-                                    let key_ty = self.lower_type_expr(key.as_ref());
-                                    let value_ty = self.lower_type_expr(value.as_ref());
-                                    return Some(ConstContainerArgs::Map { key_ty, value_ty });
-                                }
-                            }
-                        }
-                    }
-                    hir::TypeExprKind::Tuple(fields) => {
-                        if fields.len() == 2 {
-                            let key_ty = self.lower_type_expr(fields[0].as_ref());
-                            let value_ty = self.lower_type_expr(fields[1].as_ref());
-                            return Some(ConstContainerArgs::Map { key_ty, value_ty });
-                        }
-                    }
-                    hir::TypeExprKind::Structural(structural) => {
-                        let mut key_ty_expr = None;
-                        let mut value_ty_expr = None;
-                        for field in &structural.fields {
-                            match field.name.as_str() {
-                                "key" => key_ty_expr = Some(field.ty.as_ref()),
-                                "value" => value_ty_expr = Some(field.ty.as_ref()),
-                                _ => {}
-                            }
-                        }
-                        if let (Some(key_ty_expr), Some(value_ty_expr)) =
-                            (key_ty_expr, value_ty_expr)
-                        {
-                            let key_ty = self.lower_type_expr(key_ty_expr);
-                            let value_ty = self.lower_type_expr(value_ty_expr);
-                            return Some(ConstContainerArgs::Map { key_ty, value_ty });
-                        }
-                    }
-                    _ => {}
-                }
-
-                None
-            }
-            hir::TypeExprKind::Ref(inner) => self.container_args_from_type_expr(inner.as_ref()),
-            _ => None,
-        }
-    }
-
     pub(crate) fn const_len_from_constant(&self, constant: &mir::Constant) -> Option<u64> {
         match &constant.literal {
             mir::ConstantKind::Str(value) => Some(value.len() as u64),
@@ -7361,7 +3847,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn const_value_matches(&self, lhs: &mir::ConstValue, rhs: &mir::ConstValue) -> bool {
+    pub(super) fn const_value_matches(&self, lhs: &mir::ConstValue, rhs: &mir::ConstValue) -> bool {
         match (lhs, rhs) {
             (mir::ConstValue::Int(a), mir::ConstValue::Int(b)) => a == b,
             (mir::ConstValue::UInt(a), mir::ConstValue::UInt(b)) => a == b,
@@ -7375,7 +3861,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn const_value_to_constant(
+    pub(super) fn const_value_to_constant(
         &self,
         span: Span,
         value: &mir::ConstValue,
@@ -7399,7 +3885,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn lower_literal(&self, lit: &hir::Lit) -> mir::ConstantKind {
+    pub(super) fn lower_literal(&self, lit: &hir::Lit) -> mir::ConstantKind {
         match lit {
             hir::Lit::Bool(value) => mir::ConstantKind::Bool(*value),
             hir::Lit::Integer(value) => mir::ConstantKind::Int(*value),
@@ -7445,7 +3931,7 @@ impl HirToMirLowerer {
         matches!(&ty.kind, TyKind::Tuple(elements) if elements.is_empty())
     }
 
-    fn pointer_sized_ty(&self) -> Ty {
+    pub(super) fn pointer_sized_ty(&self) -> Ty {
         Ty {
             kind: TyKind::RawPtr(TypeAndMut {
                 ty: Box::new(Ty {
@@ -7456,7 +3942,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn sanitize_placeholder_ty(&self, ty: &Ty) -> Ty {
+    pub(super) fn sanitize_placeholder_ty(&self, ty: &Ty) -> Ty {
         match &ty.kind {
             TyKind::Bool
             | TyKind::Int(_)
@@ -7483,7 +3969,7 @@ impl HirToMirLowerer {
         mir::FunctionSig { inputs, output }
     }
 
-    fn opaque_ty(&mut self, name: &str) -> Ty {
+    pub(super) fn opaque_ty(&mut self, name: &str) -> Ty {
         if let Some(existing) = self.mir_package.borrow().opaque_types.get(name).cloned() {
             return existing.clone();
         }
@@ -7517,7 +4003,10 @@ impl HirToMirLowerer {
         let ty = Ty {
             kind: TyKind::Adt(adt, Vec::new()),
         };
-        self.mir_package.borrow_mut().opaque_types.insert(name.to_string(), ty.clone());
+        self.mir_package
+            .borrow_mut()
+            .opaque_types
+            .insert(name.to_string(), ty.clone());
         ty
     }
 
@@ -7527,7 +4016,7 @@ impl HirToMirLowerer {
     /// `struct_layout_for_instance`/`enum_layout_for_instance(adt.did, ..)`
     /// call can still resolve it on demand — it's an identity reference,
     /// not a dead end.
-    fn adt_shell_ty(&mut self, def_id: hir::DefId, args: &[Ty]) -> Option<Ty> {
+    pub(super) fn adt_shell_ty(&mut self, def_id: hir::DefId, args: &[Ty]) -> Option<Ty> {
         let generic_args: Vec<mir::ty::GenericArg> = args
             .iter()
             .cloned()
@@ -7600,7 +4089,7 @@ impl HirToMirLowerer {
     /// compute_ty_size` isn't reachable here). Mirrors that function's
     /// logic minus the generic-`Param`-via-`type_substs` fallback (payload
     /// types reaching this point are already substituted).
-    fn size_of_ty(&mut self, ty: &Ty, span: Span) -> Option<u64> {
+    pub(super) fn size_of_ty(&mut self, ty: &Ty, span: Span) -> Option<u64> {
         match &ty.kind {
             TyKind::Bool => Some(1),
             TyKind::Char => Some(4),
@@ -7652,10 +4141,13 @@ impl HirToMirLowerer {
             // own doc comment.
             TyKind::Any => Some(8),
             TyKind::Adt(adt, substs) => {
-                if let Some(size) = self
-                    .display_type_name(ty)
-                    .and_then(|name| self.mir_package.borrow().opaque_ty_sizes.get(&name).copied())
-                {
+                if let Some(size) = self.display_type_name(ty).and_then(|name| {
+                    self.mir_package
+                        .borrow()
+                        .opaque_ty_sizes
+                        .get(&name)
+                        .copied()
+                }) {
                     return Some(size);
                 }
                 let args: Vec<Ty> = substs
@@ -7666,9 +4158,9 @@ impl HirToMirLowerer {
                     })
                     .collect();
                 if self.mir_package.borrow().struct_defs.contains_key(&adt.did) {
-                    let layout = self
-                        .struct_layout_for_ty(ty)
-                        .or_else(|| self.struct_layout_for_instance(adt.did.clone(), &args, span))?;
+                    let layout = self.struct_layout_for_ty(ty).or_else(|| {
+                        self.struct_layout_for_instance(adt.did.clone(), &args, span)
+                    })?;
                     let mut total = 0u64;
                     for field in &layout.field_tys {
                         total = total.saturating_add(self.size_of_ty(field, span)?);
@@ -7711,7 +4203,13 @@ impl HirToMirLowerer {
     /// `EnumLayout::variant_payloads` rather than a type annotation that
     /// would otherwise resolve nominally via `struct_def_from_ty`.
     pub(crate) fn nominalize_struct_ty(&mut self, ty: Ty) -> Ty {
-        let Some(key) = self.mir_package.borrow().struct_layouts_by_ty.get(&ty).cloned() else {
+        let Some(key) = self
+            .mir_package
+            .borrow()
+            .struct_layouts_by_ty
+            .get(&ty)
+            .cloned()
+        else {
             return ty;
         };
         self.adt_shell_ty(key.def_id, &key.args).unwrap_or(ty)
@@ -7727,14 +4225,16 @@ impl HirToMirLowerer {
     /// `std::json::Value`, which reaches itself through `Vec<Field>` where
     /// `Field` directly embeds `Value`) to re-enter their own in-progress
     /// layout computation.
-    fn lower_generic_type_arg(
+    pub(super) fn lower_generic_type_arg(
         &mut self,
         ty_expr: &hir::TypeExpr,
         substs: &HashMap<String, Ty>,
     ) -> Ty {
         if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
             if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                if self.mir_package.borrow().struct_defs.contains_key(def_id) || self.mir_package.borrow().enum_defs.contains_key(def_id) {
+                if self.mir_package.borrow().struct_defs.contains_key(def_id)
+                    || self.mir_package.borrow().enum_defs.contains_key(def_id)
+                {
                     let nested_args: Vec<Ty> = path
                         .segments
                         .last()
@@ -7771,7 +4271,14 @@ impl HirToMirLowerer {
                 .variants
                 .first()
                 .map(|variant| variant.ident.as_str().to_string())
-                .or_else(|| self.mir_package.borrow().struct_defs.get(&adt.did).cloned().map(|def| def.name.clone())),
+                .or_else(|| {
+                    self.mir_package
+                        .borrow()
+                        .struct_defs
+                        .get(&adt.did)
+                        .cloned()
+                        .map(|def| def.name.clone())
+                }),
             TyKind::Ref(_, inner, _) => self.display_type_name(inner),
             TyKind::RawPtr(type_and_mut) => self.display_type_name(&type_and_mut.ty),
             _ => None,
@@ -7837,7 +4344,10 @@ impl HirToMirLowerer {
     /// `type_substs` mapping is available for this call's monomorphization.
     pub(crate) fn substitute_ty(&self, ty: &Ty, substs: &HashMap<String, Ty>) -> Ty {
         match &ty.kind {
-            TyKind::Param(param) => substs.get(param.name.as_str()).cloned().unwrap_or_else(|| ty.clone()),
+            TyKind::Param(param) => substs
+                .get(param.name.as_str())
+                .cloned()
+                .unwrap_or_else(|| ty.clone()),
             TyKind::Ref(region, inner, mutbl) => Ty {
                 kind: TyKind::Ref(
                     region.clone(),
@@ -7947,7 +4457,11 @@ impl HirToMirLowerer {
         }
     }
 
-    pub(crate) fn enum_layout_for_def(&mut self, def_id: hir::DefId, span: Span) -> Option<EnumLayout> {
+    pub(crate) fn enum_layout_for_def(
+        &mut self,
+        def_id: hir::DefId,
+        span: Span,
+    ) -> Option<EnumLayout> {
         let Some(definition) = self.mir_package.borrow().enum_defs.get(&def_id).cloned() else {
             return None;
         };
@@ -7969,7 +4483,9 @@ impl HirToMirLowerer {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
             TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
-            TyKind::Adt(adt, substs) if self.mir_package.borrow().enum_defs.contains_key(&adt.did) => {
+            TyKind::Adt(adt, substs)
+                if self.mir_package.borrow().enum_defs.contains_key(&adt.did) =>
+            {
                 let args: Vec<Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -8013,8 +4529,10 @@ impl HirToMirLowerer {
     /// Deterministically prefer a genuinely concrete instantiation (no
     /// unresolved arg) over a still-generic template, then break any
     /// remaining tie by `def_id` — never by hash order.
-    fn enum_layout_for_ty_fuzzy(&self, ty: &Ty) -> Option<EnumLayout> {
-        self.mir_package.borrow().enum_layouts
+    pub(super) fn enum_layout_for_ty_fuzzy(&self, ty: &Ty) -> Option<EnumLayout> {
+        self.mir_package
+            .borrow()
+            .enum_layouts
             .values()
             .filter(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty))
             .min_by_key(|layout| {
@@ -8024,7 +4542,7 @@ impl HirToMirLowerer {
             .cloned()
     }
 
-    fn enum_layout_ty_matches(layout_ty: &Ty, requested_ty: &Ty) -> bool {
+    pub(super) fn enum_layout_ty_matches(layout_ty: &Ty, requested_ty: &Ty) -> bool {
         match (&layout_ty.kind, &requested_ty.kind) {
             (TyKind::Infer(_), _) | (_, TyKind::Infer(_)) => true,
             (TyKind::Tuple(layout), TyKind::Tuple(requested)) => {
@@ -8038,7 +4556,11 @@ impl HirToMirLowerer {
         }
     }
 
-    fn enum_layout_for_concrete_ty(&mut self, ty: &Ty, span: Span) -> Option<EnumLayout> {
+    pub(super) fn enum_layout_for_concrete_ty(
+        &mut self,
+        ty: &Ty,
+        span: Span,
+    ) -> Option<EnumLayout> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_concrete_ty(inner, span),
             TyKind::RawPtr(type_and_mut) => {
@@ -8064,4 +4586,3 @@ impl HirToMirLowerer {
         std::mem::replace(&mut self.diagnostics, DiagnosticManager::new())
     }
 }
-

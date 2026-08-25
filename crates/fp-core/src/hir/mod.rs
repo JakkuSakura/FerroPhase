@@ -61,29 +61,59 @@ impl fmt::Display for PackageId {
     }
 }
 
-/// Identifies a HIR node. Namespaced by `PackageId` (mirroring `DefId`) so
-/// that two separately-lowered packages (each with their own `AstToHirLowerer`
-/// instance, each numbering its own nodes from zero) can never produce
-/// colliding ids — without this, a lookup keyed by a foreign package's
-/// `HirId` (e.g. resolving a lazily-pulled-in dependency item's type through
-/// the consuming package's own `TypeckResults`/`typeck_type_exprs` cache)
-/// could silently hit an unrelated entry that merely shares the same bare
-/// index, returning a wrong-but-plausible value with no diagnostic.
+/// The `DefId` of the closest enclosing item-like definition for a HIR node
+/// (rustc's `OwnerId`). Wrapping a real `DefId` means the owner already
+/// carries its defining `PackageId`, so two separately-lowered packages can
+/// never produce colliding node ids even though each mints its own
+/// `ItemLocalId`s from zero.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct OwnerId(pub DefId);
+
+impl OwnerId {
+    /// The package-root owner, used for nodes lowered outside any item-like
+    /// definition (a top-level type alias, a standalone expression's
+    /// synthesized `main`, ...). `DefId` index 0 is reserved for this
+    /// sentinel — real items are minted from index 1 (see `HirPackage::
+    /// next_def_id`).
+    pub fn root(package_id: PackageId) -> Self {
+        OwnerId(DefId::new(package_id, 0))
+    }
+}
+
+/// An index unique only within a single `OwnerId`'s scope (rustc's
+/// `ItemLocalId`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ItemLocalId(pub u32);
+
+/// Identifies a HIR node with rustc's two-level id: the `owner` (enclosing
+/// item-like definition) plus a `local_id` unique only within that owner's
+/// scope.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HirId {
-    pub package_id: PackageId,
-    pub index: u32,
+    pub owner: OwnerId,
+    pub local_id: ItemLocalId,
 }
 
 impl HirId {
-    pub fn new(package_id: PackageId, index: u32) -> Self {
-        Self { package_id, index }
+    pub fn new(owner: OwnerId, local_id: u32) -> Self {
+        Self {
+            owner,
+            local_id: ItemLocalId(local_id),
+        }
+    }
+
+    pub fn package_id(&self) -> &PackageId {
+        &self.owner.0.package_id
+    }
+
+    pub fn local_id(&self) -> u32 {
+        self.local_id.0
     }
 }
 
 impl fmt::Display for HirId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.package_id, self.index)
+        write!(f, "{}#{}", self.owner.0, self.local_id.0)
     }
 }
 

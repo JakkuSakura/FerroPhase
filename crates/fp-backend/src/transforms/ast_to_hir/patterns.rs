@@ -19,7 +19,9 @@ impl AstToHirLowerer {
                 // fresh binding unless it names something truly global),
                 // to a portable-op-tagged def (`#[op(variant = "...")]`,
                 // e.g. `OptionNone`).
-                if let Some(hir::Res::Def(def_id)) = self.resolve_global_value_symbol(ident.ident.as_str()) {
+                if let Some(hir::Res::Def(def_id)) =
+                    self.resolve_global_value_symbol(ident.ident.as_str())
+                {
                     if self.op_kind_for_def(def_id.clone()).is_some() {
                         let hir_pat = hir::Pat {
                             hir_id: self.next_id(),
