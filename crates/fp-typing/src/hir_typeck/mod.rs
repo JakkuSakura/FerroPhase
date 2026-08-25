@@ -1207,7 +1207,22 @@ impl HirTypeChecker {
                                     .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
                                 if let Some(receiver_ty) = expected {
                                     let method_name = path.segments.last().unwrap().name.clone();
-                                    let sig = if let TyKind::Param(param) = &receiver_ty.kind {
+                                    let sig = if method_name == "default" {
+                                        Some(Ty {
+                                            kind: TyKind::FnPtr(ty::PolyFnSig {
+                                                binder: ty::Binder {
+                                                    value: ty::FnSig {
+                                                        inputs: Vec::new(),
+                                                        output: Box::new(receiver_ty.clone()),
+                                                        c_variadic: false,
+                                                        unsafety: ty::Unsafety::Normal,
+                                                        abi: ty::Abi::Rust,
+                                                    },
+                                                    bound_vars: Vec::new(),
+                                                },
+                                            }),
+                                        })
+                                    } else if let TyKind::Param(param) = &receiver_ty.kind {
                                         self.generic_param_bound_method_signature(
                                             &param.name,
                                             &method_name,
