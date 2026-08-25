@@ -3977,19 +3977,31 @@ impl HirTypeChecker {
             let Some(hir::Res::Def(trait_def_id)) = &path.res else {
                 continue;
             };
-            let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
-                continue;
-            };
-            let hir::ItemKind::Trait(trait_def) = &item.kind else {
-                continue;
-            };
-            for trait_item in &trait_def.items {
-                let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+            let mut trait_ids = vec![trait_def_id.clone()];
+            let mut seen = HashSet::new();
+            while let Some(current_id) = trait_ids.pop() {
+                if !seen.insert(current_id.clone()) {
+                    continue;
+                }
+                let Some(item) = self.program_rc().item(current_id).cloned() else {
                     continue;
                 };
-                if trait_item.name == *method_name {
-                    let mut scope = self.with_self_type(param_ty.clone());
-                    return Ok(Some(scope.function_signature(function).await?));
+                let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                    continue;
+                };
+                for trait_item in &trait_def.items {
+                    let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                        continue;
+                    };
+                    if trait_item.name == *method_name {
+                        let mut scope = self.with_self_type(param_ty.clone());
+                        return Ok(Some(scope.function_signature(function).await?));
+                    }
+                }
+                for supertrait in &trait_def.supertraits {
+                    if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                        trait_ids.push(supertrait_id.clone());
+                    }
                 }
             }
         }
