@@ -3792,9 +3792,10 @@ impl HirTypeChecker {
                     TyKind::Ref(_, inner, _) => inner.as_ref(),
                     _ => &checked_self_ty,
                 };
+                let mut substitutions = HashMap::new();
                 let matches = Self::ty_shapes_compatible(&self_ty.kind, &target_ty.kind)
                     && scope
-                        .unify_call_types_probe(self_ty, target_ty, &mut HashMap::new())
+                        .unify_call_types_probe(self_ty, target_ty, &mut substitutions)
                         .is_ok();
                 if !matches {
                     continue;
@@ -3812,7 +3813,7 @@ impl HirTypeChecker {
                     continue;
                 };
                 if let Some(ty) = assoc_types.get(assoc_name) {
-                    break 'search Ok(Some(ty.clone()));
+                    break 'search Ok(Some(scope.substitute_param_map(ty, &substitutions)));
                 }
             }
             Ok(None)
