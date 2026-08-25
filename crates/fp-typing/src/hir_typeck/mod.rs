@@ -147,6 +147,7 @@ pub struct HirTypeChecker {
     /// The ambient expected-type hint for the expression currently being
     /// checked, if any.
     expected_expr_type: Option<Ty>,
+    return_type_hint: Option<Ty>,
     /// Cycle guard for `assoc_type_for_self`'s impl search: checking a
     /// candidate impl's self-type/associated-type bindings can itself
     /// trigger another `T::AssocName` projection lookup (e.g. two
@@ -194,6 +195,7 @@ impl HirTypeChecker {
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
+            return_type_hint: None,
             resolving_assoc_projections: Vec::new(),
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
@@ -220,6 +222,7 @@ impl HirTypeChecker {
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
+            return_type_hint: None,
             resolving_assoc_projections: Vec::new(),
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
@@ -805,6 +808,7 @@ impl HirTypeChecker {
         // `check_block_with_expected_tail`) — not the whole body — so it
         // doesn't leak into unrelated statements earlier in the function.
         let output_ty = scope.check_type_expr(output).await?;
+        scope.return_type_hint = Some(output_ty.clone());
         let refinement_hint = scope
             .program_rc()
             .take_raw_refinement_hint(output.hir_id.clone());
@@ -1134,7 +1138,22 @@ impl HirTypeChecker {
                                     // instead, exactly like `T::method(..)`
                                     // does when the base segment itself
                                     // names the parameter.
-                                    let sig = if let TyKind::Param(param) = &receiver_ty.kind {
+                                    let sig = if method_name == "default" {
+                                        Some(Ty {
+                                            kind: TyKind::FnPtr(ty::PolyFnSig {
+                                                binder: ty::Binder {
+                                                    value: ty::FnSig {
+                                                        inputs: Vec::new(),
+                                                        output: Box::new(receiver_ty.clone()),
+                                                        c_variadic: false,
+                                                        unsafety: ty::Unsafety::Normal,
+                                                        abi: ty::Abi::Rust,
+                                                    },
+                                                    bound_vars: Vec::new(),
+                                                },
+                                            }),
+                                        })
+                                    } else if let TyKind::Param(param) = &receiver_ty.kind {
                                         self.generic_param_bound_method_signature(
                                             &param.name,
                                             &method_name,
@@ -1789,7 +1808,10 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Return(value) | hir::ExprKind::Break(value) => {
                     match value.as_ref() {
-                        Some(value) => self.check_expr(value).await?,
+                        Some(value) => match &self.return_type_hint {
+                            Some(expected) => self.with_expected_expr_type(expected.clone()).check_expr(value).await?,
+                            None => self.check_expr(value).await?,
+                        },
                         None => self.unit_ty(),
                     }
                 }
@@ -1880,6 +1902,7 @@ impl HirTypeChecker {
                         _ => None,
                     };
                     let mut scope = self.with_fresh_block_scope();
+                    scope.return_type_hint = None;
                     let mut param_types = Vec::with_capacity(closure.params.len());
                     for (index, param) in closure.params.iter().enumerate() {
                         let declared = if matches!(param.ty.kind, hir::TypeExprKind::Infer) {
