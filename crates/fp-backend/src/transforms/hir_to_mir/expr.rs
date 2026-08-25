@@ -6,7 +6,7 @@
 use fp_core::ast::{
     DecimalType, TypeBinaryOpKind, TypeInt, TypePrimitive, Value, ValueList, ValueMap, ValueTuple,
 };
-use fp_core::diagnostics::Diagnostic;
+use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir::place::{
@@ -288,8 +288,7 @@ enum ConstContainerArgs {
 }
 
 pub struct HirToMirLowerer {
-    diagnostics: Vec<Diagnostic>,
-    has_errors: bool,
+    diagnostics: DiagnosticManager,
     /// Every struct/enum definition, layout, method table, specialization
     /// cache, const value, and ADT def this instance computes while lowering
     /// `current_package` — the *exact same* shared handle
@@ -326,19 +325,21 @@ pub struct HirToMirLowerer {
     /// is (itself `AstProgram::hir_program()`, incrementally
     /// maintained — see its own doc comment), and `transform`/`lower_program`
     /// (the ordinary whole-package path) fetches it once, the same way.
-    /// `current_package` (below) is deliberately *not* folded into this
-    /// map — it's still being lowered right now, not yet published — so
-    /// every lookup method (`hir_item`, `hir_def_path`, `hir_all_items`)
-    /// checks `current_package` first and falls through to this map for
-    /// every other package's own `DefId`s.
+    /// `current_package` (below) is always one of this map's own packages —
+    /// `new` inserts a fresh empty one if the `package_id` isn't already
+    /// present, and `transform` re-inserts the freshly-typechecked package
+    /// under the same id — so every lookup method (`hir_item`,
+    /// `hir_def_path`, `hir_all_items`) reads straight off this map with no
+    /// separate "current package first" fallback.
     hir_program: std::rc::Rc<hir::HirProgram>,
-    /// This package's own HIR — see `hir_program`'s doc comment for why
-    /// it's kept separate rather than folded in. Only *this* package's
-    /// own structs/enums/consts/impls get registered by the registration
-    /// passes below — a dependency's own items are only ever safe to
-    /// reference by signature (the dependency compiles its own body
-    /// separately; see `ensure_function_lowered`/`ensure_method_lowered`),
-    /// never to lower a body from here.
+    /// This package's own HIR — the same `Rc` already stored in
+    /// `hir_program.packages` under `current_package_id` (see `new`/
+    /// `transform`), kept as its own field for cheap direct access. Only
+    /// *this* package's own structs/enums/consts/impls get registered by
+    /// the registration passes below — a dependency's own items are only
+    /// ever safe to reference by signature (the dependency compiles its own
+    /// body separately; see `ensure_function_lowered`/
+    /// `ensure_method_lowered`), never to lower a body from here.
     current_package: std::rc::Rc<hir::HirPackage>,
     /// Always kept equal to `current_package.id` — a required field, not
     /// `Option`, since a package id is never genuinely unknown at any
@@ -367,14 +368,12 @@ impl HirToMirLowerer {
     /// real caller already has both on hand at construction time (the
     /// workspace-wide `HirProgram` snapshot it's lowering against, and the
     /// specific package this instance lowers). `current_package`/
-    /// `current_package_id` are derived from them immediately; callers that
-    /// need to lower a package not yet merged into `hir_program` (e.g. a
-    /// single still-being-typechecked `const {}` snapshot) still overwrite
-    /// `current_package` afterward via `transform`/`transform_comptime_request`,
-    /// same as before this required both
-    /// arguments up front.
+    /// `current_package_id` are derived from them immediately; if the
+    /// package isn't already in `hir_program` it is inserted as a fresh
+    /// empty package, so `current_package` is always a member of
+    /// `hir_program` and the lookup methods can query `hir_program` alone.
     pub fn new(
-        hir_program: std::rc::Rc<hir::HirProgram>,
+        mut hir_program: std::rc::Rc<hir::HirProgram>,
         package_id: hir::PackageId,
         mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     ) -> Self {
@@ -382,10 +381,13 @@ impl HirToMirLowerer {
             .packages
             .get(&package_id)
             .cloned()
-            .unwrap_or_else(|| std::rc::Rc::new(hir::HirPackage::new(package_id.clone())));
+            .unwrap_or_else(|| {
+                let fresh = std::rc::Rc::new(hir::HirPackage::new(package_id.clone()));
+                std::rc::Rc::make_mut(&mut hir_program).add_package(fresh.clone());
+                fresh
+            });
         Self {
-            diagnostics: Vec::new(),
-            has_errors: false,
+            diagnostics: DiagnosticManager::new(),
             mir_package,
             struct_layouts_in_progress: HashSet::new(),
             enum_layouts_in_progress: HashSet::new(),
@@ -412,52 +414,40 @@ impl HirToMirLowerer {
         self.current_package.const_block_value(def_id)
     }
 
-    /// Point `DefId` lookup — checks `current_package` first (its own
-    /// `def_map`, which for the ordinary whole-package `transform` path
-    /// already holds every dependency's merged-in items too, via
-    /// `seed_workspace_definitions`), then falls through to `hir_program`
-    /// (populated for the `transform_comptime_request` path, where
-    /// `current_package` is deliberately *not* pre-merged with anything).
-    /// Replaces every old direct `self.hir_def_map.get(def_id)` read.
-    /// TODO: just query from hir program, new
+    /// Point `DefId` lookup straight off `hir_program` — `current_package`
+    /// is always one of `hir_program`'s own packages (see `new`/`transform`,
+    /// which both insert it), so there is no separate "current package
+    /// first" fallback anymore. Replaces every old direct
+    /// `self.hir_def_map.get(def_id)` read.
     fn hir_item(&self, def_id: hir::DefId) -> Option<&hir::Item> {
-        self.current_package
-            .item(&def_id)
-            .or_else(|| self.hir_program.package(&def_id.package_id)?.item(&def_id))
+        self.hir_program.item(def_id)
     }
 
-    /// Same dispatch order as `hir_item`, for `def_paths` — used by
+    /// Same dispatch as `hir_item`, for `def_paths` — used by
     /// `def_path_str`, which every `register_struct`/`register_enum` call
     /// now goes through instead of being handed a whole `def_paths` map.
     fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
-        self.current_package.def_path(&def_id).or_else(|| {
-            self.hir_program
-                .package(&def_id.package_id)?
-                .def_path(&def_id)
-        })
+        self.hir_program.def_path(def_id)
     }
 
-    /// Every item this `HirToMirLowerer` instance knows about, across both
-    /// `current_package` and every package in `hir_program` — replaces
-    /// every old `self.hir_def_map.values()`/`.iter()` full scan (used to
-    /// build a one-time reverse index; never a per-lookup cost).
-    ///
-    //TODO: remove it
+    /// Every item `hir_program` knows about (which always includes
+    /// `current_package` itself) — replaces every old
+    /// `self.hir_def_map.values()`/`.iter()` full scan (used to build a
+    /// one-time reverse index; never a per-lookup cost).
     fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
-        self.current_package.all_defs().chain(
-            self.hir_program
-                .packages
-                .values()
-                .flat_map(|package| package.all_defs()),
-        )
+        self.hir_program
+            .packages
+            .values()
+            .flat_map(|package| package.all_defs())
     }
 
     pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
         let hir_program = std::rc::Rc::new(hir_program);
         self.current_package = hir_program.clone();
         self.current_package_id = hir_program.id.clone();
+        std::rc::Rc::make_mut(&mut self.hir_program).add_package(hir_program.clone());
         let program = self.lower_program(&hir_program)?;
-        if self.has_errors {
+        if self.diagnostics.has_errors() {
             return Err(fp_core::error::Error::from(
                 "internal compiler error: HIR-to-MIR lowering reported an error",
             ));
@@ -515,8 +505,7 @@ impl HirToMirLowerer {
     /// compile actually uses the offending enum, via the ordinary
     /// `finalize_adt_definitions`/on-demand layout paths below.
     fn register_all_dependency_adts(&mut self) {
-        let diagnostics_before = self.diagnostics.len();
-        let had_errors_before = self.has_errors;
+        let diagnostics_before = self.diagnostics.snapshot();
         // Only `Struct`/`Enum` items are ever registered below — cloning
         // every item regardless of kind (as this used to) paid for a
         // full deep-clone of every dependency function/impl body in the
@@ -552,7 +541,6 @@ impl HirToMirLowerer {
             }
         }
         self.diagnostics.truncate(diagnostics_before);
-        self.has_errors = had_errors_before;
     }
 
     /// Defensive fallback for a struct/enum somehow missed by
@@ -7484,7 +7472,6 @@ impl HirToMirLowerer {
     }
 
     fn emit_error(&mut self, span: Span, message: impl Into<String>) {
-        self.has_errors = true;
         let mut message = message.into();
         if let Some(item) = &self.current_item_path {
             message.push_str(&format!(" (in `{item}`)"));
@@ -7492,14 +7479,14 @@ impl HirToMirLowerer {
         let diagnostic = Diagnostic::error(message)
             .with_source_context(DIAGNOSTIC_CONTEXT)
             .with_span(span);
-        self.diagnostics.push(diagnostic);
+        self.diagnostics.add_diagnostic(diagnostic);
     }
 
     fn emit_warning(&mut self, span: Span, message: impl Into<String>) {
         let diagnostic = Diagnostic::warning(message.into())
             .with_source_context(DIAGNOSTIC_CONTEXT)
             .with_span(span);
-        self.diagnostics.push(diagnostic);
+        self.diagnostics.add_diagnostic(diagnostic);
     }
 
     fn unit_ty() -> Ty {
@@ -8131,10 +8118,8 @@ impl HirToMirLowerer {
         }
     }
 
-    pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, bool) {
-        let diagnostics = std::mem::take(&mut self.diagnostics);
-        let has_errors = std::mem::replace(&mut self.has_errors, false);
-        (diagnostics, has_errors)
+    pub fn take_diagnostics(&mut self) -> DiagnosticManager {
+        std::mem::replace(&mut self.diagnostics, DiagnosticManager::new())
     }
 }
 
