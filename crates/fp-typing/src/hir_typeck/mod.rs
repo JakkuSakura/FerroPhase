@@ -1219,6 +1219,16 @@ impl HirTypeChecker {
                         };
                         arg_types.push(actual?);
                     }
+                    let formatter_append = method.as_str() == "append"
+                        && matches!(&receiver_ty.kind, TyKind::Ref(_, inner, _)
+                            if matches!(&inner.kind, TyKind::Adt(adt, _)
+                                if self
+                                    .program_rc()
+                                    .def_path(adt.did.clone())
+                                    .is_some_and(|path| path.segments.last().is_some_and(|name| name.as_str() == "Formatter"))));
+                    if formatter_append {
+                        return Ok(self.unit_ty());
+                    }
                     // Method resolution has no natural "error" `DefId` to
                     // substitute (unlike `Ty::error()`), so the whole
                     // `Result` from `method_output` (and anything it calls
