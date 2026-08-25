@@ -52,12 +52,12 @@ pub fn catch_unwind_result(f: fn()) -> bool {
 }
 
 #[intrinsic = "print"]
-pub fn print(text: &str) {
+pub fn print(text: &str, *args: _, **argv: _) {
     compile_error!("print is a compiler intrinsic")
 }
 
 #[intrinsic = "println"]
-pub fn println(text: &str) {
+pub fn println(text: &str, *args: _, **argv: _) {
     compile_error!("println is a compiler intrinsic")
 }
 

@@ -9,7 +9,16 @@ impl HirTypeChecker {
         let TyKind::FnPtr(signature) = &callable.kind else {
             return Ok(None);
         };
-        if signature.binder.value.inputs.len() != actuals.len() {
+        let inputs = &signature.binder.value.inputs;
+        let variadic = inputs
+            .last()
+            .is_some_and(|input| matches!(input.kind, TyKind::Infer(_)));
+        let fixed_len = if variadic {
+            inputs.len().saturating_sub(1)
+        } else {
+            inputs.len()
+        };
+        if (!variadic && inputs.len() != actuals.len()) || (variadic && actuals.len() < fixed_len) {
             // `None` already means "not callable with these args" to every
             // caller (see the `TyKind::FnPtr` mismatch case just above) —
             // an arity mismatch is the same kind of "doesn't match", not a
@@ -18,7 +27,7 @@ impl HirTypeChecker {
             return Ok(None);
         }
         let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
-        for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
+        for (expected, actual) in inputs.iter().take(fixed_len).zip(actuals) {
             self.unify_call_types(expected, actual, &mut substitutions)?;
         }
         let output = self.substitute_param_map(&signature.binder.value.output, &substitutions);
