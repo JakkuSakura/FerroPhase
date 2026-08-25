@@ -532,7 +532,6 @@ impl CompilerDriver {
             }
             Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
         }
-        lowering.append_runtime_stubs();
         let runtime_support = state
             .borrow_mut()
             .mir_package_rc(&current_package_id)
@@ -685,7 +684,6 @@ impl CompilerDriver {
                 }
                 Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
             }
-            lowering.append_runtime_stubs();
             let runtime_support = state
                 .borrow_mut()
                 .mir_package_rc(&current_package_id)

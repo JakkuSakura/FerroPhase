@@ -24,12 +24,10 @@ pub struct MirPackage {
     /// partitioned instead of one flat blob. Use `items()`/`bodies()` for a
     /// whole-package view.
     pub units: HashMap<DefId, MirCodeUnit>,
-    /// Runtime-support content with no owning `DefId` at all — currently
-    /// just the synthesized stub functions `HirToMirLowerer::append_runtime_stubs`
-    /// produces for whichever runtime support functions got referenced
-    /// during lowering (e.g. `fp_panic`). Deliberately separate from
-    /// `units`: `MirCodeUnit` is keyed by the `DefId` that produced it (see
-    /// its own doc comment), and this content has no such owner.
+    /// Runtime-support content with no owning `DefId` at all. Deliberately
+    /// separate from `units`: `MirCodeUnit` is keyed by the `DefId` that
+    /// produced it (see its own doc comment), and this content has no such
+    /// owner.
     pub runtime_support: MirCodeUnit,
     /// Every concrete struct/enum instantiation's own field types, keyed by
     /// `(DefId, generic args)` since two instantiations of the same generic

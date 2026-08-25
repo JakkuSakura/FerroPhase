@@ -306,7 +306,6 @@ pub struct HirToMirLowerer {
     mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     struct_layouts_in_progress: HashSet<StructLayoutKey>,
     enum_layouts_in_progress: HashSet<EnumLayoutKey>,
-    runtime_functions: HashMap<String, mir::FunctionSig>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     /// Marks a function/method `DefId` whose body has already been lowered
@@ -318,7 +317,6 @@ pub struct HirToMirLowerer {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     lowered_items: HashSet<hir::DefId>,
-    synthetic_runtime_functions: HashSet<String>,
     next_synthetic_hir_def_id: hir::DefId,
     /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
@@ -369,36 +367,6 @@ pub struct HirToMirLowerer {
 }
 
 impl HirToMirLowerer {
-    fn default_runtime_signatures() -> HashMap<String, mir::FunctionSig> {
-        let mut map = HashMap::new();
-        map.insert(
-            "printf".to_string(),
-            mir::FunctionSig {
-                inputs: Vec::new(),
-                output: Ty {
-                    kind: TyKind::Int(IntTy::I32),
-                },
-            },
-        );
-        map.insert(
-            "fp_panic".to_string(),
-            mir::FunctionSig {
-                inputs: vec![Ty {
-                    kind: TyKind::RawPtr(TypeAndMut {
-                        ty: Box::new(Ty {
-                            kind: TyKind::Int(IntTy::I8),
-                        }),
-                        mutbl: Mutability::Not,
-                    }),
-                }],
-                output: Ty {
-                    kind: TyKind::Tuple(Vec::new()),
-                },
-            },
-        );
-        map
-    }
-
     /// `hir_program`/`package_id` are required, not filled in later via a
     /// `with_*` builder or left as an empty/default placeholder — every
     /// real caller already has both on hand at construction time (the
@@ -430,11 +398,9 @@ impl HirToMirLowerer {
             mir_package,
             struct_layouts_in_progress: HashSet::new(),
             enum_layouts_in_progress: HashSet::new(),
-            runtime_functions: Self::default_runtime_signatures(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
-            synthetic_runtime_functions: HashSet::new(),
             next_synthetic_hir_def_id: hir::DefId::local(1),
             hir_program,
             current_package,
@@ -1014,17 +980,6 @@ impl HirToMirLowerer {
         }
 
         self.flush_extra_items(&mut mir_program);
-        self.append_runtime_stubs();
-        // `lower_program`'s own contract (unlike the driver's per-`DefId`
-        // decomposition) is "the whole compiled program in one unit" — so,
-        // unlike the driver, fold `runtime_support`'s content (which
-        // `append_runtime_stubs` just wrote onto the shared package,
-        // having no `DefId` of its own to be returned separately under)
-        // straight into the unit this returns instead of leaving it for a
-        // caller to fetch off `mir_package` on the side.
-        let runtime_support = std::mem::take(&mut self.mir_package.borrow_mut().runtime_support);
-        mir_program.items.extend(runtime_support.items);
-        mir_program.bodies.extend(runtime_support.bodies);
 
         Ok(mir_program)
     }
@@ -1040,87 +995,6 @@ impl HirToMirLowerer {
         };
         self.next_mir_id += 1;
         mir_item
-    }
-
-    /// Synthesizes a stub `mir::Item`/body for every runtime support
-    /// function actually referenced during lowering (`synthetic_runtime_functions`)
-    /// straight onto `mir_package.runtime_support` — the shared package's
-    /// own dedicated home for content with no owning `DefId` at all (see
-    /// its doc comment), written in place rather than handed back as an
-    /// owned `MirCodeUnit` for a caller to store somewhere itself.
-    pub fn append_runtime_stubs(&mut self) {
-        let span = Span::new(0, 0, 0);
-        for name in self.synthetic_runtime_functions.clone() {
-            // `printf` is only ever called through the dedicated
-            // `IntrinsicCall{Print}` MIR path, never as a normal call
-            // operand — it never reaches `function_value`'s lookup, so it
-            // genuinely needs no MIR-level representation at all.
-            if self.is_extern_runtime_function(&name) {
-                continue;
-            }
-            let exists = self
-                .mir_package
-                .borrow()
-                .runtime_support
-                .items
-                .iter()
-                .any(|item| match &item.kind {
-                    mir::ItemKind::Function(func) => func.name.as_str() == name,
-                    _ => false,
-                });
-            if exists {
-                continue;
-            }
-
-            let Some(sig) = self.runtime_functions.get(&name).cloned() else {
-                continue;
-            };
-
-            let body = self.stub_body(&sig, span);
-            let body_id = mir::BodyId::new(self.next_body_id);
-            self.next_body_id += 1;
-
-            // `fp_panic` *is* called as a normal `ConstantKind::Fn` operand
-            // (from `assert!`/`unwrap`/etc. lowering), so MIR→LIR's
-            // `function_value` needs a registered signature for it — but
-            // its actual implementation is hand-synthesized directly in
-            // each native backend (see `program_uses_fp_panic`/
-            // `needs_panic_stub`), not lowered from a MIR body. Declare it
-            // `extern` (a signature-only, body-less LIR declaration) rather
-            // than giving it the generic `Unreachable`-terminated stub body
-            // every other synthetic runtime function gets — that stub body
-            // would make every panic/assert trap instead of actually
-            // reporting a message, and would fight the backend's own
-            // definition for the same symbol.
-            let is_fp_panic = name == "fp_panic";
-            let mir_function = mir::Function {
-                name: mir::Symbol::new(name.clone()),
-                def_id: None,
-                substs: Vec::new(),
-                sig: sig.clone(),
-                body_id,
-                abi: if is_fp_panic {
-                    mir::ty::Abi::C { unwind: false }
-                } else {
-                    mir::ty::Abi::Rust
-                },
-                is_extern: is_fp_panic,
-                attrs: Vec::new(),
-            };
-
-            let mut mir_package = self.mir_package.borrow_mut();
-            mir_package.runtime_support.bodies.insert(body_id, body);
-            mir_package.runtime_support.items.push(mir::Item {
-                mir_id: self.next_mir_id,
-                kind: mir::ItemKind::Function(mir_function),
-            });
-            drop(mir_package);
-            self.next_mir_id += 1;
-        }
-    }
-
-    fn is_extern_runtime_function(&self, name: &str) -> bool {
-        matches!(name, "printf")
     }
 
     fn flush_extra_items(&mut self, program: &mut mir::MirCodeUnit) {
@@ -7701,64 +7575,6 @@ impl HirToMirLowerer {
         mir::FunctionSig { inputs, output }
     }
 
-    fn update_placeholder_signature(
-        &mut self,
-        name: &str,
-        existing_sig: &mir::FunctionSig,
-        arg_types: &[Ty],
-        destination_ty: Option<&Ty>,
-    ) -> mir::FunctionSig {
-        let mut inputs: Vec<Ty> = if arg_types.is_empty() {
-            existing_sig
-                .inputs
-                .iter()
-                .map(|ty| self.sanitize_placeholder_ty(ty))
-                .collect()
-        } else {
-            arg_types
-                .iter()
-                .map(|ty| self.sanitize_placeholder_ty(ty))
-                .collect()
-        };
-
-        let mut output = if let Some(expected) = destination_ty {
-            self.sanitize_placeholder_ty(expected)
-        } else if Self::is_unit_ty(&existing_sig.output) {
-            existing_sig.output.clone()
-        } else {
-            self.sanitize_placeholder_ty(&existing_sig.output)
-        };
-
-        if inputs.is_empty() && arg_types.is_empty() && !existing_sig.inputs.is_empty() {
-            inputs = existing_sig
-                .inputs
-                .iter()
-                .map(|ty| self.sanitize_placeholder_ty(ty))
-                .collect();
-        }
-
-        if destination_ty.is_none() && Self::is_unit_ty(&existing_sig.output) {
-            output = existing_sig.output.clone();
-        }
-
-        let new_sig = mir::FunctionSig { inputs, output };
-
-        let needs_update = self
-            .runtime_functions
-            .get(name)
-            .map(|current| current != &new_sig)
-            .unwrap_or(true);
-
-        if needs_update {
-            self.runtime_functions
-                .insert(name.to_string(), new_sig.clone());
-            self.synthetic_runtime_functions.insert(name.to_string());
-            new_sig
-        } else {
-            existing_sig.clone()
-        }
-    }
-
     fn opaque_ty(&mut self, name: &str) -> Ty {
         if let Some(existing) = self.mir_package.borrow().opaque_types.get(name).cloned() {
             return existing.clone();
@@ -8204,25 +8020,6 @@ impl HirToMirLowerer {
             resolved.push(ty);
         }
         Some(resolved)
-    }
-
-    fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
-        let sanitized = self.sanitize_function_sig(sig);
-        self.runtime_functions.insert(name.to_string(), sanitized);
-        self.synthetic_runtime_functions.insert(name.to_string());
-    }
-
-    fn placeholder_function_sig(&mut self, name: &str) -> mir::FunctionSig {
-        let entry = self
-            .runtime_functions
-            .entry(name.to_string())
-            .or_insert_with(|| mir::FunctionSig {
-                inputs: Vec::new(),
-                output: Self::unit_ty(),
-            })
-            .clone();
-        self.synthetic_runtime_functions.insert(name.to_string());
-        entry
     }
 
     fn error_ty(&mut self) -> Ty {
@@ -13984,7 +13781,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let (mut func_operand, mut sig, mut callee_name) = if let Some(ref def_id) = generic_def_id {
+        let (mut func_operand, mut sig, callee_name) = if let Some(ref def_id) = generic_def_id {
             let function = self.lowering.mir_package.borrow().generic_function_defs
                 .get(&def_id)
                 .cloned()
@@ -14806,7 +14603,6 @@ impl<'a> BodyBuilder<'a> {
                     literal: mir::ConstantKind::FnDef(info.def_id, info.substs.clone()),
                 });
                 sig = info.sig.clone();
-                callee_name = Some(info.name.clone());
 
                 for (idx, arg) in args.iter().enumerate() {
                     let Some(expected_ty) = sig.inputs.get(idx) else {
@@ -14842,78 +14638,7 @@ impl<'a> BodyBuilder<'a> {
                 ),
             });
             sig = info.sig.clone();
-            callee_name = Some(info.fn_name.clone());
             associated_struct = info.struct_def;
-        }
-
-        if let Some(name) = callee_name.as_ref() {
-            if self.lowering.synthetic_runtime_functions.contains(name) {
-                let destination_ty = destination.as_ref().map(|(_, ty)| ty);
-                let updated_sig = self.lowering.update_placeholder_signature(
-                    name,
-                    &sig,
-                    &arg_types,
-                    destination_ty,
-                );
-
-                if updated_sig != sig {
-                    let symbol = Symbol::new(name.clone());
-                    let literal = match &func_operand {
-                        mir::Operand::Constant(constant) => match &constant.literal {
-                            mir::ConstantKind::Global(_) => {
-                                mir::ConstantKind::Global(mir::Path::from_symbol(symbol.clone()))
-                            }
-                            _ => mir::ConstantKind::Fn(symbol.clone()),
-                        },
-                        _ => mir::ConstantKind::Fn(symbol.clone()),
-                    };
-                    let function_ty = match &literal {
-                        mir::ConstantKind::Global(_) => {
-                            self.lowering.c_function_pointer_ty(&updated_sig)
-                        }
-                        _ => self.lowering.function_pointer_ty(&updated_sig),
-                    };
-                    func_operand = mir::Operand::Constant(mir::Constant {
-                        span: callee.span,
-                        ty: function_ty,
-                        user_ty: None,
-                        literal,
-                    });
-                    sig = updated_sig;
-
-                    for (idx, expected_input) in sig.inputs.iter().enumerate() {
-                        if let Some(original_ty) = arg_types.get(idx) {
-                            if HirToMirLowerer::is_unit_ty(original_ty)
-                                && matches!(
-                                    expected_input.kind,
-                                    TyKind::Ref(_, _, _) | TyKind::RawPtr(_)
-                                )
-                            {
-                                lowered_args[idx] = mir::Operand::Constant(mir::Constant {
-                                    span: callee.span,
-                                    ty: expected_input.clone(),
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::UInt(0),
-                                });
-                            }
-                        }
-                    }
-
-                    for (idx, operand) in lowered_args.iter_mut().enumerate() {
-                        if let Some(expected_input) = sig.inputs.get(idx) {
-                            match operand {
-                                mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-                                    if (place.local as usize) < self.locals.len() {
-                                        self.locals[place.local as usize].ty =
-                                            expected_input.clone();
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         for (idx, operand) in lowered_args.iter_mut().enumerate() {
@@ -15356,23 +15081,6 @@ impl<'a> BodyBuilder<'a> {
             .collect::<Vec<_>>()
             .join("::");
 
-        if let Some(sig) = self.lowering.runtime_functions.get(&name).cloned() {
-            let ty = self.lowering.c_function_pointer_ty(&sig);
-            let operand = mir::Operand::Constant(mir::Constant {
-                span: callee.span,
-                ty: ty.clone(),
-                user_ty: None,
-                literal: mir::ConstantKind::Global(mir::Path::new(
-                    resolved_path
-                        .segments
-                        .iter()
-                        .map(|segment| mir::Symbol::new(segment.name.clone()))
-                        .collect(),
-                )),
-            });
-            return Ok((operand, sig, Some(name)));
-        }
-
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
             // `ensure_method_info` is the uniform lookup — it resolves a
             // method in this package or any dependency's the same way
@@ -15407,7 +15115,10 @@ impl<'a> BodyBuilder<'a> {
             callee.span,
             format!("unresolved call target `{}` during MIR lowering", name),
         );
-        let sig = self.lowering.placeholder_function_sig(&name);
+        let sig = mir::FunctionSig {
+            inputs: Vec::new(),
+            output: HirToMirLowerer::unit_ty(),
+        };
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let operand = mir::Operand::Constant(mir::Constant {
             span: callee.span,
@@ -17731,7 +17442,6 @@ impl<'a> BodyBuilder<'a> {
                                 inputs: vec![string_ty.clone()],
                                 output: HirToMirLowerer::unit_ty(),
                             };
-                            self.lowering.ensure_runtime_stub("fp_panic", &sig);
                             let fn_ty = self.lowering.function_pointer_ty(&sig);
                             let func = mir::Operand::Constant(mir::Constant {
                                 span,
@@ -17818,7 +17528,6 @@ impl<'a> BodyBuilder<'a> {
                         inputs: vec![string_ty.clone()],
                         output: HirToMirLowerer::unit_ty(),
                     };
-                    self.lowering.ensure_runtime_stub("fp_panic", &sig);
                     let fn_ty = self.lowering.function_pointer_ty(&sig);
                     let func = mir::Operand::Constant(mir::Constant {
                         span,
@@ -17862,7 +17571,6 @@ impl<'a> BodyBuilder<'a> {
             inputs: vec![self.lowering.raw_string_ptr_ty()],
             output: HirToMirLowerer::unit_ty(),
         };
-        self.lowering.ensure_runtime_stub("fp_panic", &sig);
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let func = mir::Operand::Constant(mir::Constant {
             span,
@@ -17929,7 +17637,6 @@ impl<'a> BodyBuilder<'a> {
             inputs: vec![string_ty.clone()],
             output: HirToMirLowerer::unit_ty(),
         };
-        self.lowering.ensure_runtime_stub("fp_panic", &sig);
         let fn_ty = self.lowering.function_pointer_ty(&sig);
         let func = mir::Operand::Constant(mir::Constant {
             span,
@@ -20946,23 +20653,11 @@ impl<'a> BodyBuilder<'a> {
                 {
                     result_ty = output.clone();
                 }
-                let type_name = self
-                    .lowering
-                    .display_type_name(&receiver_operand.ty)
-                    .unwrap_or_else(|| "opaque".to_string());
-                let fn_name = format!("{}::{}", type_name, method_name);
                 let sig = mir::FunctionSig {
                     inputs: input_tys,
                     output: result_ty.clone(),
                 };
-                self.lowering.ensure_runtime_stub(&fn_name, &sig);
-
-                let sanitized_sig = self
-                    .lowering
-                    .runtime_functions
-                    .get(&fn_name)
-                    .cloned()
-                    .unwrap_or_else(|| self.lowering.sanitize_function_sig(&sig));
+                let sanitized_sig = self.lowering.sanitize_function_sig(&sig);
                 let arg_types = sig.inputs.clone();
 
                 for (idx, expected_input) in sanitized_sig.inputs.iter().enumerate() {
