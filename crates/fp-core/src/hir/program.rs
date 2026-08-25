@@ -100,22 +100,22 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::checked_impl_self_ty`.
     pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(&hir_id.package_id)?.checked_impl_self_ty(hir_id)
+        self.package(hir_id.package_id())?.checked_impl_self_ty(hir_id)
     }
 
     pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.cache_checked_impl_self_ty(hir_id, ty);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::function_signature`.
     pub fn function_signature(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(&hir_id.package_id)?.function_signature(hir_id)
+        self.package(hir_id.package_id())?.function_signature(hir_id)
     }
 
     pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.cache_function_signature(hir_id, ty);
         }
     }
@@ -133,11 +133,11 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::refinement_hint`.
     pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
-        self.package(&hir_id.package_id)?.refinement_hint(hir_id, slot)
+        self.package(hir_id.package_id())?.refinement_hint(hir_id, slot)
     }
 
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.insert_refinement_hint(hir_id, slot, hint);
         }
     }
@@ -149,22 +149,22 @@ impl HirProgram {
     /// `hir_id.package_id` anyway for consistency with every other
     /// per-`HirId` accessor on this type.
     pub fn take_raw_refinement_hint(&self, hir_id: HirId) -> Option<RefinementHint> {
-        self.package(&hir_id.package_id)?.take_raw_refinement_hint(hir_id)
+        self.package(hir_id.package_id())?.take_raw_refinement_hint(hir_id)
     }
 
     pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.insert_raw_refinement_hint(hir_id, hint);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::literal_type_hint`.
     pub fn literal_type_hint(&self, hir_id: HirId) -> Option<Vec<String>> {
-        self.package(&hir_id.package_id)?.literal_type_hint(hir_id)
+        self.package(hir_id.package_id())?.literal_type_hint(hir_id)
     }
 
     pub fn insert_literal_type_hint(&self, hir_id: HirId, literals: Vec<String>) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.insert_literal_type_hint(hir_id, literals);
         }
     }
@@ -190,61 +190,61 @@ impl HirProgram {
     // real caller already owns the package it's recording against.
 
     pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(&hir_id.package_id)?.expr_type(hir_id)
+        self.package(hir_id.package_id())?.expr_type(hir_id)
     }
 
     pub fn record_expr_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_expr_type(hir_id, ty);
         }
     }
 
     pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(&hir_id.package_id)?.type_expr_type(hir_id)
+        self.package(hir_id.package_id())?.type_expr_type(hir_id)
     }
 
     pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_type_expr_type(hir_id, ty);
         }
     }
 
     pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(&hir_id.package_id)?.pat_type(hir_id)
+        self.package(hir_id.package_id())?.pat_type(hir_id)
     }
 
     pub fn record_pat_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_pat_type(hir_id, ty);
         }
     }
 
     pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
-        self.package(&hir_id.package_id)?.method_resolution(hir_id)
+        self.package(hir_id.package_id())?.method_resolution(hir_id)
     }
 
     pub fn record_method_resolution(&self, hir_id: HirId, def_id: DefId) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_method_resolution(hir_id, def_id);
         }
     }
 
     pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.package(&hir_id.package_id)?.generic_call_arg(hir_id)
+        self.package(hir_id.package_id())?.generic_call_arg(hir_id)
     }
 
     pub fn record_generic_call_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_generic_call_arg(hir_id, resolution);
         }
     }
 
     pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.package(&hir_id.package_id)?.generic_method_arg(hir_id)
+        self.package(hir_id.package_id())?.generic_method_arg(hir_id)
     }
 
     pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        if let Some(package) = self.package(&hir_id.package_id) {
+        if let Some(package) = self.package(hir_id.package_id()) {
             package.record_generic_method_arg(hir_id, resolution);
         }
     }

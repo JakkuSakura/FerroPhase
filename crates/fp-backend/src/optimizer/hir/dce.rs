@@ -609,7 +609,7 @@ mod tests {
     }
 
     fn hid(index: u32) -> hir::HirId {
-        hir::HirId::new(test_pkg(), index)
+        hir::HirId::new(hir::OwnerId::root(test_pkg()), index)
     }
 
     fn unit_ty() -> TypeExpr {
@@ -703,7 +703,6 @@ mod tests {
         let mut package = HirPackage::new(test_pkg());
         package.items = items;
         package.def_map = def_map;
-        package.next_hir_id = 100;
         package
     }
 

@@ -23,7 +23,7 @@ fn test_pkg() -> hir::PackageId {
 }
 
 fn hid(index: u32) -> hir::HirId {
-    hir::HirId::new(test_pkg(), index)
+    hir::HirId::new(hir::OwnerId::root(test_pkg()), index)
 }
 
 fn primitive_type(kind: TypePrimitive) -> TypeExpr {

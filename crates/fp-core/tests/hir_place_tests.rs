@@ -14,7 +14,7 @@ fn test_pkg() -> fp_core::hir::PackageId {
 }
 
 fn hid(index: u32) -> fp_core::hir::HirId {
-    fp_core::hir::HirId::new(test_pkg(), index)
+    fp_core::hir::HirId::new(fp_core::hir::OwnerId::root(test_pkg()), index)
 }
 
 fn path_expr(hir_id: u32, name: &str) -> Expr {
