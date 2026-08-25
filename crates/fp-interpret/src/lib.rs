@@ -4,7 +4,6 @@ mod interpreter;
 mod render;
 mod vm;
 pub use interpreter::LirInterpreter;
-#[cfg(test)]
 pub(crate) use interpreter::TypedValue;
 
 use std::collections::HashMap;

@@ -65,16 +65,14 @@ impl LirInterpreter {
         Ok(())
     }
 
-    /// Test-only convenience: wraps a single flat `LirBlob` as a
+    /// Convenience: wraps a single flat `LirBlob` as a
     /// one-package program, loads it, and runs its `main` function by
     /// name. Not exposed publicly — a real caller always knows its own
     /// package id and entry `DefId` and should use `run_entrypoint`.
-    #[cfg(test)]
-    pub(super) fn run_main(&mut self, program: &LirBlob) -> LirResult<Value> {
+    pub fn run_main(&mut self, program: &LirBlob) -> LirResult<Value> {
         self.run_main_with_package(program, PackageId::new(""))
     }
 
-    #[cfg(test)]
     fn run_main_with_package(
         &mut self,
         program: &LirBlob,

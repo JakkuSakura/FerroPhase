@@ -410,6 +410,7 @@ async fn run_compile_pipeline(
             let state = session.driver().state.borrow();
             let mut unit = fp_core::mir::MirCodeUnit::new();
             if let Some(package) = state.mir_program().package(package_id) {
+                let package = package.borrow();
                 unit.items.extend(package.items().cloned());
                 unit.bodies
                     .extend(package.bodies().map(|(id, body)| (*id, body.clone())));

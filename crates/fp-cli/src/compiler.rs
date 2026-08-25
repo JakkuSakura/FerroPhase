@@ -485,6 +485,7 @@ impl LoweredProgram {
         {
             let state = self.driver.state.borrow();
             if let Some(package) = state.mir_program().package(&self.package_id) {
+                let package = package.borrow();
                 mir.items.extend(package.items().cloned());
                 mir.bodies
                     .extend(package.bodies().map(|(id, body)| (*id, body.clone())));

@@ -616,7 +616,34 @@ impl MirToLirLowerer {
                     lir::LirConstantAggregate::Array(lowered),
                 ))
             }
-            mir::ConstValue::Tuple(elements) | mir::ConstValue::Struct(elements) => {
+            mir::ConstValue::Tuple(elements) => {
+                let lir::LirType::Struct { fields, .. } = lir_ty else {
+                    return Err(fp_core::error::Error::from(
+                        "tuple constant requires tuple type hint",
+                    ));
+                };
+                if fields.len() != elements.len() {
+                    return Err(fp_core::error::Error::from(format!(
+                        "tuple/struct constant field count mismatch: expected {}, got {}",
+                        fields.len(),
+                        elements.len()
+                    )));
+                }
+                let mut lowered = Vec::with_capacity(elements.len());
+                for (idx, element) in elements.iter().enumerate() {
+                    let field_ty = fields
+                        .get(idx)
+                        .ok_or_else(|| fp_core::error::Error::from("missing tuple field type"))?;
+                    lowered.push(
+                        self.const_value_to_lir_constant_with_lir_type(element, field_ty)?,
+                    );
+                }
+                Ok(lir::LirConstant::aggregate(
+                    lir_ty.clone(),
+                    lir::LirConstantAggregate::Struct(lowered),
+                ))
+            }
+            mir::ConstValue::Struct(elements) => {
                 let lir::LirType::Struct { fields, .. } = lir_ty else {
                     return Err(fp_core::error::Error::from(
                         "tuple/struct constant requires a struct type in LIR",

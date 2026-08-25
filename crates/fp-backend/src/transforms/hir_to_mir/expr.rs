@@ -936,12 +936,6 @@ impl HirToMirLowerer {
         let items: Vec<&hir::Item> = program.items.iter().collect();
 
         for item in &items {
-            if let hir::ItemKind::Const(const_item) = &item.kind {
-                self.ensure_item_lowered(item.def_id.clone())?;
-            }
-        }
-
-        for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
                 hir::ItemKind::Const(const_item) => {
