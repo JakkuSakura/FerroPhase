@@ -112,9 +112,9 @@ impl HirTypeChecker {
             IntrinsicKind::TestCommandMockTakeCalls => self
                 .well_known_struct_ty(
                     "Vec",
-                    vec![ty::GenericArg::Type(Box::new(Ty {
+                    vec![ty::GenericArg::Type(Ty {
                         kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-                    }))],
+                    })],
                 )
                 .unwrap_or_else(|| self.error_ty("std::alloc::Vec is not declared")),
             IntrinsicKind::CompileError => {

@@ -219,7 +219,14 @@ impl AstToHirLowerer {
         let idx_local = hir::Local {
             hir_id: self.next_id(),
             pat: idx_pat.clone(),
-            ty: None,
+            ty: Some(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
+                    &ast::Name::Ident(ast::Ident::new("usize")),
+                    PathResolutionScope::Type,
+                )?),
+                Span::new(self.current_file, 0, 0),
+            )),
             init: Some(idx_init),
         };
         self.register_pattern_bindings(&idx_pat);
@@ -247,13 +254,6 @@ impl AstToHirLowerer {
                 span: Span::new(self.current_file, 0, 0),
             }
         } else {
-            // `IntrinsicKind::Len` returns `u64`, but the synthesized loop
-            // index (`idx_expr`, initialized from an untyped integer
-            // literal) defaults to `i64` — and needs to stay `i64` since
-            // it's also used to index `base_expr` below, which requires an
-            // `i64` index. Cast the length to `i64` here rather than
-            // changing the index's type, to avoid the mismatch without
-            // disturbing indexing.
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
@@ -267,12 +267,7 @@ impl AstToHirLowerer {
             };
             hir::Expr {
                 hir_id: self.next_id(),
-                kind: hir::ExprKind::Cast(
-                    Box::new(len_call),
-                    Box::new(
-                        self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64)),
-                    ),
-                ),
+                kind: len_call.kind,
                 span: Span::new(self.current_file, 0, 0),
             }
         };
@@ -420,9 +415,6 @@ impl AstToHirLowerer {
                 span: Span::new(self.current_file, 0, 0),
             }
         } else {
-            // See the matching comment in `lower_enumerate_for_loop`:
-            // `Len` returns `u64`, but the loop index defaults to (and
-            // must stay) `i64` to satisfy indexing, so cast here instead.
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
@@ -436,12 +428,7 @@ impl AstToHirLowerer {
             };
             hir::Expr {
                 hir_id: self.next_id(),
-                kind: hir::ExprKind::Cast(
-                    Box::new(len_call),
-                    Box::new(
-                        self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64)),
-                    ),
-                ),
+                kind: len_call.kind,
                 span: Span::new(self.current_file, 0, 0),
             }
         };
@@ -499,9 +486,6 @@ impl AstToHirLowerer {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        // See the matching comment in `lower_enumerate_for_loop`: `Len`
-        // returns `u64`, but the loop index defaults to (and must stay)
-        // `i64` to satisfy indexing, so cast here instead.
         let len_call = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
@@ -515,10 +499,7 @@ impl AstToHirLowerer {
         };
         let len_expr = hir::Expr {
             hir_id: self.next_id(),
-            kind: hir::ExprKind::Cast(
-                Box::new(len_call),
-                Box::new(self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))),
-            ),
+            kind: len_call.kind,
             span: Span::new(self.current_file, 0, 0),
         };
 
@@ -561,7 +542,14 @@ impl AstToHirLowerer {
         let idx_local = hir::Local {
             hir_id: self.next_id(),
             pat: idx_pat.clone(),
-            ty: None,
+            ty: Some(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
+                    &ast::Name::Ident(ast::Ident::new("usize")),
+                    PathResolutionScope::Type,
+                )?),
+                Span::new(self.current_file, 0, 0),
+            )),
             init: Some(idx_init),
         };
         self.register_pattern_bindings(&idx_pat);
