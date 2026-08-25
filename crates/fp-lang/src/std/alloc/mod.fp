@@ -103,7 +103,7 @@ impl Vec<&str> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
         let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
-        let mut idx = 0;
+        let mut idx: usize = 0;
         while idx < len {
             if idx > 0 {
                 result.extend(sep);
@@ -119,7 +119,7 @@ impl Vec<::std::string::String> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
         let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
-        let mut idx = 0;
+        let mut idx: usize = 0;
         while idx < len {
             if idx > 0 {
                 result.extend(sep);

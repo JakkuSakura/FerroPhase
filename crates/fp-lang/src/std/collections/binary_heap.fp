@@ -14,7 +14,7 @@ impl<T> BinaryHeap<T> {
 
     fn from(items: ::std::alloc::Vec<T>) -> BinaryHeap<T> {
         let mut heap: BinaryHeap<T> = BinaryHeap::new();
-        let mut idx = 0;
+        let mut idx: usize = 0;
         let items_len = items.len();
         while idx < items_len {
             heap.insert(items[idx]);
@@ -46,7 +46,7 @@ impl<T> BinaryHeap<T> {
         }
 
         self.len = self.len + 1;
-        let mut idx = self.len - 1;
+        let mut idx: usize = self.len - 1;
         while idx > 0 {
             let parent = idx - 1;
             if values[parent] >= values[idx] {
@@ -74,7 +74,7 @@ impl<T> BinaryHeap<T> {
         let mut values = self.values;
         let head = values[0];
 
-        let mut idx = 1;
+        let mut idx: usize = 1;
         while idx < self.len {
             values[(idx - 1)] = values[idx];
             idx = idx + 1;

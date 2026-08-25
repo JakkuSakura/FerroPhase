@@ -155,8 +155,8 @@ impl Value {
     pub fn get(&self, key: &str) -> ::std::option::Option<Value> {
         match self {
             Value::Object(fields) => {
-                let mut idx = 0;
-                while idx < fields.len() as i64 {
+                let mut idx: usize = 0;
+                while idx < fields.len() {
                     let field = fields[idx];
                     if field.key == key {
                         return ::std::option::Option::Some(field.value);
@@ -169,13 +169,10 @@ impl Value {
         }
     }
 
-    pub fn get_index(&self, index: i64) -> ::std::option::Option<Value> {
+    pub fn get_index(&self, index: usize) -> ::std::option::Option<Value> {
         match self {
             Value::Array(values) => {
-                if index < 0 {
-                    return ::std::option::Option::None;
-                }
-                if index >= values.len() as i64 {
+                if index >= values.len() {
                     return ::std::option::Option::None;
                 }
                 ::std::option::Option::Some(values[index])
@@ -242,8 +239,8 @@ fn print_value(value: &Value) {
         }
         Value::Array(items) => {
             ::std::intrinsics::print("[");
-            let mut idx: i64 = 0;
-            let items_len: i64 = items.len() as i64;
+            let mut idx: usize = 0;
+            let items_len = items.len();
             while idx < items_len {
                 if idx > 0 {
                     ::std::intrinsics::print(",");
@@ -257,8 +254,8 @@ fn print_value(value: &Value) {
         }
         Value::Object(fields) => {
             ::std::intrinsics::print("{");
-            let mut idx: i64 = 0;
-            let fields_len: i64 = fields.len() as i64;
+            let mut idx: usize = 0;
+            let fields_len = fields.len();
             while idx < fields_len {
                 if idx > 0 {
                     ::std::intrinsics::print(",");

@@ -14,7 +14,7 @@ impl<T> VecDeque<T> {
 
     fn from(items: ::std::alloc::Vec<T>) -> VecDeque<T> {
         let mut deque: VecDeque<T> = VecDeque::new();
-        let mut idx = 0;
+        let mut idx: usize = 0;
         let items_len = items.len();
         while idx < items_len {
             deque.push_back(items[idx]);
@@ -50,7 +50,7 @@ impl<T> VecDeque<T> {
     fn push_front(&mut self, value: T) {
         let mut values = self.values;
         if self.len < values.len() {
-            let mut idx = self.len;
+            let mut idx: usize = self.len;
             while idx > 0 {
                 values[idx] = values[(idx - 1)];
                 idx = idx - 1;
@@ -63,7 +63,7 @@ impl<T> VecDeque<T> {
 
         let mut shifted: ::std::alloc::Vec<T> = ::std::alloc::Vec::new();
         shifted.push(value);
-        let mut idx = 0;
+        let mut idx: usize = 0;
         while idx < self.len {
             shifted.push(values[idx]);
             idx = idx + 1;
@@ -82,7 +82,7 @@ impl<T> VecDeque<T> {
         let mut values = self.values;
         let front = values[0];
 
-        let mut idx = 1;
+        let mut idx: usize = 1;
         while idx < self.len {
             values[(idx - 1)] = values[idx];
             idx = idx + 1;

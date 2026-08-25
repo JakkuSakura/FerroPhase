@@ -33,8 +33,8 @@ impl<K, V> HashMap<K, V> {
             keys: ::std::alloc::Vec::new(),
             values: ::std::alloc::Vec::new(),
         };
-        let mut idx = 0;
-        let entries_len = entries.len() as i64;
+        let mut idx: usize = 0;
+        let entries_len = entries.len();
         while idx < entries_len {
             let entry = entries[idx];
             map.insert(entry.key, entry.value);
@@ -64,8 +64,8 @@ impl<K, V> HashMap<K, V> {
     fn insert(&mut self, key: K, value: V) {
         let mut keys = self.keys;
         let mut values = self.values;
-        let mut idx = 0;
-        let keys_len = keys.len() as i64;
+        let mut idx: usize = 0;
+        let keys_len = keys.len();
         while idx < keys_len {
             if keys[idx] == key {
                 values[idx] = value;
@@ -92,8 +92,8 @@ impl<K, V> HashMap<K, V> {
     }
 
     fn find_node_idx(&self, key: K) -> i64 {
-        let mut idx = 0;
-        let keys_len = self.keys.len() as i64;
+        let mut idx: usize = 0;
+        let keys_len = self.keys.len();
         while idx < keys_len {
             if self.keys[idx] == key {
                 return idx as i64;

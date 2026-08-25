@@ -71,8 +71,8 @@ impl Process {
 
     pub fn args(self, extra_args: ::std::alloc::Vec<&str>) -> Process {
         let mut process = self;
-        let mut idx = 0;
-        let extra_len = extra_args.len() as i64;
+        let mut idx: usize = 0;
+        let extra_len = extra_args.len();
         while idx < extra_len {
             process = process.arg(extra_args[idx]);
             idx = idx + 1;
@@ -259,8 +259,8 @@ fn render_process_command(process: Process) -> str {
 fn render_argv_command(program: &str, args: ::std::alloc::Vec<&str>) -> str {
     let mut parts: ::std::alloc::Vec<str> = ::std::alloc::Vec::new();
     parts.push(quote_shell_arg(program));
-    let mut idx = 0;
-    while idx < args.len() as i64 {
+    let mut idx: usize = 0;
+    while idx < args.len() {
         parts.push(quote_shell_arg(args[idx]));
         idx = idx + 1;
     }

@@ -21,8 +21,8 @@ fn run_benches() -> BenchReport {
     let benches: ::std::alloc::Vec<BenchCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
-    let mut idx = 0;
-    while idx < benches.len() as i64 {
+    let mut idx: usize = 0;
+    while idx < benches.len() {
         let bench: BenchCase = benches[idx];
         let mut ok = true;
         let warmup_secs = 5.0f64;

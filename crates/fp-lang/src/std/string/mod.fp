@@ -106,12 +106,12 @@ impl str {
         let mut result: ::std::string::String = ::std::string::String::new();
         let self_len = self.len();
         let pattern_len = pattern.len();
-        let mut idx = 0;
+        let mut idx: usize = 0;
         while idx < self_len {
             let mut matched = false;
             if pattern_len > 0 && idx + pattern_len <= self_len {
                 matched = true;
-                let mut j = 0;
+                let mut j: usize = 0;
                 while j < pattern_len {
                     if self[idx + j] != pattern[j] {
                         matched = false;
@@ -158,7 +158,7 @@ impl String {
 pub const fn uppercase(s: &str) -> &str {
     let mut result: ::std::string::String = ::std::string::String::new();
     let len = s.len();
-    let mut idx = 0;
+    let mut idx: usize = 0;
     while idx < len {
         let byte = s[idx] as u8;
         if byte >= 97 && byte <= 122 {
@@ -174,7 +174,7 @@ pub const fn uppercase(s: &str) -> &str {
 pub const fn lowercase(s: &str) -> &str {
     let mut result: ::std::string::String = ::std::string::String::new();
     let len = s.len();
-    let mut idx = 0;
+    let mut idx: usize = 0;
     while idx < len {
         let byte = s[idx] as u8;
         if byte >= 65 && byte <= 90 {
@@ -190,7 +190,7 @@ pub const fn lowercase(s: &str) -> &str {
 pub const fn capitalize(s: &str) -> &str {
     let mut result: ::std::string::String = ::std::string::String::new();
     let len = s.len();
-    let mut idx = 0;
+    let mut idx: usize = 0;
     while idx < len {
         let byte = s[idx] as u8;
         if idx == 0 && byte >= 97 && byte <= 122 {
@@ -206,7 +206,7 @@ pub const fn capitalize(s: &str) -> &str {
 pub const fn uncapitalize(s: &str) -> &str {
     let mut result: ::std::string::String = ::std::string::String::new();
     let len = s.len();
-    let mut idx = 0;
+    let mut idx: usize = 0;
     while idx < len {
         let byte = s[idx] as u8;
         if idx == 0 && byte >= 65 && byte <= 90 {

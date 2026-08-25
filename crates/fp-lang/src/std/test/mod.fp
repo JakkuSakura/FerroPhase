@@ -29,8 +29,8 @@ fn run_tests() -> TestReport {
     let tests: ::std::alloc::Vec<TestCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
-    let mut idx = 0;
-    while idx < tests.len() as i64 {
+    let mut idx: usize = 0;
+    while idx < tests.len() {
         let test: TestCase = tests[idx];
         let ok = ::std::intrinsics::catch_unwind(test.run);
         if ok {

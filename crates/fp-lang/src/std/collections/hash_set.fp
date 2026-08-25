@@ -14,8 +14,8 @@ impl<T> HashSet<T> {
 
     fn from(values: ::std::alloc::Vec<T>) -> HashSet<T> {
         let mut set: HashSet<T> = HashSet::new();
-        let mut idx = 0;
-        let values_len = values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = values.len();
         while idx < values_len {
             set.insert(values[idx]);
             idx = idx + 1;
@@ -42,8 +42,8 @@ impl<T> HashSet<T> {
 
     fn insert(&mut self, value: T) {
         let mut values = self.values;
-        let mut idx = 0;
-        let values_len = values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = values.len();
         while idx < values_len {
             if values[idx] == value {
                 self.values = values;
@@ -58,8 +58,8 @@ impl<T> HashSet<T> {
     }
 
     fn find_node_idx(&self, value: T) -> i64 {
-        let mut idx = 0;
-        let values_len = self.values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = self.values.len();
         while idx < values_len {
             if self.values[idx] == value {
                 return idx as i64;

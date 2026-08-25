@@ -14,8 +14,8 @@ impl<T> BTreeSet<T> {
 
     fn from(values: ::std::alloc::Vec<T>) -> BTreeSet<T> {
         let mut set: BTreeSet<T> = BTreeSet::new();
-        let mut idx = 0;
-        let values_len = values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = values.len();
         while idx < values_len {
             set.insert(values[idx]);
             idx = idx + 1;
@@ -46,8 +46,8 @@ impl<T> BTreeSet<T> {
 
     fn insert(&mut self, value: T) {
         let mut values = self.values;
-        let mut idx = 0;
-        let values_len = values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = values.len();
         while idx < values_len {
             if values[idx] == value {
                 self.values = values;
@@ -62,8 +62,8 @@ impl<T> BTreeSet<T> {
     }
 
     fn find_node_idx(&self, value: T) -> i64 {
-        let mut idx = 0;
-        let values_len = self.values.len() as i64;
+        let mut idx: usize = 0;
+        let values_len = self.values.len();
         while idx < values_len {
             if self.values[idx] == value {
                 return idx as i64;
