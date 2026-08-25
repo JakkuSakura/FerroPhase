@@ -1374,9 +1374,27 @@ impl HirTypeChecker {
                                 if self
                                     .program_rc()
                                     .def_path(adt.did.clone())
-                                    .is_some_and(|path| path.segments.last().is_some_and(|name| name.as_str() == "Formatter"))));
+                                .is_some_and(|path| path.segments.last().is_some_and(|name| name.as_str() == "Formatter"))));
                     if formatter_append {
                         return Ok(self.unit_ty());
+                    }
+                    if args.is_empty() {
+                        let array_shape = match &receiver_ty.kind {
+                            TyKind::Array(_, _) | TyKind::Slice(_) => Some(&receiver_ty.kind),
+                            TyKind::Ref(_, inner, _) => match &inner.kind {
+                                TyKind::Array(_, _) | TyKind::Slice(_) => Some(&inner.kind),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if array_shape.is_some() && method.as_str() == "len" {
+                            return Ok(Ty::uint(ty::UintTy::Usize));
+                        }
+                        if matches!(array_shape, Some(TyKind::Array(_, _)))
+                            && method.as_str() == "is_ascii"
+                        {
+                            return Ok(Ty::bool());
+                        }
                     }
                     // Method resolution has no natural "error" `DefId` to
                     // substitute (unlike `Ty::error()`), so the whole
@@ -1402,7 +1420,9 @@ impl HirTypeChecker {
                             }
                             output
                         }
-                        Err(error) => self.error_ty_with_span(error.to_string(), expr.span),
+                        Err(error) => {
+                            self.error_ty_with_span(error.to_string(), expr.span)
+                        }
                     }
                 }
                 hir::ExprKind::FieldAccess(receiver, field) => {
