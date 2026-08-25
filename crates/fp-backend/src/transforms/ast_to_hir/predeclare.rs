@@ -493,11 +493,16 @@ impl AstToHirLowerer {
                     let defer = tolerant
                         && self_type_first_segment_name(&impl_block.self_ty)
                             .map(|name| {
+                                let qualified = matches!(
+                                    impl_block.self_ty.kind(),
+                                    ast::ExprKind::Name(ast::Name::Path(path))
+                                        if path.segments.len() > 1
+                                );
                                 !impl_block
                                     .generics_params
                                     .iter()
                                     .any(|param| param.name.name == name)
-                                    && self.resolve_type_symbol(name).is_none()
+                                    && (qualified || self.resolve_type_symbol(name).is_none())
                                     && !is_primitive_type_name(name)
                             })
                             .unwrap_or(false);
