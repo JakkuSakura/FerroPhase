@@ -14,7 +14,7 @@ fn main() {
     println!("=== Runtime Collections ===");
 
     let numbers: Vec<i64> = vec![10, 20, 30, 40];
-    let idx = 2;
+    let idx: usize = 2;
     println!("numbers[{}] = {}", idx, numbers[idx]);
     println!("numbers.len = {}", numbers.len());
 

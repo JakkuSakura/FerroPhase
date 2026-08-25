@@ -22,7 +22,7 @@ const POINT_FIELDS = type(Point).fields;
 fn aos_to_soa(points: Vec<Point>) -> PointSoA {
     let mut x = Vec::new();
     let mut y = Vec::new();
-    let mut idx = 0;
+    let mut idx: usize = 0;
     while idx < points.len() {
         let p = points[idx];
         x.push(p.x);

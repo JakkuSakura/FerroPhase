@@ -10,6 +10,12 @@ pub struct Vec<T> {
     capacity: usize,
 }
 
+impl<T> [T] {
+    pub fn len(&self) -> usize { compile_error!("slice length is compiler-provided") }
+
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
+}
+
 impl<T> Vec<T> {
     pub const fn new() -> Vec<T> {
         Vec { ptr: 0 as *mut T, len: 0, capacity: 0 }
@@ -17,6 +23,14 @@ impl<T> Vec<T> {
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     pub fn from(arr: [T]) -> Vec<T> {
@@ -47,6 +61,27 @@ impl<T> Vec<T> {
         let dest = (self.ptr as usize + self.len * (sizeof!(T) as usize)) as *mut T;
         *dest = value;
         self.len = self.len + 1;
+    }
+
+    pub fn pop(&mut self) -> ::std::option::Option<T> {
+        if self.len == 0 {
+            ::std::option::Option::None
+        } else {
+            self.len = self.len - 1;
+            ::std::option::Option::Some(self[self.len])
+        }
+    }
+
+    pub fn get(&self, index: usize) -> ::std::option::Option<T> {
+        if index < self.len {
+            ::std::option::Option::Some(self[index])
+        } else {
+            ::std::option::Option::None
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
     }
 }
 

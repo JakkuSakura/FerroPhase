@@ -40,12 +40,20 @@ impl String {
         self.len = new_len;
     }
 
+    pub fn push_str(&mut self, s: &str) {
+        self.extend(s);
+    }
+
     pub fn as_str(&self) -> &str {
         ::std::ffi::raw_parts_to_str(self.ptr, self.len)
     }
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     pub fn push_byte(&mut self, byte: u8) {
@@ -62,10 +70,16 @@ impl String {
         *dest = byte;
         self.len = new_len;
     }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
 }
 
 impl str {
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
+
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     pub fn lines(&self) -> ::std::alloc::Vec<&str> { compile_error!("compiler intrinsic") }
 

@@ -19,7 +19,7 @@ const fn main() {
     println!();
 
     // Namespace variant
-    std::io::print("Namespace test", "still works");
+    std::intrinsics::print("Namespace test", "still works");
     println!();
 
     // Placeholder style formatting using println!
