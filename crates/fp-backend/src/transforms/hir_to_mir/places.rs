@@ -718,8 +718,8 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Match(scrutinee, arms) => {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
-            hir::ExprKind::IntrinsicCall(call) => match call.kind.intrinsic_kind() {
-                Some(kind) => match kind {
+            hir::ExprKind::IntrinsicCall(call) => match call.kind {
+                kind => match kind {
                     IntrinsicKind::Print | IntrinsicKind::Println => {
                         self.emit_printf_call(call, expr.span)?;
                         let statement = mir::Statement {
@@ -961,7 +961,7 @@ impl<'a> BodyBuilder<'a> {
                         self.push_statement(statement);
                     }
                 },
-                None => {
+                _ => {
                     // Portable op with no intrinsic equivalent and no
                     // constant-folding rule -- same "not yet supported"
                     // fallback the wildcard arm above uses for intrinsics

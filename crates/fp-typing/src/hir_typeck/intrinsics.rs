@@ -3,10 +3,7 @@ use super::*;
 impl HirTypeChecker {
     pub(super) async fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
         use fp_core::intrinsics::IntrinsicKind;
-        let kind = call
-            .kind
-            .intrinsic_kind()
-            .expect("CallKind is always Intrinsic");
+        let kind = call.kind;
         if matches!(
             kind,
             IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount

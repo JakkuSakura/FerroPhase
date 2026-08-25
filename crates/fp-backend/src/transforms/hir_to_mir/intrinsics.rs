@@ -120,11 +120,7 @@ impl<'a> BodyBuilder<'a> {
         }
         let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
-        // Portable ops with no intrinsic equivalent have no constant-folding
-        // rule here either -- same "not handled" outcome as `_ => None` below.
-        let Some(kind) = call.kind.intrinsic_kind() else {
-            return None;
-        };
+        let kind = call.kind;
 
         match kind {
             IntrinsicKind::SizeOf => {
@@ -400,11 +396,10 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let printf_kind = call
-            .kind
-            .intrinsic_kind()
-            .filter(|k| matches!(k, IntrinsicKind::Print | IntrinsicKind::Println))
-            .unwrap_or(IntrinsicKind::Print);
+        let printf_kind = match call.kind {
+            IntrinsicKind::Println => IntrinsicKind::Println,
+            _ => IntrinsicKind::Print,
+        };
         if printf_kind == IntrinsicKind::Println {
             format.push('\n');
         }
@@ -600,7 +595,7 @@ impl<'a> BodyBuilder<'a> {
                         .any(|part| matches!(part, hir::FormatTemplatePart::Placeholder(_)));
                     if has_placeholders {
                         let format_call = hir::IntrinsicCallExpr {
-                            kind: fp_core::intrinsics::CallKind::Intrinsic(IntrinsicKind::Format),
+                            kind: fp_core::intrinsics::IntrinsicKind::Format,
                             callargs: call.callargs.clone(),
                         };
                         let (format, args) = match self.prepare_format_call(&format_call, span) {

@@ -1598,7 +1598,7 @@ pub(super) fn function_body_is_compiler_intrinsic_marker(function: &hir::Functio
     matches!(
         body.expr.as_deref().map(|expr| &expr.kind),
         Some(hir::ExprKind::IntrinsicCall(call))
-            if call.kind == fp_core::intrinsics::CallKind::Intrinsic(IntrinsicKind::CompileError)
+            if call.kind == fp_core::intrinsics::IntrinsicKind::CompileError
     )
 }
 

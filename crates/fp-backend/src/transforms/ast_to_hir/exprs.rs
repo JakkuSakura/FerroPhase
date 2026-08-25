@@ -791,31 +791,28 @@ impl AstToHirLowerer {
                 }
 
                 let path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
-
-                // A call's callee is only ever a compiler intrinsic/portable
-                // op because its *own resolved declaration* was tagged
-                // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
-                // `catch_unwind`'s real (stub-bodied) declaration, or
-                // `std::time::now`'s. But recognizing this HERE, pre-
-                // typecheck, forces every match through the low-level
-                // `transform_intrinsic_call_to_hir` path, which can only
-                // represent a genuine `IntrinsicKind` — many `#[op(...)]`s
-                // (`Vec::new`, `Iter`, `AsRef`, `OptionSome`, `ResultOk`, ...)
-                // have no such equivalent and exist purely for POST-typecheck,
-                // backend-specific materialization. Always lower as an
-                // ordinary `Call` here; reclassification (by this same real
-                // `DefId`, never by re-deriving it from the call site's own
-                // name/path) happens post-typecheck instead — see
-                // `hir_to_mir::expr::lower_call` (`Native`) and
-                // `HirToAstLifter::try_lift_call_as_intrinsic`
-                // (`Transpile`), both consulting the same
-                // `program.op_defs`/`intrinsic_defs` tables via
-                // `transforms::resolve_call_kind`.
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),
                     span: self.create_span(1),
                 };
+                if let hir::ExprKind::Path(path) = &func_expr.kind {
+                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                        let intrinsic_kind = self
+                            .package
+                            .intrinsic_defs
+                            .get(def_id)
+                            .cloned()
+                            .or_else(|| self.hir_program.intrinsic_def(def_id.clone()).cloned());
+                        if let Some(kind) = intrinsic_kind {
+                            return self.transform_intrinsic_parts_to_hir(
+                                &kind,
+                                &invoke.args,
+                                &invoke.kwargs,
+                            );
+                        }
+                    }
+                }
                 let args =
                     self.transform_call_args_bound(&invoke.args, &invoke.kwargs, Some(&func_expr))?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
@@ -1595,14 +1592,23 @@ impl AstToHirLowerer {
         &mut self,
         call: &ast::ExprIntrinsicCall,
     ) -> Result<hir::ExprKind> {
-        let mut callargs = Vec::with_capacity(call.args.len() + call.kwargs.len());
-        for (index, arg) in call.args.iter().enumerate() {
+        self.transform_intrinsic_parts_to_hir(&call.kind, &call.args, &call.kwargs)
+    }
+
+    fn transform_intrinsic_parts_to_hir(
+        &mut self,
+        kind: &CallKind,
+        args: &[ast::Expr],
+        kwargs: &[ast::ExprKwArg],
+    ) -> Result<hir::ExprKind> {
+        let mut callargs = Vec::with_capacity(args.len() + kwargs.len());
+        for (index, arg) in args.iter().enumerate() {
             callargs.push(hir::CallArg {
                 name: hir::Symbol::new(format!("arg{}", index)),
                 value: self.transform_expr_to_hir(arg)?,
             });
         }
-        for kwarg in &call.kwargs {
+        for kwarg in kwargs {
             callargs.push(hir::CallArg {
                 name: kwarg.name.clone().into(),
                 value: self.transform_expr_to_hir(&kwarg.value)?,
@@ -1610,7 +1616,7 @@ impl AstToHirLowerer {
         }
 
         if matches!(
-            call.kind,
+            *kind,
             CallKind::Print | CallKind::Println | CallKind::Format
         ) {
             let mut existing = callargs
@@ -1666,7 +1672,7 @@ impl AstToHirLowerer {
         }
 
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-            kind: call.kind.clone(),
+            kind: kind.clone(),
             callargs,
         }))
     }

@@ -3809,36 +3809,7 @@ impl<'a> BodyBuilder<'a> {
                 });
             }
             hir::ExprKind::IntrinsicCall(call) => {
-                // Portable `#[op(...)]` calls with no low-level intrinsic
-                // equivalent (`CallKind::Op` variants that don't map via
-                // `intrinsic_kind()`) haven't been normalized/materialized
-                // away by the time MIR lowering runs -- fail loudly here
-                // rather than silently mis-lowering them, matching the
-                // "unsupported intrinsic" fallback already used below for
-                // intrinsics this function doesn't otherwise handle.
-                let Some(kind) = call.kind.intrinsic_kind() else {
-                    self.lowering.emit_error(
-                        expr.span,
-                        format!(
-                            "portable op {:?} reached MIR operand lowering, which only handles genuine intrinsics",
-                            call.kind
-                        ),
-                    );
-                    let unit_ty = self.lowering.error_ty();
-                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
-                    let local_place = mir::Place::from_local(local_id);
-                    self.push_statement(mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            local_place.clone(),
-                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
-                        ),
-                    });
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::copy(local_place),
-                        ty: unit_ty,
-                    });
-                };
+                let kind = call.kind;
                 if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                     self.emit_printf_call(call, expr.span)?;
                     let unit_ty = HirToMirLowerer::unit_ty();

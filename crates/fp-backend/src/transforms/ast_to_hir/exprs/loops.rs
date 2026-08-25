@@ -257,7 +257,7 @@ impl AstToHirLowerer {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: CallKind::Intrinsic(IntrinsicKind::Len),
+                    kind: IntrinsicKind::Len,
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -426,7 +426,7 @@ impl AstToHirLowerer {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: CallKind::Intrinsic(IntrinsicKind::Len),
+                    kind: IntrinsicKind::Len,
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -505,7 +505,7 @@ impl AstToHirLowerer {
         let len_call = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                kind: CallKind::Intrinsic(IntrinsicKind::Len),
+                kind: IntrinsicKind::Len,
                 callargs: vec![hir::CallArg {
                     name: hir::Symbol::new("arg0"),
                     value: base_expr.clone(),

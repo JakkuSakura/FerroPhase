@@ -1595,7 +1595,7 @@ fn render_select_kind(kind: &ast::ExprSelectType) -> &'static str {
 }
 
 fn render_intrinsic_kind(kind: &CallKind) -> String {
-    kind.name()
+    kind.name().to_string()
 }
 
 fn render_format_template(template: &ast::ExprStringTemplate) -> String {

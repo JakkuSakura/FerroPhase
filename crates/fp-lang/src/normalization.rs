@@ -374,7 +374,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     id,
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        CallKind::Intrinsic(IntrinsicKind::Format),
+                        IntrinsicKind::Format,
                         call_args,
                         Vec::new(),
                     )),
@@ -412,7 +412,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
                 call_args.extend(args[1 + skip..].iter().cloned());
                 let formatted = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    CallKind::Intrinsic(IntrinsicKind::Format),
+                    IntrinsicKind::Format,
                     call_args,
                     Vec::new(),
                 )));
@@ -444,7 +444,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     id,
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        CallKind::Intrinsic(IntrinsicKind::TypeOf),
+                        IntrinsicKind::TypeOf,
                         args,
                         Vec::new(),
                     )),
@@ -454,9 +454,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "print" || macro_name == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let kind = if macro_name == "println" {
-                    CallKind::Intrinsic(IntrinsicKind::Println)
+                    IntrinsicKind::Println
                 } else {
-                    CallKind::Intrinsic(IntrinsicKind::Print)
+                    IntrinsicKind::Print
                 };
                 let (template, skip) = build_print_template_from_args(&args)?;
                 let mut call_args = Vec::with_capacity(1 + args.len().saturating_sub(skip));
@@ -534,11 +534,11 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         };
 
         // `CallKind::Op` was retired, so `resolve_lang_intrinsic` only ever
-        // returns a genuine `CallKind::Intrinsic` here.
-        let CallKind::Intrinsic(kind) = intrinsic_kind;
+        // returns a genuine intrinsic kind here.
+        let kind = intrinsic_kind;
         Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
             ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                CallKind::Intrinsic(kind),
+                kind,
                 invoke.args,
                 invoke.kwargs,
             )),
@@ -698,60 +698,60 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
 
 fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
     match name {
-        "format" => Some(CallKind::Intrinsic(IntrinsicKind::Format)),
-        "print" => Some(CallKind::Intrinsic(IntrinsicKind::Print)),
-        "println" => Some(CallKind::Intrinsic(IntrinsicKind::Println)),
-        "input" => Some(CallKind::Intrinsic(IntrinsicKind::Input)),
-        "now" => Some(CallKind::Intrinsic(IntrinsicKind::TimeNow)),
-        "sleep" => Some(CallKind::Intrinsic(IntrinsicKind::Sleep)),
-        "spawn" => Some(CallKind::Intrinsic(IntrinsicKind::Spawn)),
-        "join" => Some(CallKind::Intrinsic(IntrinsicKind::Join)),
-        "select" => Some(CallKind::Intrinsic(IntrinsicKind::Select)),
-        "read_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadDir)),
-        "walk_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsWalkDir)),
-        "read_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadToString)),
-        "write_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsWriteString)),
-        "append_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsAppendString)),
-        "exists" => Some(CallKind::Intrinsic(IntrinsicKind::FsExists)),
-        "is_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsDir)),
-        "is_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsFile)),
-        "create_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsCreateDirAll)),
-        "remove_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveFile)),
-        "remove_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveDirAll)),
-        "glob" => Some(CallKind::Intrinsic(IntrinsicKind::FsGlob)),
-        "current_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvCurrentDir)),
-        "temp_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvTempDir)),
-        "home_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvHomeDir)),
-        "var" => Some(CallKind::Intrinsic(IntrinsicKind::EnvVar)),
-        "read_stdin_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::IoReadStdinToString)),
-        "write_stdout" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStdout)),
-        "write_stderr" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStderr)),
-        "to_json" => Some(CallKind::Intrinsic(IntrinsicKind::YamlToJson)),
-        "parse" => Some(CallKind::Intrinsic(IntrinsicKind::JsonParse)),
-        "exec" => Some(CallKind::Intrinsic(IntrinsicKind::ShellExec)),
-        "file_copy" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileCopy)),
-        "file_template" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileTemplate)),
-        "file_rsync" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileRsync)),
-        "sizeof" => Some(CallKind::Intrinsic(IntrinsicKind::SizeOf)),
-        "reflect_fields" => Some(CallKind::Intrinsic(IntrinsicKind::ReflectFields)),
-        "hasmethod" => Some(CallKind::Intrinsic(IntrinsicKind::HasMethod)),
-        "type_name" => Some(CallKind::Intrinsic(IntrinsicKind::TypeName)),
-        "type_info" | "type_of" => Some(CallKind::Intrinsic(IntrinsicKind::TypeOf)),
-        "clone_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CloneStruct)),
-        "create_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CreateStruct)),
-        "addfield" => Some(CallKind::Intrinsic(IntrinsicKind::AddField)),
-        "hasfield" => Some(CallKind::Intrinsic(IntrinsicKind::HasField)),
-        "count_fields" | "field_count" => Some(CallKind::Intrinsic(IntrinsicKind::FieldCount)),
-        "method_count" => Some(CallKind::Intrinsic(IntrinsicKind::MethodCount)),
-        "field_type" => Some(CallKind::Intrinsic(IntrinsicKind::FieldType)),
-        "vec_type" => Some(CallKind::Intrinsic(IntrinsicKind::VecType)),
-        "field_name_at" => Some(CallKind::Intrinsic(IntrinsicKind::FieldNameAt)),
-        "struct_size" => Some(CallKind::Intrinsic(IntrinsicKind::StructSize)),
-        "generate_method" => Some(CallKind::Intrinsic(IntrinsicKind::GenerateMethod)),
-        "compile_error" => Some(CallKind::Intrinsic(IntrinsicKind::CompileError)),
-        "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
-        "catch_unwind" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwind)),
-        "catch_unwind_result" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwindResult)),
+        "format" => Some(IntrinsicKind::Format),
+        "print" => Some(IntrinsicKind::Print),
+        "println" => Some(IntrinsicKind::Println),
+        "input" => Some(IntrinsicKind::Input),
+        "now" => Some(IntrinsicKind::TimeNow),
+        "sleep" => Some(IntrinsicKind::Sleep),
+        "spawn" => Some(IntrinsicKind::Spawn),
+        "join" => Some(IntrinsicKind::Join),
+        "select" => Some(IntrinsicKind::Select),
+        "read_dir" => Some(IntrinsicKind::FsReadDir),
+        "walk_dir" => Some(IntrinsicKind::FsWalkDir),
+        "read_to_string" => Some(IntrinsicKind::FsReadToString),
+        "write_string" => Some(IntrinsicKind::FsWriteString),
+        "append_string" => Some(IntrinsicKind::FsAppendString),
+        "exists" => Some(IntrinsicKind::FsExists),
+        "is_dir" => Some(IntrinsicKind::FsIsDir),
+        "is_file" => Some(IntrinsicKind::FsIsFile),
+        "create_dir_all" => Some(IntrinsicKind::FsCreateDirAll),
+        "remove_file" => Some(IntrinsicKind::FsRemoveFile),
+        "remove_dir_all" => Some(IntrinsicKind::FsRemoveDirAll),
+        "glob" => Some(IntrinsicKind::FsGlob),
+        "current_dir" => Some(IntrinsicKind::EnvCurrentDir),
+        "temp_dir" => Some(IntrinsicKind::EnvTempDir),
+        "home_dir" => Some(IntrinsicKind::EnvHomeDir),
+        "var" => Some(IntrinsicKind::EnvVar),
+        "read_stdin_to_string" => Some(IntrinsicKind::IoReadStdinToString),
+        "write_stdout" => Some(IntrinsicKind::IoWriteStdout),
+        "write_stderr" => Some(IntrinsicKind::IoWriteStderr),
+        "to_json" => Some(IntrinsicKind::YamlToJson),
+        "parse" => Some(IntrinsicKind::JsonParse),
+        "exec" => Some(IntrinsicKind::ShellExec),
+        "file_copy" => Some(IntrinsicKind::ShellFileCopy),
+        "file_template" => Some(IntrinsicKind::ShellFileTemplate),
+        "file_rsync" => Some(IntrinsicKind::ShellFileRsync),
+        "sizeof" => Some(IntrinsicKind::SizeOf),
+        "reflect_fields" => Some(IntrinsicKind::ReflectFields),
+        "hasmethod" => Some(IntrinsicKind::HasMethod),
+        "type_name" => Some(IntrinsicKind::TypeName),
+        "type_info" | "type_of" => Some(IntrinsicKind::TypeOf),
+        "clone_struct" => Some(IntrinsicKind::CloneStruct),
+        "create_struct" => Some(IntrinsicKind::CreateStruct),
+        "addfield" => Some(IntrinsicKind::AddField),
+        "hasfield" => Some(IntrinsicKind::HasField),
+        "count_fields" | "field_count" => Some(IntrinsicKind::FieldCount),
+        "method_count" => Some(IntrinsicKind::MethodCount),
+        "field_type" => Some(IntrinsicKind::FieldType),
+        "vec_type" => Some(IntrinsicKind::VecType),
+        "field_name_at" => Some(IntrinsicKind::FieldNameAt),
+        "struct_size" => Some(IntrinsicKind::StructSize),
+        "generate_method" => Some(IntrinsicKind::GenerateMethod),
+        "compile_error" => Some(IntrinsicKind::CompileError),
+        "compile_warning" => Some(IntrinsicKind::CompileWarning),
+        "catch_unwind" => Some(IntrinsicKind::CatchUnwind),
+        "catch_unwind_result" => Some(IntrinsicKind::CatchUnwindResult),
         // Portable ops (`Some`/`clone`/`map_or`/...) have no `CallKind`
         // representation anymore (`CallKind::Op` was retired) — target
         // backends recognize them directly (temporarily, by bare name)
@@ -1288,7 +1288,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
         panic_call_with_message("panic! macro triggered")
     } else {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Intrinsic(IntrinsicKind::Panic),
+            IntrinsicKind::Panic,
             args,
             Vec::new(),
         )))
@@ -1297,7 +1297,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
 
 fn panic_call_with_message(message: &str) -> Expr {
     Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-        CallKind::Intrinsic(IntrinsicKind::Panic),
+        IntrinsicKind::Panic,
         vec![Expr::value(Value::string(message.to_string()))],
         Vec::new(),
     )))
@@ -1316,7 +1316,7 @@ mod tests {
 
     fn intrinsic_call(kind: fp_core::intrinsics::IntrinsicKind) -> Expr {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Intrinsic(kind),
+            kind,
             Vec::new(),
             Vec::new(),
         )))
@@ -1338,7 +1338,7 @@ mod tests {
     fn normalize_call_shapes_direct_print_calls() {
         let normalizer = FerroIntrinsicNormalizer::new();
         let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print),
+            fp_core::intrinsics::IntrinsicKind::Print,
             vec![Expr::value(Value::string("value".to_string()))],
             Vec::new(),
         )));
@@ -1350,7 +1350,7 @@ mod tests {
         let ExprKind::IntrinsicCall(call) = normalized.kind() else {
             panic!("expected intrinsic call to be preserved");
         };
-        assert!(matches!(call.kind, CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print)));
+        assert!(matches!(call.kind, fp_core::intrinsics::IntrinsicKind::Print));
         assert_eq!(call.args.len(), 1);
     }
 
@@ -1394,7 +1394,7 @@ mod tests {
             let ExprKind::IntrinsicCall(call) = normalized.kind() else {
                 panic!("expected intrinsic call to be preserved for {kind:?}");
             };
-            assert_eq!(call.kind, CallKind::Intrinsic(kind));
+            assert_eq!(call.kind, kind);
         }
     }
 

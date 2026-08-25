@@ -74,7 +74,7 @@ fn projects_intrinsic_slice_compatibility_path() {
     let slice_call = Expr::new(
         hid(13),
         ExprKind::IntrinsicCall(IntrinsicCallExpr {
-            kind: CallKind::Intrinsic(IntrinsicKind::Slice),
+            kind: IntrinsicKind::Slice,
             callargs: vec![
                 CallArg {
                     name: Symbol::new("base"),

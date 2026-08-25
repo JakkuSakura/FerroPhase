@@ -636,7 +636,7 @@ impl KotlinEmitter {
                     // would double up the parens `intrinsic_name` already
                     // includes for this one (`"count()"`), producing malformed
                     // `count()(receiver)`.
-                    CallKind::Intrinsic(IntrinsicKind::Len) => {
+                    IntrinsicKind::Len => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.count()", receiver))
                     }
@@ -650,11 +650,9 @@ impl KotlinEmitter {
                     // straight to a Kotlin-specific string form
                     // (`?:`/`.toList()`/a string-template literal) that has no
                     // generic `ast::Expr` equivalent to return instead.
-                    CallKind::Intrinsic(
-                        kind @ (IntrinsicKind::Format
+                    kind @ (IntrinsicKind::Format
                         | IntrinsicKind::Print
-                        | IntrinsicKind::Println),
-                    ) => {
+                        | IntrinsicKind::Println) => {
                         // Resolve each placeholder against its real argument and emit a
                         // genuine Kotlin string template, instead of a fake "arg" literal
                         // fed to `String.format(...)`.
@@ -1413,14 +1411,12 @@ pub(super) fn kotlin_un_op(kind: &UnOpKind) -> &str {
 pub(super) fn intrinsic_name(kind: &fp_core::intrinsics::calls::CallKind) -> String {
     use fp_core::intrinsics::calls::IntrinsicKind;
     match kind {
-        fp_core::intrinsics::calls::CallKind::Intrinsic(i) => match i {
-            IntrinsicKind::Print => "print".into(),
-            IntrinsicKind::Println => "println".into(),
-            IntrinsicKind::Format => "String.format".into(),
-            IntrinsicKind::Len => "count()".into(),
-            IntrinsicKind::Panic => "error".into(),
-            _ => format!("intr_{:?}", i).to_lowercase(),
-        },
+        IntrinsicKind::Print => "print".into(),
+        IntrinsicKind::Println => "println".into(),
+        IntrinsicKind::Format => "String.format".into(),
+        IntrinsicKind::Len => "count()".into(),
+        IntrinsicKind::Panic => "error".into(),
+        _ => format!("intr_{:?}", kind).to_lowercase(),
     }
 }
 

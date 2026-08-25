@@ -14,7 +14,7 @@
 //! at line ~778, the multi-file `--target` path at line ~954). The AST it
 //! materializes over is produced by `HirToAstLifter` from the shared HIR,
 //! so by the time `KotlinMaterializer::materialize_call` sees an
-//! `ExprIntrinsicCall`, its `kind` is a genuine `CallKind::Intrinsic` —
+//! `ExprIntrinsicCall`, its `kind` is a genuine intrinsic kind —
 //! `CallKind::Op` was retired, so no promoted-op case reaches here anymore.
 //!
 //! ## Shell
@@ -39,11 +39,11 @@
 //!
 //! `hir_to_mir::expr`'s handling of `hir::ExprKind::IntrinsicCall(call)`
 //! already has a documented, loud fallback for a `CallKind::Op(..)` that
-//! has no `intrinsic_kind()` equivalent (added alongside the
+//! has no intrinsic-kind equivalent
 //! `hir::IntrinsicCallExpr.kind: IntrinsicKind -> CallKind` widening): every
 //! entry point (`lower_operand`'s main arm, `lower_intrinsic_constant`,
 //! `lower_expr_into_place`'s main arm) either resolves to a real
-//! `IntrinsicKind` via `CallKind::intrinsic_kind()` or emits a loud
+//! `IntrinsicKind` directly or emits a loud
 //! `emit_error`/`emit_warning` plus a unit/error value — never a silent
 //! wrong answer or a panic.
 //!

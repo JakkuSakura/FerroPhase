@@ -190,7 +190,6 @@ pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_intrinsic_name(name)?;
     lang_intrinsic_for_lang_item(&name)
         .and_then(lang_intrinsic_call_kind)
-        .and_then(|kind| kind.intrinsic_kind().map(CallKind::from))
 }
 
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {

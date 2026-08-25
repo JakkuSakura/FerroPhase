@@ -1254,11 +1254,6 @@ impl IntrinsicCallExpr {
         Span::union(self.callargs.iter().map(CallArg::span))
     }
 
-    pub fn intrinsic_kind(&self) -> Option<IntrinsicKind> {
-        match self.kind {
-            CallKind::Intrinsic(k) => Some(k),
-        }
-    }
 }
 
 impl Block {

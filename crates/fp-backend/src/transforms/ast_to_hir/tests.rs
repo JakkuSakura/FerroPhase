@@ -234,14 +234,11 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
             "expected println! to lower to an intrinsic call".to_string(),
         ));
     };
-    // `println!` may now surface as either `CallKind::Intrinsic(Println)`
+    // `println!` may now surface as either `Println`
     // (a genuine low-level intrinsic) or `CallKind::Op(OpKind::Println)`
     // (the portable `#[op(...)]` tag) -- both mean the same thing here, so
-    // compare via `intrinsic_kind()` rather than the raw `CallKind`.
-    assert_eq!(
-        call.kind.intrinsic_kind(),
-        Some(fp_core::intrinsics::IntrinsicKind::Println)
-    );
+    // compare the intrinsic kind directly.
+    assert_eq!(call.kind, fp_core::intrinsics::IntrinsicKind::Println);
     Ok(())
 }
 

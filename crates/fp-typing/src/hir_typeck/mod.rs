@@ -4559,12 +4559,8 @@ impl HirTypeChecker {
         // The few genuinely high-level ops with no intrinsic equivalent
         // (`Option`/`Result`/`Vec` constructors, `collect`, `find`, ...)
         // fall to `check_high_level_op` instead.
-        // `CallKind::Op` was retired, so `intrinsic_kind()` is always `Some`
-        // now — every `IntrinsicCallExpr` is a genuine low-level intrinsic.
-        let kind = call
-            .kind
-            .intrinsic_kind()
-            .expect("CallKind is always Intrinsic now that CallKind::Op is retired");
+        // Every `IntrinsicCallExpr` is a genuine low-level intrinsic.
+        let kind = call.kind;
         // `sizeof!`/`field_count!`/`method_count!`'s single argument names
         // a *type* (a struct, or — inside a generic function/impl body —
         // the function's own type parameter, e.g. `sizeof!(T)` in
