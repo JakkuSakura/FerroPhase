@@ -4198,39 +4198,65 @@ impl HirTypeChecker {
             let Some(bounds) = self.generic_param_bounds(&param.name).map(<[_]>::to_vec) else {
                 return Ok(None);
             };
+            let mut flattened = Vec::new();
+            fn flatten<'a>(bound: &'a hir::TypeExpr, out: &mut Vec<&'a hir::TypeExpr>) {
+                if let hir::TypeExprKind::TypeBinaryOp(op) = &bound.kind
+                    && matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Add)
+                {
+                    flatten(&op.lhs, out);
+                    flatten(&op.rhs, out);
+                } else {
+                    out.push(bound);
+                }
+            }
             for bound in &bounds {
+                flatten(bound, &mut flattened);
+            }
+            for bound in flattened {
                 let hir::TypeExprKind::Path(path) = &bound.kind else {
                     continue;
                 };
                 let Some(hir::Res::Def(trait_def_id)) = &path.res else {
                     continue;
                 };
-                let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
-                    continue;
-                };
-                let hir::ItemKind::Trait(trait_def) = &item.kind else {
-                    continue;
-                };
-                for trait_item in &trait_def.items {
-                    let hir::TraitItemKind::Method(function) = &trait_item.kind else {
-                        continue;
-                    };
-                    if trait_item.name != *method {
+                let mut trait_ids = vec![trait_def_id.clone()];
+                let mut seen = HashSet::new();
+                while let Some(current_id) = trait_ids.pop() {
+                    if !seen.insert(current_id.clone()) {
                         continue;
                     }
-                    let mut scope = self.with_self_type(receiver_ty.clone());
-                    let signature = scope.function_signature(function).await?;
-                    let Some((substitutions, result)) =
-                        scope.instantiate_call(&signature, actuals, Some(&function.sig.generics))?
-                    else {
-                        return Err(Error::from("method arguments do not match its signature"));
+                    let Some(item) = self.program_rc().item(current_id).cloned() else {
+                        continue;
                     };
-                    let args = scope.method_generic_args(
-                        &hir::Generics::default(),
-                        &function.sig.generics,
-                        &substitutions,
-                    )?;
-                    return Ok(Some((trait_item.def_id.clone(), args, result)));
+                    let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                        continue;
+                    };
+                    for trait_item in &trait_def.items {
+                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                            continue;
+                        };
+                        if trait_item.name != *method {
+                            continue;
+                        }
+                        let mut scope = self.with_self_type(receiver_ty.clone());
+                        let signature = scope.function_signature(function).await?;
+                        let Some((substitutions, result)) = scope
+                            .instantiate_call(&signature, actuals, Some(&function.sig.generics))?
+                        else {
+                            return Err(Error::from("method arguments do not match its signature"));
+                        };
+                        let args = scope.method_generic_args(
+                            &hir::Generics::default(),
+                            &function.sig.generics,
+                            &substitutions,
+                        )?;
+                        return Ok(Some((trait_item.def_id.clone(), args, result)));
+                    }
+                    for supertrait in &trait_def.supertraits {
+                        if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                            trait_ids.push(supertrait_id.clone());
+                        }
+                    }
                 }
             }
             return Ok(None);
