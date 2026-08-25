@@ -748,6 +748,25 @@ impl AstToHirLowerer {
     ) -> Result<hir::ExprKind> {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
+                if let Some(mut segments) = self.path_segments_from_expr(&select.obj) {
+                    let primitive_base = segments
+                        .iter()
+                        .rev()
+                        .find(|segment| is_primitive_type_name(segment.as_str()));
+                    if primitive_base.is_some() {
+                        segments.push(select.field.clone());
+                        let name = ast::Name::Path(ast::Path::plain(segments));
+                        let path =
+                            self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
+                        let func_expr = hir::Expr {
+                            hir_id: self.next_id(),
+                            kind: hir::ExprKind::Path(path),
+                            span: self.create_span(1),
+                        };
+                        let args = self.transform_call_args_strict(&invoke.args)?;
+                        return Ok(hir::ExprKind::Call(Box::new(func_expr), args));
+                    }
+                }
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
                 let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(
