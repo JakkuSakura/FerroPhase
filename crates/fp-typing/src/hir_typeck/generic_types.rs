@@ -97,10 +97,17 @@ impl HirTypeChecker {
                 for output_path in outputs {
                     let hir::TypeExprKind::Path(path) = &output_path.kind else { continue };
                     if path.segments.len() != 1 { continue; }
-                    if let Some(target) = params.get(&path.segments[0].name)
-                        && !substitutions.contains_key(target)
-                    {
-                        substitutions.insert(target.clone(), output.clone());
+                    if let Some(target) = params.get(&path.segments[0].name) {
+                        let replace = match substitutions.get(target) {
+                            None => true,
+                            Some(existing) => {
+                                matches!(existing.kind, TyKind::Param(_))
+                                    && !matches!(output.kind, TyKind::Param(_))
+                            }
+                        };
+                        if replace {
+                            substitutions.insert(target.clone(), output.clone());
+                        }
                     }
                 }
             }
