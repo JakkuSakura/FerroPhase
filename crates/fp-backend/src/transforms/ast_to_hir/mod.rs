@@ -730,7 +730,14 @@ impl AstToHirLowerer {
                 );
                 match self.lookup_global_res(&relative, PathResolutionScope::Type) {
                     Some(hir::Res::Def(def_id)) => Some(def_id),
-                    _ => None,
+                    _ => self_path
+                        .segments
+                        .first()
+                        .and_then(|segment| self.resolve_type_symbol(segment.name.as_str()))
+                        .and_then(|res| match res {
+                            hir::Res::Def(def_id) => Some(def_id),
+                            _ => None,
+                        }),
                 }
             }
         };
