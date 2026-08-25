@@ -493,7 +493,11 @@ impl AstToHirLowerer {
                     let defer = tolerant
                         && self_type_first_segment_name(&impl_block.self_ty)
                             .map(|name| {
-                                self.resolve_type_symbol(name).is_none()
+                                !impl_block
+                                    .generics_params
+                                    .iter()
+                                    .any(|param| param.name.name == name)
+                                    && self.resolve_type_symbol(name).is_none()
                                     && !is_primitive_type_name(name)
                             })
                             .unwrap_or(false);
@@ -511,11 +515,17 @@ impl AstToHirLowerer {
                         // generation for the whole package — the same
                         // "tolerate what's broken, keep what isn't" policy
                         // already applied at the file level (parse errors).
+                        self.push_type_scope();
+                        for param in &impl_block.generics_params {
+                            let def_id = self.next_def_id();
+                            self.register_type_generic(&param.name.name, def_id);
+                        }
                         let self_path = match self
                             .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)
                         {
                             Ok(path) => path,
                             Err(error) => {
+                                self.pop_type_scope();
                                 tracing::warn!(
                                     "skipping impl with unresolvable self-type in {}: {error}",
                                     self.module_path.to_key(),
@@ -526,13 +536,16 @@ impl AstToHirLowerer {
                         let mut method_path = match self.canonical_type_path(&self_path) {
                             Ok(path) => path.segments,
                             Err(error) => {
+                                self.pop_type_scope();
                                 tracing::warn!(
-                                    "skipping impl with unresolvable self-type in {}: {error}",
+                                    "skipping impl with unresolvable self-type {:?} in {}: {error}",
+                                    self_path,
                                     self.module_path.to_key(),
                                 );
                                 continue;
                             }
                         };
+                        self.pop_type_scope();
                         // `impl Vec<&str> { fn join }` / `impl Vec<String> {
                         // fn join }` are two genuinely different,
                         // already-concrete methods (this impl declares no
