@@ -5,6 +5,7 @@ impl HirTypeChecker {
         &self,
         callable: &Ty,
         actuals: &[Ty],
+        generics: Option<&hir::Generics>,
     ) -> Result<Option<(HashMap<ty::ParamTy, Ty>, Ty)>> {
         self.instantiate_call_at(callable, actuals, None)
     }
@@ -46,8 +47,64 @@ impl HirTypeChecker {
         for (expected, actual) in inputs.iter().take(fixed_len).zip(actuals) {
             self.unify_call_types(expected, actual, &mut substitutions)?;
         }
+        if let Some(generics) = generics {
+            self.infer_fn_bound_outputs(generics, &mut substitutions);
+        }
         let output = self.substitute_param_map(&signature.binder.value.output, &substitutions);
         Ok(Some((substitutions, output)))
+    }
+
+    fn infer_fn_bound_outputs(
+        &self,
+        generics: &hir::Generics,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+    ) {
+        let mut params = HashMap::new();
+        for (index, parameter) in generics.params.iter().enumerate() {
+            if matches!(parameter.kind, hir::GenericParamKind::Type { .. }) {
+                params.insert(parameter.name.clone(), ty::ParamTy {
+                    index: index as u32,
+                    name: parameter.name.clone(),
+                });
+            }
+        }
+        for (index, parameter) in generics.params.iter().enumerate() {
+            if !matches!(parameter.kind, hir::GenericParamKind::Type { .. }) {
+                continue;
+            }
+            let source = ty::ParamTy { index: index as u32, name: parameter.name.clone() };
+            let Some(Ty { kind: TyKind::FnPtr(signature) }) = substitutions.get(&source) else {
+                continue;
+            };
+            let output = (*signature.binder.value.output).clone();
+            let mut bounds = Vec::new();
+            fn collect<'a>(bound: &'a hir::TypeExpr, out: &mut Vec<&'a hir::TypeExpr>) {
+                if let hir::TypeExprKind::TypeBinaryOp(op) = &bound.kind
+                    && matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Add)
+                {
+                    collect(&op.lhs, out);
+                    collect(&op.rhs, out);
+                } else {
+                    out.push(bound);
+                }
+            }
+            for bound in &parameter.bounds { collect(bound, &mut bounds); }
+            for bound in bounds {
+                let hir::TypeExprKind::FnPtr(_) = &bound.kind else { continue };
+                let hir::TypeExprKind::FnPtr(fn_ptr) = &bound.kind else { unreachable!() };
+                let mut outputs = Vec::new();
+                collect(&fn_ptr.output, &mut outputs);
+                for output_path in outputs {
+                    let hir::TypeExprKind::Path(path) = &output_path.kind else { continue };
+                    if path.segments.len() != 1 { continue; }
+                    if let Some(target) = params.get(&path.segments[0].name)
+                        && !substitutions.contains_key(target)
+                    {
+                        substitutions.insert(target.clone(), output.clone());
+                    }
+                }
+            }
+        }
     }
 
     pub(super) fn generic_call_args(

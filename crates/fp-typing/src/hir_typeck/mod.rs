@@ -3898,7 +3898,21 @@ impl HirTypeChecker {
                 name: param_name.clone(),
             }),
         };
+        let mut flattened = Vec::new();
+        fn flatten<'a>(bound: &'a hir::TypeExpr, out: &mut Vec<&'a hir::TypeExpr>) {
+            if let hir::TypeExprKind::TypeBinaryOp(op) = &bound.kind
+                && matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Add)
+            {
+                flatten(&op.lhs, out);
+                flatten(&op.rhs, out);
+            } else {
+                out.push(bound);
+            }
+        }
         for bound in &bounds {
+            flatten(bound, &mut flattened);
+        }
+        for bound in flattened {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
                 continue;
             };
@@ -4137,7 +4151,7 @@ impl HirTypeChecker {
                     let mut scope = self.with_self_type(receiver_ty.clone());
                     let signature = scope.function_signature(function).await?;
                     let Some((substitutions, result)) =
-                        scope.instantiate_call(&signature, actuals)?
+                        scope.instantiate_call(&signature, actuals, Some(&function.sig.generics))?
                     else {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
@@ -4250,7 +4264,7 @@ impl HirTypeChecker {
                 if impl_item.name == *method {
                     let signature = scope.function_signature(function).await?;
                     let Some((substitutions, result)) =
-                        scope.instantiate_call(&signature, actuals)?
+                        scope.instantiate_call(&signature, actuals, Some(&function.sig.generics))?
                     else {
                         return Err(Error::from("method arguments do not match its signature"));
                     };
@@ -4284,7 +4298,7 @@ impl HirTypeChecker {
                         if trait_item.name == *method && function.body.is_some() {
                             let signature = scope.function_signature(function).await?;
                             let Some((substitutions, result)) =
-                                scope.instantiate_call(&signature, actuals)?
+                                scope.instantiate_call(&signature, actuals, Some(&function.sig.generics))?
                             else {
                                 return Err(Error::from(
                                     "method arguments do not match its signature",
