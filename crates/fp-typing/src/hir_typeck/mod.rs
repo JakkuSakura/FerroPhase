@@ -644,7 +644,7 @@ impl HirTypeChecker {
                     let body_ty = scope.check_body(&constant.body).await?;
                     let package = self.package();
                     package.record_type_expr_type(constant.ty.hir_id.clone(), body_ty.clone());
-                    package.record_const_type(item.def_id.clone(), body_ty);
+                    package.record_const_type(item.def_id.clone(), declared_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.with_generics(&impl_item.generics);
