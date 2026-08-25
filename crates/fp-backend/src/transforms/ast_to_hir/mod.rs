@@ -114,6 +114,7 @@ pub struct AstToHirLowerer {
     /// maps too. See `docs/Resolution.md`.
     package: hir::HirPackage,
     program_def_map: HashMap<hir::DefId, hir::Item>,
+    local_dispatch_items: Vec<hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
     /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
     /// function body, via `transform_item_to_hir_stmt`'s fallthrough arm).
@@ -328,6 +329,7 @@ impl AstToHirLowerer {
             synthetic_items: Vec::new(),
             package: hir::HirPackage::new(package_id),
             program_def_map: HashMap::new(),
+            local_dispatch_items: Vec::new(),
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
@@ -1160,6 +1162,7 @@ impl AstToHirLowerer {
 
         let mut hir_program = hir::HirPackage::new(self.package_id.clone());
         self.program_def_map = HashMap::new();
+        self.local_dispatch_items.clear();
 
         for item in &generated_items {
             self.append_item(&mut hir_program, item)?;
@@ -1429,6 +1432,7 @@ impl AstToHirLowerer {
             }
             program.items.extend(synthetic.drain(..));
         }
+        program.items.extend(std::mem::take(&mut self.local_dispatch_items));
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
@@ -1597,6 +1601,7 @@ impl AstToHirLowerer {
         self.prepare_lowering_state();
         self.load_default_prelude_defs();
         self.program_def_map = HashMap::new();
+        self.local_dispatch_items.clear();
 
         let ir = self.resolve_query_ir(query)?;
         let span = self.create_span(query.source_len_hint() as u32);
@@ -1993,6 +1998,9 @@ impl AstToHirLowerer {
                 let hir_item = hir_item?;
                 self.program_def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
+                if matches!(hir_item.kind, hir::ItemKind::Trait(_) | hir::ItemKind::Impl(_)) {
+                    self.local_dispatch_items.push(hir_item.clone());
+                }
                 if let Some(ident) = item.as_ref().get_ident() {
                     let label = format!(
                         "{}::<local>::{}",
