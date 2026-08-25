@@ -205,12 +205,16 @@ impl HirTypeChecker {
         substitutions: &mut HashMap<ty::ParamTy, Ty>,
         record: bool,
     ) -> Result<()> {
+        let expected = self.resolve_infer(expected);
+        let actual = self.resolve_infer(actual);
         match (&expected.kind, &actual.kind) {
+            (TyKind::Infer(var), _) => { self.bind_infer(var.clone(), &actual); Ok(()) }
+            (_, TyKind::Infer(var)) => { self.bind_infer(var.clone(), &expected); Ok(()) }
             (TyKind::Param(param), _) => {
                 if let Some(previous) = substitutions.get(param) {
                     if record {
-                        self.require_same(previous, actual)?;
-                    } else if previous != actual {
+                        self.require_same(previous, &actual)?;
+                    } else if *previous != actual {
                         return Err(Error::from("speculative type mismatch"));
                     }
                 } else {
@@ -221,8 +225,8 @@ impl HirTypeChecker {
             (_, TyKind::Param(param)) => {
                 if let Some(previous) = substitutions.get(param) {
                     if record {
-                        self.require_same(previous, expected)?;
-                    } else if previous != expected {
+                        self.require_same(previous, &expected)?;
+                    } else if *previous != expected {
                         return Err(Error::from("speculative type mismatch"));
                     }
                 } else {
@@ -231,10 +235,10 @@ impl HirTypeChecker {
                 Ok(())
             }
             (TyKind::Ref(_, expected, _), TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
+                self.unify_call_types_impl(expected, &actual, substitutions, record)
             }
             (TyKind::Ref(_, expected, _), _) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
+                self.unify_call_types_impl(&expected, &actual, substitutions, record)
             }
             // Symmetric to the rule above: a bare-expected/`Ref`-actual pair
             // (e.g. a `str`-returning call's result reconciled against a
@@ -243,7 +247,7 @@ impl HirTypeChecker {
             // don't match after peeling, the recursive call's own catch-all
             // still reports a genuine mismatch.
             (_, TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types_impl(expected, actual, substitutions, record)
+                self.unify_call_types_impl(&expected, &actual, substitutions, record)
             }
             (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
                 if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
@@ -305,7 +309,7 @@ impl HirTypeChecker {
             (TyKind::RawPtr(_), TyKind::RawPtr(_)) => Ok(()),
             _ => {
                 if record {
-                    self.require_same(expected, actual)
+                    self.require_same(&expected, &actual)
                 } else if expected == actual
                     || matches!(expected.kind, TyKind::Never)
                     || matches!(actual.kind, TyKind::Never)

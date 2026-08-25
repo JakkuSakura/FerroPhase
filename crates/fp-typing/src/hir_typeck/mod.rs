@@ -152,6 +152,7 @@ pub struct HirTypeChecker {
     /// or it's nearly untraceable once the same message recurs across a
     /// large real corpus).
     current_item_path: Option<String>,
+    infer_vars: Rc<RefCell<HashMap<ty::InferTy, Ty>>>,
 }
 
 impl HirTypeChecker {
@@ -182,6 +183,7 @@ impl HirTypeChecker {
             expected_expr_type: None,
             resolving_assoc_projections: Vec::new(),
             current_item_path: None,
+            infer_vars: Rc::new(RefCell::new(HashMap::new())),
         }))
     }
 
@@ -207,6 +209,32 @@ impl HirTypeChecker {
             expected_expr_type: None,
             resolving_assoc_projections: Vec::new(),
             current_item_path: None,
+            infer_vars: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    pub(super) fn resolve_infer(&self, ty: &Ty) -> Ty {
+        let mut current = ty.clone();
+        for _ in 0..64 {
+            let TyKind::Infer(var) = &current.kind else { break };
+            let Some(next) = self.infer_vars.borrow().get(var).cloned() else { break };
+            if next == current { break; }
+            current = next;
+        }
+        match current.kind {
+            TyKind::Ref(region, inner, mutability) => Ty { kind: TyKind::Ref(region, Box::new(self.resolve_infer(&inner)), mutability) },
+            TyKind::Tuple(items) => Ty { kind: TyKind::Tuple(items.into_iter().map(|item| Box::new(self.resolve_infer(&item))).collect()) },
+            TyKind::Array(inner, len) => Ty { kind: TyKind::Array(Box::new(self.resolve_infer(&inner)), len) },
+            TyKind::Slice(inner) => Ty { kind: TyKind::Slice(Box::new(self.resolve_infer(&inner))) },
+            TyKind::Adt(def, args) => Ty { kind: TyKind::Adt(def, args.into_iter().map(|arg| match arg { GenericArg::Type(t) => GenericArg::Type(self.resolve_infer(&t)), other => other }).collect()) },
+            other => Ty { kind: other },
+        }
+    }
+
+    pub(super) fn bind_infer(&self, var: ty::InferTy, value: &Ty) {
+        let value = self.resolve_infer(value);
+        if !matches!(value.kind, TyKind::Infer(ref other) if *other == var) {
+            self.infer_vars.borrow_mut().insert(var, value);
         }
     }
 
@@ -1184,6 +1212,7 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::MethodCall(receiver, method, args) => {
                     let receiver_ty = self.check_expr(receiver).await?;
+                    let receiver_ty = self.resolve_infer(&receiver_ty);
                     // A per-parameter expected-type hint (mirroring `Call`'s
                     // existing one, above) needs the callee's *declared*
                     // signature before any argument is checked — `Self`'s
