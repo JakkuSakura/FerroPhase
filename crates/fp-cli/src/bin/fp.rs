@@ -115,12 +115,20 @@ enum Commands {
 /// already uses in tests, rather than let a real user's program abort with a
 /// stack overflow.
 fn main() -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(16 * 1024 * 1024)
-        .build()
-        .expect("failed to build tokio runtime");
-    runtime.block_on(async_main())
+    std::thread::Builder::new()
+        .name("fp-main".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(16 * 1024 * 1024)
+                .build()
+                .expect("failed to build tokio runtime");
+            runtime.block_on(async_main())
+        })
+        .expect("failed to spawn compiler thread")
+        .join()
+        .expect("compiler thread panicked")
 }
 
 async fn async_main() -> Result<()> {

@@ -1015,23 +1015,20 @@ impl AstToHirLowerer {
             let is_trait = self.package.placeholder_defs.contains(def_id)
                 || self
                     .hir_program
-                    .as_ref()
-                    .is_some_and(|program| program.is_placeholder_def(def_id.clone()));
+                    .is_placeholder_def(def_id.clone());
             // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
             // ranks behind a real nominal declaration (`enum Result`).
             let is_alias = self.package.type_alias_targets.contains_key(def_id)
                 || self
                     .hir_program
-                    .as_ref()
-                    .is_some_and(|program| program.type_alias_target(def_id.clone()).is_some());
+                    .type_alias_target(def_id.clone())
+                    .is_some();
             let depth = self
                 .package
                 .def_paths
                 .get(def_id)
                 .or_else(|| {
-                    self.hir_program
-                        .as_ref()
-                        .and_then(|program| program.def_path(def_id.clone()))
+                    self.hir_program.def_path(def_id.clone())
                 })
                 .map(|path| path.segments.len())
                 .unwrap_or(usize::MAX);
