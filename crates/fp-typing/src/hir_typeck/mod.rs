@@ -2142,7 +2142,8 @@ impl HirTypeChecker {
     }
 
     async fn path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
-        if let Some(name) = path.segments.last().map(|segment| segment.name.as_str()) {
+        if path.segments.len() == 1 {
+            let name = path.segments[0].name.as_str();
             if let Some(primitive) = primitive_path_ty(name) {
                 return Ok(primitive);
             }
