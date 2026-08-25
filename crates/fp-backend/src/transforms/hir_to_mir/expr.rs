@@ -288,10 +288,6 @@ enum ConstContainerArgs {
 }
 
 pub struct HirToMirLowerer {
-    next_mir_id: mir::MirId,
-    next_body_id: u32,
-    next_error_id: u32,
-    next_synthetic_def_id: mir::ty::DefId,
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     /// Every struct/enum definition, layout, method table, specialization
@@ -317,7 +313,6 @@ pub struct HirToMirLowerer {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     lowered_items: HashSet<hir::DefId>,
-    next_synthetic_hir_def_id: hir::DefId,
     /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
     /// taken once at the top of `lower_program`/`transform`. Lets
@@ -389,10 +384,6 @@ impl HirToMirLowerer {
             .cloned()
             .unwrap_or_else(|| std::rc::Rc::new(hir::HirPackage::new(package_id.clone())));
         Self {
-            next_mir_id: 0,
-            next_body_id: 0,
-            next_error_id: 0,
-            next_synthetic_def_id: mir::ty::DefId::local(1),
             diagnostics: Vec::new(),
             has_errors: false,
             mir_package,
@@ -401,7 +392,6 @@ impl HirToMirLowerer {
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
-            next_synthetic_hir_def_id: hir::DefId::local(1),
             hir_program,
             current_package,
             current_package_id: package_id,
@@ -429,6 +419,7 @@ impl HirToMirLowerer {
     /// (populated for the `transform_comptime_request` path, where
     /// `current_package` is deliberately *not* pre-merged with anything).
     /// Replaces every old direct `self.hir_def_map.get(def_id)` read.
+    /// TODO: just query from hir program, new
     fn hir_item(&self, def_id: hir::DefId) -> Option<&hir::Item> {
         self.current_package
             .item(&def_id)
@@ -450,6 +441,8 @@ impl HirToMirLowerer {
     /// `current_package` and every package in `hir_program` — replaces
     /// every old `self.hir_def_map.values()`/`.iter()` full scan (used to
     /// build a one-time reverse index; never a per-lookup cost).
+    ///
+    //TODO: remove it
     fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
         self.current_package.all_defs().chain(
             self.hir_program
@@ -884,13 +877,15 @@ impl HirToMirLowerer {
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `transform_comptime_request` — see that
         // function's own comment for the full rationale.
-        self.next_synthetic_hir_def_id = program
-            .def_map
-            .keys()
-            .cloned()
-            .max()
-            .unwrap_or(hir::DefId::local(0))
-            .saturating_add(1);
+        self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
+            program
+                .def_map
+                .keys()
+                .cloned()
+                .max()
+                .unwrap_or(hir::DefId::local(0))
+                .saturating_add(1),
+        );
 
         for item in &program.items {
             match &item.kind {
@@ -986,14 +981,13 @@ impl HirToMirLowerer {
 
     fn lower_query(&mut self, item: &hir::Item, query: &hir::Query) -> mir::Item {
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Query(mir::Query {
                 origin: query.origin.clone(),
                 ir: query.ir.clone(),
                 span: item.span,
             }),
         };
-        self.next_mir_id += 1;
         mir_item
     }
 
@@ -1037,13 +1031,15 @@ impl HirToMirLowerer {
         let current_package = self.current_package.clone();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `lower_program`/`transform_comptime_request`.
-        self.next_synthetic_hir_def_id = current_package
-            .def_map
-            .keys()
-            .cloned()
-            .max()
-            .unwrap_or(hir::DefId::local(0))
-            .saturating_add(1);
+        self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
+            current_package
+                .def_map
+                .keys()
+                .cloned()
+                .max()
+                .unwrap_or(hir::DefId::local(0))
+                .saturating_add(1),
+        );
         for item in &current_package.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
@@ -1316,8 +1312,7 @@ impl HirToMirLowerer {
         item: &hir::Item,
         function: &hir::Function,
     ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
+        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
 
         let sig = self.lower_function_sig(&function.sig, None);
         self.mir_package.borrow_mut().function_sigs.insert(item.def_id.clone(), sig.clone());
@@ -1346,10 +1341,9 @@ impl HirToMirLowerer {
         };
 
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Function(mir_function),
         };
-        self.next_mir_id += 1;
 
         Ok((mir_item, body_id, mir_body))
     }
@@ -1401,8 +1395,7 @@ impl HirToMirLowerer {
         name_override: &str,
         function_substs: mir::ty::SubstsRef,
     ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
+        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
 
         let span = function
             .body
@@ -1424,10 +1417,9 @@ impl HirToMirLowerer {
         };
 
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Function(mir_function),
         };
-        self.next_mir_id += 1;
 
         Ok((mir_item, body_id, mir_body))
     }
@@ -2000,8 +1992,7 @@ impl HirToMirLowerer {
         let name = format!("{}__{}", def.method_name, suffix);
         let fn_ty = self.function_pointer_ty(&sig);
 
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
+        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
 
         let span = def
             .function
@@ -2030,10 +2021,9 @@ impl HirToMirLowerer {
             attrs: Vec::new(),
         };
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Function(mir_function),
         };
-        self.next_mir_id += 1;
 
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, mir_body));
@@ -3779,10 +3769,9 @@ impl HirToMirLowerer {
         };
 
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Static(mir_static),
         };
-        self.next_mir_id += 1;
 
         Ok(mir_item)
     }
@@ -3804,8 +3793,7 @@ impl HirToMirLowerer {
         // to name this same entity.
         self.mir_package.borrow_mut().executable_consts
             .insert(def_id.clone(), (mir::Symbol::new(def_id.comptime_const_symbol()), ty.clone()));
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
+        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
 
         let fn_name = self.synthetic_const_function_name(&konst.name, &key);
         let synthetic_item = hir::Item {
@@ -3847,7 +3835,7 @@ impl HirToMirLowerer {
         self.extra_bodies.push((body_id, body));
 
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::ExecutableConst(mir::ExecutableConst {
                 name: mir::Symbol::from(&konst.name),
                 function_name: mir::Symbol::new(fn_name),
@@ -3859,7 +3847,6 @@ impl HirToMirLowerer {
                 def_id,
             }),
         };
-        self.next_mir_id += 1;
         Ok(mir_item)
     }
 
@@ -4030,12 +4017,6 @@ impl HirToMirLowerer {
         }
     }
 
-    fn next_synthetic_def_id(&mut self) -> hir::DefId {
-        let id = self.next_synthetic_hir_def_id.clone();
-        self.next_synthetic_hir_def_id = self.next_synthetic_hir_def_id.clone().saturating_add(1);
-        id
-    }
-
     fn lower_structural_type_expr(&mut self, structural: &hir::TypeStructural, span: Span) -> Ty {
         let mut entries_ty: Option<&hir::TypeExpr> = None;
         if structural.fields.len() == 1 {
@@ -4158,7 +4139,7 @@ impl HirToMirLowerer {
         let def_id = if let Some(def_id) = self.mir_package.borrow().structural_defs.get(&key).cloned() {
             def_id
         } else {
-            let def_id = self.next_synthetic_def_id();
+            let def_id = self.mir_package.borrow_mut().fresh_synthetic_hir_def_id();
             let mut field_index = HashMap::new();
             for (idx, field) in fields.iter().enumerate() {
                 if field_index.insert(field.name.clone(), idx).is_some() {
@@ -4433,7 +4414,7 @@ impl HirToMirLowerer {
         rhs: &hir::TypeExpr,
         span: Span,
     ) -> Ty {
-        let def_id = self.next_synthetic_def_id();
+        let def_id = self.mir_package.borrow_mut().fresh_synthetic_hir_def_id();
         let enum_name = format!("__union_{}", def_id);
 
         let lhs_name = self.union_variant_name(lhs, "Left");
@@ -4455,13 +4436,13 @@ impl HirToMirLowerer {
 
         let variants = vec![
             EnumVariantDef {
-                def_id: self.next_synthetic_def_id(),
+                def_id: self.mir_package.borrow_mut().fresh_synthetic_hir_def_id(),
                 name: lhs_name,
                 discriminant: 0,
                 payload: lhs_payload,
             },
             EnumVariantDef {
-                def_id: self.next_synthetic_def_id(),
+                def_id: self.mir_package.borrow_mut().fresh_synthetic_hir_def_id(),
                 name: rhs_name,
                 discriminant: 1,
                 payload: rhs_payload,
@@ -6290,8 +6271,7 @@ impl HirToMirLowerer {
         parent_span: Span,
         method_context: Option<&MethodContext>,
     ) -> Result<(mir::Item, mir::BodyId, mir::Body, mir::FunctionSig)> {
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
+        let body_id = mir::BodyId::new(self.mir_package.borrow_mut().fresh_body_id());
 
         let sig = self.lower_function_sig(&function.sig, method_context);
         let span = function
@@ -6341,10 +6321,9 @@ impl HirToMirLowerer {
         };
 
         let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
+            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
             kind: mir::ItemKind::Function(mir_function),
         };
-        self.next_mir_id += 1;
 
         Ok((mir_item, body_id, mir_body, sig))
     }
@@ -7579,10 +7558,8 @@ impl HirToMirLowerer {
         if let Some(existing) = self.mir_package.borrow().opaque_types.get(name).cloned() {
             return existing.clone();
         }
-        let adt_def_id = self.next_synthetic_def_id.clone();
-        self.next_synthetic_def_id = self.next_synthetic_def_id.clone().saturating_add(1);
-        let variant_def_id = self.next_synthetic_def_id.clone();
-        self.next_synthetic_def_id = self.next_synthetic_def_id.clone().saturating_add(1);
+        let adt_def_id = self.mir_package.borrow_mut().fresh_synthetic_def_id();
+        let variant_def_id = self.mir_package.borrow_mut().fresh_synthetic_def_id();
 
         let symbol = Symbol::new(name);
         let variant = VariantDef {
@@ -8024,9 +8001,8 @@ impl HirToMirLowerer {
 
     fn error_ty(&mut self) -> Ty {
         let error = ErrorGuaranteed {
-            index: self.next_error_id,
+            index: self.mir_package.borrow_mut().fresh_error_id(),
         };
-        self.next_error_id += 1;
         Ty {
             kind: TyKind::Error(error),
         }

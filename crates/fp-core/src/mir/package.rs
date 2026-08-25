@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::{
     ty, ConstInfo, DefId, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantInfo,
     FunctionSpecializationInfo, FunctionSig, Function, ItemKind, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, MethodOwnerIndex, MirCodeUnit, StructDefinition, StructLayout,
+    MethodLoweringInfo, MethodOwnerIndex, MirCodeUnit, MirId, StructDefinition, StructLayout,
     StructLayoutKey, StructuralLayoutKey, Symbol, Ty,
 };
 
@@ -11,6 +11,33 @@ use super::{
 /// embeds, reused directly (not a separate namespace) since MIR items are
 /// always lowered 1:1 from an already-identified HIR package.
 pub type PackageId = crate::hir::PackageId;
+
+/// Monotonic fresh-id counters for MIR lowering — the "next id to mint"
+/// state that used to live as private fields on `HirToMirLowerer`. Lifted
+/// onto `MirPackage` so they survive across separate lowering passes over
+/// the same package (a package re-lowered after a comptime value resolves
+/// keeps minting from where the previous pass left off), instead of
+/// resetting to zero on every fresh lowerer instance.
+#[derive(Debug, Clone)]
+pub struct MirIdCounters {
+    pub next_mir_id: MirId,
+    pub next_body_id: u32,
+    pub next_error_id: u32,
+    pub next_synthetic_def_id: DefId,
+    pub next_synthetic_hir_def_id: DefId,
+}
+
+impl Default for MirIdCounters {
+    fn default() -> Self {
+        Self {
+            next_mir_id: 0,
+            next_body_id: 0,
+            next_error_id: 0,
+            next_synthetic_def_id: DefId::local(1),
+            next_synthetic_hir_def_id: DefId::local(1),
+        }
+    }
+}
 
 /// One compiled package's MIR content — its lowered items, one
 /// `MirCodeUnit` per top-level `DefId`, plus the derived tables
@@ -119,6 +146,8 @@ pub struct MirPackage {
     /// Byte size for an opaque type minted for a *mismatched enum payload
     /// slot* — see `HirToMirLowerer::opaque_ty_sizes`'s doc comment.
     pub opaque_ty_sizes: HashMap<String, u64>,
+    /// Fresh-id allocators — see `MirIdCounters`'s own doc comment.
+    pub id_counters: MirIdCounters,
 }
 
 impl MirPackage {
@@ -172,6 +201,49 @@ impl MirPackage {
     /// Mutable counterpart to `body()`.
     pub fn body_mut(&mut self, id: super::BodyId) -> Option<&mut super::Body> {
         self.units.values_mut().find_map(|unit| unit.bodies.get_mut(&id))
+    }
+
+    /// Mints and returns the next `MirId`, advancing the counter.
+    pub fn fresh_mir_id(&mut self) -> MirId {
+        let id = self.id_counters.next_mir_id;
+        self.id_counters.next_mir_id += 1;
+        id
+    }
+
+    /// Mints and returns the next `BodyId` index, advancing the counter.
+    pub fn fresh_body_id(&mut self) -> u32 {
+        let id = self.id_counters.next_body_id;
+        self.id_counters.next_body_id += 1;
+        id
+    }
+
+    /// Mints and returns the next error-guarantee index, advancing the counter.
+    pub fn fresh_error_id(&mut self) -> u32 {
+        let id = self.id_counters.next_error_id;
+        self.id_counters.next_error_id += 1;
+        id
+    }
+
+    /// Mints and returns the next synthetic `DefId` (opaque types, etc.).
+    pub fn fresh_synthetic_def_id(&mut self) -> DefId {
+        let id = self.id_counters.next_synthetic_def_id.clone();
+        self.id_counters.next_synthetic_def_id =
+            self.id_counters.next_synthetic_def_id.clone().saturating_add(1);
+        id
+    }
+
+    /// Mints and returns the next synthetic HIR-level `DefId`.
+    pub fn fresh_synthetic_hir_def_id(&mut self) -> DefId {
+        let id = self.id_counters.next_synthetic_hir_def_id.clone();
+        self.id_counters.next_synthetic_hir_def_id =
+            self.id_counters.next_synthetic_hir_def_id.clone().saturating_add(1);
+        id
+    }
+
+    /// Re-seeds the synthetic HIR `DefId` counter (see `HirToMirLowerer`'s
+    /// callers, which seed it past the package's own real `DefId`s).
+    pub fn set_next_synthetic_hir_def_id(&mut self, id: DefId) {
+        self.id_counters.next_synthetic_hir_def_id = id;
     }
 
     pub fn span(&self) -> super::Span {
