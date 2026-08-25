@@ -239,6 +239,12 @@ impl DiagnosticManager {
         }
     }
 
+    pub fn truncate(&self, len: usize) {
+        if let Ok(mut diagnostics) = self.diagnostics.lock() {
+            diagnostics.truncate(len);
+        }
+    }
+
     /// Emit diagnostics using the provided template and options. The fallback context is used
     /// when a diagnostic does not specify a source context.
     pub fn emit<M>(

@@ -541,9 +541,9 @@ impl CompilerDriver {
         if !runtime_support.items.is_empty() || !runtime_support.bodies.is_empty() {
             lowering.walk_program_types_for_layouts(&runtime_support);
         }
-        let (diagnostics, had_errors) = lowering.take_diagnostics();
-        if had_errors {
-            let details = diagnostics_summary(&diagnostics);
+        let diagnostics = lowering.take_diagnostics();
+        if diagnostics.has_errors() {
+            let details = diagnostics_summary(&diagnostics.get_diagnostics());
             return Err(CompilerDriverError::InternalCompilerError(format!(
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
@@ -693,9 +693,9 @@ impl CompilerDriver {
             if !runtime_support.items.is_empty() || !runtime_support.bodies.is_empty() {
                 lowering.walk_program_types_for_layouts(&runtime_support);
             }
-            let (diagnostics, had_errors) = lowering.take_diagnostics();
-            if had_errors {
-                let details = diagnostics_summary(&diagnostics);
+            let diagnostics = lowering.take_diagnostics();
+            if diagnostics.has_errors() {
+                let details = diagnostics_summary(&diagnostics.get_diagnostics());
                 return Err(CompilerDriverError::InternalCompilerError(format!(
                     "HIR-to-MIR lowering reported diagnostics: {details}"
                 )));
@@ -933,8 +933,8 @@ impl CompilerDriver {
         def_id: hir::DefId,
     ) -> Result<(), CompilerDriverError> {
         if let Err(error) = lowering.ensure_item_lowered(def_id.clone()) {
-            let (diagnostics, _) = lowering.take_diagnostics();
-            let details = diagnostics_summary(&diagnostics);
+            let diagnostics = lowering.take_diagnostics();
+            let details = diagnostics_summary(&diagnostics.get_diagnostics());
             return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
                 format!("HIR-to-MIR lowering failed: {error}")
             } else {

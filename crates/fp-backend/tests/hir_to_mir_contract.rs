@@ -151,12 +151,13 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
     let mir_program = lowering
         .transform(program)
         .expect("HIR→MIR lowering should succeed");
-    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    let diagnostics = lowering.take_diagnostics();
     assert!(
-        diagnostics.is_empty(),
-        "unexpected diagnostics: {diagnostics:?}"
+        diagnostics.get_diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        diagnostics.get_diagnostics()
     );
-    assert!(!has_errors);
+    assert!(!diagnostics.has_errors());
 
     assert_eq!(mir_program.items.len(), 1);
     let mir_item = &mir_program.items[0];
@@ -248,12 +249,13 @@ fn lowers_identity_function_with_parameter() {
     let mir_program = lowering
         .transform(program)
         .expect("HIR→MIR lowering should succeed");
-    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    let diagnostics = lowering.take_diagnostics();
     assert!(
-        diagnostics.is_empty(),
-        "unexpected diagnostics: {diagnostics:?}"
+        diagnostics.get_diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        diagnostics.get_diagnostics()
     );
-    assert!(!has_errors);
+    assert!(!diagnostics.has_errors());
 
     let mir_item = &mir_program.items[0];
     let mir_function = match &mir_item.kind {
@@ -662,9 +664,9 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
     let mir_program = lowering
         .transform(program)
         .expect("HIR→MIR lowering should succeed");
-    let (diagnostics, has_errors) = lowering.take_diagnostics();
-    assert!(diagnostics.is_empty());
-    assert!(!has_errors);
+    let diagnostics = lowering.take_diagnostics();
+    assert!(diagnostics.get_diagnostics().is_empty());
+    assert!(!diagnostics.has_errors());
 
     assert_eq!(mir_program.items.len(), 1);
     let mir_item = &mir_program.items[0];
@@ -869,12 +871,13 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
     let mir_program = lowering
         .transform(program_with_items(vec![item]))
         .expect("HIR→MIR lowering should succeed");
-    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    let diagnostics = lowering.take_diagnostics();
     assert!(
-        diagnostics.is_empty(),
-        "unexpected diagnostics: {diagnostics:?}"
+        diagnostics.get_diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        diagnostics.get_diagnostics()
     );
-    assert!(!has_errors);
+    assert!(!diagnostics.has_errors());
 
     let mir_function = match &mir_program.items[0].kind {
         MirItemKind::Function(func) => func,
@@ -984,12 +987,13 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
     let mir_program = lowering
         .transform(program_with_items(vec![item]))
         .expect("HIR→MIR lowering should succeed");
-    let (diagnostics, has_errors) = lowering.take_diagnostics();
+    let diagnostics = lowering.take_diagnostics();
     assert!(
-        diagnostics.is_empty(),
-        "unexpected diagnostics: {diagnostics:?}"
+        diagnostics.get_diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        diagnostics.get_diagnostics()
     );
-    assert!(!has_errors);
+    assert!(!diagnostics.has_errors());
 
     let mir_function = match &mir_program.items[0].kind {
         MirItemKind::Function(func) => func,
