@@ -477,7 +477,7 @@ impl CompilerDriver {
         // the already-resolved, already-per-language provider rather than a
         // separate frontend dependency of this crate.
         let normalizer = self.state.borrow().workspace.provider().intrinsic_normalizer();
-        let mut generator = AstToHirLowerer::new(hir_package_id.clone())
+        let mut generator = AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id.clone())
             .with_intrinsic_normalizer(normalizer)
             .with_lowering_config(HirLoweringConfig {
                 // The active `TargetBackend`'s own capabilities (see

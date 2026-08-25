@@ -192,11 +192,12 @@ pub struct AstToHirLowerer {
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: Option<std::rc::Rc<fp_core::ast::program::AstProgram>>,
-    /// Every already-published dependency package's own HIR, for
+    /// The whole workspace's HIR (every already-published dependency
+    /// package, plus this package once transformed) — required upfront for
     /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
-    /// `hir_definitions`) — separate from `workspace` (AST-only data) since
+    /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
-    hir_program: Option<std::rc::Rc<fp_core::hir::HirProgram>>,
+    hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
     /// `impl` items whose self-type didn't resolve on a *tolerant*
     /// `predeclare_items` pass because the name is only reachable through
     /// an import that hadn't been processed yet — see `transform_package`,
@@ -718,8 +719,12 @@ impl AstToHirLowerer {
         Some(current)
     }
 
-    pub fn with_file<P: AsRef<Path>>(package_id: hir::PackageId, path: P) -> Self {
-        let mut generator = Self::new(package_id);
+    pub fn with_file<P: AsRef<Path>>(
+        hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
+        package_id: hir::PackageId,
+        path: P,
+    ) -> Self {
+        let mut generator = Self::new(hir_program, package_id);
         generator.reset_file_context(path);
         generator
     }
@@ -728,8 +733,13 @@ impl AstToHirLowerer {
     /// filled in later via a builder method) so `self.package`'s own id is
     /// correct from construction, never a placeholder default that a
     /// caller might forget to override (see `HirPackage::new`'s doc
-    /// comment for the bug this class of mistake caused).
-    pub fn new(package_id: hir::PackageId) -> Self {
+    /// comment for the bug this class of mistake caused). `hir_program`
+    /// is likewise required upfront (the workspace's HIR), so
+    /// cross-package name resolution is always available.
+    pub fn new(
+        hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
+        package_id: hir::PackageId,
+    ) -> Self {
         Self {
             package_id: package_id.clone(),
             next_hir_id: 0,
@@ -761,7 +771,7 @@ impl AstToHirLowerer {
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             workspace: None,
-            hir_program: None,
+            hir_program,
             pending_impls: Vec::new(),
             pending_type_aliases: Vec::new(),
             resolved_import_aliases: HashSet::new(),
@@ -779,13 +789,6 @@ impl AstToHirLowerer {
         workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
     ) -> Self {
         self.workspace = Some(workspace);
-        self
-    }
-
-    /// Every already-published dependency package's own HIR — see
-    /// `hir_program`'s doc comment.
-    pub fn with_hir_program(mut self, hir_program: std::rc::Rc<fp_core::hir::HirProgram>) -> Self {
-        self.hir_program = Some(hir_program);
         self
     }
 
@@ -1272,51 +1275,49 @@ impl AstToHirLowerer {
         // `hir_definitions()` returns) is where those actually surface;
         // scan it the same way, merging in rather than overwriting what's
         // already collected above.
-        if let Some(ref hir_program) = self.hir_program {
-            for (_module_path, _hir_package, exports) in hir_program.hir_definitions() {
-                for (key, res) in &exports {
-                    let Some(name) = prelude_bare_name(key) else {
-                        continue;
-                    };
-                    // A prelude export could be looked up in either
-                    // namespace (`Option` as a type, `Some`/`None` as
-                    // values) — record it in both; an entry that's never
-                    // consulted in the "wrong" namespace is simply unused,
-                    // not incorrect.
-                    if self
-                        .package
-                        .module_tree
-                        .lookup(prelude_module, hir::Namespace::Value, name)
-                        .is_none()
-                    {
-                        self.package.module_tree.bind(
-                            prelude_module,
-                            hir::Namespace::Value,
-                            name,
-                            hir::SymbolEntry {
-                                res: res.clone(),
-                                export: hir::SymbolExport::Public,
-                                path: None,
-                            },
-                        );
-                    }
-                    if self
-                        .package
-                        .module_tree
-                        .lookup(prelude_module, hir::Namespace::Type, name)
-                        .is_none()
-                    {
-                        self.package.module_tree.bind(
-                            prelude_module,
-                            hir::Namespace::Type,
-                            name,
-                            hir::SymbolEntry {
-                                res: res.clone(),
-                                export: hir::SymbolExport::Public,
-                                path: None,
-                            },
-                        );
-                    }
+        for (_module_path, _hir_package, exports) in self.hir_program.hir_definitions() {
+            for (key, res) in &exports {
+                let Some(name) = prelude_bare_name(key) else {
+                    continue;
+                };
+                // A prelude export could be looked up in either
+                // namespace (`Option` as a type, `Some`/`None` as
+                // values) — record it in both; an entry that's never
+                // consulted in the "wrong" namespace is simply unused,
+                // not incorrect.
+                if self
+                    .package
+                    .module_tree
+                    .lookup(prelude_module, hir::Namespace::Value, name)
+                    .is_none()
+                {
+                    self.package.module_tree.bind(
+                        prelude_module,
+                        hir::Namespace::Value,
+                        name,
+                        hir::SymbolEntry {
+                            res: res.clone(),
+                            export: hir::SymbolExport::Public,
+                            path: None,
+                        },
+                    );
+                }
+                if self
+                    .package
+                    .module_tree
+                    .lookup(prelude_module, hir::Namespace::Type, name)
+                    .is_none()
+                {
+                    self.package.module_tree.bind(
+                        prelude_module,
+                        hir::Namespace::Type,
+                        name,
+                        hir::SymbolEntry {
+                            res: res.clone(),
+                            export: hir::SymbolExport::Public,
+                            path: None,
+                        },
+                    );
                 }
             }
         }
@@ -1332,10 +1333,7 @@ impl AstToHirLowerer {
     /// this is the only mechanism that makes cross-package references work
     /// at all.
     fn seed_workspace_definitions(&mut self, program: &mut hir::HirPackage) {
-        let Some(ref hir_program) = self.hir_program else {
-            return;
-        };
-        for (_module_path, hir_program, _exports) in hir_program.hir_definitions() {
+        for (_module_path, hir_program, _exports) in self.hir_program.hir_definitions() {
             // Deliberately *not* pushed into `program.items` — that would
             // duplicate every dependency's struct/enum into this package's
             // own output/lifted AST regardless of whether anything here
@@ -1852,8 +1850,8 @@ impl AstToHirLowerer {
             // Cross-package export (e.g. `libc::char`), looked up lazily
             // against the workspace on a local-lookup miss — see
             // `lookup_global_res`'s identical fallback.
-            .or_else(|| self.hir_program.as_ref()?.find_export(&qualified))
-            .or_else(|| self.hir_program.as_ref()?.find_export(name))
+            .or_else(|| self.hir_program.find_export(&qualified))
+            .or_else(|| self.hir_program.find_export(name))
             // Bare name, defining package unknown (e.g. `Option` really
             // lives at `core::option::Option` in real std) — fall back
             // to a suffix scan across every package's exports.
@@ -1876,7 +1874,7 @@ impl AstToHirLowerer {
     /// teaching `HirProgram` itself an ambiguity-resolution policy that
     /// would apply (likely wrongly) to every other caller too.
     fn resolve_ambiguous_type_export_by_name(&self, name: &str) -> Option<hir::Res> {
-        let hir_program = self.hir_program.as_ref()?;
+        let hir_program = &self.hir_program;
         let mut candidates: Vec<(String, hir::Res)> = hir_program
             .hir_definitions()
             .into_iter()
@@ -1924,7 +1922,7 @@ impl AstToHirLowerer {
         if let Some(op) = self.package.op_defs.get(&def_id).cloned() {
             return Some(op);
         }
-        let hir_program = self.hir_program.as_ref()?;
+        let hir_program = &self.hir_program;
         for (_module_path, hir_program, _exports) in hir_program.hir_definitions() {
             if let Some(op) = hir_program.op_defs.get(&def_id).cloned() {
                 return Some(op);
@@ -1950,9 +1948,9 @@ impl AstToHirLowerer {
                     .cloned()
             })
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
-            .or_else(|| self.hir_program.as_ref()?.find_export(&qualified))
-            .or_else(|| self.hir_program.as_ref()?.find_export(name))
-            .or_else(|| self.hir_program.as_ref()?.find_export_by_name(name))
+            .or_else(|| self.hir_program.find_export(&qualified))
+            .or_else(|| self.hir_program.find_export(name))
+            .or_else(|| self.hir_program.find_export_by_name(name))
     }
 
     fn push_value_scope(&mut self) {

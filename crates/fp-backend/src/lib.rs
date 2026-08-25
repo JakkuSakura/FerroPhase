@@ -64,7 +64,7 @@ pub fn roundtrip_items_via_hir(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(package.hir_package_id.clone());
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(std::rc::Rc::new(fp_core::hir::HirProgram::new()), package.hir_package_id.clone());
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
     transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
@@ -74,7 +74,7 @@ pub fn roundtrip_items_via_hir_dce(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(package.hir_package_id.clone());
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(std::rc::Rc::new(fp_core::hir::HirProgram::new()), package.hir_package_id.clone());
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);

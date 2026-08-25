@@ -223,7 +223,7 @@ impl CompilerState {
     }
 
     /// The whole session's `hir::HirProgram` — used by callers
-    /// (`HirToAstLifter`, `AstToHirLowerer::with_hir_program`) that need
+    /// (`HirToAstLifter`, `AstToHirLowerer::new`) that need
     /// cross-package HIR lookups (`find_export`, `find_hir_impl_method`,
     /// `find_hir_enum_for_variant`, ...), now that `AstProgram` no longer
     /// carries HIR content itself.
@@ -232,9 +232,9 @@ impl CompilerState {
     }
 
     /// Cheap `Rc` clone of the whole session's `hir::HirProgram` — what
-    /// `HirToMirLowerer::new` needs its own handle onto (it resolves
-    /// `current_package` straight out of it), instead of deep-cloning every
-    /// published package's HIR on every lowering call.
+    /// `HirToMirLowerer::new`/`AstToHirLowerer::new` need their own handle
+    /// onto (both resolve the current package straight out of it), instead
+    /// of deep-cloning every published package's HIR on every lowering call.
     pub fn hir_program_rc(&self) -> Rc<hir::HirProgram> {
         self.hir_program.clone()
     }

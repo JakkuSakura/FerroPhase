@@ -20,7 +20,7 @@ fn test_layout() -> LirDataLayout {
 #[test]
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
     let query = QueryDocument::sql("SELECT 42", SqlDialect::Generic).with_name("query.sql");
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
+    let mut hir_generator = AstToHirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let hir_program = hir_generator
         .transform_query_document(&query)
         .expect("hir program");
@@ -97,7 +97,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         .filter_map(statement_to_query_ir)
         .collect(),
     });
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
+    let mut hir_generator = AstToHirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let hir_program = hir_generator
         .transform_query_document(&query)
         .expect("hir program");
@@ -164,7 +164,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         .as_single_expr()
         .expect("expected a single top-level expression");
 
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
+    let mut hir_generator = AstToHirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let hir_program = hir_generator.transform_expr(expr).expect("hir program");
     let hir_query = match &hir_program.items[0].kind {
         hir::ItemKind::Query(query) => query,
