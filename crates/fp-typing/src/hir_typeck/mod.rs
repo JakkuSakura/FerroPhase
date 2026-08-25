@@ -1420,8 +1420,13 @@ impl HirTypeChecker {
                             }
                             output
                         }
-                        Err(error) => {
-                            self.error_ty_with_span(error.to_string(), expr.span)
+                       Err(error) => {
+                            if std::env::var_os("FP_DEBUG_TRYRFOLD").is_some()
+                                && method.as_str() == "try_rfold"
+                            {
+                                eprintln!("TRYRFOLD receiver={receiver_ty:?} error={error}");
+                            }
+                           self.error_ty_with_span(error.to_string(), expr.span)
                         }
                     }
                 }
@@ -4382,31 +4387,53 @@ impl HirTypeChecker {
             // through exactly the same generic-instantiation machinery as
             // an inherent method's, with no separate mechanism needed.
             if let Some(trait_ty) = &impl_item.trait_ty {
-                if let Some(trait_def) = scope.resolve_trait_def(trait_ty) {
-                    for trait_item in &trait_def.items {
-                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
-                            continue;
-                        };
-                        // An abstract (no-body) trait method can never be
-                        // a fallback signature source — if the impl
-                        // doesn't redeclare it, that's a genuine "method
-                        // not found" case, not something to paper over.
-                        if trait_item.name == *method && function.body.is_some() {
-                            let signature = scope.function_signature(function).await?;
-                            let Some((substitutions, result)) =
-                                scope.instantiate_call(&signature, actuals, Some(&function.sig.generics))?
-                            else {
-                                return Err(Error::from(
-                                    "method arguments do not match its signature",
-                                ));
+                let mut trait_work = vec![trait_ty.clone()];
+                let mut seen_traits = HashSet::new();
+                while let Some(current_trait_ty) = trait_work.pop() {
+                    let hir::TypeExprKind::Path(path) = &current_trait_ty.kind else {
+                        continue;
+                    };
+                    let Some(hir::Res::Def(trait_id)) = &path.res else {
+                        continue;
+                    };
+                    if !seen_traits.insert(trait_id.clone()) {
+                        continue;
+                    }
+                    if let Some(trait_def) = scope.resolve_trait_def(&current_trait_ty) {
+                        for trait_item in &trait_def.items {
+                            let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                                continue;
                             };
-                            let args = scope.method_generic_args(
-                                &impl_generics,
-                                &function.sig.generics,
-                                &substitutions,
-                            )?;
-                            return Ok(Some((trait_item.def_id.clone(), args, result)));
+                            // An abstract (no-body) trait method can never be
+                            // a fallback signature source — if the impl
+                            // doesn't redeclare it, that's a genuine "method
+                            // not found" case, not something to paper over.
+                            if trait_item.name == *method && function.body.is_some() {
+                                let signature = scope.function_signature(function).await?;
+                                let Some((substitutions, result)) = scope.instantiate_call(
+                                    &signature,
+                                    actuals,
+                                    Some(&function.sig.generics),
+                                )? else {
+                                    return Err(Error::from(
+                                        "method arguments do not match its signature",
+                                    ));
+                                };
+                                let args = scope.method_generic_args(
+                                    &impl_generics,
+                                    &function.sig.generics,
+                                    &substitutions,
+                                )?;
+                                return Ok(Some((trait_item.def_id.clone(), args, result)));
+                            }
                         }
+                        trait_work.extend(trait_def.supertraits.iter().cloned().map(|path| {
+                            hir::TypeExpr {
+                                hir_id: current_trait_ty.hir_id.clone(),
+                                kind: hir::TypeExprKind::Path(path),
+                                span: current_trait_ty.span,
+                            }
+                        }));
                     }
                 }
             }
