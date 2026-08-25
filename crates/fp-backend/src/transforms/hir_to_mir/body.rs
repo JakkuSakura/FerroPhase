@@ -2,10 +2,7 @@
 // BodyBuilder drives statement/expression lowering for a single function body,
 // delegating type/ADT/method queries back to `HirToMirLowerer` via `self.lowering`.
 
-use fp_core::ast::{
-    DecimalType, TypeBinaryOpKind, TypeInt, TypePrimitive, Value, ValueList, ValueMap, ValueTuple,
-};
-use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
+use fp_core::ast::{Value, ValueList, ValueMap, ValueTuple};
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir::place::{
@@ -13,20 +10,16 @@ use fp_core::hir::place::{
 };
 use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
-    AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, GenericArg, IntTy,
-    Mutability, ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy,
-    VariantDef, VariantDiscr,
+    AdtDef, ConstKind, ConstValue, FloatTy, GenericArg, IntTy, Mutability, Scalar, ScalarInt, Ty,
+    TyKind, TypeAndMut, UintTy,
 };
 use fp_core::mir::{
-    self, ConstInfo, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantDef, EnumVariantInfo,
-    FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, StructDefinition, StructFieldDef, StructLayout, StructLayoutKey,
-    StructuralLayoutKey, Symbol,
+    self, EnumLayout, EnumVariantInfo, MethodContext, MethodDefinition, MethodLoweringInfo,
+    StructDefinition, StructLayout, Symbol,
 };
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
-use std::hash::{Hash, Hasher};
+use std::collections::{HashMap, HashSet};
 
 use super::expr::{HirToMirLowerer, StructFieldInfo, call_arg_values};
 

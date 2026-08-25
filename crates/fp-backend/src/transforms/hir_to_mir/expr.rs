@@ -293,7 +293,7 @@ pub struct HirToMirLowerer {
     diagnostics: DiagnosticManager,
     /// Every struct/enum definition, layout, method table, specialization
     /// cache, const value, and ADT def this instance computes while lowering
-    /// `current_package` — the *exact same* shared handle
+    /// the current package — the *exact same* shared handle
     /// `CompilerState`/`MirToLirLowerer` read (`CompilerState::mir_package_rc`),
     /// not a private local copy: every insert here lands directly in the
     /// session's real package as it happens, so a struct/enum layout
@@ -327,29 +327,17 @@ pub struct HirToMirLowerer {
     /// is (itself `AstProgram::hir_program()`, incrementally
     /// maintained — see its own doc comment), and `transform`/`lower_program`
     /// (the ordinary whole-package path) fetches it once, the same way.
-    /// `current_package` (below) is always one of this map's own packages —
+    /// The current package is always one of this map's own packages —
     /// `new` inserts a fresh empty one if the `package_id` isn't already
     /// present, and `transform` re-inserts the freshly-typechecked package
     /// under the same id — so every lookup method (`hir_item`,
     /// `hir_def_path`, `hir_all_items`) reads straight off this map with no
     /// separate "current package first" fallback.
     hir_program: std::rc::Rc<hir::HirProgram>,
-    /// This package's own HIR — the same `Rc` already stored in
-    /// `hir_program.packages` under `current_package_id` (see `new`/
-    /// `transform`), kept as its own field for cheap direct access. Only
-    /// *this* package's own structs/enums/consts/impls get registered by
-    /// the registration passes below — a dependency's own items are only
-    /// ever safe to reference by signature (the dependency compiles its own
-    /// body separately; see `ensure_function_lowered`/
-    /// `ensure_method_lowered`), never to lower a body from here.
-    current_package: std::rc::Rc<hir::HirPackage>,
-    /// Always kept equal to `current_package.id` — a required field, not
-    /// `Option`, since a package id is never genuinely unknown at any
-    /// point this is read (every setter of `current_package` sets this in
-    /// the same breath). Kept as its own field (mirroring `current_package`
-    /// itself) rather than always re-deriving `self.current_package.id`,
-    /// per `mir::package::PackageId`'s own identity being a first-class
-    /// MIR-lowering concept, not just an HIR-package accessor.
+    /// The id of the package this instance is currently lowering — its HIR
+    /// lives in `hir_program.packages` under this id (`new`/`transform`
+    /// insert it there), so all HIR access routes through `hir_program`
+    /// with no separate `current_package` handle.
     current_package_id: mir::package::PackageId,
     /// Qualified path of whichever item's body/signature is currently
     /// being lowered — set by `ensure_function_lowered`/
@@ -369,25 +357,20 @@ impl HirToMirLowerer {
     /// `with_*` builder or left as an empty/default placeholder — every
     /// real caller already has both on hand at construction time (the
     /// workspace-wide `HirProgram` snapshot it's lowering against, and the
-    /// specific package this instance lowers). `current_package`/
-    /// `current_package_id` are derived from them immediately; if the
-    /// package isn't already in `hir_program` it is inserted as a fresh
-    /// empty package, so `current_package` is always a member of
-    /// `hir_program` and the lookup methods can query `hir_program` alone.
+    /// specific package this instance lowers). `current_package_id` is
+    /// derived from them immediately; if the package isn't already in
+    /// `hir_program` it is inserted as a fresh empty package, so the
+    /// current package is always a member of `hir_program` and the lookup
+    /// methods can query `hir_program` alone.
     pub fn new(
         mut hir_program: std::rc::Rc<hir::HirProgram>,
         package_id: hir::PackageId,
         mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     ) -> Self {
-        let current_package = hir_program
-            .packages
-            .get(&package_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                let fresh = std::rc::Rc::new(hir::HirPackage::new(package_id.clone()));
-                std::rc::Rc::make_mut(&mut hir_program).add_package(fresh.clone());
-                fresh
-            });
+        if !hir_program.packages.contains_key(&package_id) {
+            let fresh = std::rc::Rc::new(hir::HirPackage::new(package_id.clone()));
+            std::rc::Rc::make_mut(&mut hir_program).add_package(fresh);
+        }
         Self {
             diagnostics: DiagnosticManager::new(),
             mir_package,
@@ -397,26 +380,25 @@ impl HirToMirLowerer {
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
             hir_program,
-            current_package,
             current_package_id: package_id,
             current_item_path: None,
         }
     }
 
     /// Same idea as `typeck_expr_type`, for a `MethodCall` expr's own
-    /// resolved callee `DefId` — read straight off `current_package`, no
+    /// resolved callee `DefId` — read straight off `hir_program`, no
     /// lowering step needed.
     pub(crate) fn typeck_method_resolution(&self, hir_id: hir::HirId) -> Option<hir::DefId> {
-        self.current_package.method_resolution(hir_id)
+        self.hir_program.method_resolution(hir_id)
     }
 
     /// Same idea as `typeck_expr_type`, for a `const { .. }` block's
     /// already-resolved comptime value.
     pub(crate) fn typeck_const_block_value(&self, def_id: hir::DefId) -> Option<Value> {
-        self.current_package.const_block_value(def_id)
+        self.hir_program.const_block_value(def_id)
     }
 
-    /// Point `DefId` lookup straight off `hir_program` — `current_package`
+    /// Point `DefId` lookup straight off `hir_program` — the current package
     /// is always one of `hir_program`'s own packages (see `new`/`transform`,
     /// which both insert it), so there is no separate "current package
     /// first" fallback anymore. Replaces every old direct
@@ -433,7 +415,7 @@ impl HirToMirLowerer {
     }
 
     /// Every item `hir_program` knows about (which always includes
-    /// `current_package` itself) — replaces every old
+    /// the current package itself) — replaces every old
     /// `self.hir_def_map.values()`/`.iter()` full scan (used to build a
     /// one-time reverse index; never a per-lookup cost).
     pub(crate) fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
@@ -445,7 +427,6 @@ impl HirToMirLowerer {
 
     pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
         let hir_program = std::rc::Rc::new(hir_program);
-        self.current_package = hir_program.clone();
         self.current_package_id = hir_program.id.clone();
         std::rc::Rc::make_mut(&mut self.hir_program).add_package(hir_program.clone());
         let program = self.lower_program(&hir_program)?;
@@ -774,7 +755,7 @@ impl HirToMirLowerer {
     }
 
     /// `fp_typing`'s checked type for `hir_id`, read straight off
-    /// `self.current_package` (the same `Rc<HirPackage>` it wrote it onto —
+    /// `hir_program` (which owns the `HirPackage` it was written onto —
     /// no separate copy-and-lower-everything-up-front pass here anymore,
     /// see this type's own doc comment for why that used to exist) and
     /// lowered to a MIR `Ty` on demand. Deliberately `&self`, not `&mut
@@ -785,14 +766,14 @@ impl HirToMirLowerer {
     /// including ones that only hold `&self` or reach `HirToMirLowerer` through
     /// an immutably-borrowed field — without a parallel `&mut self` variant.
     pub(crate) fn typeck_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
-        let ty = self.current_package.expr_type(hir_id)?;
+        let ty = self.hir_program.expr_type(hir_id)?;
         lower_hir_ty(&ty).ok()
     }
 
     /// Same as `typeck_expr_type`, for a type-position `TypeExpr`'s own
     /// checked type instead of a value expr's.
     pub(crate) fn typeck_type_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
-        let ty = self.current_package.type_expr_type(hir_id)?;
+        let ty = self.hir_program.type_expr_type(hir_id)?;
         lower_hir_ty(&ty).ok()
     }
 
@@ -800,12 +781,12 @@ impl HirToMirLowerer {
     /// type arguments — if any one argument fails to lower, the whole
     /// resolution is skipped (a partial arg list would be nonsensical).
     pub(crate) fn typeck_generic_call_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
-        let resolution = self.current_package.generic_call_arg(hir_id)?;
+        let resolution = self.hir_program.generic_call_arg(hir_id)?;
         resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
     }
 
     fn typeck_generic_method_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
-        let resolution = self.current_package.generic_method_arg(hir_id)?;
+        let resolution = self.hir_program.generic_method_arg(hir_id)?;
         resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
     }
 
@@ -861,8 +842,8 @@ impl HirToMirLowerer {
     }
 
     fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirCodeUnit> {
-        // `self.current_package`/`current_package_id` are already set by
-        // `transform` (the only caller) before this runs.
+        // `current_package_id` is already set (and `program` inserted into
+        // `hir_program`) by `transform` (the only caller) before this runs.
         let mut mir_program = mir::MirCodeUnit::new();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `transform_comptime_request` — see that
@@ -990,18 +971,20 @@ impl HirToMirLowerer {
         }
     }
 
-    /// Cheap `Rc` clone of the package this instance is lowering — already
-    /// set by `new` (looked up straight off the shared `hir_program` it was
-    /// constructed with), so a driver-level loop that needs to iterate
-    /// `.items` while also calling `&mut self` methods (`ensure_item_lowered`)
-    /// can hold this handle instead of re-fetching/cloning a whole
-    /// `HirPackage` out of `CompilerState` separately.
+    /// Cheap `Rc` clone of the package this instance is lowering — looked
+    /// up straight off the shared `hir_program` under `current_package_id`,
+    /// so a driver-level loop that needs to iterate `.items` while also
+    /// calling `&mut self` methods (`ensure_item_lowered`) can hold this
+    /// handle instead of re-fetching/cloning a whole `HirPackage` out of
+    /// `CompilerState` separately.
     pub fn current_package_handle(&self) -> std::rc::Rc<hir::HirPackage> {
-        self.current_package.clone()
+        self.hir_program
+            .package_rc(&self.current_package_id)
+            .expect("current package is always a member of hir_program")
     }
 
-    /// Registers every top-level struct/enum and impl signature in
-    /// `self.current_package` (already set by `new`) — call once before any
+    /// Registers every top-level struct/enum and impl signature in the
+    /// current package (already in `hir_program`) — call once before any
     /// `ensure_item_lowered` call, then `ensure_item_lowered` for each
     /// top-level `DefId` that needs lowering (in any order — this is
     /// exactly what makes it usable from a driver-level loop instead of
@@ -1018,7 +1001,7 @@ impl HirToMirLowerer {
     /// pass at all: `ensure_const_info`, used by every `const_values` read
     /// site, lazily triggers `ensure_item_lowered` on a cache miss.
     pub fn register_package_items(&mut self) {
-        let current_package = self.current_package.clone();
+        let current_package = self.current_package_handle();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `lower_program`/`transform_comptime_request`.
         self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
@@ -1116,7 +1099,7 @@ impl HirToMirLowerer {
     }
 
     /// `ensure_item_lowered`'s counterpart for a `const { .. }` block's own
-    /// `DefId` — a block is never in `current_package.items`/`def_map`
+    /// `DefId` — a block is never in the current package's `items`/`def_map`
     /// (`record_const_block_def` is its own side table, not `def_map`; see
     /// `hir::HirPackage::const_block_defs`'s doc comment), so it can't be
     /// dispatched on there directly, but lowering it is otherwise identical
@@ -1132,11 +1115,11 @@ impl HirToMirLowerer {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }
-        let Some(block) = self.current_package.const_block_def(def_id.clone()).or_else(|| {
-            self.hir_program
-                .package(&def_id.package_id)?
-                .const_block_def(def_id.clone())
-        }) else {
+        let Some(block) = self
+            .hir_program
+            .package(&def_id.package_id)?
+            .const_block_def(def_id.clone())
+        else {
             return Ok(());
         };
         self.lowered_items.insert(def_id.clone());
@@ -3711,7 +3694,7 @@ impl HirToMirLowerer {
                 // `lower_const` would keep producing the same
                 // `ExecutableConst` placeholder forever, and this const
                 // would never actually become a real global.
-                let value = self.current_package.const_block_value(def_id.clone())?;
+                let value = self.hir_program.const_block_value(def_id.clone())?;
                 self.const_block_value_to_mir_constant(&value, konst.body.value.span)
             });
         let Some(init_constant) = folded else {
@@ -4874,8 +4857,8 @@ impl HirToMirLowerer {
     /// `register_struct`/`register_enum` can be called from a context that
     /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
     /// lookup, which runs after the original `hir::HirPackage` is out of scope).
-    /// Dispatches through `hir_def_path` (checks `current_package` first,
-    /// then every package in `hir_program` — see its own doc comment),
+    /// Dispatches through `hir_def_path` (reads straight off `hir_program`
+    /// — see its own doc comment),
     /// so callers no longer need to carry around whichever specific
     /// package's `def_paths` map happens to own `def_id`.
     fn def_path_str(&self, def_id: hir::DefId, bare_name: &str) -> String {
