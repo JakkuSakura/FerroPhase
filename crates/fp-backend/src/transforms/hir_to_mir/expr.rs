@@ -414,6 +414,34 @@ impl HirToMirLowerer {
         self.hir_program.method_resolution(hir_id)
     }
 
+    pub(crate) fn typeck_method_intrinsic(
+        &self,
+        hir_id: hir::HirId,
+    ) -> Option<fp_core::intrinsics::IntrinsicKind> {
+        let def_id = self.typeck_method_resolution(hir_id)?;
+        match self.hir_program.intrinsic_def(def_id)? {
+            fp_core::intrinsics::CallKind::Len => Some(fp_core::intrinsics::IntrinsicKind::Len),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn typeck_reflection_field_intrinsic(
+        &self,
+        hir_id: hir::HirId,
+    ) -> Option<fp_core::intrinsics::IntrinsicKind> {
+        self.hir_program.reflection_field_intrinsic(hir_id)
+    }
+
+    pub(crate) fn typeck_reflection_field_intrinsic_expr(
+        &self,
+        expr: &hir::Expr,
+    ) -> Option<fp_core::intrinsics::IntrinsicKind> {
+        self.typeck_reflection_field_intrinsic(expr.hir_id.clone()).or_else(|| {
+            self.hir_program
+                .reflection_field_intrinsic_at_span(expr.hir_id.package_id().clone(), expr.span)
+        })
+    }
+
     /// Same idea as `typeck_expr_type`, for a `const { .. }` block's
     /// already-resolved comptime value.
     pub(crate) fn typeck_const_block_value(&self, def_id: hir::DefId) -> Option<Value> {

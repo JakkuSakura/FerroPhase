@@ -1373,7 +1373,23 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::FieldAccess(receiver, field) => {
                     let receiver_ty = self.check_expr(receiver).await?;
-                    self.field_ty(&receiver_ty, field, expr.span).await?
+                    let field_ty = self.field_ty(&receiver_ty, field, expr.span).await?;
+                    let is_reflection_fields = field.as_str() == "fields"
+                        && self
+                            .well_known_struct_ty("Type", Vec::new())
+                            .is_some_and(|type_ty| receiver_ty == type_ty);
+                    if is_reflection_fields {
+                        self.program_rc().record_reflection_field_intrinsic(
+                            expr.hir_id.clone(),
+                            fp_core::intrinsics::IntrinsicKind::ReflectFields,
+                        );
+                        self.program_rc().record_reflection_field_intrinsic_at_span(
+                            self.current_package.clone(),
+                            expr.span,
+                            fp_core::intrinsics::IntrinsicKind::ReflectFields,
+                        );
+                    }
+                    field_ty
                 }
                 hir::ExprKind::Index(receiver, index) => {
                     let receiver_ty = self.check_expr(receiver).await?;
@@ -3679,7 +3695,13 @@ impl HirTypeChecker {
         let mut scope = self.with_generics(&function.sig.generics);
         let mut inputs = Vec::with_capacity(function.sig.inputs.len());
         for (index, input) in function.sig.inputs.iter().enumerate() {
-            let ty = scope.check_type_expr(&input.ty).await?;
+            let ty = if input.as_tuple || input.as_dict || matches!(input.ty.kind, hir::TypeExprKind::Infer) {
+                Ty {
+                    kind: TyKind::Infer(ty::InferTy::FreshTy(input.ty.hir_id.local_id())),
+                }
+            } else {
+                scope.check_type_expr(&input.ty).await?
+            };
             if let Some(hint) = scope
                 .program_rc()
                 .take_raw_refinement_hint(input.ty.hir_id.clone())
@@ -4899,12 +4921,12 @@ impl HirTypeChecker {
             // `type(x)`/`.field_type(name)` are reflection *queries* — they
             // report on a real, already-known type, so (unlike
             // `create_struct`/`addfield`/`build_type` below) their result
-            // has a real, ordinary struct shape: `std::meta::TypeDescriptor`/
+            // has a real, ordinary struct shape: `std::meta::Type`/
             // `FieldTypeDescriptor`, the same real structs any other value
             // of those types would be.
             IntrinsicKind::TypeOf => self
-                .well_known_struct_ty("TypeDescriptor", Vec::new())
-                .unwrap_or_else(|| self.error_ty("std::meta::TypeDescriptor is not declared")),
+                .well_known_struct_ty("Type", Vec::new())
+                .unwrap_or_else(|| self.error_ty("std::meta::Type is not declared")),
             IntrinsicKind::FieldType => self
                 .well_known_struct_ty("FieldTypeDescriptor", Vec::new())
                 .unwrap_or_else(|| self.error_ty("std::meta::FieldTypeDescriptor is not declared")),

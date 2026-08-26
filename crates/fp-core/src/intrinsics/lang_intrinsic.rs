@@ -59,6 +59,7 @@ pub enum LangIntrinsic {
     ProcMacroTokenStreamFromStr,
     ProcMacroTokenStreamToString,
     FieldType,
+    Len,
     Unionify,
 }
 
@@ -370,6 +371,12 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "field_type",
         capability: LangIntrinsicCapability::ConstOnly,
         call_kind: Some(CallKind::FieldType),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Len,
+        lang_item: "len",
+        capability: LangIntrinsicCapability::Portable,
+        call_kind: Some(CallKind::Len),
     },
 ];
 

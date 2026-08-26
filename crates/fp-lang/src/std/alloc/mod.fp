@@ -21,6 +21,7 @@ impl<T> Vec<T> {
         Vec { ptr: 0 as *mut T, len: 0usize, capacity: 0usize }
     }
 
+    #[intrinsic = "len"]
     pub fn len(&self) -> usize {
         self.len
     }

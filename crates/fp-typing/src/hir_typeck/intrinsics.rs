@@ -95,9 +95,9 @@ impl HirTypeChecker {
             IntrinsicKind::VecType => self
                 .error_ty_with_span("type-valued intrinsic has no HIR type representation", span),
             IntrinsicKind::TypeOf => self
-                .well_known_struct_ty("TypeDescriptor", Vec::new())
+                .well_known_struct_ty("Type", Vec::new())
                 .unwrap_or_else(|| {
-                    self.error_ty_with_span("std::meta::TypeDescriptor is not declared", span)
+                    self.error_ty_with_span("std::meta::Type is not declared", span)
                 }),
             IntrinsicKind::FieldType => self
                 .well_known_struct_ty("FieldTypeDescriptor", Vec::new())

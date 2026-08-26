@@ -987,6 +987,28 @@ impl<'a> BodyBuilder<'a> {
                 }
             },
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
+                if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
+                    == Some(IntrinsicKind::Len)
+                    && self
+                        .lowering
+                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                        .is_some()
+                    && args.is_empty()
+                {
+                    if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
+                        let constant = self
+                            .lowering
+                            .const_value_to_constant(expr.span, &value, expected_ty);
+                        self.push_statement(mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                            ),
+                        });
+                        return Ok(());
+                    }
+                }
                 if let Some(constant) =
                     self.lowering
                         .lower_const_expr(expr, Some(expected_ty), None)
@@ -1034,17 +1056,16 @@ impl<'a> BodyBuilder<'a> {
                 // the receiver's own slice-shaped place, reusing the same
                 // `lower_slice_len_place`/`lower_slice_ptr_place` helpers
                 // the hand-written env/fs intrinsics already use.
-                let str_intrinsic_name = |name: &str| -> Option<bool> {
-                    if name == "len" || name.ends_with("::len") {
-                        Some(true)
-                    } else if name == "as_ptr" || name.ends_with("::as_ptr") {
-                        Some(false)
-                    } else {
-                        None
-                    }
-                };
-                if let Some(is_len) = str_intrinsic_name(method_name.as_str()) {
-                    if let Some(receiver_place) = self.lower_place(receiver)? {
+                if self
+                    .lowering
+                    .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                    .is_none()
+                {
+                    if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
+                        == Some(IntrinsicKind::Len)
+                    {
+                        let is_len = true;
+                        if let Some(receiver_place) = self.lower_place(receiver)? {
                         let mut base_ty = receiver_place.ty.clone();
                         let mut base_place = receiver_place.place.clone();
                         loop {
@@ -1087,6 +1108,44 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(());
                         }
                     }
+                    if (method_name.as_str() == "as_ptr"
+                        || method_name.as_str().ends_with("::as_ptr"))
+                        && args.is_empty()
+                    {
+                        if let Some(receiver_place) = self.lower_place(receiver)? {
+                            let mut base_ty = receiver_place.ty.clone();
+                            let mut base_place = receiver_place.place.clone();
+                            loop {
+                                match &base_ty.kind {
+                                    TyKind::Ref(_, inner, _) => {
+                                        base_place.projection.push(mir::PlaceElem::Deref);
+                                        base_ty = inner.as_ref().clone();
+                                    }
+                                    TyKind::RawPtr(type_and_mut) => {
+                                        base_place.projection.push(mir::PlaceElem::Deref);
+                                        base_ty = type_and_mut.ty.as_ref().clone();
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            if matches!(&base_ty.kind, TyKind::Slice(_)) {
+                                let ptr_place = self.lower_slice_ptr_place(base_place);
+                                let ptr_ty = self.lowering.raw_string_ptr_ty();
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = ptr_ty.clone();
+                                }
+                                self.push_statement(mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        place,
+                                        mir::Rvalue::Use(mir::Operand::copy(ptr_place)),
+                                    ),
+                                });
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 }
 
                 if (method_name.as_str() == "get_unchecked"
@@ -1774,7 +1833,36 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if method_name.as_str() == "len" && args.is_empty() {
+                if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
+                    == Some(IntrinsicKind::Len)
+                    && args.is_empty()
+                {
+                    if self
+                        .lowering
+                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                        .is_some()
+                    {
+                        if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
+                            let len_ty = Ty {
+                                kind: TyKind::Uint(UintTy::Usize),
+                            };
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = len_ty.clone();
+                            }
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place.clone(),
+                                    mir::Rvalue::Use(mir::Operand::Constant(
+                                        self.lowering.const_value_to_constant(
+                                            expr.span, &value, &len_ty,
+                                        ),
+                                    )),
+                                ),
+                            });
+                            return Ok(());
+                        }
+                    }
                     if let Some(constant) = self.lowering.lower_const_expr(receiver, None, None) {
                         if let Some(len) = self.lowering.const_len_from_constant(&constant) {
                             let len_ty = Ty {

@@ -238,6 +238,39 @@ impl HirProgram {
         }
     }
 
+    pub fn reflection_field_intrinsic(&self, hir_id: HirId) -> Option<crate::intrinsics::IntrinsicKind> {
+        self.package(hir_id.package_id())?.reflection_field_intrinsic(hir_id)
+    }
+
+    pub fn reflection_field_intrinsic_at_span(
+        &self,
+        package_id: PackageId,
+        span: crate::span::Span,
+    ) -> Option<crate::intrinsics::IntrinsicKind> {
+        self.package(&package_id)?.reflection_field_intrinsic_at_span(span)
+    }
+
+    pub fn record_reflection_field_intrinsic(
+        &self,
+        hir_id: HirId,
+        intrinsic: crate::intrinsics::IntrinsicKind,
+    ) {
+        if let Some(package) = self.package(hir_id.package_id()) {
+            package.record_reflection_field_intrinsic(hir_id, intrinsic);
+        }
+    }
+
+    pub fn record_reflection_field_intrinsic_at_span(
+        &self,
+        package_id: PackageId,
+        span: crate::span::Span,
+        intrinsic: crate::intrinsics::IntrinsicKind,
+    ) {
+        if let Some(package) = self.package(&package_id) {
+            package.record_reflection_field_intrinsic_at_span(span, intrinsic);
+        }
+    }
+
     pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
         self.package(hir_id.package_id())?.generic_call_arg(hir_id)
     }

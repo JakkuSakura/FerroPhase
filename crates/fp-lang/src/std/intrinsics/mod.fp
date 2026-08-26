@@ -63,7 +63,7 @@ pub fn println(text: &str, *args: _, **argv: _) {
 
 #[intrinsic = "field_type"]
 pub fn field_type(
-    ty: ::std::meta::TypeDescriptor,
+    ty: ::std::meta::Type,
     name: &str,
 ) -> ::std::meta::FieldTypeDescriptor {
     compile_error!("field_type is a compiler intrinsic")

@@ -229,6 +229,8 @@ pub struct Param {
     pub pat: Pat,
     pub ty: TypeExpr,
     pub is_context: bool,
+    pub as_tuple: bool,
+    pub as_dict: bool,
     pub default: Option<Expr>,
 }
 

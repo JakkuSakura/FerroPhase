@@ -172,6 +172,16 @@ impl HirToMirLowerer {
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 let ty = constant_ty.clone()?;
+                if self.typeck_method_intrinsic(expr.hir_id.clone())
+                    == Some(IntrinsicKind::Len)
+                    && self
+                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                        .is_some()
+                    && args.is_empty()
+                {
+                    let value = self.lower_reflection_fields_len(receiver)?;
+                    return Some(self.const_value_to_constant(expr.span, &value, &ty));
+                }
                 let value =
                     self.lower_const_method_value(receiver, method_name.as_str(), args, expr.span)?;
                 Some(mir::Constant {
@@ -198,6 +208,11 @@ impl HirToMirLowerer {
                     user_ty: None,
                     literal: kind,
                 })
+            }
+            hir::ExprKind::Cast(inner, ty_expr) => {
+                let target_ty = self.lower_type_expr(ty_expr);
+                let value = self.lower_const_value(inner, Some(&target_ty))?;
+                Some(self.const_value_to_constant(expr.span, &value, &target_ty))
             }
             _ => None,
         }
@@ -386,6 +401,15 @@ impl HirToMirLowerer {
                 self.lower_const_value(branch, expected_ty)
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
+                if self.typeck_method_intrinsic(expr.hir_id.clone())
+                    == Some(IntrinsicKind::Len)
+                    && self
+                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                        .is_some()
+                    && args.is_empty()
+                {
+                    return self.lower_reflection_fields_len(receiver);
+                }
                 self.lower_const_method_value(receiver, method_name.as_str(), args, expr.span)
             }
             hir::ExprKind::Path(path) => {
@@ -510,6 +534,36 @@ impl HirToMirLowerer {
             }
         }
         None
+    }
+
+    pub(super) fn lower_reflection_fields_len(
+        &mut self,
+        receiver: &hir::Expr,
+    ) -> Option<mir::ConstValue> {
+        let hir::ExprKind::FieldAccess(type_value, _) = &receiver.kind else {
+            return None;
+        };
+        let struct_def_id = self.type_descriptor_struct_def(type_value)?;
+        let hir_field_count = || {
+            let hir::ExprKind::IntrinsicCall(call) = &type_value.kind else {
+                return None;
+            };
+            let hir::ExprKind::Path(path) = &call.callargs.first()?.value.kind else {
+                return None;
+            };
+            let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                return None;
+            };
+            let item = self.hir_item(def_id.clone())?;
+            let hir::ItemKind::Struct(def) = &item.kind else {
+                return None;
+            };
+            Some(def.fields.len() as u64)
+        };
+        let field_count = hir_field_count().or_else(|| {
+            Some(self.mir_package.borrow().struct_defs.get(&struct_def_id)?.fields.len() as u64)
+        })?;
+        Some(mir::ConstValue::UInt(field_count))
     }
 
     pub(super) fn lower_const_field_access(

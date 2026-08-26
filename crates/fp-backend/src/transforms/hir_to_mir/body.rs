@@ -2979,9 +2979,51 @@ impl<'a> BodyBuilder<'a> {
         }
         self.active_exprs.insert(expr.hir_id.clone());
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id.clone());
+        if let hir::ExprKind::MethodCall(receiver, _method, args) = &expr.kind {
+            if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
+                == Some(IntrinsicKind::Len)
+                && self
+                    .lowering
+                    .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
+                    .is_some()
+                && args.is_empty()
+            {
+                if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
+                    let ty = expected.cloned().unwrap_or_else(|| Ty {
+                        kind: TyKind::Uint(UintTy::Usize),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(
+                            self.lowering.const_value_to_constant(expr.span, &value, &ty),
+                        ),
+                        ty,
+                    });
+                }
+            }
+        }
+        if self
+            .lowering
+            .typeck_reflection_field_intrinsic(expr.hir_id.clone())
+            .is_some()
+        {
+            if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
+                let ty = expected
+                    .cloned()
+                    .unwrap_or_else(|| constant.ty.clone());
+                return Ok(OperandInfo {
+                    operand: mir::Operand::Constant(mir::Constant {
+                        ty: ty.clone(),
+                        ..constant
+                    }),
+                    ty,
+                });
+            }
+        }
         if matches!(
             expr.kind,
-            hir::ExprKind::FieldAccess(_, _) | hir::ExprKind::MethodCall(_, _, _)
+            hir::ExprKind::FieldAccess(_, _)
+                | hir::ExprKind::MethodCall(_, _, _)
+                | hir::ExprKind::Cast(_, _)
         ) {
             if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
                 let ty = expected
@@ -4428,6 +4470,24 @@ impl<'a> BodyBuilder<'a> {
             // guard's "recursive expression detected" — a false positive
             // that masks the actual failure. Emit that failure directly.
             hir::ExprKind::FieldAccess(_, _) => {
+                if self
+                    .lowering
+                    .typeck_reflection_field_intrinsic_expr(expr)
+                    .is_some()
+                {
+                    if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
+                        let ty = expected
+                            .cloned()
+                            .unwrap_or_else(|| constant.ty.clone());
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                ty: ty.clone(),
+                                ..constant
+                            }),
+                            ty,
+                        });
+                    }
+                }
                 let message = "unable to lower field access to an operand: neither a \
                      constant value nor a real place could be computed for it";
                 self.lowering.emit_error(expr.span, message);

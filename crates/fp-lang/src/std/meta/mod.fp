@@ -23,31 +23,23 @@ impl TypeBuilder {
     }
 }
 
-// Deliberately not `ty: TypeDescriptor` (which would need `TypeDescriptor`
-// and `FieldDescriptor` to nest into each other by value) — `&[T]`/`Ref`
-// type lowering resolves its pointee's own layout eagerly rather than
-// treating a reference as the fixed-size pointer it actually is, so a
-// real by-value cycle here trips the compiler's "recursive type has
-// infinite size" check even though no such cycle exists at the machine
-// level. A field's own type only ever needs a name here, so route it
-// through this smaller, non-nesting descriptor instead.
 pub struct FieldTypeDescriptor {
     pub name: &str,
 }
 
-pub struct FieldDescriptor {
+pub struct StructField {
     pub name: &str,
     pub ty: FieldTypeDescriptor,
 }
 
-pub struct TypeDescriptor {
+pub struct Type {
     pub name: &str,
-    pub size: i64,
-    pub fields: &[FieldDescriptor],
-    pub methods: &[&str],
+    pub size: usize,
+    pub fields: ::std::alloc::Vec<StructField>,
+    pub methods: ::std::alloc::Vec<&str>,
 }
 
-impl TypeDescriptor {
+impl Type {
     pub fn field_type(self, name: &str) -> FieldTypeDescriptor {
         ::std::intrinsics::field_type(self, name)
     }

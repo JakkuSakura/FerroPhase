@@ -290,6 +290,8 @@ pub struct HirPackage {
     /// A `MethodCall` expr's own `hir_id` -> the concrete method `DefId`
     /// it resolved to (never the receiver's/type's `DefId`).
     method_resolutions: RefCell<HashMap<HirId, DefId>>,
+    reflection_field_intrinsics: RefCell<HashMap<HirId, crate::intrinsics::IntrinsicKind>>,
+    reflection_field_intrinsics_by_span: RefCell<HashMap<crate::span::Span, crate::intrinsics::IntrinsicKind>>,
     generic_call_args: RefCell<HashMap<HirId, GenericCallResolution>>,
     generic_method_args: RefCell<HashMap<HirId, GenericCallResolution>>,
     const_types: RefCell<HashMap<DefId, Ty>>,
@@ -473,6 +475,8 @@ impl HirPackage {
             type_expr_types: RefCell::new(HashMap::new()),
             pat_types: RefCell::new(HashMap::new()),
             method_resolutions: RefCell::new(HashMap::new()),
+            reflection_field_intrinsics: RefCell::new(HashMap::new()),
+            reflection_field_intrinsics_by_span: RefCell::new(HashMap::new()),
             generic_call_args: RefCell::new(HashMap::new()),
             generic_method_args: RefCell::new(HashMap::new()),
             const_types: RefCell::new(HashMap::new()),
@@ -812,6 +816,33 @@ impl HirPackage {
 
     pub fn method_resolutions(&self) -> HashMap<HirId, DefId> {
         self.method_resolutions.borrow().clone()
+    }
+
+    pub fn reflection_field_intrinsic(&self, hir_id: HirId) -> Option<crate::intrinsics::IntrinsicKind> {
+        self.reflection_field_intrinsics.borrow().get(&hir_id).copied()
+    }
+
+    pub fn reflection_field_intrinsic_at_span(
+        &self,
+        span: crate::span::Span,
+    ) -> Option<crate::intrinsics::IntrinsicKind> {
+        self.reflection_field_intrinsics_by_span.borrow().get(&span).copied()
+    }
+
+    pub fn record_reflection_field_intrinsic(
+        &self,
+        hir_id: HirId,
+        intrinsic: crate::intrinsics::IntrinsicKind,
+    ) {
+        self.reflection_field_intrinsics.borrow_mut().insert(hir_id, intrinsic);
+    }
+
+    pub fn record_reflection_field_intrinsic_at_span(
+        &self,
+        span: crate::span::Span,
+        intrinsic: crate::intrinsics::IntrinsicKind,
+    ) {
+        self.reflection_field_intrinsics_by_span.borrow_mut().insert(span, intrinsic);
     }
 
     pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
