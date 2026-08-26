@@ -209,7 +209,7 @@ fn records_binding_pattern_type() {
 
 fn str_shaped_ty() -> Ty {
     Ty {
-        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+        kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
     }
 }
 

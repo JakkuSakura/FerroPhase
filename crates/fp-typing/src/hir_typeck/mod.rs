@@ -1218,6 +1218,40 @@ impl HirTypeChecker {
                             return Ok(callee_ty);
                         }
                     }
+                    // A unit struct is both a type and a value in Rust.
+                    // When lowering a value-qualified method call such as
+                    // `RangeFull.sample(source)`, the path form is the same
+                    // as a type-relative associated call, but the unit
+                    // constructor is its implicit receiver. Materialize it
+                    // only for an actual zero-field struct matching the
+                    // declared receiver; arbitrary `Type::method()` calls
+                    // never receive an invented argument.
+                    if let (
+                        hir::ExprKind::Path(path),
+                        TyKind::FnPtr(signature),
+                    ) = (&callee.kind, &callee_ty.kind)
+                    {
+                        if signature.binder.value.inputs.len() == arg_types.len() + 1
+                            && path.segments.len() >= 2
+                        {
+                            let receiver = &signature.binder.value.inputs[0];
+                            let receiver_adt = match &receiver.kind {
+                                TyKind::Ref(_, inner, _) => match &inner.kind {
+                                    TyKind::Adt(adt, _) => Some(adt),
+                                    _ => None,
+                                },
+                                TyKind::Adt(adt, _) => Some(adt),
+                                _ => None,
+                            };
+                            if let Some(adt) = receiver_adt {
+                                if self.program_rc().item(adt.did.clone()).is_some_and(|item| {
+                                    matches!(&item.kind, hir::ItemKind::Struct(def) if def.fields.is_empty())
+                                }) {
+                                    arg_types.insert(0, (**receiver).clone());
+                                }
+                            }
+                        }
+                    }
                     let Some((substitutions, _)) = self.instantiate_call_with_expected(
                         &callee_ty,
                         &arg_types,
@@ -1539,10 +1573,13 @@ impl HirTypeChecker {
                     }
                     let mut result: Option<Ty> = None;
                     let mut result_is_default_integer_literal = false;
+                    let expected_output = self.expected_expr_type.clone();
                     for arm in arms {
                         let arm_is_default_integer_literal =
                             Self::expr_ends_with_default_integer_literal(&arm.body);
-                        let checked_arm_ty = self.check_match_arm(arm, &scrutinee_ty).await?;
+                        let checked_arm_ty = self
+                            .check_match_arm(arm, &scrutinee_ty, expected_output.as_ref())
+                            .await?;
                         // Keep an unannotated integer literal in a match arm
                         // inferable until the other arms are known. Rustc
                         // does not commit `0` to `i64` before it sees a
@@ -1594,11 +1631,20 @@ impl HirTypeChecker {
                         self.error_ty("match expression requires at least one arm")
                     })
                 }
-                hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
-                    self.check_block(block).await?
+                hir::ExprKind::Block(block) => {
+                    self.check_block_with_expected_tail(block, self.expected_expr_type.clone())
+                        .await?
                 }
+                hir::ExprKind::Loop(block) => self.check_block(block).await?,
                 hir::ExprKind::ConstBlock(const_block) => {
-                    let body_ty = self.check_expr(&const_block.body).await?;
+                    let expected_output = self.expected_expr_type.clone();
+                    let body_ty = match expected_output.as_ref() {
+                        Some(expected) => self
+                            .with_expected_expr_type(expected.clone())
+                            .check_expr(&const_block.body)
+                            .await?,
+                        None => self.check_expr(&const_block.body).await?,
+                    };
                     // Recorded unconditionally, before any generic-param
                     // skip below — `register_const_block_comptime_entry`
                     // (`hir_to_mir`'s own body-walk, reached whenever this
@@ -1825,7 +1871,10 @@ impl HirTypeChecker {
                         .program_rc()
                         .take_raw_refinement_hint(target.hir_id.clone());
                     if let Some(value) = value {
-                        let value_ty = self.check_expr(value).await?;
+                        let value_ty = self
+                            .with_expected_expr_type(ty.clone())
+                            .check_expr(value)
+                            .await?;
                         self.require_same_at(&ty, &value_ty, expr.span)?;
                         if let Some(hint) = &hint {
                             self.discharge_refinement(hint, value)?;
@@ -1859,7 +1908,7 @@ impl HirTypeChecker {
                             self.bind_pattern(
                                 pattern,
                                 Ty {
-                                    kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                                    kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
                                 },
                             )
                             .await?;
@@ -1969,7 +2018,7 @@ impl HirTypeChecker {
                         }
                     }
                     Ty {
-                        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                        kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
                     }
                 }
             };
@@ -2118,8 +2167,12 @@ impl HirTypeChecker {
                                 && !coerce_unsized
                                 && !Self::ty_matches_with_infer_holes(&ty, &resolved_init)
                             {
+                                let binding = match &local.pat.kind {
+                                    hir::PatKind::Binding { name, .. } => name.as_str(),
+                                    _ => "<pattern>",
+                                };
                                 return Err(Error::from(format!(
-                                    "type mismatch: expected `{ty}`, found `{resolved_init}`"
+                                    "type mismatch for local `{binding}`: expected `{ty}`, found `{resolved_init}`"
                                 )));
                             }
                             scope
@@ -2156,14 +2209,25 @@ impl HirTypeChecker {
         Ok(ty)
     }
 
-    async fn check_match_arm(&mut self, arm: &hir::MatchArm, scrutinee_ty: &Ty) -> Result<Ty> {
+    async fn check_match_arm(
+        &mut self,
+        arm: &hir::MatchArm,
+        scrutinee_ty: &Ty,
+        expected: Option<&Ty>,
+    ) -> Result<Ty> {
         let mut scope = self.with_fresh_block_scope();
         scope.bind_pattern(&arm.pat, scrutinee_ty.clone()).await?;
         if let Some(guard) = &arm.guard {
             let guard_ty = scope.check_expr(guard).await?;
             scope.require_same_at(&guard_ty, &Ty::bool(), guard.span)?;
         }
-        scope.check_expr(&arm.body).await
+        match expected {
+            Some(expected) => scope
+                .with_expected_expr_type(expected.clone())
+                .check_expr(&arm.body)
+                .await,
+            None => scope.check_expr(&arm.body).await,
+        }
     }
 
     fn expr_ends_with_default_integer_literal(expr: &hir::Expr) -> bool {
@@ -5036,7 +5100,7 @@ impl HirTypeChecker {
             // like a genuinely unreachable expression already does.
             IntrinsicKind::Panic => Ty::never(),
             IntrinsicKind::Format => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
             IntrinsicKind::Slice => match arg_types.first() {
@@ -5074,7 +5138,7 @@ impl HirTypeChecker {
             | IntrinsicKind::YamlToJson
             | IntrinsicKind::JsonParse
             | IntrinsicKind::ProcMacroTokenStreamToString => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             IntrinsicKind::PathIsAbsolute => Ty::bool(),
             IntrinsicKind::TimeNow => Ty::float(ty::FloatTy::F64),
@@ -5103,7 +5167,7 @@ impl HirTypeChecker {
             IntrinsicKind::FieldNameAt
             | IntrinsicKind::TypeName
             | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             IntrinsicKind::VecType => {
                 self.error_ty("type-valued intrinsic has no HIR type representation")

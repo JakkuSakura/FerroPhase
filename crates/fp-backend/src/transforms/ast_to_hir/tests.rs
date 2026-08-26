@@ -244,6 +244,37 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
 }
 
 #[test]
+fn suffixed_numeric_literal_lowers_to_explicit_cast() -> Result<()> {
+    let frontend = fp_lang::FerroFrontend::new();
+    let parsed = frontend.parse_expr("1_usize")?;
+    let ast::ItemKind::Expr(expr) = parsed.ast.items[0].kind() else {
+        return Err(crate::error::optimization_error(
+            "expected parsed expression item".to_string(),
+        ));
+    };
+
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let lowered = generator.transform_expr_to_hir(expr)?;
+    let hir::ExprKind::Cast(value, target) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "expected suffixed numeric literal to lower to a cast".to_string(),
+        ));
+    };
+    assert!(matches!(value.kind, hir::ExprKind::Literal(_)));
+    let hir::TypeExprKind::Path(path) = target.kind else {
+        return Err(crate::error::optimization_error(
+            "expected usize cast target path".to_string(),
+        ));
+    };
+    assert_eq!(path.segments.len(), 1);
+    assert_eq!(path.segments[0].name.as_str(), "usize");
+    Ok(())
+}
+
+#[test]
 fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
     let frontend = fp_lang::FerroFrontend::new();
     let parsed = frontend.parse_expr("const { 1 + 1 }")?;

@@ -118,6 +118,25 @@ impl AstToHirLowerer {
                     let ty = fp_core::ast::resolved_expr_type(ast_expr.id());
                     Self::transform_bytes_value_to_hir(bytes, ty.as_ref())
                 }
+                ast::Value::Int(_)
+                | ast::Value::UInt(_)
+                | ast::Value::BigInt(_)
+                | ast::Value::Decimal(_)
+                | ast::Value::BigDecimal(_)
+                    if fp_core::ast::resolved_expr_type(ast_expr.id()).is_some() =>
+                {
+                    let target = fp_core::ast::resolved_expr_type(ast_expr.id())
+                        .expect("numeric literal type checked above");
+                    let value = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: self.transform_value_to_hir(value)?,
+                        span,
+                    };
+                    hir::ExprKind::Cast(
+                        Box::new(value),
+                        Box::new(self.transform_type_to_hir(&target)?),
+                    )
+                }
                 _ => self.transform_value_to_hir(value)?,
             },
             ExprKind::Id(expr_id) => self.error_placeholder_expr_kind(
@@ -740,7 +759,16 @@ impl AstToHirLowerer {
     ) -> Result<hir::ExprKind> {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
-                if let Some(mut segments) = self.path_segments_from_expr(&select.obj) {
+                let receiver_can_be_type_path = match select.obj.kind() {
+                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_) => true,
+                    ast::ExprKind::Invoke(receiver) => {
+                        matches!(receiver.target, ast::ExprInvokeTarget::Type(_))
+                    }
+                    _ => false,
+                };
+                if receiver_can_be_type_path
+                    && let Some(mut segments) = self.path_segments_from_expr(&select.obj)
+                {
                     let base_name = ast::Name::Path(ast::Path::plain(segments.clone()));
                     let base_path =
                         self.name_to_hir_path_with_scope(&base_name, PathResolutionScope::Type)?;
@@ -752,8 +780,11 @@ impl AstToHirLowerer {
                     ) {
                         segments.push(select.field.clone());
                         let name = ast::Name::Path(ast::Path::plain(segments));
-                        let path =
+                        let mut path =
                             self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
+                        if path.res.is_none() {
+                            path.res = base_path.res;
+                        }
                         let func_expr = hir::Expr {
                             hir_id: self.next_id(),
                             kind: hir::ExprKind::Path(path),

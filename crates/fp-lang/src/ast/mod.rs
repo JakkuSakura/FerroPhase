@@ -735,7 +735,7 @@ fn union_exprs(a: &Expr, b: &Expr) -> Span {
 fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<Ty>), ()> {
     let stripped = strip_number_suffix(raw);
     let normalized = stripped.replace('_', "");
-    let suffix = &raw[stripped.len()..];
+    let suffix = raw[stripped.len()..].strip_prefix('_').unwrap_or(&raw[stripped.len()..]);
     match suffix {
         "ib" => {
             if normalized.contains('.') {
@@ -762,15 +762,13 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
             }
             let value = parse_i64_literal(&normalized).ok_or(())?;
             let ty = match suffix {
-                "i8" => TypeInt::I8,
-                "i16" => TypeInt::I16,
-                "i32" => TypeInt::I32,
-                _ => TypeInt::I64,
+                "isize" => Ty::path(Path::plain(vec![Ident::new("isize")])),
+                "i8" => Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+                "i16" => Ty::Primitive(TypePrimitive::Int(TypeInt::I16)),
+                "i32" => Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+                _ => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
             };
-            Ok((
-                Value::int(value),
-                Some(Ty::Primitive(TypePrimitive::Int(ty))),
-            ))
+            Ok((Value::int(value), Some(ty)))
         }
         "i128" => {
             if normalized.contains('.') {
@@ -788,15 +786,13 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
             }
             let value = parse_u64_literal(&normalized).ok_or(())?;
             let ty = match suffix {
-                "u8" => TypeInt::U8,
-                "u16" => TypeInt::U16,
-                "u32" => TypeInt::U32,
-                _ => TypeInt::U64,
+                "usize" => Ty::path(Path::plain(vec![Ident::new("usize")])),
+                "u8" => Ty::Primitive(TypePrimitive::Int(TypeInt::U8)),
+                "u16" => Ty::Primitive(TypePrimitive::Int(TypeInt::U16)),
+                "u32" => Ty::Primitive(TypePrimitive::Int(TypeInt::U32)),
+                _ => Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
             };
-            Ok((
-                Value::uint(value),
-                Some(Ty::Primitive(TypePrimitive::Int(ty))),
-            ))
+            Ok((Value::uint(value), Some(ty)))
         }
         "u128" => {
             if normalized.contains('.') {

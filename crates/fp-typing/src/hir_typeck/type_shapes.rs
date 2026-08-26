@@ -72,7 +72,7 @@ pub(super) fn ty_contains_error(ty: &Ty) -> bool {
 /// resolution so every one of those erases identically.
 pub(super) fn str_ty() -> Ty {
     Ty {
-        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+        kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
     }
 }
 
@@ -85,7 +85,7 @@ pub(super) fn str_ty() -> Ty {
 ///
 /// Returns more than one key only for the one representational collision
 /// in this compiler's checked-`Ty` system: `str` and `[u8]`-ish slices
-/// both check to the identical `TyKind::Slice(Box::new(Ty::int(I8)))`
+/// both check to the identical `TyKind::Slice(Box::new(Ty::uint(U8)))`
 /// shape (see `primitive_ty`'s own `TypePrimitive::String` arm) — there is
 /// no way to tell them apart once a value has reached this checked `Ty`
 /// form, so both the `"[]"` and `"str"` buckets are checked rather than
@@ -183,7 +183,7 @@ pub(super) fn primitive_path_ty(name: &str) -> Option<Ty> {
         "f64" => Ty::float(ty::FloatTy::F64),
         "f128" => Ty::float(ty::FloatTy::F128),
         "str" => Ty {
-            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
         },
         _ => return None,
     })
@@ -229,7 +229,7 @@ pub(super) fn primitive_ty(primitive: TypePrimitive) -> Ty {
             _ => ty::FloatTy::F64,
         }),
         TypePrimitive::String => Ty {
-            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
         },
         TypePrimitive::List => Ty {
             kind: TyKind::Slice(Box::new(Ty::never())),

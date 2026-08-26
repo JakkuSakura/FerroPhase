@@ -891,17 +891,11 @@ fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
     let token = token_kind(input, TokenKind::Number)?;
     let (value, ty) = parse_numeric_literal_local(&token.lexeme)
         .map_err(|_| ErrMode::Cut(ContextError::new()))?;
-    // TODO(ty-removal): parse-time numeric-suffix type (`ty`) no longer
-    // has anywhere to attach to on `Expr` directly — the removed
-    // `Expr.ty` cache field. The real typechecker (`fp-typing`) re-derives
-    // this literal's type independently during HIR typecheck, and that
-    // resolved type is what `HirToAstLifter` records into the
-    // `resolved_expr_types` side-table backends actually read from, so
-    // dropping this parse-time attachment should be behavior-preserving
-    // for every typechecked pipeline. Left as a TODO in case some
-    // never-typechecked path (e.g. a raw-AST-only tool) relied on it.
-    let _ = ty;
-    Ok(Expr::value(value).with_span(token_span_to_span(&token)))
+    let node = Expr::value(value).with_span(token_span_to_span(&token));
+    if let Some(ty) = ty {
+        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+    }
+    Ok(node)
 }
 
 fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {

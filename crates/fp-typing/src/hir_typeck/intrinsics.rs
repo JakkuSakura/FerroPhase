@@ -24,7 +24,7 @@ impl HirTypeChecker {
             },
             IntrinsicKind::Panic => Ty::never(),
             IntrinsicKind::Format => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
             IntrinsicKind::Slice => match arg_types.first() {
@@ -67,7 +67,7 @@ impl HirTypeChecker {
             | IntrinsicKind::FieldNameAt
             | IntrinsicKind::TypeName
             | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             IntrinsicKind::JsonParse => self.well_known_enum_ty("Value").unwrap_or_else(|| {
                 self.error_ty_with_span("std::json::Value is not declared", span)

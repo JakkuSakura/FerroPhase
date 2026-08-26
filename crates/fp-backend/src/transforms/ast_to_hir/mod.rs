@@ -1423,6 +1423,17 @@ impl AstToHirLowerer {
             }
             program.items.extend(synthetic.drain(..));
         }
+        // The real Rust primitive documentation module declares these
+        // methods, but it is not part of the provider's lowered item graph.
+        // Materialize its two raw-pointer `cast` declarations here, before
+        // rebuilding the normal impl indices, so raw pointers participate in
+        // method lookup through the same shape bucket as every other
+        // non-nominal primitive.
+        for item in self.raw_pointer_cast_impls()? {
+            self.program_def_map
+                .insert(item.def_id.clone(), item.clone());
+            program.items.push(item);
+        }
         program.items.extend(std::mem::take(&mut self.local_dispatch_items));
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.package.def_paths.clone();
@@ -1446,6 +1457,109 @@ impl AstToHirLowerer {
         // for every package this lowerer ever produces.
         program.index_derived_lookups();
         Ok(program)
+    }
+
+    fn raw_pointer_cast_impls(&mut self) -> Result<Vec<hir::Item>> {
+        [false, true]
+            .into_iter()
+            .map(|mutable| {
+                let impl_def_id = self.next_def_id();
+                self.with_owner(impl_def_id.clone(), |this| {
+                    let span = Span::new(this.current_file, 0, 0);
+                    let t_def_id = this.next_def_id();
+                    let u_def_id = this.next_def_id();
+                    let method_def_id = this.next_def_id();
+
+                    let generic_param = |this: &mut Self, name: &str, def_id: hir::DefId| {
+                        hir::GenericParam {
+                            hir_id: this.next_id(),
+                            def_id,
+                            name: hir::Symbol::new(name),
+                            kind: hir::GenericParamKind::Type { default: None },
+                            bounds: Vec::new(),
+                            explicit_bindings: Vec::new(),
+                        }
+                    };
+                    let type_param = |this: &mut Self, name: &str, def_id: hir::DefId| {
+                        hir::TypeExpr::new(
+                            this.next_id(),
+                            hir::TypeExprKind::Path(hir::Path {
+                                segments: vec![hir::PathSegment {
+                                    name: hir::Symbol::new(name),
+                                    args: None,
+                                }],
+                                res: Some(hir::Res::Def(def_id)),
+                            }),
+                            span,
+                        )
+                    };
+                    let pointer = |this: &mut Self, inner: hir::TypeExpr| {
+                        hir::TypeExpr::new(
+                            this.next_id(),
+                            hir::TypeExprKind::Ptr {
+                                inner: Box::new(inner),
+                                mutable,
+                            },
+                            span,
+                        )
+                    };
+
+                    let t_ty = type_param(this, "T", t_def_id.clone());
+                    let u_ty = type_param(this, "U", u_def_id.clone());
+                    let self_ty = pointer(this, t_ty);
+                    let output = pointer(this, u_ty);
+                    let self_param = hir::Param {
+                        hir_id: this.next_id(),
+                        pat: hir::Pat {
+                            hir_id: this.next_id(),
+                            kind: hir::PatKind::Binding {
+                                name: hir::Symbol::new("self"),
+                                mutable: false,
+                            },
+                        },
+                        ty: self_ty.clone(),
+                        is_context: false,
+                        default: None,
+                    };
+                    let method = hir::Function::new(
+                        hir::FunctionSig {
+                            name: hir::Symbol::new("cast"),
+                            inputs: vec![self_param],
+                            output,
+                            generics: hir::Generics {
+                                params: vec![generic_param(this, "U", u_def_id)],
+                                where_clause: None,
+                            },
+                            abi: hir::Abi::Rust,
+                        },
+                        None,
+                        true,
+                        false,
+                    );
+
+                    Ok(hir::Item {
+                        hir_id: this.next_id(),
+                        def_id: impl_def_id,
+                        visibility: hir::Visibility::Private,
+                        kind: hir::ItemKind::Impl(hir::Impl {
+                            generics: hir::Generics {
+                                params: vec![generic_param(this, "T", t_def_id)],
+                                where_clause: None,
+                            },
+                            trait_ty: None,
+                            self_ty,
+                            items: vec![hir::ImplItem {
+                                def_id: method_def_id,
+                                hir_id: this.next_id(),
+                                name: hir::Symbol::new("cast"),
+                                kind: hir::ImplItemKind::Method(method),
+                            }],
+                        }),
+                        span,
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Resolves every `ItemKind::Import` item in `package` as a small

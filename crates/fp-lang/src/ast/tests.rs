@@ -53,6 +53,20 @@ fn parse_expr_ast_parses_basic_binary_ops() {
 }
 
 #[test]
+fn parse_expr_ast_preserves_underscored_numeric_suffix() {
+    let parser = FerroPhaseParser::new();
+    let expr = parser.parse_expr_ast("1_usize").expect("parse usize literal");
+    let ty = fp_core::ast::resolved_expr_type(expr.id()).expect("numeric suffix type");
+    let fp_core::ast::Ty::Expr(path_expr) = ty else {
+        panic!("expected usize expression type");
+    };
+    let fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(ident)) = path_expr.kind() else {
+        panic!("expected usize identifier type");
+    };
+    assert_eq!(ident.name.as_str(), "usize");
+}
+
+#[test]
 fn parse_raw_references_preserves_pointer_kind_and_mutability() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

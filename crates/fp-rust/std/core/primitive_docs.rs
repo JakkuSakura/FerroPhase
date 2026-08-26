@@ -618,6 +618,21 @@ impl () {}
 #[stable(feature = "rust1", since = "1.0.0")]
 mod prim_pointer {}
 
+// These declarations are compiler-provided in rustc. FerroPhase lowers the
+// vendored standard library directly, so keep their signatures in core where
+// normal primitive-impl indexing can resolve raw-pointer method calls.
+impl<T: ?Sized> *const T {
+    pub const fn cast<U>(self) -> *const U {
+        self as *const U
+    }
+}
+
+impl<T: ?Sized> *mut T {
+    pub const fn cast<U>(self) -> *mut U {
+        self as *mut U
+    }
+}
+
 #[rustc_doc_primitive = "array"]
 #[doc(alias = "[]")]
 #[doc(alias = "[T;N]")] // unfortunately, rustdoc doesn't have fuzzy search for aliases

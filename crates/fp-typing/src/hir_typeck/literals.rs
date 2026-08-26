@@ -14,7 +14,7 @@ impl HirTypeChecker {
             hir::Lit::Integer(_) => Ty::int(ty::IntTy::I64),
             hir::Lit::Float(_) => Ty::float(ty::FloatTy::F64),
             hir::Lit::Str(_) => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
             hir::Lit::Null => Ty::never(),
             hir::Lit::Bytes(bytes) => Ty {

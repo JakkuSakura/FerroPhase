@@ -812,6 +812,7 @@ impl HirTypeChecker {
             Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
             None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
         };
+        let expected_output = self.expected_expr_type.clone();
         for item in candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
@@ -843,15 +844,27 @@ impl HirTypeChecker {
             if !matches_receiver {
                 continue;
             }
+            let mut scope = scope.with_self_type(checked_self_ty.clone());
+            let assoc_types = scope
+                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
+                .await?;
+            let mut scope = scope.with_assoc_types(assoc_types);
             for impl_item in &impl_item.items {
                 match &impl_item.kind {
                     hir::ImplItemKind::Method(function) if impl_item.name == *method => {
-                        return Self::method_declared_signature_apply_receiver(
+                        let signature = Self::method_declared_signature_apply_receiver(
                             &mut scope,
                             receiver_ty,
                             function,
                         )
-                        .await;
+                        .await?;
+                        if Self::signature_matches_expected_output(
+                            &scope,
+                            signature.as_ref(),
+                            expected_output.as_ref(),
+                        ) {
+                            return Ok(signature);
+                        }
                     }
                     // An associated const looked up through the same
                     // type-relative path shape (`u8::MAX`, `Layout::
@@ -860,7 +873,14 @@ impl HirTypeChecker {
                     // lookup answers it: the const's own declared type.
                     hir::ImplItemKind::AssocConst(constant) if impl_item.name == *method => {
                         let mut scope = scope.with_self_type(checked_self_ty.clone());
-                        return Ok(Some(scope.check_type_expr(&constant.ty).await?));
+                        let ty = scope.check_type_expr(&constant.ty).await?;
+                        if expected_output.as_ref().is_none_or(|expected| {
+                            scope
+                                .unify_call_types_probe(&ty, expected, &mut HashMap::new())
+                                .is_ok()
+                        }) {
+                            return Ok(Some(ty));
+                        }
                     }
                     _ => {}
                 }
@@ -881,25 +901,42 @@ impl HirTypeChecker {
                             continue;
                         };
                         if trait_item.name == *method && function.body.is_some() {
-                            let mut scope = scope.with_self_type(checked_self_ty.clone());
-                            let assoc_types = scope
-                                .impl_assoc_types(
-                                    &impl_item.items,
-                                    impl_item.self_ty.hir_id.clone(),
-                                )
-                                .await?;
-                            let mut scope = scope.with_assoc_types(assoc_types);
-                            return Self::method_declared_signature_apply_receiver(
+                            let signature = Self::method_declared_signature_apply_receiver(
                                 &mut scope,
                                 receiver_ty,
                                 function,
                             )
-                            .await;
+                            .await?;
+                            if Self::signature_matches_expected_output(
+                                &scope,
+                                signature.as_ref(),
+                                expected_output.as_ref(),
+                            ) {
+                                return Ok(signature);
+                            }
                         }
                     }
                 }
             }
         }
         Ok(None)
+    }
+
+    fn signature_matches_expected_output(
+        scope: &HirTypeChecker,
+        signature: Option<&Ty>,
+        expected: Option<&Ty>,
+    ) -> bool {
+        let (Some(Ty { kind: TyKind::FnPtr(signature) }), Some(expected)) = (signature, expected)
+        else {
+            return true;
+        };
+        scope
+            .unify_call_types_probe(
+                &signature.binder.value.output,
+                expected,
+                &mut HashMap::new(),
+            )
+            .is_ok()
     }
 }
