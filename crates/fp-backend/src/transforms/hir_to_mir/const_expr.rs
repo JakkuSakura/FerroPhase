@@ -527,32 +527,70 @@ impl HirToMirLowerer {
         }
 
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
+            if let hir::ExprKind::MethodCall(receiver, method, args) = &base.kind {
+                if method.as_str().ends_with("::field_type")
+                    || method.as_str() == "field_type"
+                {
+                    if args.len() != 1 {
+                        return None;
+                    }
+                    let field_name = self.const_string_from_expr(&args[0].value)?;
+                    let struct_def_id = self.type_descriptor_struct_def(receiver)?;
+                    let struct_info = self
+                        .mir_package
+                        .borrow()
+                        .struct_defs
+                        .get(&struct_def_id)
+                        .cloned()?;
+                    let field = struct_info
+                        .fields
+                        .iter()
+                        .find(|field| field.name == field_name)?;
+                    let field_ty = self.lower_type_expr(&field.ty);
+                    return self
+                        .reflection_type_name(&field_ty)
+                        .map(|name| self.string_constant(span, name));
+                }
+            }
             return None;
         };
+        if call.kind == IntrinsicKind::FieldType && call.callargs.len() == 2 {
+            let type_descriptor = &call.callargs[0].value;
+            let field_name = match &call.callargs[1].value.kind {
+                hir::ExprKind::Literal(hir::Lit::Str(value)) => value.as_str(),
+                _ => return None,
+            };
+            let struct_def_id = self.type_descriptor_struct_def(type_descriptor)?;
+            let struct_info = self
+                .mir_package
+                .borrow()
+                .struct_defs
+                .get(&struct_def_id)
+                .cloned()?;
+            let field = struct_info
+                .fields
+                .iter()
+                .find(|field| field.name == field_name)?;
+            let field_ty = self.lower_type_expr(&field.ty);
+            return self
+                .reflection_type_name(&field_ty)
+                .map(|name| self.string_constant(span, name));
+        }
         if call.kind != IntrinsicKind::TypeOf || call.callargs.len() != 1 {
             return None;
         }
         let type_arg = &call.callargs[0].value;
 
-        let hir::ExprKind::Path(path) = &type_arg.kind else {
-            return None;
-        };
-        let struct_def_id = if let Some(hir::Res::Def(def_id)) = &path.res {
-            def_id.clone()
-        } else {
-            let name = path.segments.last()?.name.as_str();
-            let mut matches = self
-                .mir_package
-                .borrow()
-                .struct_defs
-                .iter()
-                .filter_map(|(def_id, info)| (info.name == name).then_some(def_id.clone()))
-                .collect::<Vec<_>>();
-            if matches.len() != 1 {
+        if field == "name" {
+            let hir::ExprKind::Path(path) = &type_arg.kind else {
                 return None;
-            }
-            matches.pop()?
-        };
+            };
+            return path
+                .segments
+                .last()
+                .map(|segment| self.string_constant(span, segment.name.as_str().to_string()));
+        }
+        let struct_def_id = self.type_descriptor_struct_def(type_arg)?;
         let struct_info = self
             .mir_package
             .borrow()
@@ -560,6 +598,7 @@ impl HirToMirLowerer {
             .get(&struct_def_id)
             .cloned()?;
         match field {
+            "name" => Some(self.string_constant(span, struct_info.name)),
             "fields" => {
                 let names = struct_info
                     .fields
@@ -580,6 +619,62 @@ impl HirToMirLowerer {
             }
             _ => None,
         }
+    }
+
+    fn type_descriptor_struct_def(&self, type_expr: &hir::Expr) -> Option<hir::DefId> {
+        let hir::ExprKind::IntrinsicCall(call) = &type_expr.kind else {
+            return None;
+        };
+        if call.kind != IntrinsicKind::TypeOf || call.callargs.len() != 1 {
+            return None;
+        }
+        let hir::ExprKind::Path(path) = &call.callargs[0].value.kind else {
+            return None;
+        };
+        if let Some(hir::Res::Def(def_id)) = &path.res {
+            return Some(def_id.clone());
+        }
+        let name = path.segments.last()?.name.as_str();
+        let package = self.mir_package.borrow();
+        let mut matches = package
+            .struct_defs
+            .iter()
+            .filter_map(|(def_id, info)| (info.name == name).then_some(def_id.clone()));
+        let def_id = matches.next()?;
+        matches.next().is_none().then_some(def_id)
+    }
+
+    fn string_constant(&self, span: Span, value: String) -> mir::Constant {
+        mir::Constant {
+            span,
+            ty: self.string_slice_ty(),
+            user_ty: None,
+            literal: mir::ConstantKind::Str(value),
+        }
+    }
+
+    fn reflection_type_name(&self, ty: &Ty) -> Option<String> {
+        let name = match &ty.kind {
+            TyKind::Bool => "bool".to_string(),
+            TyKind::Char => "char".to_string(),
+            TyKind::Int(value) => format!("{value:?}").to_lowercase(),
+            TyKind::Uint(value) => format!("{value:?}").to_lowercase(),
+            TyKind::Float(value) => format!("{value:?}").to_lowercase(),
+            TyKind::Ref(_, inner, _) => return self.reflection_type_name(inner),
+            TyKind::RawPtr(value) => return self.reflection_type_name(&value.ty),
+            TyKind::Array(inner, _) => {
+                return self
+                    .reflection_type_name(inner)
+                    .map(|name| format!("[{name}]"));
+            }
+            TyKind::Slice(inner) => {
+                return self
+                    .reflection_type_name(inner)
+                    .map(|name| format!("[{name}]"));
+            }
+            _ => self.display_type_name(ty)?,
+        };
+        Some(name)
     }
 
     pub(super) fn lower_const_struct_field_from_constant(
