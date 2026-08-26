@@ -883,6 +883,14 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Reference(reference) => {
                     let mut referent = self.check_expr(&reference.expr).await?;
+                    if reference.raw {
+                        return Ok(Ty {
+                            kind: TyKind::RawPtr(ty::TypeAndMut {
+                                ty: Box::new(referent),
+                                mutbl: reference.mutable,
+                            }),
+                        });
+                    }
                     // Re-borrow, don't stack references: `&expr` where
                     // `expr` is already a `&T`/`&mut T` (e.g. `&self.field`
                     // when `field`'s own declared type is `&str`) produces

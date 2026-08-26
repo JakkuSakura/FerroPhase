@@ -437,12 +437,14 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             span: span_from_expr(&inner_value),
             referee: Box::new(inner_value),
             mutable: is_mut_ref.then_some(true),
+            raw: false,
         })
         .into();
         return Ok(ExprKind::Reference(ExprReference {
             span: span_from_expr(&inner),
             referee: Box::new(inner),
             mutable: None,
+            raw: false,
         })
         .into());
     }
@@ -451,15 +453,9 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         if matches!(op, "!" | "-" | "*" | "&") {
             let op = op.to_string();
             skip_symbol(input, &op)?;
-            // `&raw const expr` / `&raw mut expr` — raw-pointer-producing
-            // address-of syntax. `raw` isn't a lexer keyword (a plain
-            // `Ident`), so it must be checked positionally rather than via
-            // `skip_keyword`. This checker has no separate raw-pointer
-            // reference node, and the existing `*const`/`*mut` coercion
-            // already used at cast/annotation sites accepts an ordinary
-            // reference in its place, so `&raw const`/`&raw mut` lower to
-            // the same `ExprReference` an ordinary `&`/`&mut` would.
-            if op == "&"
+            // `raw` is an identifier rather than a lexer keyword, so raw
+            // address-of syntax must be recognized positionally.
+            let is_raw_ref = op == "&"
                 && matches!(
                     input.first(),
                     Some(token) if token.kind == TokenKind::Ident && token.lexeme == "raw"
@@ -467,8 +463,8 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                 && matches!(
                     input.get(1).map(|t| &t.kind),
                     Some(TokenKind::Keyword(Keyword::Const | Keyword::Mut))
-                )
-            {
+                );
+            if is_raw_ref {
                 *input = &input[1..]; // `raw`
             }
             let is_mut_ref = op == "&" && skip_keyword(input, Keyword::Mut).is_ok();
@@ -479,6 +475,7 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                     span: span_from_expr(&value),
                     referee: Box::new(value),
                     mutable: is_mut_ref.then_some(true),
+                    raw: is_raw_ref,
                 })
                 .into());
             }
@@ -560,12 +557,14 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
             span: span_from_expr(&inner_value),
             referee: Box::new(inner_value),
             mutable: is_mut_ref.then_some(true),
+            raw: false,
         })
         .into();
         return Ok(ExprKind::Reference(ExprReference {
             span: span_from_expr(&inner),
             referee: Box::new(inner),
             mutable: None,
+            raw: false,
         })
         .into());
     }
@@ -574,7 +573,7 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
         if matches!(op, "!" | "-" | "*" | "&") {
             let op = op.to_string();
             skip_symbol(input, &op)?;
-            if op == "&"
+            let is_raw_ref = op == "&"
                 && matches!(
                     input.first(),
                     Some(token) if token.kind == TokenKind::Ident && token.lexeme == "raw"
@@ -582,8 +581,8 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
                 && matches!(
                     input.get(1).map(|t| &t.kind),
                     Some(TokenKind::Keyword(Keyword::Const | Keyword::Mut))
-                )
-            {
+                );
+            if is_raw_ref {
                 *input = &input[1..]; // `raw`
             }
             let is_mut_ref = op == "&" && skip_keyword(input, Keyword::Mut).is_ok();
@@ -594,6 +593,7 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
                     span: span_from_expr(&value),
                     referee: Box::new(value),
                     mutable: is_mut_ref.then_some(true),
+                    raw: is_raw_ref,
                 })
                 .into());
             }

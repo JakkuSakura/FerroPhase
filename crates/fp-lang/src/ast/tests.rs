@@ -53,6 +53,24 @@ fn parse_expr_ast_parses_basic_binary_ops() {
 }
 
 #[test]
+fn parse_raw_references_preserves_pointer_kind_and_mutability() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let raw_const = parser.parse_expr_ast("&raw const value").unwrap();
+    let ExprKind::Reference(reference) = raw_const.kind() else {
+        panic!("expected raw const reference");
+    };
+    assert!(reference.raw);
+    assert_eq!(reference.mutable, None);
+    let raw_mut = parser.parse_expr_ast("&raw mut value").unwrap();
+    let ExprKind::Reference(reference) = raw_mut.kind() else {
+        panic!("expected raw mut reference");
+    };
+    assert!(reference.raw);
+    assert_eq!(reference.mutable, Some(true));
+}
+
+#[test]
 fn nested_quote_splice_and_control_flow() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

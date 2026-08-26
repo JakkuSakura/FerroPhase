@@ -489,6 +489,7 @@ pub struct TryCatch {
 pub struct ExprReference {
     pub hir_id: HirId,
     pub mutable: crate::hir::ty::Mutability,
+    pub raw: bool,
     pub expr: Box<Expr>,
 }
 

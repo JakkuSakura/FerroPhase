@@ -159,16 +159,7 @@ impl AstToHirLowerer {
                     .collect::<Result<Vec<_>>>()?;
                 hir::ExprKind::Tuple(values)
             }
-            ExprKind::Range(_range) => {
-                self.add_error(
-                    Diagnostic::warning(
-                        "range expressions are only supported in for loops and slicing; treating as empty array"
-                            .to_string(),
-                    )
-                    .with_span(expr_span),
-                );
-                hir::ExprKind::Array(Vec::new())
-            }
+            ExprKind::Range(range) => self.transform_range_to_hir(range)?,
             ExprKind::Index(index_expr) => {
                 if let ast::ExprKind::Range(range) = index_expr.index.kind() {
                     if range.step.is_some() {
@@ -409,6 +400,7 @@ impl AstToHirLowerer {
                 hir::ExprKind::Reference(hir::ExprReference {
                     hir_id: self.next_id(),
                     mutable,
+                    raw: reference.raw,
                     expr: Box::new(inner),
                 })
             }
@@ -1062,6 +1054,38 @@ impl AstToHirLowerer {
             stmts: vec![local_stmt],
             expr: Some(Box::new(struct_expr)),
         }))
+    }
+
+    fn transform_range_to_hir(&mut self, range: &ast::ExprRange) -> Result<hir::ExprKind> {
+        if range.step.is_some() {
+            return Ok(self.error_placeholder_expr_kind(
+                "range steps are not supported outside for loops and slicing".to_string(),
+                range.span(),
+            ));
+        }
+
+        let (name, fields) = match (&range.start, &range.end, range.limit.clone()) {
+            (None, None, ast::ExprRangeLimit::Exclusive) => ("RangeFull", Vec::new()),
+            (Some(start), None, ast::ExprRangeLimit::Exclusive) => ("RangeFrom", vec![("start", self.transform_expr_to_hir(start)?)]),
+            (None, Some(end), ast::ExprRangeLimit::Exclusive) => ("RangeTo", vec![("end", self.transform_expr_to_hir(end)?)]),
+            (None, Some(end), ast::ExprRangeLimit::Inclusive) => ("RangeToInclusive", vec![("end", self.transform_expr_to_hir(end)?)]),
+            (Some(start), Some(end), ast::ExprRangeLimit::Exclusive) => ("Range", vec![("start", self.transform_expr_to_hir(start)?), ("end", self.transform_expr_to_hir(end)?)]),
+            (Some(start), Some(end), ast::ExprRangeLimit::Inclusive) => ("RangeInclusive", vec![("start", self.transform_expr_to_hir(start)?), ("end", self.transform_expr_to_hir(end)?)]),
+            (None, None, ast::ExprRangeLimit::Inclusive) | (Some(_), None, ast::ExprRangeLimit::Inclusive) => return Err(eyre::eyre!("inclusive range requires an end bound").into()),
+        };
+        let path = self.name_to_hir_path_with_scope(
+            &ast::Name::path(ast::Path {
+                prefix: PathPrefix::Crate,
+                segments: vec![ast::Ident::new("ops"), ast::Ident::new(name)],
+            }),
+            PathResolutionScope::Value,
+        )?;
+        let fields = fields.into_iter().map(|(name, expr)| hir::StructExprField {
+            hir_id: self.next_id(),
+            name: hir::Symbol::new(name),
+            expr,
+        }).collect();
+        Ok(hir::ExprKind::Struct(path, fields))
     }
 
     /// Transform a block node to HIR without wrapping it in an expression.

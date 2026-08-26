@@ -523,6 +523,7 @@ impl<'a> HirToAstLifter<'a> {
                 span: expr.span,
                 referee: Box::new(self.lift_expr(&reference.expr)?),
                 mutable: Some(matches!(reference.mutable, hir::ty::Mutability::Mut)),
+                raw: reference.raw,
             })),
             hir::ExprKind::Call(callee, args) => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                 span: expr.span,

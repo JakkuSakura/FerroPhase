@@ -1398,6 +1398,8 @@ common_struct! {
         pub span: Span,
         pub referee: BExpr,
         pub mutable: Option<bool>,
+        #[serde(default)]
+        pub raw: bool,
     }
 }
 common_struct! {

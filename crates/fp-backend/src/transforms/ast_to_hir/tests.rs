@@ -556,6 +556,44 @@ fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
 }
 
 #[test]
+fn transform_range_value_to_standard_range_struct() -> Result<()> {
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let range = range_expr(None, ast::ExprRangeLimit::Exclusive, Some(ast::Expr::ident(ident("end"))));
+    let lowered = generator.transform_expr_to_hir(&range)?;
+    let hir::ExprKind::Struct(path, fields) = lowered.kind else {
+        return Err(crate::error::optimization_error("expected RangeTo struct literal"));
+    };
+    assert_eq!(path.segments.last().unwrap().name.as_str(), "RangeTo");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].name.as_str(), "end");
+    Ok(())
+}
+
+#[test]
+fn transform_raw_reference_preserves_pointer_kind() -> Result<()> {
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let raw_ref = ast::Expr::from(ast::ExprKind::Reference(ast::ExprReference {
+        span: Span::null(),
+        referee: Box::new(ast::Expr::ident(ident("value"))),
+        mutable: None,
+        raw: true,
+    }));
+    let lowered = generator.transform_expr_to_hir(&raw_ref)?;
+    let hir::ExprKind::Reference(reference) = lowered.kind else {
+        return Err(crate::error::optimization_error("expected HIR reference"));
+    };
+    assert!(reference.raw);
+    assert_eq!(reference.mutable, hir::ty::Mutability::Not);
+    Ok(())
+}
+
+#[test]
 fn transform_await_expression_to_hir_passthrough() -> Result<()> {
     let mut generator = AstToHirLowerer::new(
         std::rc::Rc::new(hir::HirProgram::new()),

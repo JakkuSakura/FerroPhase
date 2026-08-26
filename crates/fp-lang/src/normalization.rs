@@ -188,6 +188,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     span: macro_expr.span(),
                     referee: Box::new(struct_lit),
                     mutable: None,
+                    raw: false,
                 }));
                 let invoke = ExprInvoke {
                     target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
