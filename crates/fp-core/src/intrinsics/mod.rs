@@ -10,6 +10,7 @@ use crate::ast::{
     ItemDeclFunction, ItemKind, Ty, TySlot, TypeFunction, Value,
 };
 use crate::error::Result;
+use std::collections::HashMap;
 
 /// Extracts `key`'s string value from a call-style `#[op(key = "value")]`
 /// attribute (`#[op(class = "Foo")]`, `#[op(method = "bar")]`,
@@ -69,6 +70,11 @@ pub struct NoopIntrinsicNormalizer;
 
 /// Strategy interface for language-specific intrinsic normalisation.
 pub trait IntrinsicNormalizer {
+    /// Supply macro_rules definitions collected by the frontend so expression
+    /// expansion observes the same lexical macro environment as item
+    /// expansion.
+    fn set_macro_rules_defs(&mut self, _defs: HashMap<String, crate::ast::MacroRulesDef>) {}
+
     /// Normalize one expression root before a downstream lowering pass handles
     /// it. Child expressions are owned by that lowering pass, so this method
     /// deliberately does not walk the tree.

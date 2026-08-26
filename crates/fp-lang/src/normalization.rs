@@ -56,6 +56,10 @@ impl FerroIntrinsicNormalizer {
 }
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
+    fn set_macro_rules_defs(&mut self, defs: HashMap<String, MacroRulesDef>) {
+        self.macro_rules_defs = Arc::new(defs);
+    }
+
     fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         // Fall through to default dispatch
         let kind = expr.kind().clone();

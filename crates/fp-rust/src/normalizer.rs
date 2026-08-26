@@ -45,6 +45,10 @@ impl RustIntrinsicNormalizer {
 }
 
 impl IntrinsicNormalizer for RustIntrinsicNormalizer {
+    fn set_macro_rules_defs(&mut self, defs: HashMap<String, MacroRulesDef>) {
+        self.inner.set_macro_rules_defs(defs);
+    }
+
     fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         self.inner.normalize_expr(expr)
     }

@@ -2,16 +2,16 @@ use super::*;
 
 impl AstToHirLowerer {
     pub(super) fn expand_item_macros(
-        &self,
+        &mut self,
         items: Vec<fp_core::ast::package::PackageItem>,
     ) -> Vec<fp_core::ast::package::PackageItem> {
-        let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
-            return items;
-        };
         let mut defs: HashMap<String, fp_core::ast::MacroRulesDef> = HashMap::new();
         let mut depths: HashMap<String, usize> = HashMap::new();
-        items
-            .into_iter()
+        let expanded = {
+            let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
+                return items;
+            };
+            items.into_iter()
             .flat_map(|package_item| {
                 let module_path = package_item.module_path;
                 let depth = module_path.segments.len();
@@ -30,6 +30,11 @@ impl AstToHirLowerer {
                 .collect::<Vec<_>>()
             })
             .collect()
+        };
+        if let Some(normalizer) = self.intrinsic_normalizer.as_mut() {
+            normalizer.set_macro_rules_defs(defs);
+        }
+        expanded
     }
 
     fn expand_item_macros_in_item(
