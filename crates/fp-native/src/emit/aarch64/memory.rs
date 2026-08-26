@@ -750,6 +750,45 @@ pub(super) fn emit_store(
             }
             return Ok(());
         }
+        if let AsmValue::Constant(AsmConstant::GlobalRef(name, _, indices)) = value {
+            let addend = indices.iter().map(|index| *index as i64).sum();
+            emit_load_symbol_addr(asm, Reg::X16, name.as_str(), addend)?;
+            match address {
+                AsmValue::StackSlot(id) => {
+                    let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
+                    if base != Reg::X31 {
+                        return Err(Error::from("unsupported aggregate store into regfile slot"));
+                    }
+                    if size != 16 {
+                        return Err(Error::from("unsupported global aggregate store size"));
+                    }
+                    emit_load_from_reg(asm, Reg::X17, Reg::X16);
+                    emit_store_to_sp(asm, Reg::X17, dst_offset);
+                    add_immediate_offset(asm, Reg::X16, 8);
+                    emit_load_from_reg(asm, Reg::X17, Reg::X16);
+                    emit_store_to_sp(asm, Reg::X17, dst_offset + 8);
+                }
+                AsmValue::Register(_) | AsmValue::Local(_) => {
+                    let dst_offset = match address {
+                        AsmValue::Register(id) => vreg_offset(layout, *id)?,
+                        AsmValue::Local(id) => local_offset(layout, *id)?,
+                        _ => return Err(Error::from("unsupported store address for aarch64")),
+                    };
+                    if size != 16 {
+                        return Err(Error::from("unsupported global aggregate store size"));
+                    }
+                    emit_load_from_sp(asm, Reg::X9, dst_offset);
+                    emit_load_from_reg(asm, Reg::X17, Reg::X16);
+                    emit_store_to_reg(asm, Reg::X17, Reg::X9);
+                    add_immediate_offset(asm, Reg::X16, 8);
+                    add_immediate_offset(asm, Reg::X9, 8);
+                    emit_load_from_reg(asm, Reg::X17, Reg::X16);
+                    emit_store_to_reg(asm, Reg::X17, Reg::X9);
+                }
+                _ => return Err(Error::from("unsupported store address for aarch64")),
+            }
+            return Ok(());
+        }
         let src_offset = match value {
             AsmValue::Register(id) => agg_offset(layout, *id)?,
             AsmValue::Local(id) => local_offset(layout, *id)?,

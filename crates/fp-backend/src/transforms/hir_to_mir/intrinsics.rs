@@ -303,6 +303,44 @@ impl<'a> BodyBuilder<'a> {
                     },
                 ))
             }
+            IntrinsicKind::HasMethod => {
+                if args.len() != 2 {
+                    self.lowering
+                        .emit_error(span, "hasmethod! intrinsic expects a type and method name");
+                    return None;
+                }
+                let struct_ref = match self.resolve_struct_ref(arg_values[0]) {
+                    Some(value) => value,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "hasmethod! only supports struct types");
+                        return None;
+                    }
+                };
+                let method_name = match self.expect_string_literal(arg_values[1], span) {
+                    Some(name) => name,
+                    None => return None,
+                };
+                let struct_name = match self.lowering.struct_def(&struct_ref.def_id) {
+                    Some(info) => info.name.clone(),
+                    None => {
+                        self.lowering
+                            .emit_error(span, "struct metadata is unavailable during MIR lowering");
+                        return None;
+                    }
+                };
+                let has_method = self
+                    .lowering
+                    .mir_package
+                    .borrow()
+                    .struct_methods
+                    .get(&struct_name)
+                    .is_some_and(|methods| methods.contains_key(&method_name));
+                Some((
+                    mir::ConstantKind::Bool(has_method),
+                    Ty { kind: TyKind::Bool },
+                ))
+            }
             _ => None,
         }
     }

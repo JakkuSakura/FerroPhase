@@ -154,7 +154,7 @@ impl HirToMirLowerer {
                     .hir_program
                     .const_value(def_id.clone())
                     .or_else(|| self.hir_program.const_block_value(def_id.clone()))?;
-                self.const_block_value_to_mir_constant(&value, konst.body.value.span)
+                self.typed_const_value_to_mir_constant(&value, &ty, konst.body.value.span)
             });
         let Some(init_constant) = folded else {
             // Not the same `key` as the foldable path below — this const

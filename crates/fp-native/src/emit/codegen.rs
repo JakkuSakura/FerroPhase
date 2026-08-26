@@ -82,6 +82,13 @@ pub fn emit_text_from_selection(
 
 pub fn lower_program_for_native(lir_program: &LirBlob) -> Result<LirBlob> {
     let mut lir_program = lir_program.clone();
+    // Executable comptime entries exist only to obtain a value during
+    // compilation. They are never runtime entry points; after resolution a
+    // relower can leave an obsolete helper in an earlier unit, whose body
+    // may still refer to the placeholder global it replaced.
+    lir_program
+        .functions
+        .retain(|function| !function.name.as_str().starts_with("__fp_comptime_const_"));
     lower_phi_in_program(&mut lir_program)?;
     crate::jit::validate_native_program(&lir_program)?;
     Ok(lir_program)

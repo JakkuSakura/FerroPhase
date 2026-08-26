@@ -397,6 +397,13 @@ async fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(session.driver())?;
+    if target_name == "native" {
+        for package_id in &packages {
+            executor
+                .run(session.driver().lower_package_native_lir(package_id))
+                .map_err(|error| CliError::Compilation(error.to_string()))?;
+        }
+    }
     if matches!(target_name, "bytecode" | "text-bytecode") {
         session.driver().pipeline = fp_compiler::PipelineMode::Native;
         session

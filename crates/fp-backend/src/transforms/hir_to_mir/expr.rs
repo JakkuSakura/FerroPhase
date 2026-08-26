@@ -901,6 +901,21 @@ impl HirToMirLowerer {
         Some(constant)
     }
 
+    /// Converts a comptime result using the source const's declared type.
+    /// Aggregate runtime values, including the `{ptr, len}` representation
+    /// of `&str`, cannot be reconstructed from their shape alone.
+    pub(super) fn typed_const_value_to_mir_constant(
+        &self,
+        value: &Value,
+        ty: &Ty,
+        span: Span,
+    ) -> Option<mir::Constant> {
+        let mut constant = crate::transforms::lir_to_mir::LirToMir::new(Vec::new())
+            .value_to_mir_constant(value, ty)?;
+        constant.span = span;
+        Some(constant)
+    }
+
     pub(super) fn const_key(&self, name: &str, span: Span) -> String {
         let file = fp_core::source_map::source_map()
             .file(span.file)

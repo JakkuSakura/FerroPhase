@@ -195,6 +195,14 @@ impl CompilerState {
             .push(blob);
     }
 
+    /// Discards a package's previous LIR before a full re-lowering pass.
+    /// A resolved comptime entry can disappear entirely (it becomes a
+    /// static initializer), so append-only storage would retain an orphaned
+    /// synthetic function for native emission.
+    pub fn clear_lir_package(&mut self, package_id: &PackageId) {
+        Rc::make_mut(&mut self.lir_program).packages.remove(package_id);
+    }
+
     /// `package_id`'s own LIR, every one of its blobs (see `lir::LirPackage`'s
     /// own doc comment) flattened into one. Empty (not an error) if the
     /// package hasn't produced any LIR yet.

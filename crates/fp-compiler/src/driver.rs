@@ -126,6 +126,27 @@ impl CompilerDriver {
         self.compile_package(package_id).await
     }
 
+    /// Lowers one already typechecked workspace member through the native
+    /// MIR/LIR path. Workspace compilation initially runs in transpile mode
+    /// so vendored std packages are not forced to lower every public API;
+    /// native backends then request this only for the package they emit.
+    pub async fn lower_package_native_lir(
+        &mut self,
+        package_id: &PackageId,
+    ) -> Result<(), CompilerDriverError> {
+        let package = self
+            .state
+            .borrow()
+            .workspace
+            .compiled_package(package_id)
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        let previous_pipeline = self.pipeline;
+        self.pipeline = PipelineMode::Native;
+        let result = self.compile_items_to_lir_units(&package).await;
+        self.pipeline = previous_pipeline;
+        result
+    }
+
     pub async fn compile_bytecode(
         &mut self,
         package_id: &PackageId,
@@ -159,7 +180,7 @@ impl CompilerDriver {
     }
 
     pub async fn evaluate_package_comptime_constants(
-        &self,
+        &mut self,
         package_id: &PackageId,
     ) -> Result<(), CompilerDriverError> {
         let (mir, entries) = {
@@ -190,6 +211,7 @@ impl CompilerDriver {
             } else {
                 None
             };
+        let mut resolved_entries = Vec::with_capacity(entries.len());
         for (def_id, function_name) in entries {
             let value = if let Some(bytecode) = bytecode.clone() {
                 fp_stackcode::interpret_const(bytecode, &function_name)
@@ -208,8 +230,28 @@ impl CompilerDriver {
                 .clone();
             let hir_package = self.state.borrow().hir_package_rc(hir_package_id)?;
             hir_package.record_const_value(def_id.clone(), value.clone());
-            hir_package.record_const_block_value(def_id, value);
+            hir_package.record_const_block_value(def_id.clone(), value);
+            resolved_entries.push(def_id);
         }
+        // The first lowering represents executable constants as entry points so
+        // they can be evaluated. Re-lower the package after recording their
+        // values to publish ordinary LIR globals for native code generation.
+        {
+            let mut state = self.state.borrow_mut();
+            let mir_package = state.mir_package_rc(package_id);
+            mir_package
+                .borrow_mut()
+                .executable_consts
+                .retain(|def_id, _| !resolved_entries.contains(def_id));
+            state.clear_lir_package(package_id);
+        }
+        let package = self
+            .state
+            .borrow()
+            .workspace
+            .compiled_package(package_id)
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        self.compile_items_to_lir_units(&package).await?;
         Ok(())
     }
 
@@ -553,6 +595,20 @@ impl CompilerDriver {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
         let package_source = package.borrow().clone();
+        // Re-lowering after comptime evaluation rebuilds HIR from the same
+        // source. Preserve values recorded on the previous package so the
+        // new MIR pass can replace executable entries with static data.
+        let prior_const_values = self
+            .state
+            .borrow()
+            .hir_program()
+            .package(&hir_package_id)
+            .map(|hir_package| {
+                (
+                    hir_package.const_values(),
+                    hir_package.const_block_values(),
+                )
+            });
         // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`,
         // real vendored std's `int_impl!`/`uint_impl!`, ...) are expanded by
         // `AstToHirLowerer`'s own single-pass item walker
@@ -594,6 +650,15 @@ impl CompilerDriver {
                     "package HIR type checking failed: {error}"
                 ))
             })?;
+        if let Some((const_values, const_block_values)) = prior_const_values {
+            let hir_package = self.state.borrow().hir_package_rc(hir_package_id.clone())?;
+            for (def_id, value) in const_values {
+                hir_package.record_const_value(def_id, value);
+            }
+            for (def_id, value) in const_block_values {
+                hir_package.record_const_block_value(def_id, value);
+            }
+        }
 
         // Transpile: lift typed HIR back to AST — this is what the Kotlin
         // backend actually reads, and doesn't depend on anything below
@@ -621,6 +686,9 @@ impl CompilerDriver {
         // needs. A private item unreached from any root is genuinely dead
         // code and no longer gets a MIR unit at all.
         for item in &current_package.items {
+            if item.def_id.package_id != hir_package_id {
+                continue;
+            }
             if !Self::is_lowering_root(item) {
                 continue;
             }

@@ -3272,25 +3272,27 @@ impl<'a> BodyBuilder<'a> {
                             });
                         }
                     }
-                    if let Some((name, ty)) = self
-                        .lowering
-                        .mir_package
-                        .borrow()
-                        .executable_consts
-                        .get(def_id)
-                        .cloned()
-                    {
-                        return Ok(OperandInfo {
-                            operand: mir::Operand::Constant(mir::Constant {
-                                span: expr.span,
+                    if !self.const_items.contains_key(def_id) {
+                        if let Some((name, ty)) = self
+                            .lowering
+                            .mir_package
+                            .borrow()
+                            .executable_consts
+                            .get(def_id)
+                            .cloned()
+                        {
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    ty: ty.clone(),
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Global(mir::Path::from_symbol(
+                                        name.clone(),
+                                    )),
+                                }),
                                 ty: ty.clone(),
-                                user_ty: None,
-                                literal: mir::ConstantKind::Global(mir::Path::from_symbol(
-                                    name.clone(),
-                                )),
-                            }),
-                            ty: ty.clone(),
-                        });
+                            });
+                        }
                     }
                     let const_def_item =
                         self.lowering
@@ -3331,25 +3333,27 @@ impl<'a> BodyBuilder<'a> {
                         // code, which would silently bypass the real
                         // global this const's own top-level declaration
                         // needs to exist as.
-                        if let Some((name, ty)) = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .executable_consts
-                            .get(def_id)
-                            .cloned()
-                        {
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::Constant(mir::Constant {
-                                    span: expr.span,
+                        if !self.const_items.contains_key(def_id) {
+                            if let Some((name, ty)) = self
+                                .lowering
+                                .mir_package
+                                .borrow()
+                                .executable_consts
+                                .get(def_id)
+                                .cloned()
+                            {
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::Constant(mir::Constant {
+                                        span: expr.span,
+                                        ty: ty.clone(),
+                                        user_ty: None,
+                                        literal: mir::ConstantKind::Global(mir::Path::from_symbol(
+                                            name.clone(),
+                                        )),
+                                    }),
                                     ty: ty.clone(),
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::Global(mir::Path::from_symbol(
-                                        name.clone(),
-                                    )),
-                                }),
-                                ty: ty.clone(),
-                            });
+                                });
+                            }
                         }
                         let ty = self.lower_type_expr(&konst.ty);
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
@@ -3364,6 +3368,15 @@ impl<'a> BodyBuilder<'a> {
                         });
                     } else if let Some(konst) = self.const_items.get(def_id).cloned() {
                         let ty = self.lower_type_expr(&konst.ty);
+                        if let Some(constant) = self
+                            .lowering
+                            .lower_const_expr(&konst.body.value, Some(&ty), None)
+                        {
+                            return Ok(OperandInfo {
+                                ty: constant.ty.clone(),
+                                operand: mir::Operand::Constant(constant),
+                            });
+                        }
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
                         let place = mir::Place::from_local(local_id);
                         self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;

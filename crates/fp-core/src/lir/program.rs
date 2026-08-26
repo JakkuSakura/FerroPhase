@@ -158,11 +158,10 @@ impl LirProgram {
     /// site instead (it needs HIR data this type doesn't have — see
     /// `crate::ast::package::resolve_entrypoint_def_id`/`rename_lir_function`).
     /// A package re-lowered more than once (see `LirPackage`'s own doc
-    /// comment) has every one of its own blobs flattened in, in push
-    /// order, so a later blob's same-named function/global still ends up
-    /// last in the combined `LirBlob` — this is purely an output artifact
-    /// for a `TargetBackend`, not a lookup table, so it doesn't need
-    /// `LirProgram::find_function`'s own latest-wins search.
+    /// comment) contributes only the latest version of each function and
+    /// global. Backends lower the returned blob as a flat program rather
+    /// than querying it with `find_function`, so retaining stale duplicate
+    /// definitions would otherwise let code generation pick an older body.
     pub fn merged_blob_for_package(&self, id: &PackageId) -> crate::error::Result<super::LirBlob> {
         let package = self.packages.get(id).ok_or_else(|| {
             crate::error::Error::from(format!(
@@ -204,8 +203,25 @@ impl LirProgram {
                     "cannot merge LIR blobs with different data layouts",
                 ));
             }
-            combined.functions.extend(blob.functions.iter().cloned());
-            combined.globals.extend(blob.globals.iter().cloned());
+            for function in &blob.functions {
+                if let Some(def_id) = &function.def_id {
+                    combined
+                        .functions
+                        .retain(|existing| {
+                            existing.def_id.as_ref() != Some(def_id)
+                                && existing.name != function.name
+                        });
+                } else {
+                    combined
+                        .functions
+                        .retain(|existing| existing.name != function.name);
+                }
+                combined.functions.push(function.clone());
+            }
+            for global in &blob.globals {
+                combined.globals.retain(|existing| existing.name != global.name);
+                combined.globals.push(global.clone());
+            }
             combined
                 .type_definitions
                 .extend(blob.type_definitions.iter().cloned());

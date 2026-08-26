@@ -67,7 +67,11 @@ fn collect_external_symbols(plan: &EmitPlan, stub_size: u64) -> Vec<ExternSymbol
     let mut seen = HashMap::new();
     let mut externs = Vec::new();
     for reloc in &plan.relocs {
-        if reloc.kind != RelocKind::CallRel32 {
+        let needs_dynamic_pointer = reloc.kind == RelocKind::Aarch64GotLoad
+            && !plan.symbols.contains_key(&reloc.symbol)
+            && !plan.data_symbols.contains_key(&reloc.symbol)
+            && !plan.rodata_symbols.contains_key(&reloc.symbol);
+        if reloc.kind != RelocKind::CallRel32 && !needs_dynamic_pointer {
             continue;
         }
         if seen.contains_key(&reloc.symbol) {
@@ -805,9 +809,48 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
             }
             RelocKind::Aarch64GotLoad => {
-                return Err(Error::from(
-                    "Aarch64GotLoad relocations are not supported by the internal Mach-O linker",
-                ));
+                if !matches!(arch, TargetArch::Aarch64) {
+                    return Err(Error::from("AArch64 relocation on non-AArch64 target"));
+                }
+                if reloc.addend != 0 {
+                    return Err(Error::from("AArch64 GOT relocation with addend"));
+                }
+                let target = externs
+                    .iter()
+                    .find(|sym| sym.original == reloc.symbol)
+                    .ok_or_else(|| Error::from("missing external GOT symbol"))?;
+                let got_addr = ptr_addr + target.ptr_offset;
+                let adrp_addr = vmaddr_text + (text_offset - text_fileoff) + reloc.offset;
+                let pc_page = adrp_addr & !0xfff;
+                let got_page = got_addr & !0xfff;
+                let delta_pages = (got_page as i64 - pc_page as i64) >> 12;
+                if delta_pages < -(1 << 20) || delta_pages > (1 << 20) - 1 {
+                    return Err(Error::from("GOT page target out of range"));
+                }
+                let imm = delta_pages as u32;
+                let adrp_offset = text_offset as usize + reloc.offset as usize;
+                let mut adrp = u32::from_le_bytes(
+                    out[adrp_offset..adrp_offset + 4]
+                        .try_into()
+                        .map_err(|e| Error::from(format!("GOT ADRP relocation out of range: {e}")))?,
+                );
+                adrp &= !((0x3 << 29) | (0x7ffff << 5));
+                adrp |= ((imm & 0x3) << 29) | (((imm >> 2) & 0x7ffff) << 5);
+                out[adrp_offset..adrp_offset + 4].copy_from_slice(&adrp.to_le_bytes());
+
+                let ldr_offset = adrp_offset + 4;
+                let pageoff = (got_addr & 0xfff) as u32;
+                if pageoff % 8 != 0 {
+                    return Err(Error::from("unaligned AArch64 GOT entry"));
+                }
+                let mut ldr = u32::from_le_bytes(
+                    out[ldr_offset..ldr_offset + 4]
+                        .try_into()
+                        .map_err(|e| Error::from(format!("GOT LDR relocation out of range: {e}")))?,
+                );
+                ldr &= !(0xfff << 10);
+                ldr |= (pageoff / 8) << 10;
+                out[ldr_offset..ldr_offset + 4].copy_from_slice(&ldr.to_le_bytes());
             }
             RelocKind::CallRel32 => {
                 let target = externs
