@@ -17,5 +17,5 @@ make_adder!(add_two, 2);
 fn main() {
     let sum = add!(10, 32);
     let v = add_two(5);
-    print("sum =", sum, ", add_two(5) =", v);
+    println("sum = {}, add_two(5) = {}", sum, v);
 }

@@ -16,10 +16,10 @@ for f in examples/*.fp; do
   out_dir="examples/generated"
   mkdir -p "${out_dir}"
   fbc="${out_dir}/${name}.fbc"
-  cargo run --bin fp --release -- compile --emitter bytecode --save-intermediates --output "${fbc}" "${f}"
+  cargo run --bin fp --release -- compile --target bytecode --package "${name}" --save-intermediates --output "${fbc}" "${f}"
   if [[ ! -f "${fbc}" ]]; then
     echo "Missing bytecode output: ${fbc}"
     exit 1
   fi
-  cargo run --bin fp --release -- interpret "${fbc}"
+  cargo run --bin fp --release -- interpret --package "${name}" "${fbc}"
  done
