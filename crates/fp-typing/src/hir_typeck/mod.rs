@@ -311,6 +311,54 @@ impl HirTypeChecker {
                         .generic_param_bindings
                         .insert(parameter.name.clone(), parameter.explicit_bindings.clone());
                 }
+                for (projection, bounds) in &parameter.projection_bounds {
+                    child
+                        .generic_param_bounds
+                        .entry(projection.clone())
+                        .or_default()
+                        .extend(bounds.clone());
+                }
+                let mut trait_ids = Vec::new();
+                let mut pending_bounds: Vec<&hir::TypeExpr> = parameter.bounds.iter().collect();
+                while let Some(bound) = pending_bounds.pop() {
+                    if let hir::TypeExprKind::TypeBinaryOp(op) = &bound.kind
+                        && matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Add)
+                    {
+                        pending_bounds.push(&op.lhs);
+                        pending_bounds.push(&op.rhs);
+                    } else if let hir::TypeExprKind::Path(path) = &bound.kind
+                        && let Some(hir::Res::Def(trait_id)) = &path.res
+                    {
+                        trait_ids.push(trait_id.clone());
+                    }
+                }
+                let mut seen = HashSet::new();
+                while let Some(trait_id) = trait_ids.pop() {
+                    if !seen.insert(trait_id.clone()) {
+                        continue;
+                    }
+                    let Some(item) = child.program.item(trait_id).cloned() else {
+                        continue;
+                    };
+                    let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                        continue;
+                    };
+                    for trait_item in &trait_def.items {
+                        let hir::TraitItemKind::AssocType(assoc_type) = &trait_item.kind else {
+                            continue;
+                        };
+                        child
+                            .generic_param_bounds
+                            .entry(assoc_type.name.clone())
+                            .or_default()
+                            .extend(assoc_type.bounds.clone());
+                    }
+                    for supertrait in &trait_def.supertraits {
+                        if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                            trait_ids.push(supertrait_id.clone());
+                        }
+                    }
+                }
             }
         }
         child
@@ -3979,7 +4027,15 @@ impl HirTypeChecker {
                 continue;
             };
             let mut seen = HashSet::new();
-            if self.trait_declares_assoc_type(trait_def, assoc_name, &mut seen) {
+            if let Some(assoc_type) =
+                self.trait_assoc_type(trait_def, assoc_name, &mut seen)
+            {
+                if !assoc_type.bounds.is_empty() {
+                    self.generic_param_bounds
+                        .entry(assoc_name.clone())
+                        .or_default()
+                        .extend(assoc_type.bounds);
+                }
                 return Ok(Some(Ty {
                     kind: TyKind::Param(ty::ParamTy {
                         index: u32::MAX,
@@ -4069,39 +4125,44 @@ impl HirTypeChecker {
         Ok(None)
     }
 
-    /// Whether `trait_def` (or one of its supertraits, transitively —
+    /// Finds the associated type declared by `trait_def` (or one of its
+    /// supertraits, transitively —
     /// real `core::ops::function`'s own `Fn<Args>: FnMut<Args>: FnOnce
     /// <Args>` chain, where only `FnOnce` actually declares `type
     /// Output;`) declares an associated type named `assoc_name`. `seen`
     /// guards against a cyclic supertrait chain (never valid Rust, but
     /// this checker shouldn't hang on one anyway).
-    fn trait_declares_assoc_type(
+    fn trait_assoc_type(
         &self,
         trait_def: &hir::Trait,
         assoc_name: &hir::Symbol,
         seen: &mut HashSet<hir::DefId>,
-    ) -> bool {
-        let declares_directly = trait_def.items.iter().any(|trait_item| {
-            trait_item.name == *assoc_name
-                && matches!(trait_item.kind, hir::TraitItemKind::AssocType(_))
-        });
-        if declares_directly {
-            return true;
+    ) -> Option<hir::TraitAssocType> {
+        if let Some(assoc_type) = trait_def.items.iter().find_map(|trait_item| {
+            if trait_item.name != *assoc_name {
+                return None;
+            }
+            let hir::TraitItemKind::AssocType(assoc_type) = &trait_item.kind else {
+                return None;
+            };
+            Some(assoc_type.clone())
+        }) {
+            return Some(assoc_type);
         }
-        trait_def.supertraits.iter().any(|supertrait| {
+        trait_def.supertraits.iter().find_map(|supertrait| {
             let Some(hir::Res::Def(supertrait_def_id)) = &supertrait.res else {
-                return false;
+                return None;
             };
             if !seen.insert(supertrait_def_id.clone()) {
-                return false;
+                return None;
             }
             let Some(item) = self.package().def_map.get(supertrait_def_id).cloned() else {
-                return false;
+                return None;
             };
             let hir::ItemKind::Trait(supertrait_def) = &item.kind else {
-                return false;
+                return None;
             };
-            self.trait_declares_assoc_type(supertrait_def, assoc_name, seen)
+            self.trait_assoc_type(supertrait_def, assoc_name, seen)
         })
     }
 

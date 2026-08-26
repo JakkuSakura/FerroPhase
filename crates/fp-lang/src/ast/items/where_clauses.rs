@@ -2,19 +2,22 @@ use super::super::*;
 
 pub(super) fn parse_where_clause_predicates(
     input: &mut &[Token],
-) -> ModalResult<Vec<(Ident, TypeBounds)>> {
+) -> ModalResult<Vec<(Vec<Ident>, TypeBounds)>> {
     let mut predicates = Vec::new();
     loop {
         if input.is_empty() || matches!(peek_symbol(*input), Some("{") | Some(";")) {
             break;
         }
         let mut probe = *input;
-        let parsed = (|| -> ModalResult<(Ident, TypeBounds)> {
+        let parsed = (|| -> ModalResult<(Vec<Ident>, TypeBounds)> {
             skip_hrtb_for_lifetimes_in_predicate(&mut probe);
-            let name = ident_like(&mut probe)?;
+            let mut path = vec![ident_like(&mut probe)?];
+            while skip_symbol(&mut probe, "::").is_ok() {
+                path.push(ident_like(&mut probe)?);
+            }
             skip_symbol(&mut probe, ":")?;
             let bounds = parse_type_bounds(&mut probe)?;
-            Ok((name, bounds))
+            Ok((path, bounds))
         })();
         match parsed {
             Ok(predicate) => {
@@ -72,12 +75,19 @@ pub(super) fn parse_where_clause_and_merge(
     generics_params: &mut [fp_core::ast::GenericParam],
 ) -> ModalResult<()> {
     let predicates = parse_where_clause_predicates(input)?;
-    for (name, bounds) in predicates {
+    for (path, bounds) in predicates {
+        let Some(name) = path.first() else {
+            continue;
+        };
         if let Some(param) = generics_params
             .iter_mut()
             .find(|param| param.name.as_str() == name.as_str())
         {
-            param.bounds.bounds.extend(bounds.bounds);
+            if let [_, projection] = path.as_slice() {
+                param.projection_bounds.push((projection.clone(), bounds));
+            } else if path.len() == 1 {
+                param.bounds.bounds.extend(bounds.bounds);
+            }
         }
     }
     Ok(())

@@ -893,6 +893,7 @@ fn transform_generic_function_and_method() -> Result<()> {
     identity.sig.generics_params = vec![ast::GenericParam {
         name: ident("T"),
         bounds: ast::TypeBounds::any(),
+        projection_bounds: Vec::new(),
     }];
     identity.sig.params = vec![ast::FunctionParam::new(ident("x"), ty_ident("T"))];
     identity.sig.ret_ty = Some(ty_ident("T"));
@@ -993,6 +994,44 @@ fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
 
     assert_eq!(method.sig.inputs.len(), 1);
     assert!(matches!(method.sig.inputs[0].ty.kind, hir::TypeExprKind::Ref(_)));
+    Ok(())
+}
+
+#[test]
+fn transform_trait_associated_type_bounds() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "trait Borrow<T> { fn borrow(&self) -> &T; } \
+             trait ToOwned { type Owned: Borrow<Self>; }",
+        )
+        .expect("parse associated type bound");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let assoc_type = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::ItemKind::Trait(trait_def) => Some(trait_def),
+            _ => None,
+        })
+        .flat_map(|trait_def| &trait_def.items)
+        .find_map(|item| match &item.kind {
+            hir::TraitItemKind::AssocType(assoc_type) => Some(assoc_type),
+            _ => None,
+        })
+        .expect("lowered associated type");
+
+    assert_eq!(assoc_type.bounds.len(), 1);
+    let hir::TypeExprKind::Path(bound) = &assoc_type.bounds[0].kind else {
+        panic!("expected trait path bound");
+    };
+    assert!(matches!(bound.res, Some(hir::Res::Def(_))));
+    assert_eq!(bound.segments.last().unwrap().name.as_str(), "Borrow");
     Ok(())
 }
 

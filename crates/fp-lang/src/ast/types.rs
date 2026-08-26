@@ -1229,7 +1229,11 @@ pub(crate) fn parse_optional_generic_params(
                     let _ = parse_type_expr(&mut probe)?;
                 }
             }
-            params.push(fp_core::ast::GenericParam { name, bounds });
+            params.push(fp_core::ast::GenericParam {
+                name,
+                bounds,
+                projection_bounds: Vec::new(),
+            });
             if skip_symbol(&mut probe, ",").is_err() {
                 break;
             }

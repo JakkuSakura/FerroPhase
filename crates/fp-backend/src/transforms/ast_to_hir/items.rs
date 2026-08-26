@@ -275,6 +275,27 @@ impl AstToHirLowerer {
                         .collect()
                 })
                 .collect();
+            let projection_bounds = param
+                .projection_bounds
+                .iter()
+                .map(|(projection, bounds)| {
+                    let bounds = bounds
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| {
+                            let path = self
+                                .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                                .ok()?;
+                            Some(hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::Path(path),
+                                bound.span(),
+                            ))
+                        })
+                        .collect();
+                    (projection.name.clone().into(), bounds)
+                })
+                .collect();
             hir_params.push(hir::GenericParam {
                 hir_id,
                 def_id: def_id.clone(),
@@ -282,6 +303,7 @@ impl AstToHirLowerer {
                 kind: hir::GenericParamKind::Type { default: None },
                 bounds,
                 explicit_bindings,
+                projection_bounds,
             });
         }
 
@@ -663,17 +685,28 @@ impl AstToHirLowerer {
                         });
                     }
                     ast::ItemKind::DeclType(decl_type) => {
-                        // A bare `type Item;` declaration — no bound type
-                        // (that binding is always on the impl side,
-                        // `hir::ImplItemKind::AssocType`); this only
-                        // records that the name exists so a default
-                        // method's signature can reference `Self::Item`.
+                        let bounds = decl_type
+                            .bounds
+                            .bounds
+                            .iter()
+                            .filter_map(|bound| {
+                                let path = self
+                                    .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                                    .ok()?;
+                                Some(hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(path),
+                                    bound.span(),
+                                ))
+                            })
+                            .collect();
                         items.push(hir::TraitItem {
                             def_id: self.def_id_for_item(item),
                             hir_id: self.next_id(),
                             name: decl_type.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocType(hir::TraitAssocType {
                                 name: decl_type.name.name.clone().into(),
+                                bounds,
                             }),
                         });
                     }

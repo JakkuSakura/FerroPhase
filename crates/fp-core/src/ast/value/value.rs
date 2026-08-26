@@ -859,6 +859,10 @@ common_struct! {
     pub struct GenericParam {
         pub name: Ident,
         pub bounds: TypeBounds,
+        /// Bounds on an associated type projection rooted at this parameter,
+        /// such as `T::Item: Clone` from a `where` clause.
+        #[serde(default)]
+        pub projection_bounds: Vec<(Ident, TypeBounds)>,
     }
 }
 impl GenericParam {

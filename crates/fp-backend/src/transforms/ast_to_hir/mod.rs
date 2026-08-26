@@ -1478,6 +1478,7 @@ impl AstToHirLowerer {
                             kind: hir::GenericParamKind::Type { default: None },
                             bounds: Vec::new(),
                             explicit_bindings: Vec::new(),
+                            projection_bounds: Vec::new(),
                         }
                     };
                     let type_param = |this: &mut Self, name: &str, def_id: hir::DefId| {

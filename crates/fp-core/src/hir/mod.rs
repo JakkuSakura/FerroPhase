@@ -351,6 +351,9 @@ pub enum TraitItemKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitAssocType {
     pub name: Symbol,
+    /// Bounds declared on the associated type, such as
+    /// `type Owned: Borrow<Self>`.
+    pub bounds: Vec<TypeExpr>,
 }
 
 /// An impl block's own `type Target = Y;` binding for one of its trait's
@@ -745,6 +748,10 @@ pub struct GenericParam {
     /// opaque placeholder — an explicit binding gives a real, concrete
     /// answer.
     pub explicit_bindings: Vec<(Symbol, TypeExpr)>,
+    /// Trait bounds on associated projections rooted at this parameter.
+    /// The projection uses the associated type name because unresolved
+    /// projections are represented by the same opaque parameter name.
+    pub projection_bounds: Vec<(Symbol, Vec<TypeExpr>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
