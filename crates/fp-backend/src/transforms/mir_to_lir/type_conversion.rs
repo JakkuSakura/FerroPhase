@@ -56,6 +56,16 @@ impl MirToLirLowerer {
                 if let Some(elem_ty) = Self::slice_ref_element_ty(inner) {
                     let elem_lir = self.lir_type_from_ty(elem_ty);
                     self.slice_lir_type(&elem_lir)
+                } else if matches!(&inner.kind, TyKind::Tuple(fields)
+                    if fields.is_empty()
+                        || (fields.len() == 1
+                            && matches!(fields[0].kind, TyKind::RawPtr(_))))
+                {
+                    // Some std wrapper declarations are structurally
+                    // normalized before MIR lowering, so their one-pointer
+                    // representation arrives as a tuple rather than an
+                    // ADT. Preserve the same thin-pointer ABI here.
+                    lir::LirType::Ptr(Box::new(lir::LirType::I8))
                 } else if let TyKind::Adt(adt, substs) = &inner.kind {
                     // A reference to a struct that's really just an opaque/
                     // extern-style pointer wrapper — either genuinely empty
@@ -75,7 +85,7 @@ impl MirToLirLowerer {
                     // Treat both shapes as a bare pointer, matching how
                     // this backend already represents other raw/opaque
                     // pointers.
-                    let is_opaque_wrapper = self
+                    let cached_opaque_wrapper = self
                         .struct_layouts
                         .borrow()
                         .get(&(adt.did.clone(), Self::adt_substs_types(substs)))
@@ -85,6 +95,19 @@ impl MirToLirLowerer {
                                     && matches!(fields[0], Some(lir::LirType::Ptr(_))))
                         })
                         .unwrap_or(false);
+                    // Reference conversion can run before the per-ADT
+                    // layout cache has been populated, and a cached layout
+                    // may still have lost the source-level wrapper shape.
+                    // Consult the typed definition as well so opaque
+                    // pointer wrappers such as `CStr` retain their
+                    // thin-pointer ABI in every lowering phase.
+                    let definition_is_opaque_wrapper =
+                        adt.variants.first().is_some_and(|variant| {
+                            variant.fields.is_empty()
+                                || (variant.fields.len() == 1
+                                    && matches!(variant.fields[0].ty.kind, TyKind::RawPtr(_)))
+                        });
+                    let is_opaque_wrapper = cached_opaque_wrapper || definition_is_opaque_wrapper;
                     if is_opaque_wrapper {
                         lir::LirType::Ptr(Box::new(lir::LirType::I8))
                     } else {
