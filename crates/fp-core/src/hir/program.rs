@@ -238,8 +238,12 @@ impl HirProgram {
         }
     }
 
-    pub fn reflection_field_intrinsic(&self, hir_id: HirId) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.package(hir_id.package_id())?.reflection_field_intrinsic(hir_id)
+    pub fn reflection_field_intrinsic(
+        &self,
+        hir_id: HirId,
+    ) -> Option<crate::intrinsics::IntrinsicKind> {
+        self.package(hir_id.package_id())?
+            .reflection_field_intrinsic(hir_id)
     }
 
     pub fn reflection_field_intrinsic_at_span(
@@ -247,7 +251,8 @@ impl HirProgram {
         package_id: PackageId,
         span: crate::span::Span,
     ) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.package(&package_id)?.reflection_field_intrinsic_at_span(span)
+        self.package(&package_id)?
+            .reflection_field_intrinsic_at_span(span)
     }
 
     pub fn record_reflection_field_intrinsic(

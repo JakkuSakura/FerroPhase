@@ -30,6 +30,29 @@ pub struct LirInterpreter {
     program: Option<Rc<fp_core::lir::LirProgram>>,
 }
 
+fn json_to_runtime_value(value: serde_json::Value) -> LirResult<Value> {
+    match value {
+        serde_json::Value::Null => Ok(Value::null()),
+        serde_json::Value::Bool(value) => Ok(Value::bool(value)),
+        serde_json::Value::Number(value) => value
+            .as_i64().map(Value::int)
+            .or_else(|| value.as_u64().map(Value::uint))
+            .or_else(|| value.as_f64().map(Value::decimal))
+            .ok_or_else(|| VmError::Runtime("unsupported JSON number".into())),
+        serde_json::Value::String(value) => Ok(Value::string(value)),
+        serde_json::Value::Array(values) => Ok(Value::List(ValueList::new(
+            values.into_iter().map(json_to_runtime_value).collect::<LirResult<Vec<_>>>()?,
+        ))),
+        serde_json::Value::Object(values) => Ok(Value::Structural(
+            fp_core::ast::ValueStructural::new(values.into_iter().map(|(name, value)| {
+                Ok(fp_core::ast::ValueField::new(
+                    fp_core::ast::Ident::new(name), json_to_runtime_value(value)?,
+                ))
+            }).collect::<LirResult<Vec<_>>>()?),
+        )),
+    }
+}
+
 impl LirInterpreter {
     pub fn new() -> Self {
         Self {
@@ -615,10 +638,29 @@ impl LirInterpreter {
                     self.write_typed_result(dst, self.result_type(instr)?, closure)
                 }
             },
-            LirInstructionKind::InlineAsm { .. }
-            | LirInstructionKind::LandingPad { .. }
-            | LirInstructionKind::Freeze(_)
-            | LirInstructionKind::ExecQuery(_) => Err(VmError::Runtime("unsupported".into())),
+            LirInstructionKind::Freeze(value) => {
+                let value = self.resolve_operand(value)?;
+                self.write_typed_result(dst, self.result_type(instr)?, value.value)
+            }
+            LirInstructionKind::LandingPad { result_type, .. } => {
+                // The interpreter has no unwinding runtime. Match the native
+                // backend's landing-pad contract by materializing the zero
+                // exception pointer/selector tuple (or the zero value for a
+                // backend-specific result type).
+                if instr.result.is_none() {
+                    return Err(VmError::Runtime(
+                        "landing pad instruction has no result type".into(),
+                    ));
+                }
+                self.write_typed_result(
+                    dst,
+                    result_type,
+                    Self::default_value_for_type(result_type),
+                )
+            }
+            LirInstructionKind::InlineAsm { .. } | LirInstructionKind::ExecQuery(_) => {
+                Err(VmError::Runtime("unsupported".into()))
+            }
             _ => Err(VmError::Runtime("unimplemented".into())),
         };
         result
@@ -1778,11 +1820,9 @@ impl LirInterpreter {
         self.write_typed_result(dst, ty, integer_value(result, signed))
     }
 
-    /// Handles calling the closure `unionify(f)` returns — the only
-    /// indirect-call shape this interpreter supports (see `handle_call`'s
-    /// doc comment). Any other non-statically-known callee still errors
-    /// with "indirect call"; this is deliberately not general first-class
-    /// function/currying support.
+    /// Handles calling the special `unionify(f)` closure returned by the
+    /// reflection intrinsics. Generic named function values are resolved
+    /// earlier by `handle_call` from their managed string handle.
     pub(super) fn handle_unionify_closure_call(
         &mut self,
         dst: u32,
@@ -1886,10 +1926,21 @@ impl LirInterpreter {
         result_ty: Option<&LirType>,
     ) -> LirResult<()> {
         let LirValueKind::Function(function_ref) = &function.kind else {
-            // Not a statically-known function reference — the only
-            // supported indirect-call shape today is calling the closure
-            // `unionify(f)` returns (`Value::UnionifyClosure`), never a
-            // general first-class/curried function value.
+            let callee = self.resolve_operand(function)?;
+            if let Value::Pointer(pointer) = callee.value {
+                let handle = usize::try_from(pointer.value)
+                    .map_err(|_| VmError::Runtime("negative function handle".into()))?;
+                if let Some(Value::String(name)) = self.state.objects.get(handle).cloned() {
+                    return self.handle_call_named(
+                        dst,
+                        &name.value,
+                        args,
+                        None,
+                        None,
+                        result_ty,
+                    );
+                }
+            }
             return self.handle_unionify_closure_call(dst, function, args, result_ty);
         };
         match function_ref {
@@ -1982,7 +2033,8 @@ impl LirInterpreter {
             definition
         } else {
             let name = Name::new(name);
-            let direct = self.program
+            let direct = self
+                .program
                 .as_ref()
                 .and_then(|program| match &package_id {
                     Some(package_id) => program.find_function(package_id, &name),
@@ -2046,8 +2098,17 @@ impl LirInterpreter {
         if let Some(rest) = name.strip_prefix("__bc_") {
             return self.call_bc_intrinsic(rest, args, result_ty);
         }
-        let result_ty = result_ty
-            .ok_or_else(|| VmError::Runtime(format!("intrinsic '{name}' has no result type")))?;
+        let result_ty = match result_ty {
+            Some(ty) => ty.clone(),
+            None if matches!(name, "println" | "print" | "printf" | "eprintln" | "eprint") => {
+                LirType::Void
+            }
+            None => {
+                return Err(VmError::Runtime(format!(
+                    "intrinsic '{name}' has no result type"
+                )))
+            }
+        };
         let unit = || TypedValue {
             ty: result_ty.clone(),
             value: Value::unit(),
@@ -2081,7 +2142,7 @@ impl LirInterpreter {
             }
             "sizeof" | "strlen" => Ok(TypedValue {
                 ty: result_ty.clone(),
-                value: integer_value(0, lir_type_info(result_ty).1),
+                value: integer_value(0, lir_type_info(&result_ty).1),
             }),
             "malloc" => {
                 let size = args
@@ -2162,9 +2223,17 @@ impl LirInterpreter {
         args: &[TypedValue],
         result_ty: Option<&LirType>,
     ) -> LirResult<TypedValue> {
-        let result_ty = result_ty.ok_or_else(|| {
-            VmError::Runtime(format!("bytecode intrinsic '{name}' has no result type"))
-        })?;
+        let result_ty = match result_ty {
+            Some(ty) => ty,
+            None if matches!(name, "println" | "print" | "eprintln" | "eprint" | "printf") => {
+                &LirType::Void
+            }
+            None => {
+                return Err(VmError::Runtime(format!(
+                    "bytecode intrinsic '{name}' has no result type"
+                )))
+            }
+        };
         let result = |value: Value| TypedValue {
             ty: result_ty.clone(),
             value,
@@ -2214,7 +2283,6 @@ impl LirInterpreter {
             "tuple_get" | "array_get" => {
                 Self::require_bc_arity(name, args, 2)?;
                 let handle = self.container_handle(name, &args[0])?;
-                let index = self.bc_integer_arg(name, args, 1)? as usize;
                 let obj = self
                     .state
                     .objects
@@ -2222,11 +2290,24 @@ impl LirInterpreter {
                     .cloned()
                     .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
                 let element = match &obj {
-                    Value::Tuple(t) => t.values.get(index).cloned(),
-                    Value::List(l) => l.values.get(index).cloned(),
+                    Value::Tuple(t) => Some(self.indexed_value(&args[1], &t.values, name)?),
+                    Value::List(l) => Some(self.indexed_value(&args[1], &l.values, name)?),
+                    Value::Map(map) => map
+                        .entries
+                        .iter()
+                        .find(|entry| entry.key == args[1].value)
+                        .map(|entry| entry.value.clone()),
+                    Value::Struct(value) => {
+                        let field = self.struct_field_by_name(&value.structural.fields, &args[1], name)?;
+                        Some(field.value.clone())
+                    }
+                    Value::Structural(value) => {
+                        let field = self.struct_field_by_name(&value.fields, &args[1], name)?;
+                        Some(field.value.clone())
+                    }
                     _ => return Err(VmError::Runtime("get on non-container".into())),
                 }
-                .ok_or(VmError::Runtime(format!("index {index} out of bounds")))?;
+                .ok_or_else(|| VmError::Runtime("container key not found".into()))?;
                 Ok(result(element))
             }
             "tuple_set" => {
@@ -2239,6 +2320,32 @@ impl LirInterpreter {
                     .get(handle)
                     .cloned()
                     .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                if matches!(obj, Value::Struct(_) | Value::Structural(_)) {
+                    let mut value = obj;
+                    let field_index = self.bc_integer_arg(name, args, 1)? as usize;
+                    let replacement = args[2].value.clone();
+                    match &mut value {
+                        Value::Struct(structure) => structure
+                            .structural
+                            .fields
+                            .get_mut(field_index)
+                            .ok_or_else(|| VmError::Runtime(format!("field index {field_index} out of bounds")))?
+                            .value = replacement,
+                        Value::Structural(structure) => structure
+                            .fields
+                            .get_mut(field_index)
+                            .ok_or_else(|| VmError::Runtime(format!("field index {field_index} out of bounds")))?
+                            .value = replacement,
+                        _ => unreachable!(),
+                    }
+                    let new_handle = self.state.objects.len() as u64;
+                    self.state.objects.push(value.clone());
+                    return Ok(result(if Self::is_aggregate_runtime_type(result_ty) {
+                        value
+                    } else {
+                        Value::uint(new_handle)
+                    }));
+                }
                 let mut values = match &obj {
                     Value::Tuple(t) => t.values.clone(),
                     _ => return Err(VmError::Runtime("set on non-tuple".into())),
@@ -2254,6 +2361,38 @@ impl LirInterpreter {
                     value
                 } else {
                     Value::uint(new_handle)
+                }))
+            }
+            "array_set" => {
+                Self::require_bc_arity(name, args, 3)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let index = self.bc_integer_arg(name, args, 1)? as usize;
+                let obj = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                let mut values = match &obj {
+                    Value::Tuple(t) => t.values.clone(),
+                    Value::List(l) => l.values.clone(),
+                    _ => return Err(VmError::Runtime("set on non-array container".into())),
+                };
+                if index >= values.len() {
+                    return Err(VmError::Runtime(format!("index {index} out of bounds")));
+                }
+                values[index] = args[2].value.clone();
+                let value = match obj {
+                    Value::Tuple(_) => Value::Tuple(ValueTuple::new(values)),
+                    Value::List(_) => Value::List(ValueList::new(values)),
+                    _ => unreachable!(),
+                };
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(value.clone());
+                Ok(result(if Self::is_aggregate_runtime_type(result_ty) {
+                    value
+                } else {
+                    Value::uint(handle)
                 }))
             }
             "container_len" => {
@@ -2274,6 +2413,81 @@ impl LirInterpreter {
                 };
                 Ok(result(integer_value(len, lir_type_info(result_ty).1)))
             }
+            "slice" => {
+                Self::require_bc_arity(name, args, 3)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let start = usize::try_from(self.bc_integer_arg(name, args, 1)?)
+                    .map_err(|_| VmError::Runtime("negative slice start".into()))?;
+                let end = usize::try_from(self.bc_integer_arg(name, args, 2)?)
+                    .map_err(|_| VmError::Runtime("negative slice end".into()))?;
+                if start > end {
+                    return Err(VmError::Runtime("slice start exceeds end".into()));
+                }
+                let object = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling handle {handle}")))?;
+                let sliced = match object {
+                    Value::String(string) => {
+                        let chars: Vec<char> = string.value.chars().collect();
+                        let part = chars
+                            .get(start..end)
+                            .ok_or(VmError::Runtime("string slice out of bounds".into()))?
+                            .iter()
+                            .collect::<String>();
+                        Value::string(part)
+                    }
+                    Value::List(list) => Value::List(ValueList::new(
+                        list.values
+                            .get(start..end)
+                            .ok_or(VmError::Runtime("list slice out of bounds".into()))?
+                            .to_vec(),
+                    )),
+                    Value::Tuple(tuple) => Value::Tuple(ValueTuple::new(
+                        tuple
+                            .values
+                            .get(start..end)
+                            .ok_or(VmError::Runtime("tuple slice out of bounds".into()))?
+                            .to_vec(),
+                    )),
+                    _ => return Err(VmError::Runtime("slice on non-sequence".into())),
+                };
+                let new_handle = self.state.objects.len() as u64;
+                self.state.objects.push(sliced);
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    new_handle as i64,
+                ))))
+            }
+            "proc_macro_token_stream_from_str" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let source = match self.state.objects.get(handle) {
+                    Some(Value::String(value)) => value.value.clone(),
+                    Some(_) => {
+                        return Err(VmError::Runtime(
+                            "token stream source must be a string".into(),
+                        ))
+                    }
+                    None => return Err(VmError::Runtime(format!("dangling handle {handle}"))),
+                };
+                let tokens = source
+                    .split_whitespace()
+                    .map(|text| {
+                        fp_core::ast::MacroTokenTree::Token(fp_core::ast::MacroToken {
+                            text: text.to_owned(),
+                            span: fp_core::span::Span::null(),
+                        })
+                    })
+                    .collect();
+                let stream = Value::TokenStream(fp_core::ast::ValueTokenStream { tokens });
+                let stream_handle = self.state.objects.len() as u64;
+                self.state.objects.push(stream);
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    stream_handle as i64,
+                ))))
+            }
             "str_alloc" => {
                 Self::require_bc_arity(name, args, 1)?;
                 let len = self.bc_integer_arg(name, args, 0)? as usize;
@@ -2283,6 +2497,68 @@ impl LirInterpreter {
                 Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
                     handle as i64,
                 ))))
+            }
+            "str_const" => {
+                let mut bytes = Vec::with_capacity(args.len());
+                for index in 0..args.len() {
+                    let byte = self.bc_integer_arg(name, args, index)?;
+                    let byte = u8::try_from(byte).map_err(|_| {
+                        VmError::Runtime(format!("string byte {byte} is out of range"))
+                    })?;
+                    bytes.push(byte);
+                }
+                let text = String::from_utf8(bytes)
+                    .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string: {error}")))?;
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(Value::string(text));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle as i64,
+                ))))
+            }
+            "yaml_to_json" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let source = match self.state.objects.get(handle) {
+                    Some(Value::String(string)) => string.value.clone(),
+                    Some(value) => {
+                        return Err(VmError::Runtime(format!(
+                            "{name} expects a string, got {value:?}"
+                        )))
+                    }
+                    None => return Err(VmError::Runtime(format!("dangling string handle {handle}"))),
+                };
+                let yaml = serde_yaml::from_str::<serde_yaml::Value>(&source)
+                    .map_err(|error| VmError::Runtime(format!("failed to parse YAML: {error}")))?;
+                let json = serde_json::to_string(&yaml).map_err(|error| {
+                    VmError::Runtime(format!("failed to serialize YAML as JSON: {error}"))
+                })?;
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(json));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
+            }
+            "json_parse" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let source = {
+                    let handle = self.container_handle(name, &args[0])?;
+                    let Value::String(value) = self
+                        .state
+                        .objects
+                        .get(handle)
+                        .cloned()
+                        .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                    else {
+                        return Err(VmError::Runtime("json_parse expects a string".into()));
+                    };
+                    value.value
+                };
+                let parsed = serde_json::from_str::<serde_json::Value>(&source)
+                    .map_err(|error| VmError::Runtime(format!("failed to parse JSON: {error}")))?;
+                let value = json_to_runtime_value(parsed)?;
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(value);
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
             }
             "println" => {
                 for arg in args {
@@ -2316,6 +2592,831 @@ impl LirInterpreter {
                     .unwrap_or_default();
                 Ok(result(Value::decimal(dur.as_secs_f64())))
             }
+            "panic" => {
+                let message = args
+                    .first()
+                    .map(|arg| self.render_value(&arg.value))
+                    .unwrap_or_else(|| "panic".into());
+                Err(VmError::Runtime(format!("panic: {message}")))
+            }
+            "catch_unwind" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let function_handle = self.container_handle(name, &args[0])?;
+                let function_name = match self.state.objects.get(function_handle).cloned() {
+                    Some(Value::String(value)) => value.value,
+                    Some(value) => {
+                        return Err(VmError::Runtime(format!(
+                            "catch_unwind expects a function reference, got {value:?}"
+                        )))
+                    }
+                    None => {
+                        return Err(VmError::Runtime(format!(
+                            "dangling function handle {function_handle}"
+                        )))
+                    }
+                };
+                let function = self
+                    .program
+                    .as_ref()
+                    .and_then(|program| {
+                        program.find_function_any_package(&fp_core::lir::Name::new(
+                            function_name.clone(),
+                        ))
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        VmError::Runtime(format!("missing function {function_name}"))
+                    })?;
+                let fields = match self.run_function(&function, &[]) {
+                    Ok(value) => vec![
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("ok"),
+                            Value::bool(true),
+                        ),
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("value"),
+                            value,
+                        ),
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("error"),
+                            Value::None(Default::default()),
+                        ),
+                    ],
+                    Err(error) => vec![
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("ok"),
+                            Value::bool(false),
+                        ),
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("value"),
+                            Value::None(Default::default()),
+                        ),
+                        fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new("error"),
+                            Value::string(error.to_string()),
+                        ),
+                    ],
+                };
+                let handle = self.state.objects.len() as i64;
+                self.state
+                    .objects
+                    .push(Value::Structural(fp_core::ast::ValueStructural::new(fields)));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
+            }
+            "shell_exec" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let command = match self.state.objects.get(handle) {
+                    Some(Value::String(value)) => value.value.clone(),
+                    Some(value) => {
+                        return Err(VmError::Runtime(format!(
+                            "{name} expects a string, got {value:?}"
+                        )))
+                    }
+                    None => {
+                        return Err(VmError::Runtime(format!(
+                            "dangling string handle {handle}"
+                        )))
+                    }
+                };
+                let output = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&command)
+                    .output()
+                    .map_err(|error| {
+                        VmError::Runtime(format!("failed to execute shell command: {error}"))
+                    })?;
+                if !output.status.success() {
+                    return Err(VmError::Runtime(format!(
+                        "shell command exited with status {}: {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    )));
+                }
+                let text = String::from_utf8(output.stdout).map_err(|error| {
+                    VmError::Runtime(format!("shell command returned invalid UTF-8: {error}"))
+                })?;
+                let result_handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(text));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    result_handle,
+                ))))
+            }
+            "fs_exists" | "fs_is_file" | "fs_is_dir" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(path) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string")));
+                };
+                let path = std::path::Path::new(&path.value);
+                let exists = match name {
+                    "fs_exists" => path.exists(),
+                    "fs_is_file" => path.is_file(),
+                    "fs_is_dir" => path.is_dir(),
+                    _ => unreachable!(),
+                };
+                Ok(result(Value::bool(exists)))
+            }
+            "fs_read_to_string" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(path) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string path")));
+                };
+                let contents = std::fs::read_to_string(&path.value).map_err(|error| {
+                    VmError::Runtime(format!("failed to read '{}': {error}", path.value))
+                })?;
+                let new_handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(contents));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    new_handle,
+                ))))
+            }
+            "fs_write_string" | "fs_append_string" => {
+                Self::require_bc_arity(name, args, 2)?;
+                let read_string = |arg: &TypedValue| -> LirResult<String> {
+                    let handle = self.container_handle(name, arg)?;
+                    let Some(Value::String(value)) = self.state.objects.get(handle) else {
+                        return Err(VmError::Runtime(format!("{name} expects string arguments")));
+                    };
+                    Ok(value.value.clone())
+                };
+                let path = read_string(&args[0])?;
+                let contents = read_string(&args[1])?;
+                let io_result = if name == "fs_write_string" {
+                    std::fs::write(&path, contents)
+                } else {
+                    use std::io::Write;
+                    let mut file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path);
+                    match file.as_mut() {
+                        Ok(file) => file.write_all(contents.as_bytes()),
+                        Err(error) => Err(std::io::Error::new(error.kind(), error.to_string())),
+                    }
+                };
+                io_result.map_err(|error| {
+                    VmError::Runtime(format!("failed to write '{}': {error}", path))
+                })?;
+                Ok(result(Value::unit()))
+            }
+            "fs_create_dir_all" | "fs_remove_file" | "fs_remove_dir_all" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(path) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string path")));
+                };
+                let io_result = match name {
+                    "fs_create_dir_all" => std::fs::create_dir_all(&path.value),
+                    "fs_remove_file" => std::fs::remove_file(&path.value),
+                    "fs_remove_dir_all" => std::fs::remove_dir_all(&path.value),
+                    _ => unreachable!(),
+                };
+                io_result.map_err(|error| {
+                    VmError::Runtime(format!("{name} '{}': {error}", path.value))
+                })?;
+                Ok(result(Value::unit()))
+            }
+            "fs_read_dir" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(path) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string path")));
+                };
+                let entries = std::fs::read_dir(&path.value).map_err(|error| {
+                    VmError::Runtime(format!("failed to read directory '{}': {error}", path.value))
+                })?;
+                let mut paths = Vec::new();
+                for entry in entries {
+                    let entry = entry.map_err(|error| {
+                        VmError::Runtime(format!("failed to read directory entry: {error}"))
+                    })?;
+                    paths.push(entry.path().to_string_lossy().into_owned());
+                }
+                paths.sort();
+                let mut values = Vec::with_capacity(paths.len());
+                for path in paths {
+                    let entry_handle = self.state.objects.len() as i64;
+                    self.state.objects.push(Value::string(path));
+                    values.push(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                        entry_handle,
+                    )));
+                }
+                let list_handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::List(ValueList::new(values)));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    list_handle,
+                ))))
+            }
+            "fs_walk_dir" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(path) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string path")));
+                };
+                let mut paths = Vec::new();
+                let mut pending = vec![std::path::PathBuf::from(&path.value)];
+                while let Some(directory) = pending.pop() {
+                    let entries = std::fs::read_dir(&directory).map_err(|error| {
+                        VmError::Runtime(format!("failed to walk '{}': {error}", directory.display()))
+                    })?;
+                    for entry in entries {
+                        let entry = entry.map_err(|error| {
+                            VmError::Runtime(format!("failed to read directory entry: {error}"))
+                        })?;
+                        let entry_path = entry.path();
+                        paths.push(entry_path.to_string_lossy().into_owned());
+                        if entry.file_type().map_err(|error| {
+                            VmError::Runtime(format!("failed to inspect '{}': {error}", entry_path.display()))
+                        })?.is_dir() {
+                            pending.push(entry_path);
+                        }
+                    }
+                }
+                paths.sort();
+                let values = paths
+                    .into_iter()
+                    .map(|path| {
+                        let entry_handle = self.state.objects.len() as i64;
+                        self.state.objects.push(Value::string(path));
+                        Value::Pointer(fp_core::ast::ValuePointer::managed(entry_handle))
+                    })
+                    .collect();
+                let list_handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::List(ValueList::new(values)));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    list_handle,
+                ))))
+            }
+            "fs_glob" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(pattern) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string pattern")));
+                };
+                let matcher = globset::Glob::new(&pattern.value)
+                    .map_err(|error| VmError::Runtime(format!("invalid glob pattern: {error}")))?
+                    .compile_matcher();
+                let mut matches = Vec::new();
+                let mut pending = vec![std::path::PathBuf::from(".")];
+                while let Some(directory) = pending.pop() {
+                    let entries = std::fs::read_dir(&directory).map_err(|error| {
+                        VmError::Runtime(format!("failed to read '{}': {error}", directory.display()))
+                    })?;
+                    for entry in entries {
+                        let entry = entry.map_err(|error| {
+                            VmError::Runtime(format!("failed to read directory entry: {error}"))
+                        })?;
+                        let entry_path = entry.path();
+                        let relative_path = entry_path.strip_prefix(".").unwrap_or(&entry_path);
+                        if matcher.is_match(&entry_path) || matcher.is_match(relative_path) {
+                            matches.push(entry_path.to_string_lossy().into_owned());
+                        }
+                        if entry.file_type().map_err(|error| {
+                            VmError::Runtime(format!("failed to inspect '{}': {error}", entry_path.display()))
+                        })?.is_dir() {
+                            pending.push(entry_path);
+                        }
+                    }
+                }
+                matches.sort();
+                let values = matches
+                    .into_iter()
+                    .map(|path| {
+                        let entry_handle = self.state.objects.len() as i64;
+                        self.state.objects.push(Value::string(path));
+                        Value::Pointer(fp_core::ast::ValuePointer::managed(entry_handle))
+                    })
+                    .collect();
+                let list_handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::List(ValueList::new(values)));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    list_handle,
+                ))))
+            }
+            "path_join" | "path_parent" | "path_file_name" | "path_extension"
+            | "path_stem" | "path_normalize" | "path_is_absolute" => {
+                if name == "path_join" {
+                    if args.len() < 2 {
+                        return Err(VmError::Runtime(
+                            "path_join expects at least two path components".into(),
+                        ));
+                    }
+                } else {
+                    Self::require_bc_arity(name, args, 1)?;
+                }
+                let path_value = |arg: &TypedValue| -> LirResult<String> {
+                    let handle = self.container_handle(name, arg)?;
+                    let Some(Value::String(value)) = self.state.objects.get(handle) else {
+                        return Err(VmError::Runtime(format!("{name} expects a string")));
+                    };
+                    Ok(value.value.clone())
+                };
+                let first = path_value(&args[0])?;
+                if name == "path_is_absolute" {
+                    return Ok(result(Value::bool(std::path::Path::new(&first).is_absolute())));
+                }
+                let text = match name {
+                    "path_join" => {
+                        let mut joined = std::path::PathBuf::from(first);
+                        for arg in &args[1..] {
+                            joined.push(path_value(arg)?);
+                        }
+                        joined.to_string_lossy().into_owned()
+                    }
+                    "path_parent" => std::path::Path::new(&first)
+                        .parent()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    "path_file_name" => std::path::Path::new(&first)
+                        .file_name()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    "path_extension" => std::path::Path::new(&first)
+                        .extension()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    "path_stem" => std::path::Path::new(&first)
+                        .file_stem()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    "path_normalize" => {
+                        let mut normalized = std::path::PathBuf::new();
+                        for component in std::path::Path::new(&first).components() {
+                            match component {
+                                std::path::Component::CurDir => {}
+                                std::path::Component::ParentDir => {
+                                    normalized.pop();
+                                }
+                                component => normalized.push(component.as_os_str()),
+                            }
+                        }
+                        normalized.to_string_lossy().into_owned()
+                    }
+                    _ => unreachable!(),
+                };
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(text));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "env_current_dir" | "env_temp_dir" | "env_home_dir" | "env_var"
+            | "env_var_exists" => {
+                let takes_name = matches!(name, "env_var" | "env_var_exists");
+                Self::require_bc_arity(name, args, usize::from(takes_name))?;
+                let string_arg = |arg: &TypedValue| -> LirResult<String> {
+                    let handle = self.container_handle(name, arg)?;
+                    let Some(Value::String(value)) = self.state.objects.get(handle) else {
+                        return Err(VmError::Runtime(format!("{name} expects a string")));
+                    };
+                    Ok(value.value.clone())
+                };
+                if name == "env_var_exists" {
+                    return Ok(result(Value::bool(std::env::var_os(string_arg(&args[0])?).is_some())));
+                }
+                let value = match name {
+                    "env_current_dir" => std::env::current_dir()
+                        .map_err(|error| VmError::Runtime(format!("current directory: {error}")))?
+                        .to_string_lossy()
+                        .into_owned(),
+                    "env_temp_dir" => std::env::temp_dir().to_string_lossy().into_owned(),
+                    "env_home_dir" => std::env::var("HOME")
+                        .map_err(|error| VmError::Runtime(format!("HOME is unavailable: {error}")))?,
+                    "env_var" => std::env::var(string_arg(&args[0])?).map_err(|error| {
+                        VmError::Runtime(format!("environment variable is unavailable: {error}"))
+                    })?,
+                    _ => unreachable!(),
+                };
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(value));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "io_read_stdin_to_string" => {
+                Self::require_bc_arity(name, args, 0)?;
+                use std::io::Read;
+                let mut contents = String::new();
+                std::io::stdin().read_to_string(&mut contents).map_err(|error| {
+                    VmError::Runtime(format!("failed to read stdin: {error}"))
+                })?;
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(contents));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "io_write_stdout" | "io_write_stderr" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = self.container_handle(name, &args[0])?;
+                let Value::String(contents) = self
+                    .state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling string handle {handle}")))?
+                else {
+                    return Err(VmError::Runtime(format!("{name} expects a string")));
+                };
+                use std::io::Write;
+                let write_result = if name == "io_write_stdout" {
+                    std::io::stdout().write_all(contents.value.as_bytes())
+                } else {
+                    std::io::stderr().write_all(contents.value.as_bytes())
+                };
+                write_result.map_err(|error| {
+                    VmError::Runtime(format!("failed to write {name}: {error}"))
+                })?;
+                Ok(result(Value::unit()))
+            }
+            "debug_assertions" => {
+                if args.is_empty() {
+                    return Err(VmError::Runtime(
+                        "debug_assertions expects a condition".into(),
+                    ));
+                }
+                let condition = match &args[0].value {
+                    Value::Bool(value) => value.value,
+                    Value::UInt(value) => value.value != 0,
+                    ref value => {
+                        return Err(VmError::Runtime(format!(
+                            "debug_assertions expects bool, got {value:?}"
+                        )))
+                    }
+                };
+                if !condition {
+                    let message = args
+                        .get(1)
+                        .map(|value| self.render_value(&value.value))
+                        .unwrap_or_else(|| "debug assertion failed".into());
+                    return Err(VmError::Runtime(message));
+                }
+                Ok(result(Value::unit()))
+            }
+            "input" => {
+                if args.len() > 1 {
+                    return Err(VmError::Runtime("input accepts at most one prompt".into()));
+                }
+                if let Some(prompt) = args.first() {
+                    let handle = self.container_handle(name, prompt)?;
+                    let Value::String(prompt) = self
+                        .state
+                        .objects
+                        .get(handle)
+                        .cloned()
+                        .ok_or(VmError::Runtime("dangling input prompt handle".into()))?
+                    else {
+                        return Err(VmError::Runtime("input prompt must be a string".into()));
+                    };
+                    print!("{}", prompt.value);
+                }
+                use std::io::BufRead;
+                let mut line = String::new();
+                std::io::stdin().lock().read_line(&mut line).map_err(|error| {
+                    VmError::Runtime(format!("failed to read input: {error}"))
+                })?;
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(
+                    line.strip_suffix('\n')
+                        .and_then(|line| line.strip_suffix('\r'))
+                        .unwrap_or(&line)
+                        .to_string(),
+                ));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "type_name" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let value = &args[0].value;
+                let type_name = match value {
+                    Value::Unit(_) => "unit",
+                    Value::Bool(_) => "bool",
+                    Value::Int(_) => "int",
+                    Value::UInt(_) => "uint",
+                    Value::BigInt(_) => "bigint",
+                    Value::Decimal(_) => "decimal",
+                    Value::BigDecimal(_) => "bigdecimal",
+                    Value::Char(_) => "char",
+                    Value::String(_) => "string",
+                    Value::Tuple(_) => "tuple",
+                    Value::List(_) => "list",
+                    Value::Map(_) => "map",
+                    Value::Bytes(_) => "bytes",
+                    Value::Pointer(_) => "pointer",
+                    Value::Offset(_) => "offset",
+                    Value::Function(_) => "function",
+                    Value::Null(_) => "null",
+                    Value::None(_) => "none",
+                    Value::Some(_) | Value::Option(_) => "option",
+                    Value::Type(_) => "type",
+                    Value::Struct(_) | Value::Structural(_) => "struct",
+                    Value::UnionifyClosure(_) => "function",
+                    _ => "value",
+                };
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(type_name.to_string()));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "type_of" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let ty = match &args[0].value {
+                    Value::Unit(_) => Ty::unit(),
+                    Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
+                    Value::Int(_) => Ty::Primitive(TypePrimitive::i64()),
+                    Value::UInt(_) => Ty::Primitive(TypePrimitive::Int(
+                        fp_core::ast::TypeInt::U64,
+                    )),
+                    Value::Decimal(_) | Value::BigDecimal(_) =>
+                        Ty::Primitive(TypePrimitive::f64()),
+                    Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
+                    Value::String(_) => Ty::Primitive(TypePrimitive::String),
+                    Value::List(_) => Ty::Primitive(TypePrimitive::List),
+                    Value::Tuple(tuple) => Ty::Tuple(fp_core::ast::TypeTuple {
+                        types: vec![Ty::unknown(); tuple.values.len()],
+                    }),
+                    Value::Type(ty) => ty.clone(),
+                    Value::Struct(value) => Ty::Struct(value.ty.clone()),
+                    Value::Structural(value) => Ty::Structural(fp_core::ast::TypeStructural {
+                        fields: value
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                fp_core::ast::StructuralField::new(
+                                    field.name.clone(),
+                                    Ty::unknown(),
+                                )
+                            })
+                            .collect(),
+                    }),
+                    Value::Function(_) | Value::UnionifyClosure(_) => {
+                        Ty::unknown()
+                    }
+                    _ => Ty::unknown(),
+                };
+                Ok(result(Value::Type(ty)))
+            }
+            "sleep" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let seconds = self.expect_float(&args[0])?;
+                if seconds.is_sign_negative() {
+                    return Err(VmError::Runtime("sleep duration cannot be negative".into()));
+                }
+                std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
+                Ok(result(Value::unit()))
+            }
+            "spawn" | "select" => {
+                Self::require_bc_arity(name, args, 1)?;
+                Ok(result(args[0].value.clone()))
+            }
+            "join" => {
+                Self::require_bc_arity(name, args, 1)?;
+                if args.len() == 1 {
+                    return Ok(result(args[0].value.clone()));
+                }
+                let value = Value::Tuple(ValueTuple::new(
+                    args.iter().map(|arg| arg.value.clone()).collect(),
+                ));
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(value.clone());
+                Ok(result(if Self::is_aggregate_runtime_type(result_ty) {
+                    value
+                } else {
+                    Value::uint(handle)
+                }))
+            }
+            "yield" => {
+                Self::require_bc_arity(name, args, 0)?;
+                Ok(result(Value::unit()))
+            }
+            "size_of" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let (bits, _) = lir_type_info(&args[0].ty);
+                Ok(result(integer_value(
+                    u64::from(bits.div_ceil(8)),
+                    lir_type_info(result_ty).1,
+                )))
+            }
+            "field_count" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let object = match &args[0].value {
+                    Value::Pointer(pointer) if pointer.value >= 0 => self
+                        .state
+                        .objects
+                        .get(pointer.value as usize)
+                        .ok_or(VmError::Runtime("dangling struct handle".into()))?,
+                    value => value,
+                };
+                let count = match object {
+                    Value::Struct(value) => value.structural.fields.len(),
+                    Value::Structural(value) => value.fields.len(),
+                    value => {
+                        return Err(VmError::Runtime(format!(
+                            "field_count expects a struct, got {value:?}"
+                        )))
+                    }
+                };
+                Ok(result(integer_value(
+                    count as u64,
+                    lir_type_info(result_ty).1,
+                )))
+            }
+            "field_name_at" => {
+                Self::require_bc_arity(name, args, 2)?;
+                let index = usize::try_from(self.bc_integer_arg(name, args, 1)?)
+                    .map_err(|_| VmError::Runtime("field index is out of range".into()))?;
+                let object = match &args[0].value {
+                    Value::Pointer(pointer) if pointer.value >= 0 => self
+                        .state
+                        .objects
+                        .get(pointer.value as usize)
+                        .ok_or(VmError::Runtime("dangling struct handle".into()))?,
+                    value => value,
+                };
+                let field_name = match object {
+                    Value::Struct(value) => value.structural.fields.get(index),
+                    Value::Structural(value) => value.fields.get(index),
+                    value => {
+                        return Err(VmError::Runtime(format!(
+                            "field_name_at expects a struct, got {value:?}"
+                        )))
+                    }
+                }
+                .ok_or_else(|| VmError::Runtime(format!("field index {index} out of bounds")))?
+                .name
+                .name
+                .clone();
+                let handle = self.state.objects.len() as i64;
+                self.state.objects.push(Value::string(field_name));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
+            "has_field" => {
+                Self::require_bc_arity(name, args, 2)?;
+                let field_handle = self.container_handle(name, &args[1])?;
+                let Value::String(field_name) = self
+                    .state
+                    .objects
+                    .get(field_handle)
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!("dangling field name handle {field_handle}")))?
+                else {
+                    return Err(VmError::Runtime("has_field expects a string field name".into()));
+                };
+                let object = match &args[0].value {
+                    Value::Pointer(pointer) if pointer.value >= 0 => self
+                        .state
+                        .objects
+                        .get(pointer.value as usize)
+                        .ok_or(VmError::Runtime("dangling struct handle".into()))?,
+                    value => value,
+                };
+                let exists = match object {
+                    Value::Struct(value) => value
+                        .structural
+                        .fields
+                        .iter()
+                        .any(|field| field.name.name == field_name.value),
+                    Value::Structural(value) => value
+                        .fields
+                        .iter()
+                        .any(|field| field.name.name == field_name.value),
+                    value => {
+                        return Err(VmError::Runtime(format!(
+                            "has_field expects a struct, got {value:?}"
+                        )))
+                    }
+                };
+                Ok(result(Value::bool(exists)))
+            }
+            "has_method" => {
+                Self::require_bc_arity(name, args, 2)?;
+                let _method_handle = self.container_handle(name, &args[1])?;
+                // Method tables are compile-time metadata; calls that reach the
+                // interpreter are validly folded only when that metadata exists.
+                Ok(result(Value::bool(false)))
+            }
+            "method_count" => {
+                Self::require_bc_arity(name, args, 1)?;
+                Ok(result(integer_value(
+                    0,
+                    lir_type_info(result_ty).1,
+                )))
+            }
+            "field_type" => {
+                Self::require_bc_arity(name, args, 2)?;
+                let _field_handle = self.container_handle(name, &args[1])?;
+                Ok(result(Value::Type(Ty::unknown())))
+            }
+            "struct_size" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let (bits, _) = lir_type_info(&args[0].ty);
+                Ok(result(integer_value(
+                    u64::from(bits.div_ceil(8)),
+                    lir_type_info(result_ty).1,
+                )))
+            }
+            "reflect_fields" => {
+                Self::require_bc_arity(name, args, 1)?;
+                let object = match &args[0].value {
+                    Value::Pointer(pointer) if pointer.value >= 0 => self
+                        .state
+                        .objects
+                        .get(pointer.value as usize)
+                        .ok_or(VmError::Runtime("dangling struct handle".into()))?,
+                    value => value,
+                };
+                let names = match object {
+                    Value::Struct(value) => value
+                        .structural
+                        .fields
+                        .iter()
+                        .map(|field| Value::string(field.name.name.clone()))
+                        .collect(),
+                    Value::Structural(value) => value
+                        .fields
+                        .iter()
+                        .map(|field| Value::string(field.name.name.clone()))
+                        .collect(),
+                    value => {
+                        return Err(VmError::Runtime(format!(
+                            "reflect_fields expects a struct, got {value:?}"
+                        )))
+                    }
+                };
+                let list = Value::List(ValueList::new(names));
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(list.clone());
+                Ok(result(if Self::is_aggregate_runtime_type(result_ty) {
+                    list
+                } else {
+                    Value::uint(handle)
+                }))
+            }
+            "create_struct" => {
+                if args.is_empty() || args.len() % 2 != 0 {
+                    return Err(VmError::Runtime(
+                        "create_struct expects field-name/value pairs".into(),
+                    ));
+                }
+                let mut fields = Vec::with_capacity(args.len() / 2);
+                for pair in args.chunks_exact(2) {
+                    let handle = self.container_handle(name, &pair[0])?;
+                    let Value::String(field_name) = self
+                        .state
+                        .objects
+                        .get(handle)
+                        .cloned()
+                        .ok_or(VmError::Runtime(format!(
+                            "dangling field name handle {handle}"
+                        )))?
+                    else {
+                        return Err(VmError::Runtime(
+                            "create_struct field names must be strings".into(),
+                        ));
+                    };
+                    fields.push(fp_core::ast::ValueField::new(
+                        fp_core::ast::Ident::new(field_name.value),
+                        pair[1].value.clone(),
+                    ));
+                }
+                let handle = self.state.objects.len() as i64;
+                self.state
+                    .objects
+                    .push(Value::Structural(fp_core::ast::ValueStructural::new(fields)));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+            }
             _ => Err(VmError::Runtime(format!("unknown bc intrinsic: {name}"))),
         }
     }
@@ -2330,7 +3431,15 @@ impl LirInterpreter {
     }
 
     fn container_handle(&self, name: &str, value: &TypedValue) -> LirResult<usize> {
-        let handle = self.integer_value(value)?;
+        let handle = match &value.value {
+            Value::Pointer(pointer) if pointer.value >= 0 => pointer.value as u64,
+            Value::Pointer(_) => {
+                return Err(VmError::Runtime(format!(
+                    "invalid container handle for {name}"
+                )))
+            }
+            _ => self.integer_value(value)?,
+        };
         usize::try_from(handle)
             .map_err(|_| VmError::Runtime(format!("invalid container handle for {name}")))
     }
@@ -2343,6 +3452,36 @@ impl LirInterpreter {
             "bytecode intrinsic `{name}` expects {expected} arguments, got {}",
             args.len()
         )))
+    }
+
+    fn indexed_value(&self, key: &TypedValue, values: &[Value], name: &str) -> LirResult<Value> {
+        let index = self.bc_integer_arg(name, std::slice::from_ref(key), 0)? as usize;
+        values
+            .get(index)
+            .cloned()
+            .ok_or_else(|| VmError::Runtime(format!("index {index} out of bounds")))
+    }
+
+    fn struct_field_by_name<'a>(
+        &self,
+        fields: &'a [fp_core::ast::ValueField],
+        key: &TypedValue,
+        name: &str,
+    ) -> LirResult<&'a fp_core::ast::ValueField> {
+        let handle = self.container_handle(name, key)?;
+        let Value::String(field_name) = self
+            .state
+            .objects
+            .get(handle)
+            .cloned()
+            .ok_or(VmError::Runtime("dangling field name handle".into()))?
+        else {
+            return Err(VmError::Runtime("struct field key must be a string".into()));
+        };
+        fields
+            .iter()
+            .find(|field| field.name.name == field_name.value)
+            .ok_or_else(|| VmError::Runtime(format!("unknown struct field '{}'", field_name.value)))
     }
 
     fn store_value_at(&mut self, addr: u64, ty: &LirType, value: &Value) -> LirResult<()> {

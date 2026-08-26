@@ -40,7 +40,6 @@ fp-bytecode = { path = "../fp-bytecode" }
 fp-stackcode = { path = "../fp-stackcode" }
 fp-jvm = { path = "../fp-jvm" }
 fp-interpret = { path = "../fp-interpret" }
-fp-stackvm = { path = "../fp-stackvm" }
 fp-wasm = { path = "../fp-wasm" }
 fp-ebpf = { path = "../fp-ebpf" }
 fp-native = { path = "../fp-native" }

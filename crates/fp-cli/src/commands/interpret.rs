@@ -56,8 +56,7 @@ fn interpret_binary_bytecode(path: &Path) -> Result<()> {
 }
 
 fn run_bytecode_program(program: fp_bytecode::BytecodeProgram) -> Result<()> {
-    let vm = fp_stackvm::Vm::new(program);
-    vm.run_main()
+    fp_stackcode::interpret_program(program)
         .map_err(|err| CliError::Compilation(format!("Bytecode interpretation failed: {}", err)))?;
     Ok(())
 }

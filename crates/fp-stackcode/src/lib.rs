@@ -20,6 +20,17 @@ pub struct BytecodeBackend {
     pub save_intermediates: bool,
 }
 
+pub fn interpret_program(
+    program: fp_bytecode::BytecodeProgram,
+) -> fp_core::Result<fp_core::ast::Value> {
+    let lir = fp_stackvm::lowering::lower_program(&program)
+        .map_err(|error| fp_core::Error::from(error.to_string()))?;
+    let mut interpreter = fp_interpret::LirInterpreter::new();
+    interpreter
+        .run_main(&lir)
+        .map_err(|error| fp_core::Error::from(error.to_string()))
+}
+
 pub fn interpret_const(
     program: fp_bytecode::BytecodeProgram,
     entry: &str,
@@ -102,8 +113,7 @@ impl fp_core::backend::TargetBackend for BytecodeBackend {
         let bytes = std::fs::read(&self.output)?;
         let file = fp_bytecode::decode_file(&bytes)
             .map_err(|e| fp_core::error::Error::from(format!("failed to decode bytecode: {e}")))?;
-        let vm = fp_stackvm::Vm::new(file.program);
-        vm.run_main()
+        interpret_program(file.program)
             .map_err(|e| fp_core::error::Error::from(format!("bytecode execution failed: {e}")))?;
         Ok(())
     }

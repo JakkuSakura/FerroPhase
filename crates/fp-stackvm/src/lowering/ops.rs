@@ -74,35 +74,29 @@ pub(crate) fn lower_load_const(
             block_id,
             LirInstructionKind::Add(f64_value(*f), f64_value(0.0)),
         ),
-        BytecodeConst::Str(_s) => {
-            // String bodies are stored in the const pool but their
-            // runtime representation requires heap allocation.  For
-            // now we emit a placeholder call to __bc_str_alloc.
-            // A full implementation would encode the string bytes as
-            // inline data or a global initialiser.
-            let len_reg = fl.emit_in_block(
-                block_id,
-                LirInstructionKind::Add(i64_value(0), i64_value(0)),
-            )?;
+        BytecodeConst::Str(s) => {
+            let mut args = Vec::with_capacity(s.len());
+            for byte in s.as_bytes() {
+                args.push(i64_value(*byte as u64));
+            }
             lower_call_intrinsic_typed(
                 fl,
                 block_id,
-                constants::INTRINSIC_STR_ALLOC,
-                &[fl.reg_val(len_reg)?],
+                constants::INTRINSIC_STR_CONST,
+                &args,
                 LirType::Ptr(Box::new(LirType::I8)),
             )
         }
-        BytecodeConst::Function(_name) => {
-            // Function references are lowered identically to strings.
-            let len_reg = fl.emit_in_block(
-                block_id,
-                LirInstructionKind::Add(i64_value(0), i64_value(0)),
-            )?;
+        BytecodeConst::Function(name) => {
+            let mut args = Vec::with_capacity(name.len());
+            for byte in name.as_bytes() {
+                args.push(i64_value(*byte as u64));
+            }
             lower_call_intrinsic_typed(
                 fl,
                 block_id,
-                constants::INTRINSIC_STR_ALLOC,
-                &[fl.reg_val(len_reg)?],
+                constants::INTRINSIC_STR_CONST,
+                &args,
                 LirType::Ptr(Box::new(LirType::I8)),
             )
         }
@@ -300,6 +294,405 @@ pub(crate) fn lower_intrinsic(
                 lower_call_intrinsic_typed(fl, block_id, "__bc_time_now", &args, result_type)?;
             Ok(Some(reg))
         }
+        IntrinsicKind::Panic => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_panic",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::CatchUnwind => {
+            if args.len() != 1 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic CatchUnwind requires 1 argument, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::JsonParse => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_json_parse",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Slice => {
+            if args.len() != 3 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic Slice requires 3 arguments, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::INTRINSIC_SLICE,
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsExists | IntrinsicKind::FsIsFile | IntrinsicKind::FsIsDir => {
+            let name = match kind {
+                IntrinsicKind::FsExists => "__bc_fs_exists",
+                IntrinsicKind::FsIsFile => "__bc_fs_is_file",
+                IntrinsicKind::FsIsDir => "__bc_fs_is_dir",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsReadToString => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_fs_read_to_string",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsWriteString | IntrinsicKind::FsAppendString => {
+            let name = match kind {
+                IntrinsicKind::FsWriteString => "__bc_fs_write_string",
+                IntrinsicKind::FsAppendString => "__bc_fs_append_string",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsCreateDirAll
+        | IntrinsicKind::FsRemoveFile
+        | IntrinsicKind::FsRemoveDirAll => {
+            let name = match kind {
+                IntrinsicKind::FsCreateDirAll => "__bc_fs_create_dir_all",
+                IntrinsicKind::FsRemoveFile => "__bc_fs_remove_file",
+                IntrinsicKind::FsRemoveDirAll => "__bc_fs_remove_dir_all",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsReadDir => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_fs_read_dir",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsWalkDir => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_fs_walk_dir",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FsGlob => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_fs_glob",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::PathJoin
+        | IntrinsicKind::PathParent
+        | IntrinsicKind::PathFileName
+        | IntrinsicKind::PathExtension
+        | IntrinsicKind::PathStem
+        | IntrinsicKind::PathNormalize
+        | IntrinsicKind::PathIsAbsolute => {
+            let name = match kind {
+                IntrinsicKind::PathJoin => "__bc_path_join",
+                IntrinsicKind::PathParent => "__bc_path_parent",
+                IntrinsicKind::PathFileName => "__bc_path_file_name",
+                IntrinsicKind::PathExtension => "__bc_path_extension",
+                IntrinsicKind::PathStem => "__bc_path_stem",
+                IntrinsicKind::PathNormalize => "__bc_path_normalize",
+                IntrinsicKind::PathIsAbsolute => "__bc_path_is_absolute",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::EnvCurrentDir
+        | IntrinsicKind::EnvTempDir
+        | IntrinsicKind::EnvHomeDir
+        | IntrinsicKind::EnvVar
+        | IntrinsicKind::EnvVarExists => {
+            let name = match kind {
+                IntrinsicKind::EnvCurrentDir => "__bc_env_current_dir",
+                IntrinsicKind::EnvTempDir => "__bc_env_temp_dir",
+                IntrinsicKind::EnvHomeDir => "__bc_env_home_dir",
+                IntrinsicKind::EnvVar => "__bc_env_var",
+                IntrinsicKind::EnvVarExists => "__bc_env_var_exists",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::IoReadStdinToString
+        | IntrinsicKind::IoWriteStdout
+        | IntrinsicKind::IoWriteStderr => {
+            let name = match kind {
+                IntrinsicKind::IoReadStdinToString => "__bc_io_read_stdin_to_string",
+                IntrinsicKind::IoWriteStdout => "__bc_io_write_stdout",
+                IntrinsicKind::IoWriteStderr => "__bc_io_write_stderr",
+                _ => unreachable!(),
+            };
+            let reg = lower_call_intrinsic_typed(fl, block_id, name, &args, result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::DebugAssertions => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_debug_assertions",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Input => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_input",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::TypeName => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_type_name",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::TypeOf => {
+            if args.len() != 1 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic TypeOf requires 1 argument, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_type_of",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Sleep => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_sleep",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Spawn | IntrinsicKind::Join | IntrinsicKind::Select => {
+            if args.is_empty() {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic {kind:?} requires at least one argument"
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Yield => {
+            lower_call_intrinsic_void(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+            )?;
+            Ok(None)
+        }
+        IntrinsicKind::SizeOf => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_size_of",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FieldCount => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_field_count",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FieldNameAt => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_field_name_at",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::HasField => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_has_field",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::HasMethod => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_has_method",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::MethodCount => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_method_count",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::FieldType => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_field_type",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::StructSize => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_struct_size",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::ReflectFields => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_reflect_fields",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::CreateStruct => {
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                "__bc_create_struct",
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::YamlToJson => {
+            if args.len() != 1 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic YamlToJson requires 1 argument, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::ShellExec => {
+            if args.len() != 1 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic ShellExec requires 1 argument, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::ProcMacroTokenStreamFromStr => {
+            if args.len() != 1 {
+                return Err(LowerError::Internal(format!(
+                    "intrinsic ProcMacroTokenStreamFromStr requires 1 argument, got {}",
+                    args.len()
+                )));
+            }
+            let reg = lower_call_intrinsic_typed(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+                result_type,
+            )?;
+            Ok(Some(reg))
+        }
         _ => Err(LowerError::Unsupported(format!(
             "intrinsic {kind:?} not yet lowered"
         ))),
@@ -318,8 +711,13 @@ pub(crate) fn lower_make_compound(
     intrinsic_name: &str,
     count: u32,
 ) -> LowerResult<RegisterId> {
-    let mut element_regs = Vec::with_capacity(count as usize);
-    for _ in 0..count {
+    let element_count = if intrinsic_name == constants::INTRINSIC_MAKE_MAP {
+        count.saturating_mul(2)
+    } else {
+        count
+    };
+    let mut element_regs = Vec::with_capacity(element_count as usize);
+    for _ in 0..element_count {
         let element_reg = fl.pop_reg()?;
         element_regs.push(fl.reg_val(element_reg)?);
     }
@@ -435,7 +833,7 @@ pub(crate) fn lower_store_place(
         if i == last {
             let set_intrinsic = match elem {
                 BytecodePlaceElem::Field(_) => constants::INTRINSIC_TUPLE_SET,
-                BytecodePlaceElem::Index(_) => constants::INTRINSIC_ARRAY_GET,
+                BytecodePlaceElem::Index(_) => constants::INTRINSIC_ARRAY_SET,
             };
             let new_handle = lower_call_intrinsic(
                 fl,

@@ -29,14 +29,14 @@
 //!
 //! # Limitations
 //!
-//! - Multi-predecessor blocks do not emit φ-nodes; the simulated stack
-//!   is cleared at each block entry.  This is sound for bytecode that
-//!   was produced by a φ-aware lowering, but would produce incorrect
-//!   LIR for general bytecode.
-//! - Most [`CallKind`] variants beyond `Println`/`Print`/
-//!   `Format`/`Len`/`TimeNow` return [`LowerError::Unsupported`].
-//! - The runtime intrinsics (`__bc_*`) are declared as external
-//!   `Call` targets but not yet implemented in `fp-interpret`.
+//! - Multi-predecessor blocks with compatible carried operand-stack values
+//!   are lowered through typed LIR `Phi` instructions. Backedge incoming
+//!   values are patched after their predecessor is lowered.
+//! - Intrinsic variants outside the current runtime bridge (`Println`,
+//!   `Print`, `Format`, `Len`, `TimeNow`, `Panic`, and `Slice`) return
+//!   [`LowerError::Unsupported`].
+//! - Compound-value runtime intrinsics (`__bc_*`) depend on the matching
+//!   handlers in `fp-interpret` and need end-to-end coverage per operation.
 
 pub mod cfg;
 pub mod constants;
