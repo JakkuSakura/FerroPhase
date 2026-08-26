@@ -2879,14 +2879,18 @@ impl<'a> BodyBuilder<'a> {
                 .expect("segments len checked")
                 .name
                 .clone();
-            if let Some(info) = self
+            let method_info = self
                 .lowering
                 .mir_package
                 .borrow()
                 .struct_methods
                 .get(&String::from(struct_name.clone()))
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
-            {
+                .cloned();
+            if let Some(info) = method_info {
+                if let Some(def_id) = &info.def_id {
+                    self.lowering.ensure_method_lowered(def_id.clone())?;
+                }
                 let literal = match info.def_id {
                     Some(ref def_id) => mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
                     None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
@@ -2929,10 +2933,7 @@ impl<'a> BodyBuilder<'a> {
             // existing `current_package_id` guard already handles.
             if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
                 self.lowering.ensure_method_lowered(def_id.clone())?;
-                let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
-                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
-                };
+                let literal = mir::ConstantKind::FnDef(def_id.clone(), info.substs.clone());
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
@@ -4927,11 +4928,12 @@ impl<'a> BodyBuilder<'a> {
             expected_return,
             span,
         )?;
+        let literal = mir::ConstantKind::FnDef(def.def_id.clone(), info.substs.clone());
         let func_operand = mir::Operand::Constant(mir::Constant {
             span,
             ty: info.fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
+            literal,
         });
         let continue_block = self.new_block();
         let terminator = mir::Terminator {

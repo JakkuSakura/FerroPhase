@@ -521,19 +521,13 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
 
 fn lower_place(
     place: &mir::Place,
-    local_types: &[fp_core::lir::LirType],
+    _local_types: &[fp_core::lir::LirType],
 ) -> Result<BytecodePlace, BytecodeError> {
-    let scalar_slice = matches!(
-        local_types.get(place.local as usize),
-        Some(fp_core::lir::LirType::Ptr(_))
-    );
     let mut projection = Vec::new();
     for elem in &place.projection {
         match elem {
             mir::PlaceElem::Field(index, _) => {
-                if !scalar_slice {
-                    projection.push(BytecodePlaceElem::Field(*index as u32));
-                }
+                projection.push(BytecodePlaceElem::Field(*index as u32));
             }
             mir::PlaceElem::Index(local) => {
                 projection.push(BytecodePlaceElem::Index(*local));

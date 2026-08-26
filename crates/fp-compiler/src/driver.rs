@@ -671,6 +671,7 @@ impl CompilerDriver {
             )
             .with_package_id(current_package_id.clone())
         };
+        lir_gen.prepare_package(&current_package_id);
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id)
                 .await?;
@@ -1089,7 +1090,11 @@ impl CompilerDriver {
     /// (or root's transitive dependency) references it.
     fn is_lowering_root(item: &hir::Item) -> bool {
         item.visibility == hir::Visibility::Public
-            || matches!(&item.kind, hir::ItemKind::Function(function) if function.sig.name.as_str() == "main")
+            || matches!(
+                &item.kind,
+                hir::ItemKind::Function(function) if function.sig.name.as_str() == "main"
+            )
+            || matches!(&item.kind, hir::ItemKind::Impl(_))
     }
 
     /// One `DefId`'s own HIR->MIR lowering — call once per top-level `DefId`

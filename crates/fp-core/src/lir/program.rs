@@ -49,7 +49,8 @@ impl LirProgram {
     /// comptime value resolves has a later blob superseding an earlier
     /// one's same-named function; see `LirPackage`'s own doc comment).
     pub fn find_function(&self, package_id: &PackageId, name: &Name) -> Option<&LirFunction> {
-        self.package(package_id)?
+        let package = self.package(package_id)?;
+        let direct = package
             .blobs
             .iter()
             .rev()
@@ -57,18 +58,54 @@ impl LirProgram {
                 blob.functions
                     .iter()
                     .find(|function| &function.name == name)
-            })
+            });
+        direct.or_else(|| {
+            let suffix = format!("::{name}");
+            let mut matches = package
+                .blobs
+                .iter()
+                .rev()
+                .flat_map(|blob| blob.functions.iter())
+                .filter(|function| function.name.as_str().ends_with(&suffix));
+            let function = matches.next()?;
+            if matches.next().is_none() {
+                Some(function)
+            } else {
+                None
+            }
+        }).or_else(|| {
+            let suffix = format!("::{name}");
+            let mut matches = self
+                .packages
+                .values()
+                .flat_map(|package| package.blobs.iter())
+                .flat_map(|blob| blob.functions.iter())
+                .filter(|function| function.name.as_str().ends_with(&suffix));
+            let function = matches.next()?;
+            if matches.next().is_none() { Some(function) } else { None }
+        })
     }
 
     /// Same as `find_function`, but searches every loaded package for a
     /// match — for a bare, unqualified name with no package of its own.
     pub fn find_function_any_package(&self, name: &Name) -> Option<&LirFunction> {
-        self.packages.values().find_map(|package| {
+        let direct = self.packages.values().find_map(|package| {
             package.blobs.iter().rev().find_map(|blob| {
                 blob.functions
                     .iter()
                     .find(|function| &function.name == name)
             })
+        });
+        direct.or_else(|| {
+            let suffix = format!("::{name}");
+            let mut matches = self
+                .packages
+                .values()
+                .flat_map(|package| package.blobs.iter())
+                .flat_map(|blob| blob.functions.iter())
+                .filter(|function| function.name.as_str().ends_with(&suffix));
+            let function = matches.next()?;
+            if matches.next().is_none() { Some(function) } else { None }
         })
     }
 

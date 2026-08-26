@@ -661,6 +661,7 @@ impl HirTypeChecker {
             };
             let mut scope = self.with_generics(&impl_item.generics);
             let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
+            let mut scope = scope.with_self_type(checked_self_ty.clone());
             let self_ty = match &checked_self_ty.kind {
                 TyKind::Ref(_, inner, _) => inner.as_ref(),
                 _ => &checked_self_ty,

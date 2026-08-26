@@ -1982,13 +1982,14 @@ impl LirInterpreter {
             definition
         } else {
             let name = Name::new(name);
-            self.program
+            let direct = self.program
                 .as_ref()
                 .and_then(|program| match &package_id {
                     Some(package_id) => program.find_function(package_id, &name),
                     None => program.find_function_any_package(&name),
                 })
-                .cloned()
+                .cloned();
+            direct
         }
         .ok_or_else(|| VmError::Runtime(format!("missing function {name}")))?;
         let resolved_args: Vec<Value> = args

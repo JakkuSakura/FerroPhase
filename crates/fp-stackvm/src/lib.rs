@@ -5,6 +5,7 @@ use fp_bytecode::{
     BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicKind,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{cell::RefCell, rc::Rc};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub enum Value {
     Null,
     Undefined,
     Tuple(Vec<Value>),
+    SharedTuple(Rc<RefCell<Vec<Value>>>),
     Array(Vec<Value>),
     List(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -53,6 +55,16 @@ impl Vm {
             .functions
             .iter()
             .find(|f| f.name == name)
+            .or_else(|| {
+                let suffix = format!("::{name}");
+                let mut matches = self
+                    .program
+                    .functions
+                    .iter()
+                    .filter(|function| function.name.ends_with(&suffix));
+                let function = matches.next()?;
+                if matches.next().is_none() { Some(function) } else { None }
+            })
             .ok_or_else(|| VmError::Runtime {
                 message: format!("missing function {}", name),
             })?;
@@ -286,7 +298,7 @@ fn execute_instr(
         }
         BytecodeInstr::MakeTuple(count) => {
             let values = pop_n(stack, *count)?;
-            stack.push(Value::Tuple(values));
+            stack.push(Value::SharedTuple(Rc::new(RefCell::new(values))));
             Ok(())
         }
         BytecodeInstr::MakeArray(count) => {
@@ -323,6 +335,7 @@ fn execute_instr(
                 Value::Array(items) => items.len() as i64,
                 Value::List(items) => items.len() as i64,
                 Value::Tuple(items) => items.len() as i64,
+                Value::SharedTuple(items) => items.borrow().len() as i64,
                 Value::Map(items) => items.len() as i64,
                 _ => {
                     return Err(VmError::Unsupported {
@@ -561,6 +574,7 @@ fn exec_intrinsic(
                 Value::Array(items) => items.len() as i64,
                 Value::List(items) => items.len() as i64,
                 Value::Tuple(items) => items.len() as i64,
+                Value::SharedTuple(items) => items.borrow().len() as i64,
                 Value::Map(items) => items.len() as i64,
                 _ => {
                     return Err(VmError::Unsupported {
@@ -665,6 +679,10 @@ fn render_value(value: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Value::SharedTuple(items) => format!(
+            "({})",
+            items.borrow().iter().map(render_value).collect::<Vec<_>>().join(", ")
+        ),
         Value::Array(items) | Value::List(items) => format!(
             "[{}]",
             items
@@ -740,6 +758,13 @@ fn load_place(locals: &[Value], place: &BytecodePlace) -> Result<Value, VmError>
                         })?;
                         Value::Str(ch.to_string())
                     }
+                    Value::SharedTuple(items) => items
+                        .borrow()
+                        .get(*index as usize)
+                        .cloned()
+                        .ok_or_else(|| VmError::Runtime {
+                            message: "field index out of bounds".to_string(),
+                        })?,
                     _ => {
                         return Err(VmError::Unsupported {
                             message: "field access unsupported for value".to_string(),
@@ -806,6 +831,16 @@ fn apply_store(
         BytecodePlaceElem::Field(index) => match base {
             Value::Tuple(items) | Value::Array(items) | Value::List(items) => {
                 let idx = *index as usize;
+                if idx >= items.len() {
+                    return Err(VmError::Runtime {
+                        message: "field index out of bounds".to_string(),
+                    });
+                }
+                apply_store(locals, &mut items[idx], &projection[1..], value)
+            }
+            Value::SharedTuple(items) => {
+                let idx = *index as usize;
+                let mut items = items.borrow_mut();
                 if idx >= items.len() {
                     return Err(VmError::Runtime {
                         message: "field index out of bounds".to_string(),
@@ -881,6 +916,11 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         | (Value::Array(a), Value::Array(b))
         | (Value::List(a), Value::List(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(l, r)| values_equal(l, r))
+        }
+        (Value::SharedTuple(a), Value::SharedTuple(b)) => {
+            let a = a.borrow();
+            let b = b.borrow();
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(l, r)| values_equal(l, r))
         }
         (Value::Map(a), Value::Map(b)) => {
             a.len() == b.len()

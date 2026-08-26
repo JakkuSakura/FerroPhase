@@ -171,7 +171,14 @@ impl MirToLirLowerer {
     }
 
     pub(super) fn function_value(&self, name: String) -> Result<lir::LirValue> {
-        let signature = self.function_signatures.get(&name).ok_or_else(|| {
+        let symbol_name = self
+            .function_symbol_map
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| name.clone());
+        let signature = self.function_signatures.get(&name).or_else(|| {
+            self.function_signatures.get(&symbol_name)
+        }).ok_or_else(|| {
             fp_core::error::Error::from(format!("missing LIR signature for function `{name}`"))
         })?;
         let ty = lir::LirType::Ptr(Box::new(lir::LirType::Function {
@@ -181,13 +188,13 @@ impl MirToLirLowerer {
         }));
         let package_id = self
             .function_package_ids
-            .get(&name)
+            .get(&symbol_name)
             .cloned()
             .unwrap_or_else(|| self.package_id.clone());
         Ok(lir::LirValue::function(
             lir::LirFunctionRef::Package {
                 package_id,
-                name: lir::Name::new(name),
+                name: lir::Name::new(symbol_name),
             },
             ty,
         ))
@@ -246,6 +253,17 @@ impl MirToLirLowerer {
 
     pub fn prepare_program(&mut self, mir_program: &mir::MirCodeUnit) {
         self.predeclare_function_signatures(mir_program);
+    }
+
+    pub fn prepare_package(&mut self, package_id: &fp_core::ast::package::PackageId) {
+        let units = self
+            .mir_program
+            .package(package_id)
+            .map(|package| package.borrow().units.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for unit in &units {
+            self.predeclare_function_signatures_impl(unit, Some(package_id.clone()));
+        }
     }
 
     /// Lower one MIR declaration into independently publishable LIR.
@@ -499,7 +517,25 @@ impl MirToLirLowerer {
         };
         self.function_signatures
             .entry(name.clone())
+            .or_insert(signature.clone());
+        self.function_signatures
+            .entry(func.name.as_str().to_string())
             .or_insert(signature);
+        self.function_symbol_map
+            .entry(func.name.as_str().to_string())
+            .or_insert_with(|| name.clone());
+        if let Some(short_name) = func.name.as_str().rsplit("::").next() {
+            let short_signature = self
+                .function_signatures
+                .get(&name)
+                .cloned()
+                .expect("function signature was just registered");
+            self.function_signatures
+                .entry(short_name.to_string())
+                .or_insert(short_signature);
+            self.function_symbol_map
+                .insert(short_name.to_string(), name.clone());
+        }
         let cc = self.calling_convention_for_abi(&func.abi);
         self.function_call_conventions
             .entry(func.name.as_str().to_string())
@@ -2395,11 +2431,21 @@ impl MirToLirLowerer {
                     self.function_value(name)
                 }
                 mir::ConstantKind::Fn(name) => {
-                    let function_name = self
+                    let mut function_name = self
                         .function_symbol_map
                         .get(&String::from(name.clone()))
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
+                    let suffix = format!("::{name}");
+                    let matches: Vec<String> = self
+                        .function_signatures
+                        .keys()
+                        .filter(|candidate| candidate.ends_with(&suffix))
+                        .cloned()
+                        .collect();
+                    if matches.len() == 1 {
+                        function_name = matches[0].clone();
+                    }
                     self.function_value(function_name)
                 }
                 mir::ConstantKind::Global(path) => {
