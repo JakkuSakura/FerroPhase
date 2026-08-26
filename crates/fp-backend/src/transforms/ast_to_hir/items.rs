@@ -394,10 +394,13 @@ impl AstToHirLowerer {
                         }
                         let method_def_id = self.def_id_for_item(item);
                         if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func.attrs) {
-                            if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
-                                .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
+                            if let Some(kind) =
+                                fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
+                                    .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
                             {
-                                self.package.intrinsic_defs.insert(method_def_id.clone(), kind);
+                                self.package
+                                    .intrinsic_defs
+                                    .insert(method_def_id.clone(), kind);
                             }
                         }
                         if let Some(tag) =

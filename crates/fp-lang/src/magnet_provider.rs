@@ -167,11 +167,7 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 modules: Vec::new(),
             };
             return FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
-                .resolve_package_source(
-                    descriptor,
-                    QualifiedPath::new(Vec::new()),
-                    file.ast,
-                );
+                .resolve_package_source(descriptor, QualifiedPath::new(Vec::new()), file.ast);
         }
         let frontend = FerroFrontend::new();
         let mut items = Vec::new();

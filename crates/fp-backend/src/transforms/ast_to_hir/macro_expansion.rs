@@ -11,25 +11,26 @@ impl AstToHirLowerer {
             let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
                 return items;
             };
-            items.into_iter()
-            .flat_map(|package_item| {
-                let module_path = package_item.module_path;
-                let depth = module_path.segments.len();
-                self.expand_item_macros_in_item(
-                    package_item.item,
-                    normalizer,
-                    &mut defs,
-                    &mut depths,
-                    depth,
-                )
+            items
                 .into_iter()
-                .map(move |item| fp_core::ast::package::PackageItem {
-                    module_path: module_path.clone(),
-                    item,
+                .flat_map(|package_item| {
+                    let module_path = package_item.module_path;
+                    let depth = module_path.segments.len();
+                    self.expand_item_macros_in_item(
+                        package_item.item,
+                        normalizer,
+                        &mut defs,
+                        &mut depths,
+                        depth,
+                    )
+                    .into_iter()
+                    .map(move |item| fp_core::ast::package::PackageItem {
+                        module_path: module_path.clone(),
+                        item,
+                    })
+                    .collect::<Vec<_>>()
                 })
-                .collect::<Vec<_>>()
-            })
-            .collect()
+                .collect()
         };
         if let Some(normalizer) = self.intrinsic_normalizer.as_mut() {
             normalizer.set_macro_rules_defs(defs);

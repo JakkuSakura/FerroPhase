@@ -3695,7 +3695,10 @@ impl HirTypeChecker {
         let mut scope = self.with_generics(&function.sig.generics);
         let mut inputs = Vec::with_capacity(function.sig.inputs.len());
         for (index, input) in function.sig.inputs.iter().enumerate() {
-            let ty = if input.as_tuple || input.as_dict || matches!(input.ty.kind, hir::TypeExprKind::Infer) {
+            let ty = if input.as_tuple
+                || input.as_dict
+                || matches!(input.ty.kind, hir::TypeExprKind::Infer)
+            {
                 Ty {
                     kind: TyKind::Infer(ty::InferTy::FreshTy(input.ty.hir_id.local_id())),
                 }

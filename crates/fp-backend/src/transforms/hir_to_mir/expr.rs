@@ -436,10 +436,11 @@ impl HirToMirLowerer {
         &self,
         expr: &hir::Expr,
     ) -> Option<fp_core::intrinsics::IntrinsicKind> {
-        self.typeck_reflection_field_intrinsic(expr.hir_id.clone()).or_else(|| {
-            self.hir_program
-                .reflection_field_intrinsic_at_span(expr.hir_id.package_id().clone(), expr.span)
-        })
+        self.typeck_reflection_field_intrinsic(expr.hir_id.clone())
+            .or_else(|| {
+                self.hir_program
+                    .reflection_field_intrinsic_at_span(expr.hir_id.package_id().clone(), expr.span)
+            })
     }
 
     /// Same idea as `typeck_expr_type`, for a `const { .. }` block's

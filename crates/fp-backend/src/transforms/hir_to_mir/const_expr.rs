@@ -172,8 +172,7 @@ impl HirToMirLowerer {
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 let ty = constant_ty.clone()?;
-                if self.typeck_method_intrinsic(expr.hir_id.clone())
-                    == Some(IntrinsicKind::Len)
+                if self.typeck_method_intrinsic(expr.hir_id.clone()) == Some(IntrinsicKind::Len)
                     && self
                         .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
                         .is_some()
@@ -401,8 +400,7 @@ impl HirToMirLowerer {
                 self.lower_const_value(branch, expected_ty)
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                if self.typeck_method_intrinsic(expr.hir_id.clone())
-                    == Some(IntrinsicKind::Len)
+                if self.typeck_method_intrinsic(expr.hir_id.clone()) == Some(IntrinsicKind::Len)
                     && self
                         .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
                         .is_some()
@@ -561,7 +559,14 @@ impl HirToMirLowerer {
             Some(def.fields.len() as u64)
         };
         let field_count = hir_field_count().or_else(|| {
-            Some(self.mir_package.borrow().struct_defs.get(&struct_def_id)?.fields.len() as u64)
+            Some(
+                self.mir_package
+                    .borrow()
+                    .struct_defs
+                    .get(&struct_def_id)?
+                    .fields
+                    .len() as u64,
+            )
         })?;
         Some(mir::ConstValue::UInt(field_count))
     }
@@ -582,9 +587,7 @@ impl HirToMirLowerer {
 
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
             if let hir::ExprKind::MethodCall(receiver, method, args) = &base.kind {
-                if method.as_str().ends_with("::field_type")
-                    || method.as_str() == "field_type"
-                {
+                if method.as_str().ends_with("::field_type") || method.as_str() == "field_type" {
                     if args.len() != 1 {
                         return None;
                     }

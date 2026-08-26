@@ -1736,10 +1736,7 @@ impl AstToHirLowerer {
                 .collect());
         };
 
-        if !kwargs.is_empty()
-            && args.len() == kwargs.len()
-            && values.len() > param_names.len()
-        {
+        if !kwargs.is_empty() && args.len() == kwargs.len() && values.len() > param_names.len() {
             values = kwargs
                 .iter()
                 .map(|kwarg| {

@@ -176,11 +176,13 @@ impl MirToLirLowerer {
             .get(&name)
             .cloned()
             .unwrap_or_else(|| name.clone());
-        let signature = self.function_signatures.get(&name).or_else(|| {
-            self.function_signatures.get(&symbol_name)
-        }).ok_or_else(|| {
-            fp_core::error::Error::from(format!("missing LIR signature for function `{name}`"))
-        })?;
+        let signature = self
+            .function_signatures
+            .get(&name)
+            .or_else(|| self.function_signatures.get(&symbol_name))
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("missing LIR signature for function `{name}`"))
+            })?;
         let ty = lir::LirType::Ptr(Box::new(lir::LirType::Function {
             return_type: Box::new(signature.return_type.clone()),
             param_types: signature.params.clone(),

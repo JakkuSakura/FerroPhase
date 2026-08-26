@@ -2995,7 +2995,8 @@ impl<'a> BodyBuilder<'a> {
                     });
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(
-                            self.lowering.const_value_to_constant(expr.span, &value, &ty),
+                            self.lowering
+                                .const_value_to_constant(expr.span, &value, &ty),
                         ),
                         ty,
                     });
@@ -3008,9 +3009,7 @@ impl<'a> BodyBuilder<'a> {
             .is_some()
         {
             if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
-                let ty = expected
-                    .cloned()
-                    .unwrap_or_else(|| constant.ty.clone());
+                let ty = expected.cloned().unwrap_or_else(|| constant.ty.clone());
                 return Ok(OperandInfo {
                     operand: mir::Operand::Constant(mir::Constant {
                         ty: ty.clone(),
@@ -4477,9 +4476,7 @@ impl<'a> BodyBuilder<'a> {
                     .is_some()
                 {
                     if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
-                        let ty = expected
-                            .cloned()
-                            .unwrap_or_else(|| constant.ty.clone());
+                        let ty = expected.cloned().unwrap_or_else(|| constant.ty.clone());
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 ty: ty.clone(),

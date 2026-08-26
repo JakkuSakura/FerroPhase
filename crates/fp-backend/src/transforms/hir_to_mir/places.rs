@@ -996,9 +996,9 @@ impl<'a> BodyBuilder<'a> {
                     && args.is_empty()
                 {
                     if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
-                        let constant = self
-                            .lowering
-                            .const_value_to_constant(expr.span, &value, expected_ty);
+                        let constant =
+                            self.lowering
+                                .const_value_to_constant(expr.span, &value, expected_ty);
                         self.push_statement(mir::Statement {
                             source_info: expr.span,
                             kind: mir::StatementKind::Assign(
@@ -1022,7 +1022,8 @@ impl<'a> BodyBuilder<'a> {
                     });
                     return Ok(());
                 }
-                let mut resolved_info: Option<(hir::DefId, MethodLoweringInfo, Option<PlaceInfo>)> = None;
+                let mut resolved_info: Option<(hir::DefId, MethodLoweringInfo, Option<PlaceInfo>)> =
+                    None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
@@ -1066,53 +1067,6 @@ impl<'a> BodyBuilder<'a> {
                     {
                         let is_len = true;
                         if let Some(receiver_place) = self.lower_place(receiver)? {
-                        let mut base_ty = receiver_place.ty.clone();
-                        let mut base_place = receiver_place.place.clone();
-                        loop {
-                            match &base_ty.kind {
-                                TyKind::Ref(_, inner, _) => {
-                                    base_place.projection.push(mir::PlaceElem::Deref);
-                                    base_ty = inner.as_ref().clone();
-                                }
-                                TyKind::RawPtr(type_and_mut) => {
-                                    base_place.projection.push(mir::PlaceElem::Deref);
-                                    base_ty = type_and_mut.ty.as_ref().clone();
-                                }
-                                _ => break,
-                            }
-                        }
-                        if let TyKind::Slice(_) = &base_ty.kind {
-                            let (field_place, declared_ty) = if is_len {
-                                (
-                                    self.lower_slice_len_place(base_place),
-                                    Ty {
-                                        kind: TyKind::Uint(UintTy::Usize),
-                                    },
-                                )
-                            } else {
-                                (
-                                    self.lower_slice_ptr_place(base_place),
-                                    self.lowering.raw_string_ptr_ty(),
-                                )
-                            };
-                            if (place.local as usize) < self.locals.len() {
-                                self.locals[place.local as usize].ty = declared_ty;
-                            }
-                            self.push_statement(mir::Statement {
-                                source_info: expr.span,
-                                kind: mir::StatementKind::Assign(
-                                    place,
-                                    mir::Rvalue::Use(mir::Operand::copy(field_place)),
-                                ),
-                            });
-                            return Ok(());
-                        }
-                    }
-                    if (method_name.as_str() == "as_ptr"
-                        || method_name.as_str().ends_with("::as_ptr"))
-                        && args.is_empty()
-                    {
-                        if let Some(receiver_place) = self.lower_place(receiver)? {
                             let mut base_ty = receiver_place.ty.clone();
                             let mut base_place = receiver_place.place.clone();
                             loop {
@@ -1128,24 +1082,71 @@ impl<'a> BodyBuilder<'a> {
                                     _ => break,
                                 }
                             }
-                            if matches!(&base_ty.kind, TyKind::Slice(_)) {
-                                let ptr_place = self.lower_slice_ptr_place(base_place);
-                                let ptr_ty = self.lowering.raw_string_ptr_ty();
+                            if let TyKind::Slice(_) = &base_ty.kind {
+                                let (field_place, declared_ty) = if is_len {
+                                    (
+                                        self.lower_slice_len_place(base_place),
+                                        Ty {
+                                            kind: TyKind::Uint(UintTy::Usize),
+                                        },
+                                    )
+                                } else {
+                                    (
+                                        self.lower_slice_ptr_place(base_place),
+                                        self.lowering.raw_string_ptr_ty(),
+                                    )
+                                };
                                 if (place.local as usize) < self.locals.len() {
-                                    self.locals[place.local as usize].ty = ptr_ty.clone();
+                                    self.locals[place.local as usize].ty = declared_ty;
                                 }
                                 self.push_statement(mir::Statement {
                                     source_info: expr.span,
                                     kind: mir::StatementKind::Assign(
                                         place,
-                                        mir::Rvalue::Use(mir::Operand::copy(ptr_place)),
+                                        mir::Rvalue::Use(mir::Operand::copy(field_place)),
                                     ),
                                 });
                                 return Ok(());
                             }
                         }
+                        if (method_name.as_str() == "as_ptr"
+                            || method_name.as_str().ends_with("::as_ptr"))
+                            && args.is_empty()
+                        {
+                            if let Some(receiver_place) = self.lower_place(receiver)? {
+                                let mut base_ty = receiver_place.ty.clone();
+                                let mut base_place = receiver_place.place.clone();
+                                loop {
+                                    match &base_ty.kind {
+                                        TyKind::Ref(_, inner, _) => {
+                                            base_place.projection.push(mir::PlaceElem::Deref);
+                                            base_ty = inner.as_ref().clone();
+                                        }
+                                        TyKind::RawPtr(type_and_mut) => {
+                                            base_place.projection.push(mir::PlaceElem::Deref);
+                                            base_ty = type_and_mut.ty.as_ref().clone();
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if matches!(&base_ty.kind, TyKind::Slice(_)) {
+                                    let ptr_place = self.lower_slice_ptr_place(base_place);
+                                    let ptr_ty = self.lowering.raw_string_ptr_ty();
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = ptr_ty.clone();
+                                    }
+                                    self.push_statement(mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place,
+                                            mir::Rvalue::Use(mir::Operand::copy(ptr_place)),
+                                        ),
+                                    });
+                                    return Ok(());
+                                }
+                            }
+                        }
                     }
-                }
                 }
 
                 if (method_name.as_str() == "get_unchecked"
@@ -1600,8 +1601,7 @@ impl<'a> BodyBuilder<'a> {
                                 });
                             if let Some(def) = method_def {
                                 if def.function.sig.generics.params.is_empty() {
-                                    self.lowering
-                                        .ensure_method_lowered(def.def_id.clone())?;
+                                    self.lowering.ensure_method_lowered(def.def_id.clone())?;
                                 }
                                 let method_ctx = self
                                     .lowering
@@ -1759,7 +1759,10 @@ impl<'a> BodyBuilder<'a> {
                                     expr.span,
                                 )?;
 
-                                let literal = mir::ConstantKind::FnDef(def.def_id.clone(), info.substs.clone());
+                                let literal = mir::ConstantKind::FnDef(
+                                    def.def_id.clone(),
+                                    info.substs.clone(),
+                                );
                                 let func_operand = mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
@@ -1856,9 +1859,8 @@ impl<'a> BodyBuilder<'a> {
                                 kind: mir::StatementKind::Assign(
                                     place.clone(),
                                     mir::Rvalue::Use(mir::Operand::Constant(
-                                        self.lowering.const_value_to_constant(
-                                            expr.span, &value, &len_ty,
-                                        ),
+                                        self.lowering
+                                            .const_value_to_constant(expr.span, &value, &len_ty),
                                     )),
                                 ),
                             });
@@ -2139,7 +2141,8 @@ impl<'a> BodyBuilder<'a> {
                         .cloned();
                     if let Some(def) = method_def {
                         if let Some(struct_def_id) = def.self_def.clone() {
-                            let extra_args: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
+                            let extra_args: Vec<&hir::Expr> =
+                                args.iter().map(|arg| &arg.value).collect();
                             self.call_real_method_into_place(
                                 struct_def_id,
                                 method_name,
@@ -2166,7 +2169,8 @@ impl<'a> BodyBuilder<'a> {
                             .method_defs_by_self_and_name
                             .contains_key(&(struct_def_id.clone(), method_name.to_string()));
                         if has_method {
-                            let extra_args: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
+                            let extra_args: Vec<&hir::Expr> =
+                                args.iter().map(|arg| &arg.value).collect();
                             self.call_real_method_into_place(
                                 struct_def_id,
                                 method_name,
@@ -2183,12 +2187,15 @@ impl<'a> BodyBuilder<'a> {
 
                 let unique_method = {
                     let package = self.lowering.mir_package.borrow();
-                    let mut matches = package
-                        .method_defs_by_def
-                        .values()
-                        .filter(|def| def.method_name == method_name.as_str() && def.self_def.is_some());
+                    let mut matches = package.method_defs_by_def.values().filter(|def| {
+                        def.method_name == method_name.as_str() && def.self_def.is_some()
+                    });
                     let first = matches.next().cloned();
-                    if matches.next().is_none() { first } else { None }
+                    if matches.next().is_none() {
+                        first
+                    } else {
+                        None
+                    }
                 };
                 let typed_method = self
                     .lowering
@@ -2224,7 +2231,11 @@ impl<'a> BodyBuilder<'a> {
                             .iter()
                             .filter(|(_, info)| info.fn_name == method_name.as_str());
                         let first = matches.next().map(|(def_id, _)| def_id.clone());
-                        if matches.next().is_none() { first } else { None }
+                        if matches.next().is_none() {
+                            first
+                        } else {
+                            None
+                        }
                     });
                 let receiver_operand = self.lower_operand(receiver, None)?;
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
