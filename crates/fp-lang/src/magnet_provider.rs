@@ -10,9 +10,10 @@ use fp_core::ast::package::{
 };
 use fp_core::ast::path::QualifiedPath;
 use fp_core::frontend::LanguageFrontend;
-use fp_core::vfs::VirtualPath;
+use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
+use crate::module_source::FerroModuleSourceResolver;
 use crate::project;
 
 /// `PackageProvider` for ferrophase/`.fp` projects organized in a
@@ -63,14 +64,15 @@ pub struct MagnetWorkspaceProvider {
 impl MagnetWorkspaceProvider {
     pub fn discover(start: &Path) -> ProviderResult<Self> {
         if start.is_file() {
+            let path = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
             let name = start
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("main")
                 .to_string();
             return Ok(Self {
-                root: start.to_path_buf(),
-                members: vec![(name, MemberRoot::File(start.to_path_buf()))],
+                root: path.clone(),
+                members: vec![(name, MemberRoot::File(path))],
                 cache: Default::default(),
             });
         }
@@ -145,6 +147,32 @@ impl PackageProvider for MagnetWorkspaceProvider {
         }
 
         let member_root = self.resolve_root(id)?;
+        if let MemberRoot::File(path) = member_root {
+            let frontend = FerroFrontend::new();
+            let source = std::fs::read_to_string(path)
+                .map_err(|e| ProviderError::other(format!("read {}: {}", path.display(), e)))?;
+            let file = frontend
+                .parse_file(&source, path)
+                .map_err(|e| ProviderError::other(format!("parse {}: {}", path.display(), e)))?;
+            let descriptor = PackageDescriptor {
+                id: id.clone(),
+                name: id.as_str().to_string(),
+                version: None,
+                manifest_path: VirtualPath::from_path(path),
+                root: VirtualPath::from_path(path.parent().unwrap_or(Path::new("."))),
+                metadata: PackageMetadata {
+                    dependencies: vec![crate::provider::std_dependency()],
+                    ..Default::default()
+                },
+                modules: Vec::new(),
+            };
+            return FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
+                .resolve_package_source(
+                    descriptor,
+                    QualifiedPath::new(Vec::new()),
+                    file.ast,
+                );
+        }
         let frontend = FerroFrontend::new();
         let mut items = Vec::new();
 

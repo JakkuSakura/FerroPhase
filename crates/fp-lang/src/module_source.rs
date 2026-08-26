@@ -50,12 +50,14 @@ impl FerroModuleSourceResolver {
         root_module_path: QualifiedPath,
         root_file: File,
     ) -> ProviderResult<AstPackage> {
-        if package.id.as_str() != package_name_from_path(&root_module_path)? {
-            return Err(ProviderError::other(format!(
-                "root module {} does not belong to package {}",
-                root_module_path.to_key(),
-                package.id
-            )));
+        if let Some(root_name) = root_module_path.head() {
+            if package.id.as_str() != root_name {
+                return Err(ProviderError::other(format!(
+                    "root module {} does not belong to package {}",
+                    root_module_path.to_key(),
+                    package.id
+                )));
+            }
         }
 
         let root_source_path = VirtualPath::from_path(&root_file.path);
