@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::module::ModuleId;
-use crate::ast::package::{PackageDescriptor, PackageId, PackageMetadata, AstPackage};
+use crate::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageMetadata};
 use crate::vfs::VirtualPath;
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
@@ -192,7 +192,10 @@ pub struct CompositeProvider {
 }
 
 impl CompositeProvider {
-    pub fn new(dependencies: Vec<Arc<dyn PackageProvider>>, workspace: Arc<dyn PackageProvider>) -> Self {
+    pub fn new(
+        dependencies: Vec<Arc<dyn PackageProvider>>,
+        workspace: Arc<dyn PackageProvider>,
+    ) -> Self {
         Self {
             dependencies,
             workspace,
@@ -200,7 +203,9 @@ impl CompositeProvider {
     }
 
     fn all_providers(&self) -> impl Iterator<Item = &Arc<dyn PackageProvider>> {
-        self.dependencies.iter().chain(std::iter::once(&self.workspace))
+        self.dependencies
+            .iter()
+            .chain(std::iter::once(&self.workspace))
     }
 
     /// The sub-provider whose own `list_packages()` includes `id` — bounded
@@ -274,6 +279,7 @@ pub fn lir_from_text(
         .unwrap_or("main")
         .to_string();
     let package_id = PackageId::new(name);
-    let source = AstPackage::single_item(package_id.clone(), crate::ast::Item::precompiled_lir(lir));
+    let source =
+        AstPackage::single_item(package_id.clone(), crate::ast::Item::precompiled_lir(lir));
     Some(Arc::new(FixedPackageProvider::for_source(package_id, source)) as Arc<dyn PackageProvider>)
 }

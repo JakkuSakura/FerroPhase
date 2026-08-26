@@ -286,7 +286,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LeanParseError> {
             }
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '\'')
+                while i < chars.len()
+                    && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '\'')
                 {
                     i += 1;
                 }

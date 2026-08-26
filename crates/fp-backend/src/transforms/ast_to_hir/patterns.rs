@@ -336,6 +336,7 @@ impl AstToHirLowerer {
     fn value_to_literal(&self, value: &ast::BValue) -> Option<hir::Lit> {
         match value.as_ref() {
             ast::Value::Int(int_val) => Some(hir::Lit::Integer(int_val.value)),
+            ast::Value::UInt(uint_val) => Some(hir::Lit::Integer(uint_val.value as i64)),
             ast::Value::Bool(bool_val) => Some(hir::Lit::Bool(bool_val.value)),
             ast::Value::Decimal(decimal_val) => Some(hir::Lit::Float(decimal_val.value)),
             ast::Value::String(string_val) => Some(hir::Lit::Str(string_val.value.clone())),

@@ -11,11 +11,7 @@ use fp_core::intrinsics::IntrinsicMaterializer;
 pub struct KotlinMaterializer;
 
 impl IntrinsicMaterializer for KotlinMaterializer {
-    fn materialize_invoke(
-        &self,
-        _invoke: &mut ExprInvoke,
-        _ty: &TySlot,
-    ) -> Result<Option<Expr>> {
+    fn materialize_invoke(&self, _invoke: &mut ExprInvoke, _ty: &TySlot) -> Result<Option<Expr>> {
         Ok(None)
     }
 

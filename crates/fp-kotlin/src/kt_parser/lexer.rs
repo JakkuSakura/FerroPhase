@@ -39,8 +39,8 @@ pub struct LexError {
 
 const TRIPLE_PUNCT: &[&str] = &["===", "!==", "..<"];
 const DOUBLE_PUNCT: &[&str] = &[
-    "->", "::", "..", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=",
-    "%=", "?:", "?.", "!!",
+    "->", "::", "..", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=",
+    "?:", "?.", "!!",
 ];
 const SINGLE_PUNCT: &str = "=+-*/%&|^!~@?:;,.()[]{}<>$#";
 
@@ -62,7 +62,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
         let text = src[start..end].to_string();
 
         if kind == TokenKind::Symbol && (text == ">>" || text == ">>>") && angle_depth > 0 {
-            tokens.push(Token { kind: TokenKind::Symbol, text: ">".to_string(), pos: start });
+            tokens.push(Token {
+                kind: TokenKind::Symbol,
+                text: ">".to_string(),
+                pos: start,
+            });
             angle_depth -= 1;
             input = &src[start + 1..];
             continue;
@@ -78,7 +82,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
                 _ => {}
             }
         }
-        tokens.push(Token { kind, text, pos: start });
+        tokens.push(Token {
+            kind,
+            text,
+            pos: start,
+        });
     }
 
     Ok(tokens)
@@ -86,7 +94,10 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
 
 fn to_lex_error(src: &str, remaining: &str, _err: ErrMode<ContextError>) -> LexError {
     let pos = src.len() - remaining.len();
-    LexError { message: "unrecognized token".to_string(), pos }
+    LexError {
+        message: "unrecognized token".to_string(),
+        pos,
+    }
 }
 
 fn ws_and_comments(input: &mut &str) -> ModalResult<()> {
@@ -179,7 +190,12 @@ fn scan_template_aware(input: &mut &str, triple: bool) -> ModalResult<()> {
             return Err(backtrack_err());
         }
         if !triple && input.starts_with('\\') {
-            *input = &input[input.chars().take(2).map(char::len_utf8).sum::<usize>().max(1)..];
+            *input = &input[input
+                .chars()
+                .take(2)
+                .map(char::len_utf8)
+                .sum::<usize>()
+                .max(1)..];
             continue;
         }
         if input.starts_with("${") {
@@ -250,7 +266,11 @@ fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
             end = idx + c.len_utf8();
             chars.next();
         } else if c == '.' && !s[idx..].starts_with("..") {
-            if let Some((_, next)) = { let mut it = chars.clone(); it.next(); it.next() } {
+            if let Some((_, next)) = {
+                let mut it = chars.clone();
+                it.next();
+                it.next()
+            } {
                 if next.is_ascii_digit() {
                     end = idx + c.len_utf8();
                     chars.next();

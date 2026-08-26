@@ -285,11 +285,13 @@ fn build_core_std_tree(frontend: &FerroFrontend) -> Result<Vec<StdTreeEntry>, Sh
             .map_err(|err| ShellError::Lower(err.to_string()))?;
         let embedded_path = relative.to_string_lossy().replace('\\', "/");
         let module_path = module_path_for_core_std(embedded_path.as_str())?;
-        let items = parse_source_items(frontend, embedded_path.as_str(), embedded_path.as_str(), true)?;
-        tree.push((
-            module_path.iter().map(|s| s.to_string()).collect(),
-            items,
-        ));
+        let items = parse_source_items(
+            frontend,
+            embedded_path.as_str(),
+            embedded_path.as_str(),
+            true,
+        )?;
+        tree.push((module_path.iter().map(|s| s.to_string()).collect(), items));
     }
     Ok(tree)
 }
@@ -304,10 +306,7 @@ fn build_embedded_std_tree(frontend: &FerroFrontend) -> Result<Vec<StdTreeEntry>
             &format!("<fp-shell-std>/{embedded_path}"),
             false,
         )?;
-        tree.push((
-            module_path.iter().map(|s| s.to_string()).collect(),
-            items,
-        ));
+        tree.push((module_path.iter().map(|s| s.to_string()).collect(), items));
     }
     Ok(tree)
 }

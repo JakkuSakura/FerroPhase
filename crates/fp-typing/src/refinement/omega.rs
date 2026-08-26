@@ -342,7 +342,10 @@ mod tests {
     use crate::refinement::test_support::{binop, lit_int, path};
 
     fn conj(exprs: Vec<Expr>) -> Vec<LinearConstraint> {
-        exprs.iter().flat_map(|e| to_conjuncts(e).unwrap()).collect()
+        exprs
+            .iter()
+            .flat_map(|e| to_conjuncts(e).unwrap())
+            .collect()
     }
 
     #[test]

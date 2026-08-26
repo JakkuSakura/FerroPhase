@@ -2,7 +2,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
-use crate::intrinsics::{CallKind, PortableOp, PortableOpRegistry, lang_intrinsic_call_kind, lang_intrinsic_for_lang_item};
+use crate::intrinsics::{
+    CallKind, PortableOp, PortableOpRegistry, lang_intrinsic_call_kind,
+    lang_intrinsic_for_lang_item,
+};
 
 /// The central, canonical portable-op registry (formerly the closed
 /// `OpKind` enum) — every language's own `#[op(...)]`/`@Op(...)` tag
@@ -64,7 +67,11 @@ pub fn resolve_portable_op_tag(tag: &str) -> Option<PortableOp> {
 pub fn class_and_member_to_portable_op(class: &str, member: &str) -> Option<PortableOp> {
     let canonical: Option<String> = class_and_member_to_canonical_name(class, member)
         .map(str::to_string)
-        .or_else(|| central_registry().contains(member).then(|| member.to_string()));
+        .or_else(|| {
+            central_registry()
+                .contains(member)
+                .then(|| member.to_string())
+        });
     canonical.and_then(|name| central_registry().resolve(&name))
 }
 
@@ -139,7 +146,11 @@ impl LangItemRegistry {
             .ops
             .iter()
             .find(|(_, path)| {
-                path.segments.iter().map(|seg| seg.name.as_str()).collect::<Vec<_>>() == segments
+                path.segments
+                    .iter()
+                    .map(|seg| seg.name.as_str())
+                    .collect::<Vec<_>>()
+                    == segments
             })
             .map(|(name, _)| name.clone())?;
         central_registry().resolve(&name)
@@ -148,7 +159,9 @@ impl LangItemRegistry {
     /// Looks up a method-position portable op by the receiver's real type
     /// name and the method name being called — `"{opclass}.{opmethod}"`.
     pub fn get_method_op(&self, opclass: &str, opmethod: &str) -> Option<PortableOp> {
-        self.method_ops.get(&format!("{opclass}.{opmethod}")).cloned()
+        self.method_ops
+            .get(&format!("{opclass}.{opmethod}"))
+            .cloned()
     }
 }
 
@@ -188,8 +201,7 @@ pub fn collect_lang_items_from_item(item: &Item) -> LangItemRegistry {
 
 pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_intrinsic_name(name)?;
-    lang_intrinsic_for_lang_item(&name)
-        .and_then(lang_intrinsic_call_kind)
+    lang_intrinsic_for_lang_item(&name).and_then(lang_intrinsic_call_kind)
 }
 
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
@@ -208,7 +220,6 @@ pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     }
     None
 }
-
 
 pub fn extract_intrinsic_item(attrs: &[Attribute]) -> Option<String> {
     extract_intrinsic_attribute(attrs)
@@ -262,9 +273,13 @@ fn collect_lang_items_from_items(
                         // `Vec` -> `vec_new`) — try both.
                         let canonical = class_and_member_to_canonical_name(&opclass, &opmethod)
                             .or_else(|| {
-                                central_registry().contains(&opmethod).then_some(opmethod.as_str())
+                                central_registry()
+                                    .contains(&opmethod)
+                                    .then_some(opmethod.as_str())
                             });
-                        if let Some(op) = canonical.and_then(|name| central_registry().resolve(name)) {
+                        if let Some(op) =
+                            canonical.and_then(|name| central_registry().resolve(name))
+                        {
                             registry.insert_method_op(&opclass, &opmethod, op);
                         }
                     }
@@ -284,9 +299,13 @@ fn collect_lang_items_from_items(
                         };
                         let canonical = class_and_member_to_canonical_name(&opclass, &opmethod)
                             .or_else(|| {
-                                central_registry().contains(&opmethod).then_some(opmethod.as_str())
+                                central_registry()
+                                    .contains(&opmethod)
+                                    .then_some(opmethod.as_str())
                             });
-                        if let Some(op) = canonical.and_then(|name| central_registry().resolve(name)) {
+                        if let Some(op) =
+                            canonical.and_then(|name| central_registry().resolve(name))
+                        {
                             registry.insert_method_op(&opclass, &opmethod, op);
                         }
                     }

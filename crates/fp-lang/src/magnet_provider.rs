@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::frontend::LanguageFrontend;
-use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, AstPackage};
+use fp_core::ast::package::{
+    AstPackage, PackageDescriptor, PackageId, PackageItem, PackageMetadata,
+};
+use fp_core::ast::path::QualifiedPath;
+use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 
 use crate::FerroFrontend;

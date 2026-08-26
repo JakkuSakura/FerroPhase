@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::PackageProvider;
-use fp_core::ast::package::{PackageId, AstPackage};
+use fp_core::ast::package::{AstPackage, PackageId};
 
 fn package_name_for(root: &Path) -> String {
     root.file_stem()
@@ -21,28 +21,34 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let bytes = std::fs::read(root).ok()?;
     let is_jar = bytes.starts_with(b"PK\x03\x04");
     let package_id = PackageId::new(package_name_for(root));
-    let mut source =
-        AstPackage::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
+    let mut source = AstPackage::single_item(
+        package_id.clone(),
+        fp_core::ast::Item::precompiled_artifact(bytes.clone()),
+    );
     let lir = if is_jar {
-        crate::extract_class_files_from_jar(&bytes).ok().and_then(|classes| {
-            let mut merged: Option<fp_core::lir::LirBlob> = None;
-            for class in classes {
-                let mut program = crate::parse_class_to_lir(&class.bytes).ok()?;
-                match merged.as_mut() {
-                    Some(merged_program) if merged_program.data_layout == program.data_layout => {
-                        merged_program.functions.append(&mut program.functions);
-                        merged_program.globals.append(&mut program.globals);
-                        merged_program
-                            .type_definitions
-                            .append(&mut program.type_definitions);
-                        merged_program.queries.append(&mut program.queries);
+        crate::extract_class_files_from_jar(&bytes)
+            .ok()
+            .and_then(|classes| {
+                let mut merged: Option<fp_core::lir::LirBlob> = None;
+                for class in classes {
+                    let mut program = crate::parse_class_to_lir(&class.bytes).ok()?;
+                    match merged.as_mut() {
+                        Some(merged_program)
+                            if merged_program.data_layout == program.data_layout =>
+                        {
+                            merged_program.functions.append(&mut program.functions);
+                            merged_program.globals.append(&mut program.globals);
+                            merged_program
+                                .type_definitions
+                                .append(&mut program.type_definitions);
+                            merged_program.queries.append(&mut program.queries);
+                        }
+                        Some(_) => return None,
+                        None => merged = Some(program),
                     }
-                    Some(_) => return None,
-                    None => merged = Some(program),
                 }
-            }
-            merged
-        })
+                merged
+            })
     } else {
         crate::parse_class_to_lir(&bytes).ok()
     };
@@ -52,7 +58,7 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
             item: fp_core::ast::Item::precompiled_lir(lir),
         });
     }
-    Some(Arc::new(fp_core::ast::package::provider::FixedPackageProvider::for_source(
-        package_id, source,
-    )) as Arc<dyn PackageProvider>)
+    Some(Arc::new(
+        fp_core::ast::package::provider::FixedPackageProvider::for_source(package_id, source),
+    ) as Arc<dyn PackageProvider>)
 }

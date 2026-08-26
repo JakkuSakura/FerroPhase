@@ -8,6 +8,7 @@ fp-backend = { path = "../fp-backend" }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
+fp-stackcode = { path = "../fp-stackcode" }
 fp-typing = { path = "../fp-typing" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2.0.0"

@@ -74,21 +74,23 @@ impl fp_core::backend::TargetBackend for CraneliftBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let _ = mir;
         let lir = lir
-            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
+            })?
             .clone();
 
-        let object_path = self
-            .output
-            .with_extension(if is_windows_target(self.target_triple.as_deref()) {
-                "obj"
-            } else {
-                "o"
-            });
+        let object_path =
+            self.output
+                .with_extension(if is_windows_target(self.target_triple.as_deref()) {
+                    "obj"
+                } else {
+                    "o"
+                });
         if let Some(parent) = object_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -109,7 +111,8 @@ impl fp_core::backend::TargetBackend for CraneliftBackend {
             .emit(lir, None)
             .map_err(|e| fp_core::error::Error::from(format!("fp-cranelift failed: {e}")))?;
 
-        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/fp_cranelift_runtime.c");
+        let runtime_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/fp_cranelift_runtime.c");
         link_object_with_clang(
             &object_path,
             &self.output,
@@ -128,9 +131,14 @@ impl fp_core::backend::TargetBackend for CraneliftBackend {
     }
 
     fn exec(&self) -> Result<()> {
-        let status = std::process::Command::new(&self.output).status().map_err(|e| {
-            fp_core::error::Error::from(format!("failed to execute '{}': {e}", self.output.display()))
-        })?;
+        let status = std::process::Command::new(&self.output)
+            .status()
+            .map_err(|e| {
+                fp_core::error::Error::from(format!(
+                    "failed to execute '{}': {e}",
+                    self.output.display()
+                ))
+            })?;
         if !status.success() {
             let code = status.code().unwrap_or(-1);
             return Err(fp_core::error::Error::from(format!(
@@ -191,7 +199,9 @@ fn link_object_with_clang(
         if message.is_empty() {
             message = "clang failed without diagnostics".to_string();
         }
-        return Err(fp_core::error::Error::from(format!("clang failed: {message}")));
+        return Err(fp_core::error::Error::from(format!(
+            "clang failed: {message}"
+        )));
     }
     Ok(())
 }

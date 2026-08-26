@@ -2,7 +2,7 @@
 //! Minimal rodata + external call coverage for ELF PIE output.
 
 fn sum(values: &[i64; 4]) -> i64 {
-    let mut idx = 0;
+    let mut idx: usize = 0;
     let mut total = 0;
     while idx < 4 {
         total += values[idx];

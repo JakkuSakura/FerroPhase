@@ -98,7 +98,10 @@ mod tests {
     #[test]
     fn decides_literal_comparison() {
         let expr = binop(BinOp::Ge, lit_int(5), lit_int(0));
-        assert_eq!(try_decide(&expr, &HashMap::new()), Some(ConstVal::Bool(true)));
+        assert_eq!(
+            try_decide(&expr, &HashMap::new()),
+            Some(ConstVal::Bool(true))
+        );
     }
 
     #[test]

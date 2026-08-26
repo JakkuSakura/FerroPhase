@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use fp_core::ast::package::AstPackage;
 use fp_core::ast::{
     AstSerializer, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, File, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
@@ -11,7 +12,6 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
-use fp_core::ast::package::AstPackage;
 
 /// Public entry point used by the CLI target emitter.
 #[derive(Clone, Debug)]
@@ -92,13 +92,14 @@ impl fp_core::backend::TargetBackend for GoBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = self.serializer.serialize_package(package)?;
-        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        let writer =
+            fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {
             let rel = if rel_path.contains('.') {
                 rel_path

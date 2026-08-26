@@ -7,8 +7,8 @@ enum Color {
     Rgb(u8, u8, u8),
 }
 
-enum Option<T> {
-    Some(T),
+enum Maybe {
+    Some(i64),
     None,
 }
 
@@ -16,7 +16,7 @@ fn describe(color: &Color) -> &str {
     match *color {
         Color::Red => "red",
         Color::Green => "green",
-        Color::Rgb(255, 0, 0) => "red rgb",
+        Color::Rgb(255u8, 0u8, 0u8) => "red rgb",
         Color::Rgb(r, g, b) => "custom rgb",
     }
 }
@@ -30,10 +30,10 @@ fn classify(n: i64) -> &str {
     }
 }
 
-fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
+fn unwrap_or(opt: Maybe, default: i64) -> i64 {
     match opt {
-        Option::Some(v) => v,
-        Option::None => default,
+        Maybe::Some(v) => v,
+        Maybe::None => default,
     }
 }
 
@@ -56,8 +56,8 @@ fn main() {
     println!("classify(7) = {}", classify(7));
 
     // Option matching
-    println!("unwrap_or(Some(42), 0) = {}", unwrap_or(Option::Some(42), 0));
-    println!("unwrap_or(None, 99) = {}", unwrap_or(Option::None, 99));
+    println!("unwrap_or(Some(42), 0) = {}", unwrap_or(Maybe::Some(42), 0));
+    println!("unwrap_or(None, 99) = {}", unwrap_or(Maybe::None, 99));
 
     // Const match
     const CODE: i64 = match 1 {

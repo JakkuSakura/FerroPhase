@@ -1,11 +1,11 @@
 use eyre::eyre;
 use fp_core::ast::{
-    BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
-    ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File,
-    FunctionParam, Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name,
-    Pattern, PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList, ValueMap,
-    ValueMapEntry, ValueStruct, ValueTuple,
+    BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprRange,
+    ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File, FunctionParam,
+    Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name, Pattern,
+    PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList, ValueMap, ValueMapEntry,
+    ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
@@ -65,13 +65,14 @@ impl fp_core::backend::TargetBackend for GdscriptBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = GdscriptSerializer.serialize_package(package)?;
-        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        let writer =
+            fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {
             let rel = if rel_path.contains('.') {
                 rel_path

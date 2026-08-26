@@ -6,8 +6,8 @@
 
 use fp_bytecode::{BytecodeCallee, BytecodeInstr, BytecodeTerminator};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirBasicBlock, LirFunction, LirInstruction,
-    LirInstructionKind, LirTerminator, LirType, LirValue, RegisterId,
+    BasicBlockId, CallingConvention, LirBasicBlock, LirFunction, LirFunctionRef, LirInstruction,
+    LirInstructionKind, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use std::collections::HashMap;
 
@@ -201,6 +201,15 @@ impl<'a> FunctionLowering<'a> {
             | SextOrTrunc(_, ty) => Some(ty.clone()),
             ExtractValue { aggregate, .. } => Some(aggregate.ty.clone()),
             InsertValue { aggregate, .. } => Some(aggregate.ty.clone()),
+            Call { function, .. }
+                if matches!(
+                    &function.kind,
+                    LirValueKind::Function(LirFunctionRef::Name(name))
+                        if name.as_str() == "__bc_print" || name.as_str() == "__bc_println"
+                ) =>
+            {
+                None
+            }
             Call { .. } | IntrinsicCall { .. } | ExecQuery(_) | ComptimeOp(_) => Some(LirType::I64),
             Alloca { .. } | GetElementPtr { .. } => Some(LirType::Ptr(Box::new(LirType::I8))),
             Phi { incoming } => incoming.first().map(|(value, _)| value.ty.clone()),
@@ -454,19 +463,36 @@ impl<'a> FunctionLowering<'a> {
                     }
                 };
 
-                let result_reg = self.emit_typed_in_block(
-                    block_id,
-                    LirInstructionKind::Call {
-                        function: callee_val,
-                        args,
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    result_type.clone(),
-                )?;
+                let void_call = matches!(
+                    callee,
+                    BytecodeCallee::Function(name)
+                        if name == "__bc_print" || name == "__bc_println"
+                );
+                if void_call {
+                    self.emit_void_in_block(
+                        block_id,
+                        LirInstructionKind::Call {
+                            function: callee_val,
+                            args,
+                            calling_convention: CallingConvention::C,
+                            tail_call: false,
+                        },
+                    )?;
+                } else {
+                    let result_reg = self.emit_typed_in_block(
+                        block_id,
+                        LirInstructionKind::Call {
+                            function: callee_val,
+                            args,
+                            calling_convention: CallingConvention::C,
+                            tail_call: false,
+                        },
+                        result_type.clone(),
+                    )?;
 
-                if let Some(place) = destination {
-                    super::ops::lower_store_place(self, block_id, place, result_reg)?;
+                    if let Some(place) = destination {
+                        super::ops::lower_store_place(self, block_id, place, result_reg)?;
+                    }
                 }
 
                 let block = self.current_block_mut(block_id);

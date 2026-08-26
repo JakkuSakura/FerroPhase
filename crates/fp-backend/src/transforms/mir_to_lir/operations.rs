@@ -145,7 +145,11 @@ impl MirToLirLowerer {
         }
     }
 
-    pub(super) fn collect_operand_struct_layout(&mut self, operand: &mir::Operand, body: &mir::Body) {
+    pub(super) fn collect_operand_struct_layout(
+        &mut self,
+        operand: &mir::Operand,
+        body: &mir::Body,
+    ) {
         match operand {
             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                 self.collect_place_struct_layout(place, body);

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::PackageProvider;
-use fp_core::ast::package::{PackageId, AstPackage};
+use fp_core::ast::package::{AstPackage, PackageId};
 
 fn package_name_for(root: &Path) -> String {
     root.file_stem()
@@ -24,8 +24,10 @@ pub fn provider_for_path(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let bytes = std::fs::read(root).ok()?;
     let is_pe = bytes.starts_with(b"MZ");
     let package_id = PackageId::new(package_name_for(root));
-    let mut source =
-        AstPackage::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
+    let mut source = AstPackage::single_item(
+        package_id.clone(),
+        fp_core::ast::Item::precompiled_artifact(bytes.clone()),
+    );
     if !is_pe {
         if let Ok(text) = String::from_utf8(bytes) {
             if let Ok(lir) = crate::parse_cil_program(&text) {
@@ -36,7 +38,7 @@ pub fn provider_for_path(root: &Path) -> Option<Arc<dyn PackageProvider>> {
             }
         }
     }
-    Some(Arc::new(fp_core::ast::package::provider::FixedPackageProvider::for_source(
-        package_id, source,
-    )) as Arc<dyn PackageProvider>)
+    Some(Arc::new(
+        fp_core::ast::package::provider::FixedPackageProvider::for_source(package_id, source),
+    ) as Arc<dyn PackageProvider>)
 }

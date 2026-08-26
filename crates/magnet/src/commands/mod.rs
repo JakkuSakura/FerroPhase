@@ -12,8 +12,8 @@ mod lock;
 mod run;
 mod submodule;
 mod test;
-mod tree;
 pub mod transpile;
+mod tree;
 mod update;
 mod utils;
 
@@ -32,8 +32,8 @@ pub use submodule::{
     switch as submodule_switch, update as submodule_update,
 };
 pub use test::{TestOptions, test};
-pub use tree::tree;
 pub use transpile::{TranspileOptions, transpile};
+pub use tree::tree;
 pub use update::{UpdateOptions, update};
 #[allow(unused_imports)]
 pub use utils::*;

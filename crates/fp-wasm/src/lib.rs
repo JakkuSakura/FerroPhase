@@ -1,10 +1,9 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirConstantAggregate, LirConstantData,
+    BasicBlockId, LirBasicBlock, LirBlob, LirConstant, LirConstantAggregate, LirConstantData,
     LirConstantKind, LirDataLayout, LirFloat, LirFunction, LirFunctionRef, LirFunctionSignature,
-    LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirBlob,
-    LirRelocationKind, LirRelocationTarget, LirTerminator, LirType, LirValue, LirValueKind,
-    RegisterId,
+    LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirRelocationKind,
+    LirRelocationTarget, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use std::collections::HashMap;
 use wasm_encoder::{
@@ -2196,12 +2195,14 @@ impl fp_core::backend::TargetBackend for WasmBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
         let _ = mir;
         let lir = lir
-            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
+            })?
             .clone();
         let wasm_bytes = emit_wasm(&lir)
             .map_err(|e| fp_core::error::Error::from(format!("Failed to emit wasm: {e}")))?;

@@ -6,10 +6,10 @@
 //! back to a HIR-level value.
 
 use fp_core::ast::Value;
+use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
-use fp_core::hir;
 
 /// Owns exactly the context this lift direction needs: every already-
 /// compiled package's `MirPackage::adt_defs`, consulted only when a

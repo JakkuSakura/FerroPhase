@@ -1,6 +1,6 @@
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirInstruction, LirInstructionKind, LirBlob, LirTerminator, LirValue};
+use fp_core::lir::{LirBlob, LirInstruction, LirInstructionKind, LirTerminator, LirValue};
 
 use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 

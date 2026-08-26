@@ -8,7 +8,7 @@ use crate::link;
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirBlob,
+    CallingConvention, Linkage, LirBasicBlock, LirBlob, LirFunction, LirFunctionSignature,
     LirTerminator, LirType, Name,
 };
 use std::collections::HashMap;
@@ -149,7 +149,10 @@ pub struct CodegenOutput {
 
 impl CodegenOutput {
     fn validate_text_layout(&self) -> Result<()> {
-        if self.entry_offset.is_some_and(|entry| entry > self.text.len() as u64) {
+        if self
+            .entry_offset
+            .is_some_and(|entry| entry > self.text.len() as u64)
+        {
             return Err(Error::from("entry offset is outside __text"));
         }
         for (name, offset) in &self.symbols {

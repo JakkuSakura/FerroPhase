@@ -124,7 +124,7 @@ impl fp_core::backend::TargetBackend for TypeScriptBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
@@ -185,7 +185,7 @@ impl fp_core::backend::TargetBackend for JavaScriptBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
@@ -314,7 +314,8 @@ impl ScriptEmitter {
             } else if let Ok(rendered) = self.render_expr(expr) {
                 self.writer.write_line(format!("{};", rendered));
             } else {
-                self.writer.write_line("// skipped unsupported top-level expression");
+                self.writer
+                    .write_line("// skipped unsupported top-level expression");
             }
         }
 
@@ -376,8 +377,10 @@ impl ScriptEmitter {
                     } else {
                         ","
                     };
-                    slf.writer
-                        .write_line(format!("{}: {}{}", field.name.name, field.name.name, suffix));
+                    slf.writer.write_line(format!(
+                        "{}: {}{}",
+                        field.name.name, field.name.name, suffix
+                    ));
                 }
                 Ok(())
             })
@@ -465,7 +468,8 @@ impl ScriptEmitter {
                 }
             }
             ScriptFlavor::JavaScript => {
-                self.writer.write_line(format!("const {} = {};", name, value_expr));
+                self.writer
+                    .write_line(format!("const {} = {};", name, value_expr));
             }
         }
         Ok(())
@@ -508,7 +512,10 @@ impl ScriptEmitter {
             }
         }
 
-        let has_non_item_stmts = block.stmts.iter().any(|stmt| !matches!(stmt, BlockStmt::Item(_)));
+        let has_non_item_stmts = block
+            .stmts
+            .iter()
+            .any(|stmt| !matches!(stmt, BlockStmt::Item(_)));
         if !has_non_item_stmts {
             return Ok(());
         }
@@ -655,12 +662,16 @@ impl ScriptEmitter {
                     None => format!("{pat}++"),
                 };
                 let header = format!("for (let {pat} = {start}; {pat} {cmp} {end}; {update})");
-                self.block(&header, |slf| slf.emit_branch_body(for_expr.body.as_ref(), false))
+                self.block(&header, |slf| {
+                    slf.emit_branch_body(for_expr.body.as_ref(), false)
+                })
             }
             _ => {
                 let iter = self.render_expr(for_expr.iter.as_ref())?;
                 let header = format!("for (const {pat} of {iter})");
-                self.block(&header, |slf| slf.emit_branch_body(for_expr.body.as_ref(), false))
+                self.block(&header, |slf| {
+                    slf.emit_branch_body(for_expr.body.as_ref(), false)
+                })
             }
         }
     }

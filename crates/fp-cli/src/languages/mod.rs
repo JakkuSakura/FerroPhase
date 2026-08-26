@@ -312,7 +312,6 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
     })
 }
 
-
 /// Check if a target language is supported as an AST output target.
 pub fn is_ast_target_supported(target: &str) -> bool {
     detect_target_language(target)

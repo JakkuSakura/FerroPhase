@@ -25,7 +25,8 @@ pub struct ComptimeRequest {
 /// (rather than a queue the driver polls) is what lets `request_comptime`
 /// just `.await` the answer directly, instead of parking on a reply and
 /// relying on driver-level code to notice and drain a side queue.
-pub type ComptimeResolver = std::rc::Rc<dyn Fn(ComptimeRequest) -> BoxFuture<'static, fp_core::Result<Value>>>;
+pub type ComptimeResolver =
+    std::rc::Rc<dyn Fn(ComptimeRequest) -> BoxFuture<'static, fp_core::Result<Value>>>;
 
 /// Tags a diagnostic as a hard item-check abort (see `record_item_check_failure`)
 /// within `TypingShared::diagnostics`'s single unified manager.

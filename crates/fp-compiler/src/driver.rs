@@ -1,12 +1,12 @@
 use fp_backend::transformations::{
-    AstToHirLowerer, HirLoweringConfig, MirToLirLowerer, HirToMirLowerer,
+    AstToHirLowerer, HirLoweringConfig, HirToMirLowerer, MirToLirLowerer,
 };
+use fp_core::ast::package::{DependencyDescriptor, DependencyKind, PackageId};
+use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_core::hir;
 use fp_core::mir;
-use fp_core::ast::path::QualifiedPath;
-use fp_core::ast::package::{DependencyDescriptor, DependencyKind, PackageId};
-use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_interpret::LirInterpreter;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -34,9 +34,17 @@ fn diagnostics_summary(diagnostics: &[Diagnostic]) -> String {
     if errors.is_empty() {
         return String::new();
     }
-    let shown = errors.iter().take(MAX_SHOWN).cloned().collect::<Vec<_>>().join("; ");
+    let shown = errors
+        .iter()
+        .take(MAX_SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("; ");
     if errors.len() > MAX_SHOWN {
-        format!("{shown}; ... and {} more error(s)", errors.len() - MAX_SHOWN)
+        format!(
+            "{shown}; ... and {} more error(s)",
+            errors.len() - MAX_SHOWN
+        )
     } else {
         shown
     }
@@ -122,7 +130,18 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
-        self.compile_package(package_id).await?;
+        self.state.borrow_mut().set_bytecode_comptime(true);
+        let package = self.compile_package(package_id).await?;
+        // Bytecode packages do not enter the native/transpile lowering branch
+        // in `compile_package`; establish their MIR roots before collecting
+        // executable const entries for stackcode evaluation.
+        self.compile_items_to_lir_units(&package).await?;
+        self.evaluate_package_comptime_constants(package_id).await?;
+        // Executable constants are first lowered as comptime entry points.
+        // Once their values have been recorded, rerun the package lowering
+        // so references become ordinary MIR constants before bytecode sees
+        // them. This is the same two-phase model used by native compilation.
+        self.compile_items_to_lir_units(&package).await?;
         let state = self.state.borrow();
         let mut mir = mir::MirCodeUnit::new();
         if let Some(package) = state.mir_program().package(package_id) {
@@ -133,10 +152,65 @@ impl CompilerDriver {
         }
         if mir.items.is_empty() {
             return Err(CompilerDriverError::InternalCompilerError(format!(
-                "package {package_id} has no MIR program"
+                "package {package_id} has no MIR program after root lowering"
             )));
         }
         fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
+    }
+
+    pub async fn evaluate_package_comptime_constants(
+        &self,
+        package_id: &PackageId,
+    ) -> Result<(), CompilerDriverError> {
+        let (mir, entries) = {
+            let state = self.state.borrow();
+            let package_rc = state
+                .mir_program()
+                .package(package_id)
+                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+            let package = package_rc.borrow();
+            let mut mir = mir::MirCodeUnit::new();
+            mir.items.extend(package.items().cloned());
+            mir.bodies
+                .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+            let entries = package
+                .executable_consts
+                .iter()
+                .map(|(def_id, (function_name, _))| {
+                    (def_id.clone(), function_name.as_str().to_string())
+                })
+                .collect::<Vec<_>>();
+            (mir, entries)
+        };
+        let bytecode =
+            if self.state.borrow().bytecode_comptime() {
+                Some(fp_bytecode::lower_program(&mir).map_err(|error| {
+                    CompilerDriverError::InternalCompilerError(error.to_string())
+                })?)
+            } else {
+                None
+            };
+        for (def_id, function_name) in entries {
+            let value = if let Some(bytecode) = bytecode.clone() {
+                fp_stackcode::interpret_const(bytecode, &function_name)
+                    .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))?
+            } else {
+                Self::evaluate_comptime_lir(&self.state, &def_id)?
+            };
+            let hir_package_id = self
+                .state
+                .borrow()
+                .workspace
+                .compiled_package(package_id)
+                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?
+                .borrow()
+                .hir_package_id
+                .clone();
+            let hir_package = self.state.borrow().hir_package_rc(hir_package_id)?;
+            hir_package.record_const_value(def_id.clone(), value.clone());
+            hir_package.record_const_block_value(def_id, value);
+        }
+        Ok(())
     }
 
     /// Runs `def_id`'s own function through the shared `LirInterpreter`
@@ -177,7 +251,8 @@ impl CompilerDriver {
     ) -> Result<hir::DefId, CompilerDriverError> {
         let _ = module_path;
         let package = self
-            .state.borrow()
+            .state
+            .borrow()
             .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
@@ -197,7 +272,10 @@ impl CompilerDriver {
     /// function directly (not a whole `LirBlob`) — see
     /// `CompilerState::insert_runtime_program`'s doc comment for why only
     /// this one function needs its own storage.
-    fn rename_lir_function_unit(mut unit: fp_core::lir::LirCodeUnit, bare_name: &str) -> fp_core::lir::LirCodeUnit {
+    fn rename_lir_function_unit(
+        mut unit: fp_core::lir::LirCodeUnit,
+        bare_name: &str,
+    ) -> fp_core::lir::LirCodeUnit {
         if let fp_core::lir::LirCodeUnitKind::Function(function) = &mut unit.kind {
             function.name = fp_core::lir::Name::new(bare_name.to_string());
         }
@@ -220,9 +298,7 @@ impl CompilerDriver {
             .into_iter()
             .find(|candidate| candidate.def_id == Some(function.clone()))
             .ok_or_else(|| {
-                CompilerDriverError::Interpreter(format!(
-                    "entrypoint {function} was not emitted"
-                ))
+                CompilerDriverError::Interpreter(format!("entrypoint {function} was not emitted"))
             })?;
         let unit = fp_core::lir::LirCodeUnit {
             package_id: package_id.clone(),
@@ -230,8 +306,11 @@ impl CompilerDriver {
             kind: fp_core::lir::LirCodeUnitKind::Function(lir_function),
         };
         let unit = Self::rename_lir_function_unit(unit, function_name);
-        self.state.borrow_mut().insert_runtime_program(lir_path.clone(), unit);
-        self.state.borrow_mut()
+        self.state
+            .borrow_mut()
+            .insert_runtime_program(lir_path.clone(), unit);
+        self.state
+            .borrow_mut()
             .insert_runtime_entrypoint(lir_path.clone(), function);
         Ok(lir_path)
     }
@@ -306,7 +385,8 @@ impl CompilerDriver {
         let result: Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> =
             async {
                 let provider = self
-                    .state.borrow()
+                    .state
+                    .borrow()
                     .workspace
                     .provider_for(package_id)
                     .ok_or_else(|| {
@@ -357,7 +437,10 @@ impl CompilerDriver {
                 );
                 if !precompiled_lir_blobs.is_empty() {
                     Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_blobs)?;
-                } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::Transpile) {
+                } else if matches!(
+                    self.pipeline,
+                    PipelineMode::Native | PipelineMode::Transpile
+                ) {
                     // `Transpile` needs HIR generation + typing too (it lifts the
                     // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
                     // attempts MIR/LIR lowering there so any comptime entries (e.g. `const
@@ -450,7 +533,9 @@ impl CompilerDriver {
         blobs: &[fp_core::lir::LirBlob],
     ) -> Result<(), CompilerDriverError> {
         for blob in blobs {
-            state.borrow_mut().insert_lir_blob_for_package(package_id, blob.clone());
+            state
+                .borrow_mut()
+                .insert_lir_blob_for_package(package_id, blob.clone());
         }
         Ok(())
     }
@@ -476,23 +561,32 @@ impl CompilerDriver {
         // intrinsic_normalizer`'s doc comment for why that choice lives on
         // the already-resolved, already-per-language provider rather than a
         // separate frontend dependency of this crate.
-        let normalizer = self.state.borrow().workspace.provider().intrinsic_normalizer();
-        let mut generator = AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id.clone())
-            .with_intrinsic_normalizer(normalizer)
-            .with_lowering_config(HirLoweringConfig {
-                // The active `TargetBackend`'s own capabilities (see
-                // `fp_core::backend::TargetBackend::capabilities`), set by
-                // `fp-cli` before compiling via
-                // `CompilerState::set_backend_capabilities` — defaults to
-                // `NATIVE` (nothing first-class) for any caller that never
-                // sets it, matching this field's prior behavior exactly.
-                capabilities: self.state.borrow().backend_capabilities(),
-            })
-            .with_workspace(self.state.borrow().workspace.clone());
+        let normalizer = self
+            .state
+            .borrow()
+            .workspace
+            .provider()
+            .intrinsic_normalizer();
+        let mut generator =
+            AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id.clone())
+                .with_intrinsic_normalizer(normalizer)
+                .with_lowering_config(HirLoweringConfig {
+                    // The active `TargetBackend`'s own capabilities (see
+                    // `fp_core::backend::TargetBackend::capabilities`), set by
+                    // `fp-cli` before compiling via
+                    // `CompilerState::set_backend_capabilities` — defaults to
+                    // `NATIVE` (nothing first-class) for any caller that never
+                    // sets it, matching this field's prior behavior exactly.
+                    capabilities: self.state.borrow().backend_capabilities(),
+                })
+                .with_workspace(self.state.borrow().workspace.clone());
         let hir_program = generator.transform_package(&package_source)?;
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
-        package.borrow_mut().type_alias_exports.extend(type_alias_exports);
+        package
+            .borrow_mut()
+            .type_alias_exports
+            .extend(type_alias_exports);
         self.type_check_program(hir_program, package_exports)
             .await
             .map_err(|error| {
@@ -530,7 +624,13 @@ impl CompilerDriver {
             if !Self::is_lowering_root(item) {
                 continue;
             }
-            Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
+            Self::lower_package_to_mir(
+                &state,
+                &current_package_id,
+                &mut lowering,
+                item.def_id.clone(),
+            )
+            .await?;
         }
         let runtime_support = state
             .borrow_mut()
@@ -572,7 +672,8 @@ impl CompilerDriver {
             .with_package_id(current_package_id.clone())
         };
         for def_id in def_ids {
-            Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+            Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id)
+                .await?;
         }
         Self::lower_runtime_support_to_lir(&state, &current_package_id, &mut lir_gen).await?;
         Ok(())
@@ -600,7 +701,8 @@ impl CompilerDriver {
         let (lifted_items_by_path, referenced_paths_by_path) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
-            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, Some(state.hir_program()));
+            let lifter =
+                fp_backend::transforms::HirToAstLifter::new(&hir, Some(state.hir_program()));
             // `lift_items_by_path` treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from
@@ -611,7 +713,12 @@ impl CompilerDriver {
             lifter.publish_resolved_expr_types();
             (lifted_items_by_path, lifter.referenced_paths_by_path())
         };
-        if let Some(pkg) = self.state.borrow().workspace.compiled_package(&current_package_id) {
+        if let Some(pkg) = self
+            .state
+            .borrow()
+            .workspace
+            .compiled_package(&current_package_id)
+        {
             let mut pkg = pkg.borrow_mut();
             // Splice typed/normalized content back onto the original
             // untyped source items by qualified-path identity — the
@@ -650,7 +757,9 @@ impl CompilerDriver {
                 };
                 let mut path = pkg_item.module_path.segments.clone();
                 path.push(name.to_string());
-                let key = fp_core::hir::DefPath::new(path.into_iter().map(fp_core::hir::Symbol::new).collect());
+                let key = fp_core::hir::DefPath::new(
+                    path.into_iter().map(fp_core::hir::Symbol::new).collect(),
+                );
                 if let Some(typed) = lifted_items_by_path.get(&key) {
                     pkg_item.item = typed.clone();
                 }
@@ -658,10 +767,19 @@ impl CompilerDriver {
             pkg.referenced_paths = referenced_paths_by_path
                 .into_iter()
                 .map(|(key, values)| {
-                    let key: Vec<String> = key.segments.iter().map(|s| s.as_str().to_string()).collect();
+                    let key: Vec<String> = key
+                        .segments
+                        .iter()
+                        .map(|s| s.as_str().to_string())
+                        .collect();
                     let values: Vec<Vec<String>> = values
                         .into_iter()
-                        .map(|path| path.segments.iter().map(|s| s.as_str().to_string()).collect())
+                        .map(|path| {
+                            path.segments
+                                .iter()
+                                .map(|s| s.as_str().to_string())
+                                .collect()
+                        })
                         .collect();
                     (key, values)
                 })
@@ -671,7 +789,8 @@ impl CompilerDriver {
         if let Err(error) = (async {
             let hir_program = state.borrow().hir_program_rc();
             let mir_package = state.borrow_mut().mir_package_rc(&current_package_id);
-            let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
+            let mut lowering =
+                HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
             lowering.register_package_items();
             let current_package = lowering.current_package_handle();
             // Same public-surface-plus-`main`-only roots as the Native
@@ -682,7 +801,13 @@ impl CompilerDriver {
                 if !Self::is_lowering_root(item) {
                     continue;
                 }
-                Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
+                Self::lower_package_to_mir(
+                    &state,
+                    &current_package_id,
+                    &mut lowering,
+                    item.def_id.clone(),
+                )
+                .await?;
             }
             let runtime_support = state
                 .borrow_mut()
@@ -732,7 +857,8 @@ impl CompilerDriver {
                 .with_package_id(current_package_id.clone())
             };
             for def_id in def_ids {
-                Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+                Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id)
+                    .await?;
             }
             Self::lower_runtime_support_to_lir(&state, &current_package_id, &mut lir_gen).await?;
             Ok(())
@@ -741,7 +867,9 @@ impl CompilerDriver {
         {
             fp_core::diagnostics::DiagnosticManager::report_warning_with_context(
                 "const-eval".to_string(),
-                format!("HIR->MIR/LIR lowering failed, skipping comptime validation for this package: {error}"),
+                format!(
+                    "HIR->MIR/LIR lowering failed, skipping comptime validation for this package: {error}"
+                ),
             );
         }
         Ok(())
@@ -770,8 +898,12 @@ impl CompilerDriver {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let dependency_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
-        let checker =
-            fp_typing::HirTypeChecker::new(program, Some(dependency_program), comptime_resolver, executor);
+        let checker = fp_typing::HirTypeChecker::new(
+            program,
+            Some(dependency_program),
+            comptime_resolver,
+            executor,
+        );
         let item_ids: Vec<_> = checker
             .borrow()
             .package()
@@ -889,9 +1021,11 @@ impl CompilerDriver {
         let package_id = PackageId::new(request.def_id.package_id.as_str());
         let hir_program = state.borrow().hir_program_rc();
         let mir_package = state.borrow_mut().mir_package_rc(&package_id);
-        let mut lowering = HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);
+        let mut lowering =
+            HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);
         lowering.register_package_items();
-        Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;
+        Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone())
+            .await?;
 
         lowering.sync_layout_exports();
 
@@ -904,9 +1038,47 @@ impl CompilerDriver {
             )
             .with_package_id(package_id.clone())
         };
-        Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
+        Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone())
+            .await?;
 
-        Self::evaluate_comptime_lir(state, &request.def_id)
+        if state.borrow().bytecode_comptime() {
+            Self::evaluate_comptime_bytecode(state, &request.def_id)
+        } else {
+            Self::evaluate_comptime_lir(state, &request.def_id)
+        }
+    }
+
+    fn evaluate_comptime_bytecode(
+        state: &Rc<RefCell<CompilerState>>,
+        def_id: &hir::DefId,
+    ) -> Result<Value, CompilerDriverError> {
+        let package_id = PackageId::new(def_id.package_id.as_str());
+        let (mir, function_name) = {
+            let state_ref = state.borrow();
+            let package = state_ref
+                .mir_program()
+                .package(&package_id)
+                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+            let package_ref = package.borrow();
+            let function_name = package_ref
+                .executable_consts
+                .get(def_id)
+                .map(|(name, _)| name.as_str().to_string())
+                .ok_or_else(|| {
+                    CompilerDriverError::InternalCompilerError(format!(
+                        "missing executable const for {def_id}"
+                    ))
+                })?;
+            let mut mir = mir::MirCodeUnit::new();
+            mir.items.extend(package_ref.items().cloned());
+            mir.bodies
+                .extend(package_ref.bodies().map(|(id, body)| (*id, body.clone())));
+            (mir, function_name)
+        };
+        let bytecode = fp_bytecode::lower_program(&mir)
+            .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
+        fp_stackcode::interpret_const(bytecode, &function_name)
+            .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 
     /// Whether `item` needs an explicit HIR->MIR lowering root — the
@@ -935,11 +1107,13 @@ impl CompilerDriver {
         if let Err(error) = lowering.ensure_item_lowered(def_id.clone()) {
             let diagnostics = lowering.take_diagnostics();
             let details = diagnostics_summary(&diagnostics.get_diagnostics());
-            return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
-                format!("HIR-to-MIR lowering failed: {error}")
-            } else {
-                format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
-            }));
+            return Err(CompilerDriverError::InternalCompilerError(
+                if details.is_empty() {
+                    format!("HIR-to-MIR lowering failed: {error}")
+                } else {
+                    format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
+                },
+            ));
         }
         let unit = lowering.take_unit();
         // Run *before* the diagnostics check below — `walk_program_types_for_layouts`
@@ -969,7 +1143,9 @@ impl CompilerDriver {
             ))
         })?;
         for blob in blobs {
-            state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
+            state
+                .borrow_mut()
+                .insert_lir_blob_for_package(package_id, blob);
         }
         Ok(())
     }
@@ -999,7 +1175,9 @@ impl CompilerDriver {
             ))
         })?;
         for blob in blobs {
-            state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
+            state
+                .borrow_mut()
+                .insert_lir_blob_for_package(package_id, blob);
         }
         Ok(())
     }
@@ -1062,7 +1240,10 @@ fn item_own_name(item: &Item) -> Option<&str> {
         ItemKind::DeclConst(def) => Some(def.name.name.as_str()),
         ItemKind::DeclStatic(def) => Some(def.name.name.as_str()),
         ItemKind::DeclFunction(def) => Some(def.name.name.as_str()),
-        ItemKind::Macro(item_macro) => item_macro.declared_name.as_ref().map(|ident| ident.name.as_str()),
+        ItemKind::Macro(item_macro) => item_macro
+            .declared_name
+            .as_ref()
+            .map(|ident| ident.name.as_str()),
         ItemKind::Impl(_)
         | ItemKind::Import(_)
         | ItemKind::Expr(_)
@@ -1091,8 +1272,9 @@ fn impl_self_type_name(self_ty: &Expr) -> Option<&str> {
     match name {
         fp_core::ast::Name::Ident(ident) => Some(ident.name.as_str()),
         fp_core::ast::Name::Path(path) => path.segments.last().map(|seg| seg.name.as_str()),
-        fp_core::ast::Name::ParameterPath(param_path) => {
-            param_path.segments.last().map(|seg| seg.ident.name.as_str())
-        }
+        fp_core::ast::Name::ParameterPath(param_path) => param_path
+            .segments
+            .last()
+            .map(|seg| seg.ident.name.as_str()),
     }
 }

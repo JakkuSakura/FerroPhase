@@ -121,9 +121,12 @@ impl ExprIntrinsicContainer {
     /// otherwise have to `.clone()` the whole container just to call the
     /// by-value method, only to immediately discard the original.
     pub fn take_into_const_expr(&mut self) -> Expr {
-        let owned = std::mem::replace(self, ExprIntrinsicContainer::VecElements {
-            elements: Vec::new(),
-        });
+        let owned = std::mem::replace(
+            self,
+            ExprIntrinsicContainer::VecElements {
+                elements: Vec::new(),
+            },
+        );
         owned.into_const_expr()
     }
 

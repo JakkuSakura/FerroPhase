@@ -1,9 +1,11 @@
 use super::*;
+use std::collections::HashMap;
 
 pub(super) fn lower_function(
     func: &mir::Function,
     body: &mir::Body,
     const_pool: &mut Vec<BytecodeConst>,
+    function_names: &HashMap<mir::ty::DefId, String>,
 ) -> Result<BytecodeFunction, BytecodeError> {
     let local_types = body
         .locals
@@ -17,7 +19,13 @@ pub(super) fn lower_function(
             lower_statement(stmt, &local_types, &mut code, const_pool)?;
         }
         let lowered_term = match block.terminator.as_ref() {
-            Some(terminator) => lower_terminator(terminator, &local_types, &mut code, const_pool)?,
+            Some(terminator) => lower_terminator(
+                terminator,
+                &local_types,
+                &mut code,
+                const_pool,
+                function_names,
+            )?,
             None => {
                 return Err(BytecodeError::Lowering {
                     message: format!("function {} has a block without a terminator", func.name),
@@ -83,6 +91,15 @@ fn lower_type(ty: &mir::Ty) -> Result<fp_core::lir::LirType, BytecodeError> {
             let count = value.data as u64;
             Ok(LirType::Array(Box::new(lower_type(element)?), count))
         }
+        TyKind::Adt(adt, _)
+            if adt.flags.contains(mir::ty::AdtFlags::IS_ENUM)
+                && adt.variants.iter().all(|variant| variant.fields.is_empty()) =>
+        {
+            // Tag-only enums have the same bytecode representation as their
+            // MIR discriminant: a single integer value. Payload-bearing
+            // enums still require an aggregate representation.
+            Ok(LirType::I64)
+        }
         TyKind::Never => Ok(LirType::Void),
         other => Err(BytecodeError::Lowering {
             message: format!("unsupported MIR type in bytecode: {other:?}"),
@@ -139,7 +156,7 @@ fn lower_statement(
         mir::StatementKind::Assign(place, rvalue) => {
             let result_type = place_type(place, local_types)?;
             lower_rvalue(rvalue, &result_type, local_types, code, const_pool)?;
-            code.push(BytecodeInstr::StorePlace(lower_place(place)?));
+            code.push(BytecodeInstr::StorePlace(lower_place(place, local_types)?));
             Ok(())
         }
         mir::StatementKind::IntrinsicCall { kind, format, args } => {
@@ -172,6 +189,7 @@ fn lower_terminator(
     local_types: &[fp_core::lir::LirType],
     code: &mut Vec<BytecodeInstr>,
     const_pool: &mut Vec<BytecodeConst>,
+    function_names: &HashMap<mir::ty::DefId, String>,
 ) -> Result<BytecodeTerminator, BytecodeError> {
     match &term.kind {
         mir::TerminatorKind::Return => Ok(BytecodeTerminator::Return),
@@ -217,10 +235,10 @@ fn lower_terminator(
             for arg in args {
                 lower_operand(arg, local_types, code, const_pool)?;
             }
-            let callee = lower_callee(func)?;
+            let callee = lower_callee(func, function_names, local_types)?;
             let dest = destination
                 .as_ref()
-                .map(|(place, _)| lower_place(place))
+                .map(|(place, _)| lower_place(place, local_types))
                 .transpose()?;
             let (_, target) = destination
                 .as_ref()
@@ -340,7 +358,13 @@ fn lower_rvalue(
             }
             match kind {
                 mir::AggregateKind::Tuple => {
-                    code.push(BytecodeInstr::MakeTuple(operands.len() as u32));
+                    if matches!(result_type, fp_core::lir::LirType::I64) && operands.len() == 1 {
+                        // A tag-only enum is lowered by MIR as a one-element
+                        // tuple containing its discriminant, but bytecode
+                        // stores that enum as the scalar tag itself.
+                    } else {
+                        code.push(BytecodeInstr::MakeTuple(operands.len() as u32));
+                    }
                     Ok(())
                 }
                 mir::AggregateKind::Array(_) => {
@@ -407,7 +431,7 @@ fn lower_operand(
     match operand {
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
             place_type(place, local_types)?;
-            code.push(BytecodeInstr::LoadPlace(lower_place(place)?));
+            code.push(BytecodeInstr::LoadPlace(lower_place(place, local_types)?));
             Ok(())
         }
         mir::Operand::Constant(constant) => {
@@ -435,7 +459,7 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
                 def_id, substs
             ),
         }),
-        mir::ConstantKind::Global(symbol) => Ok(BytecodeConst::Function(symbol.to_string())),
+        mir::ConstantKind::Global(symbol) => Ok(BytecodeConst::Global(symbol.to_string())),
         mir::ConstantKind::Val(value) => lower_const_value(value),
         mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
             message: format!(
@@ -495,12 +519,21 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
     }
 }
 
-fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
+fn lower_place(
+    place: &mir::Place,
+    local_types: &[fp_core::lir::LirType],
+) -> Result<BytecodePlace, BytecodeError> {
+    let scalar_slice = matches!(
+        local_types.get(place.local as usize),
+        Some(fp_core::lir::LirType::Ptr(_))
+    );
     let mut projection = Vec::new();
     for elem in &place.projection {
         match elem {
             mir::PlaceElem::Field(index, _) => {
-                projection.push(BytecodePlaceElem::Field(*index as u32));
+                if !scalar_slice {
+                    projection.push(BytecodePlaceElem::Field(*index as u32));
+                }
             }
             mir::PlaceElem::Index(local) => {
                 projection.push(BytecodePlaceElem::Index(*local));
@@ -520,23 +553,40 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
     })
 }
 
-fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError> {
+fn lower_callee(
+    operand: &mir::Operand,
+    function_names: &HashMap<mir::ty::DefId, String>,
+    local_types: &[fp_core::lir::LirType],
+) -> Result<BytecodeCallee, BytecodeError> {
     match operand {
         mir::Operand::Constant(constant) => match &constant.literal {
             mir::ConstantKind::Fn(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
-            mir::ConstantKind::FnDef(def_id, substs) => Err(BytecodeError::Lowering {
-                message: format!(
-                    "function definition reference {:?} with substitutions {:?} cannot be called from bytecode",
-                    def_id, substs
-                ),
-            }),
+            mir::ConstantKind::FnDef(def_id, substs) => {
+                if !substs.is_empty() {
+                    return Err(BytecodeError::Lowering {
+                        message: format!(
+                            "generic function definition reference {:?} with substitutions {:?} cannot be called from bytecode",
+                            def_id, substs
+                        ),
+                    });
+                }
+                let Some(name) = function_names.get(def_id) else {
+                    return Err(BytecodeError::Lowering {
+                        message: format!(
+                            "function definition {:?} is not present in bytecode unit",
+                            def_id
+                        ),
+                    });
+                };
+                Ok(BytecodeCallee::Function(name.clone()))
+            }
             mir::ConstantKind::Global(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
             _ => Err(BytecodeError::Lowering {
                 message: format!("unsupported call operand: {:?}", constant.literal),
             }),
         },
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            Ok(BytecodeCallee::Local(lower_place(place)?))
+            Ok(BytecodeCallee::Local(lower_place(place, local_types)?))
         }
     }
 }

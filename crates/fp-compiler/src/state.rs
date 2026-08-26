@@ -2,10 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use fp_core::{
-    ast::package::PackageId,
-    ast::program::AstProgram,
-    executor::ExecutorHandle,
-    hir, lir, mir,
+    ast::package::PackageId, ast::program::AstProgram, executor::ExecutorHandle, hir, lir, mir,
 };
 use fp_interpret::LirInterpreter;
 use fp_typing::ComptimeResolver;
@@ -73,6 +70,8 @@ pub struct CompilerState {
     /// already-constructed backend (`TargetBackend::capabilities`) and
     /// sets it here before compiling (`set_backend_capabilities`).
     backend_capabilities: fp_core::capabilities::LanguageCapabilities,
+    /// Selects bytecode lowering for comptime requests made during typing.
+    bytecode_comptime: bool,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
     /// comptime work. Lives here since scheduling ("what task runs next")
@@ -117,6 +116,7 @@ impl CompilerState {
             workspace,
             data_layout,
             backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
+            bytecode_comptime: false,
             tasks,
             interpreter: LirInterpreter::new(),
         }
@@ -126,6 +126,14 @@ impl CompilerState {
     /// see the field's own doc comment for why it lives here.
     pub fn interpreter_mut(&mut self) -> &mut LirInterpreter {
         &mut self.interpreter
+    }
+
+    pub fn set_bytecode_comptime(&mut self, enabled: bool) {
+        self.bytecode_comptime = enabled;
+    }
+
+    pub fn bytecode_comptime(&self) -> bool {
+        self.bytecode_comptime
     }
 
     /// Publishes `package` under its own `id` — `HirProgram::add_package`
@@ -252,7 +260,10 @@ impl CompilerState {
         self.runtime_entrypoints.insert(lir_path, def_id);
     }
 
-    pub fn runtime_entrypoint(&self, lir_path: &lir::LirPath) -> Result<hir::DefId, CompilerDriverError> {
+    pub fn runtime_entrypoint(
+        &self,
+        lir_path: &lir::LirPath,
+    ) -> Result<hir::DefId, CompilerDriverError> {
         self.runtime_entrypoints
             .get(lir_path)
             .cloned()
@@ -261,7 +272,10 @@ impl CompilerState {
             })
     }
 
-    pub fn set_backend_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
+    pub fn set_backend_capabilities(
+        &mut self,
+        capabilities: fp_core::capabilities::LanguageCapabilities,
+    ) {
         self.backend_capabilities = capabilities;
     }
 

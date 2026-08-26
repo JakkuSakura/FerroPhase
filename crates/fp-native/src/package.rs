@@ -57,7 +57,9 @@ pub fn asm_text_provider(root: &Path, dialect: AsmDialect) -> Option<Arc<dyn Pac
     let text = std::fs::read_to_string(root).ok()?;
     let asm = match dialect {
         AsmDialect::X86_64 => lift_from_x86_64(&AsmX86_64Program::parse_text(&text).ok()?).ok()?,
-        AsmDialect::Aarch64 => lift_from_aarch64(&AsmAarch64Program::parse_text(&text).ok()?).ok()?,
+        AsmDialect::Aarch64 => {
+            lift_from_aarch64(&AsmAarch64Program::parse_text(&text).ok()?).ok()?
+        }
         AsmDialect::Auto => match AsmX86_64Program::parse_text(&text) {
             Ok(program) => lift_from_x86_64(&program).ok()?,
             Err(_) => lift_from_aarch64(&AsmAarch64Program::parse_text(&text).ok()?).ok()?,

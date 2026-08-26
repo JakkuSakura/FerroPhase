@@ -1,7 +1,11 @@
 use super::*;
 
 impl HirTypeChecker {
-    pub(super) async fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
+    pub(super) async fn check_intrinsic(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: fp_core::span::Span,
+    ) -> Result<Ty> {
         use fp_core::intrinsics::IntrinsicKind;
         let kind = call.kind;
         if matches!(
@@ -24,12 +28,13 @@ impl HirTypeChecker {
             },
             IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
             IntrinsicKind::Slice => match arg_types.first() {
-                None => self.error_ty("slice intrinsic requires a base expression"),
+                None => self.error_ty_with_span("slice intrinsic requires a base expression", span),
                 Some(base) => match &base.kind {
                     TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty {
                         kind: TyKind::Slice(inner.clone()),
                     },
-                    _ => self.error_ty("slice intrinsic base must be an array or slice"),
+                    _ => self
+                        .error_ty_with_span("slice intrinsic base must be an array or slice", span),
                 },
             },
             IntrinsicKind::DebugAssertions
@@ -58,40 +63,47 @@ impl HirTypeChecker {
             | IntrinsicKind::PathNormalize
             | IntrinsicKind::IoReadStdinToString
             | IntrinsicKind::YamlToJson
-            | IntrinsicKind::JsonParse
             | IntrinsicKind::ProcMacroTokenStreamToString
             | IntrinsicKind::FieldNameAt
             | IntrinsicKind::TypeName
             | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
+            IntrinsicKind::JsonParse => self.well_known_enum_ty("Value").unwrap_or_else(|| {
+                self.error_ty_with_span("std::json::Value is not declared", span)
+            }),
             IntrinsicKind::TimeNow => Ty::float(ty::FloatTy::F64),
             IntrinsicKind::CatchUnwindResult => match arg_types.first().cloned() {
-                None => self.error_ty("catch_unwind_result requires a callable argument"),
+                None => self
+                    .error_ty_with_span("catch_unwind_result requires a callable argument", span),
                 Some(value) => Ty {
                     kind: TyKind::Tuple(vec![Box::new(Ty::bool()), Box::new(value)]),
                 },
             },
             IntrinsicKind::Spawn | IntrinsicKind::Select => match arg_types.first() {
                 Some(value) => value.clone(),
-                None => self.error_ty(format!("{:?} intrinsic requires an argument", kind)),
+                None => self
+                    .error_ty_with_span(format!("{:?} intrinsic requires an argument", kind), span),
             },
             IntrinsicKind::Join => match arg_types.as_slice() {
                 [value] => value.clone(),
-                [] => self.error_ty("join intrinsic requires an argument"),
+                [] => self.error_ty_with_span("join intrinsic requires an argument", span),
                 values => Ty {
                     kind: TyKind::Tuple(values.iter().cloned().map(Box::new).collect()),
                 },
             },
-            IntrinsicKind::VecType => {
-                self.error_ty("type-valued intrinsic has no HIR type representation")
-            }
+            IntrinsicKind::VecType => self
+                .error_ty_with_span("type-valued intrinsic has no HIR type representation", span),
             IntrinsicKind::TypeOf => self
                 .well_known_struct_ty("TypeDescriptor", Vec::new())
-                .unwrap_or_else(|| self.error_ty("std::meta::TypeDescriptor is not declared")),
+                .unwrap_or_else(|| {
+                    self.error_ty_with_span("std::meta::TypeDescriptor is not declared", span)
+                }),
             IntrinsicKind::FieldType => self
                 .well_known_struct_ty("FieldTypeDescriptor", Vec::new())
-                .unwrap_or_else(|| self.error_ty("std::meta::FieldTypeDescriptor is not declared")),
+                .unwrap_or_else(|| {
+                    self.error_ty_with_span("std::meta::FieldTypeDescriptor is not declared", span)
+                }),
             IntrinsicKind::CreateStruct
             | IntrinsicKind::AddField
             | IntrinsicKind::BuildType
@@ -109,18 +121,20 @@ impl HirTypeChecker {
             | IntrinsicKind::Sleep
             | IntrinsicKind::Yield
             | IntrinsicKind::CompileWarning => self.unit_ty(),
-            IntrinsicKind::TestCommandMockTakeCalls => self
-                .well_known_struct_ty(
+            IntrinsicKind::TestCommandMockTakeCalls => {
+                self.well_known_struct_ty(
                     "Vec",
                     vec![ty::GenericArg::Type(Ty {
                         kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
                     })],
                 )
-                .unwrap_or_else(|| self.error_ty("std::alloc::Vec is not declared")),
-            IntrinsicKind::CompileError => {
-                self.error_ty("compile_error intrinsic requested an error")
+                .unwrap_or_else(|| self.error_ty_with_span("std::alloc::Vec is not declared", span))
             }
-            _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", kind)),
+            IntrinsicKind::CompileError => {
+                self.error_ty_with_span("compile_error intrinsic requested an error", span)
+            }
+            _ => self
+                .error_ty_with_span(format!("intrinsic `{:?}` has no HIR type rule", kind), span),
         })
     }
 }

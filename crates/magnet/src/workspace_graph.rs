@@ -181,7 +181,10 @@ pub struct WorkspaceDependency {
 
 impl WorkspaceDependency {
     pub fn new(name: impl Into<String>, kind: Option<String>) -> Self {
-        Self { name: name.into(), kind }
+        Self {
+            name: name.into(),
+            kind,
+        }
     }
 }
 

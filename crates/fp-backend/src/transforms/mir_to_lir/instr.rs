@@ -29,7 +29,8 @@ pub struct MirToLirLowerer {
     pub(super) entry_allocas: Vec<lir::LirInstruction>,
     pub(super) queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
-    pub(super) struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
+    pub(super) struct_layouts:
+        RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -145,7 +146,10 @@ impl MirToLirLowerer {
     /// full_layouts` (this package's own first, then every other loaded
     /// package's, same search order as `lookup_adt_def`), instead of a
     /// private copy of the same map handed to this generator up front.
-    pub(super) fn lookup_full_layout(&self, key: &(mir::DefId, Vec<mir::Ty>)) -> Option<Vec<mir::Ty>> {
+    pub(super) fn lookup_full_layout(
+        &self,
+        key: &(mir::DefId, Vec<mir::Ty>),
+    ) -> Option<Vec<mir::Ty>> {
         self.mir_program
             .packages
             .values()
@@ -789,7 +793,10 @@ impl MirToLirLowerer {
     }
 
     /// Transform a MIR statement to LIR instructions
-    pub(super) fn transform_statement(&mut self, stmt: &mir::Statement) -> Result<Vec<lir::LirInstruction>> {
+    pub(super) fn transform_statement(
+        &mut self,
+        stmt: &mir::Statement,
+    ) -> Result<Vec<lir::LirInstruction>> {
         match &stmt.kind {
             mir::StatementKind::Assign(place, rvalue) => self.transform_assign(place, rvalue),
             mir::StatementKind::IntrinsicCall { kind, format, args } => {
@@ -3934,7 +3941,9 @@ impl MirToLirLowerer {
         }
     }
 
-    pub(super) fn successors_from_terminator(terminator: &lir::LirTerminator) -> Vec<lir::BasicBlockId> {
+    pub(super) fn successors_from_terminator(
+        terminator: &lir::LirTerminator,
+    ) -> Vec<lir::BasicBlockId> {
         match terminator {
             lir::LirTerminator::Br(target) => vec![*target],
             lir::LirTerminator::CondBr {

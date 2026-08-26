@@ -134,8 +134,8 @@ pub struct PackageDescriptor {
 pub mod graph;
 pub mod provider;
 
-use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::ast::path::QualifiedPath;
+use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
@@ -269,7 +269,11 @@ impl AstPackage {
     /// asm, goasm, urcl, jvm-bytecode, cil, ...) needs, with no real module
     /// graph behind it.
     pub fn single_item(package_id: PackageId, item: Item) -> Self {
-        let mut source = Self::new(package_id.clone(), package_id.as_str(), graph::PackageGraph::new(Vec::new()));
+        let mut source = Self::new(
+            package_id.clone(),
+            package_id.as_str(),
+            graph::PackageGraph::new(Vec::new()),
+        );
         source.items.push(PackageItem {
             module_path: QualifiedPath::new(Vec::new()),
             item,
@@ -345,7 +349,9 @@ pub fn resolve_entrypoint_def_id(
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            crate::hir::ItemKind::Function(function) if function.sig.name.as_str() == function_name => {
+            crate::hir::ItemKind::Function(function)
+                if function.sig.name.as_str() == function_name =>
+            {
                 Some(item.def_id.clone())
             }
             _ => None,
@@ -362,7 +368,11 @@ pub fn resolve_entrypoint_def_id(
 /// emission) by its final, bare symbol name — a linkage requirement, not a
 /// display convention — so a module-nested `main`'s mangled qualified name
 /// needs renaming back to the bare name it was resolved by.
-pub fn rename_lir_function(lir: &mut crate::lir::LirBlob, def_id: crate::hir::DefId, bare_name: &str) {
+pub fn rename_lir_function(
+    lir: &mut crate::lir::LirBlob,
+    def_id: crate::hir::DefId,
+    bare_name: &str,
+) {
     for lir_function in lir.functions.iter_mut() {
         if lir_function.def_id.as_ref() == Some(&def_id) {
             lir_function.name = crate::lir::Name::new(bare_name.to_string());

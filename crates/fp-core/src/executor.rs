@@ -244,7 +244,9 @@ impl ExecutorState {
             }
         };
         self.tasks.borrow_mut().insert(key.clone(), Box::pin(task));
-        self.task_states.borrow_mut().insert(key.clone(), state.clone());
+        self.task_states
+            .borrow_mut()
+            .insert(key.clone(), state.clone());
         self.ready.borrow_mut().push_back(key);
         TaskHandle { state }
     }
@@ -376,7 +378,6 @@ impl ExecutorState {
             }
         }
     }
-
 }
 
 impl Default for CompilerExecutor {

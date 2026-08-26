@@ -62,7 +62,11 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
             } else {
                 ""
             };
-            format!("&{}{}", mutability, serialize_type_rust_shaped(&reference.ty))
+            format!(
+                "&{}{}",
+                mutability,
+                serialize_type_rust_shaped(&reference.ty)
+            )
         }
         Ty::RawPtr(raw_ptr) => {
             let mutability = if raw_ptr.mutability == Some(true) {
@@ -70,7 +74,11 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
             } else {
                 "const"
             };
-            format!("*{} {}", mutability, serialize_type_rust_shaped(&raw_ptr.ty))
+            format!(
+                "*{} {}",
+                mutability,
+                serialize_type_rust_shaped(&raw_ptr.ty)
+            )
         }
         Ty::Vec(vec_ty) => format!("Vec<{}>", serialize_type_rust_shaped(&vec_ty.ty)),
         Ty::Slice(slice) => format!("[{}]", serialize_type_rust_shaped(&slice.elem)),
@@ -235,7 +243,13 @@ fn serialize_value_structural(name: &str, structural: &fp_core::ast::ValueStruct
     let fields: Vec<String> = structural
         .fields
         .iter()
-        .map(|field| format!("{}: {}", field.name, serialize_value_rust_shaped(&field.value)))
+        .map(|field| {
+            format!(
+                "{}: {}",
+                field.name,
+                serialize_value_rust_shaped(&field.value)
+            )
+        })
         .collect();
     format!("{name} {{ {} }}", fields.join(", "))
 }
@@ -372,13 +386,14 @@ impl fp_core::backend::TargetBackend for RustBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<(), fp_core::Error> {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = self.serializer.serialize_package(package)?;
-        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        let writer =
+            fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {
             let rel = if rel_path.contains('.') {
                 rel_path

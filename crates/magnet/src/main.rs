@@ -178,8 +178,18 @@ fn main() -> Result<()> {
             };
             magnet_cli.build(&options)
         }
-        Some(Commands::Transpile { path, target, output, package }) => {
-            let options = TranspileOptions { path, target, output, package };
+        Some(Commands::Transpile {
+            path,
+            target,
+            output,
+            package,
+        }) => {
+            let options = TranspileOptions {
+                path,
+                target,
+                output,
+                package,
+            };
             magnet_cli.transpile(&options)
         }
         Some(Commands::Test {

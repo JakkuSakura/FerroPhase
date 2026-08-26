@@ -511,9 +511,11 @@ impl AstToHirLowerer {
                 .and_then(|root| tree.child(tree.root(), root))
             {
                 if let Some(prim_module) = tree.child(root_module, segments[0].name.as_str()) {
-                    if let Some(res) =
-                        tree.lookup_res(prim_module, hir::Namespace::Type, segments[1].name.as_str())
-                    {
+                    if let Some(res) = tree.lookup_res(
+                        prim_module,
+                        hir::Namespace::Type,
+                        segments[1].name.as_str(),
+                    ) {
                         return Ok(hir::Path {
                             segments,
                             res: Some(res.clone()),

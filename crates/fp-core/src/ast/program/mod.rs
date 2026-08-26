@@ -1,10 +1,10 @@
 // ── Compiled workspace context (typer lookup) ────────────────────
 
+use crate::ast::package::provider::PackageProvider;
+use crate::ast::package::{AstPackage, PackageId};
+use crate::ast::path::QualifiedPath;
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
-use crate::ast::path::QualifiedPath;
-use crate::ast::package::provider::PackageProvider;
-use crate::ast::package::{PackageId, AstPackage};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;

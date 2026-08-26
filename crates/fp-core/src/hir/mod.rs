@@ -42,7 +42,18 @@ pub type Value = crate::ast::Value;
 /// this, aren't `Copy` either as a result; both are still cheap `Clone`s,
 /// and every real usage is `HashMap`-keyed rather than densely
 /// array-indexed, so this isn't a hot-path concern.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct PackageId(pub String);
 
 impl PackageId {
@@ -117,7 +128,9 @@ impl fmt::Display for HirId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct DefId {
     pub package_id: PackageId,
     pub index: u32,
@@ -393,7 +406,10 @@ pub enum ExprKind {
     While(Box<Expr>, Block),
     With(Box<Expr>, Box<Expr>),
     Array(Vec<Expr>),
-    ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
+    ArrayRepeat {
+        elem: Box<Expr>,
+        len: Box<Expr>,
+    },
     Tuple(Vec<Expr>),
     /// A `const { ... }` block. Structurally this node IS the const
     /// context indicator: the type checker eagerly resolves `body`'s
@@ -820,10 +836,14 @@ pub enum Res {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinSelfType {
-    Reference { mutable: bool },
+    Reference {
+        mutable: bool,
+    },
     Slice,
     Array,
-    RawPtr { mutable: bool },
+    RawPtr {
+        mutable: bool,
+    },
     /// The never type `!` (`std::core::primitive_docs`'s `impl ! {}`).
     Never,
     /// The unit type `()`.
@@ -877,7 +897,6 @@ impl Default for Generics {
         }
     }
 }
-
 
 /// A generic function/method call whose concrete type arguments have been
 /// resolved and are ready for monomorphization.
@@ -1253,7 +1272,6 @@ impl IntrinsicCallExpr {
     pub fn span(&self) -> Span {
         Span::union(self.callargs.iter().map(CallArg::span))
     }
-
 }
 
 impl Block {
@@ -1379,9 +1397,9 @@ impl TypeExprKind {
             | TypeExprKind::Error
             | TypeExprKind::Type
             | TypeExprKind::Any => Span::null(),
-            TypeExprKind::Refinement { base, predicate, .. } => {
-                Span::union([base.span(), predicate.span()])
-            }
+            TypeExprKind::Refinement {
+                base, predicate, ..
+            } => Span::union([base.span(), predicate.span()]),
             TypeExprKind::LiteralString(_) => Span::null(),
         }
     }

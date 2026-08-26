@@ -31,7 +31,13 @@ pub fn list_members(root: &Path) -> Vec<(String, PathBuf)> {
         }
     }
     // Single crate at root, no manifest at all: lib.rs / main.rs
-    vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
+    vec![(
+        root.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        root.to_path_buf(),
+    )]
 }
 
 /// Parse workspace members from `Cargo.toml` only, ignoring any sibling
@@ -52,7 +58,13 @@ pub fn list_cargo_members(root: &Path) -> Vec<(String, PathBuf)> {
             return vec![(name, root.to_path_buf())];
         }
     }
-    vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
+    vec![(
+        root.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        root.to_path_buf(),
+    )]
 }
 
 /// A single (non-workspace) manifest's own `[package].name` — the name a
@@ -87,7 +99,10 @@ fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf
                     if entry.file_type().map_or(false, |t| t.is_dir()) {
                         let p = entry.path();
                         result.push((
-                            p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                            p.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string(),
                             p,
                         ));
                     }
@@ -96,12 +111,19 @@ fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf
         } else if !member.is_empty() {
             let p = root.join(member);
             result.push((
-                p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
                 p,
             ));
         }
     }
-    if result.is_empty() { None } else { Some(result) }
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 /// List all .rs/.fp source files under a crate directory

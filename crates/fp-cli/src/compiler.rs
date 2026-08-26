@@ -4,9 +4,9 @@ use std::sync::Arc;
 use fp_compiler::{
     CompilerDriver, CompilerExecutor, CompilerSession, FullyQualifiedPath, PipelineMode,
 };
-use fp_core::ast::path::QualifiedPath;
-use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::package::PackageId;
+use fp_core::ast::package::provider::PackageProvider;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::{
     ast::File,
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
@@ -77,10 +77,13 @@ pub fn find_manifest_package(
     let Some(root) = fp_lang::project::find_manifest(&input_abs) else {
         return Ok(None);
     };
-    let provider = crate::languages::package_provider_registry::provider_for_language(language, &root)
-        .ok_or_else(|| {
-            CliError::Compilation(format!("no package provider for source language: {language}"))
-        })?;
+    let provider =
+        crate::languages::package_provider_registry::provider_for_language(language, &root)
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "no package provider for source language: {language}"
+                ))
+            })?;
     let packages = provider
         .list_packages()
         .map_err(|e| CliError::Compilation(e.to_string()))?;
@@ -161,10 +164,9 @@ pub(crate) fn module_path_for_language(
 
 #[cfg(feature = "lang-typescript")]
 fn module_path_for_typescript(package_root: &Path, input: &Path) -> Result<QualifiedPath> {
-    Ok(QualifiedPath::new(fp_typescript::package::estimate_module_path(
-        package_root,
-        input,
-    )))
+    Ok(QualifiedPath::new(
+        fp_typescript::package::estimate_module_path(package_root, input),
+    ))
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -201,7 +203,8 @@ fn resolve_input_package(
                 find_manifest_package(&path, language)?
             {
                 let input_abs = path.canonicalize().unwrap_or_else(|_| path.clone());
-                let module_path = module_path_for_language(language, &package_root_abs, &input_abs)?;
+                let module_path =
+                    module_path_for_language(language, &package_root_abs, &input_abs)?;
                 Ok((provider, package_id, module_path))
             } else {
                 // A standalone file with no discoverable enclosing
@@ -282,11 +285,18 @@ fn compile_source_file(
     // Only evaluate comptime LIR for full native compilation
     if pipeline == PipelineMode::Native {
         executor
-            .run(session.driver().compile_package_module_native(
-                &package_id,
-                &module_path,
-                "main",
-            ))
+            .run(
+                session
+                    .driver()
+                    .compile_package_module_native(&package_id, &module_path, "main"),
+            )
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+        executor
+            .run(
+                session
+                    .driver()
+                    .evaluate_package_comptime_constants(&package_id),
+            )
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     Ok(session.into_driver())
@@ -353,6 +363,13 @@ pub fn compile_file_to_lir_bundle(
         &executor,
         PipelineMode::Native,
     )?;
+    executor
+        .run(driver.evaluate_package_comptime_constants(&PackageId::new(
+            identity.path.path().head().ok_or_else(|| {
+                CliError::Compilation("source file has no package identity".to_string())
+            })?,
+        )))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
     drain_driver(&mut driver)?;
     let lowered = LoweredProgram {
         driver,
@@ -405,7 +422,10 @@ pub fn build_workspace_session(
 /// `source_language` override, else extension-based detection. No silent
 /// default — an undetectable language (unknown/missing extension, no
 /// override) is a real error, not a guess at FerroPhase.
-pub(crate) fn resolve_source_language(path: &Path, source_language: Option<&str>) -> Result<String> {
+pub(crate) fn resolve_source_language(
+    path: &Path,
+    source_language: Option<&str>,
+) -> Result<String> {
     if let Some(lang) = source_language {
         return Ok(lang.trim().to_ascii_lowercase());
     }
@@ -463,21 +483,16 @@ struct LoweredProgram {
     executor: CompilerExecutor,
 }
 
-
 impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::HirPackage> {
         let package = self.compiled_package()?;
         let hir_package_id = package.borrow().hir_package_id.clone();
-        self.driver
-            .state
-            .borrow()
-            .hir(hir_package_id)
-            .map_err(|_| {
-                CliError::Compilation(format!(
-                    "compiled package `{}` contains no HIR program",
-                    self.package_id
-                ))
-            })
+        self.driver.state.borrow().hir(hir_package_id).map_err(|_| {
+            CliError::Compilation(format!(
+                "compiled package `{}` contains no HIR program",
+                self.package_id
+            ))
+        })
     }
 
     fn mir(&self) -> Result<fp_core::mir::MirCodeUnit> {
@@ -525,9 +540,11 @@ impl LoweredProgram {
             .merged_blob_for_package(&self.package_id)
             .map_err(|error| CliError::Compilation(error.to_string()))?;
         if let Ok(hir_package) = self.hir() {
-            if let Ok(def_id) =
-                fp_core::ast::package::resolve_entrypoint_def_id(&self.package_id, &hir_package, "main")
-            {
+            if let Ok(def_id) = fp_core::ast::package::resolve_entrypoint_def_id(
+                &self.package_id,
+                &hir_package,
+                "main",
+            ) {
                 fp_core::ast::package::rename_lir_function(&mut blob, def_id, "main");
             }
         }

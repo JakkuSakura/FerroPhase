@@ -198,7 +198,11 @@ impl HirToMirLowerer {
         }
     }
 
-    pub(super) fn register_generic_function(&mut self, def_id: hir::DefId, function: &hir::Function) {
+    pub(super) fn register_generic_function(
+        &mut self,
+        def_id: hir::DefId,
+        function: &hir::Function,
+    ) {
         if self
             .mir_package
             .borrow()

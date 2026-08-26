@@ -22,7 +22,11 @@ pub struct KtType {
 
 impl KtType {
     fn simple(name: impl Into<String>) -> Self {
-        KtType { name: name.into(), args: Vec::new(), nullable: false }
+        KtType {
+            name: name.into(),
+            args: Vec::new(),
+            nullable: false,
+        }
     }
 }
 
@@ -96,14 +100,38 @@ pub fn parse_declarations(
     diagnostics: &fp_core::diagnostics::DiagnosticManager,
 ) -> Result<Vec<KtDecl>, KtParseError> {
     let tokens = tokenize(source)?;
-    let mut cur = Cursor { tokens: &tokens, pos: 0 };
+    let mut cur = Cursor {
+        tokens: &tokens,
+        pos: 0,
+    };
     Ok(parse_body(&mut cur, /* top_level */ true, diagnostics))
 }
 
 const MODIFIER_KEYWORDS: &[&str] = &[
-    "public", "private", "protected", "internal", "open", "final", "abstract", "sealed",
-    "data", "inline", "noinline", "crossinline", "tailrec", "operator", "infix", "external",
-    "const", "lateinit", "actual", "expect", "annotation", "inner", "override", "suspend",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "open",
+    "final",
+    "abstract",
+    "sealed",
+    "data",
+    "inline",
+    "noinline",
+    "crossinline",
+    "tailrec",
+    "operator",
+    "infix",
+    "external",
+    "const",
+    "lateinit",
+    "actual",
+    "expect",
+    "annotation",
+    "inner",
+    "override",
+    "suspend",
 ];
 
 struct Cursor<'a> {
@@ -240,8 +268,10 @@ fn skip_to_next_boundary(cur: &mut Cursor) {
 }
 
 fn is_decl_start_keyword(kw: &str) -> bool {
-    matches!(kw, "fun" | "class" | "interface" | "object" | "val" | "var" | "typealias")
-        || MODIFIER_KEYWORDS.contains(&kw)
+    matches!(
+        kw,
+        "fun" | "class" | "interface" | "object" | "val" | "var" | "typealias"
+    ) || MODIFIER_KEYWORDS.contains(&kw)
         || matches!(kw, "enum" | "companion" | "value")
 }
 
@@ -324,7 +354,9 @@ fn skip_annotations_and_modifiers(cur: &mut Cursor) -> Modifiers {
 /// argument list (cursor positioned at the opening `(`) into its three
 /// possible named values — mirrors the Rust frontend's `#[op(class = "Foo",
 /// method = "bar", func = "baz")]` (`fp-core/src/lang/mod.rs`).
-fn parse_op_annotation_args(cur: &mut Cursor) -> Option<(Option<String>, Option<String>, Option<String>)> {
+fn parse_op_annotation_args(
+    cur: &mut Cursor,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
     if !cur.eat("(") {
         return None;
     }
@@ -366,7 +398,9 @@ fn parse_op_annotation_args(cur: &mut Cursor) -> Option<(Option<String>, Option<
 /// triple-quoted) — good enough for a bare op-tag name, which never
 /// contains escapes in practice.
 fn string_literal_content(text: &str) -> Option<String> {
-    let inner = text.strip_prefix("\"\"\"").and_then(|s| s.strip_suffix("\"\"\""))
+    let inner = text
+        .strip_prefix("\"\"\"")
+        .and_then(|s| s.strip_suffix("\"\"\""))
         .or_else(|| text.strip_prefix('"').and_then(|s| s.strip_suffix('"')));
     inner.map(|s| s.to_string())
 }
@@ -401,11 +435,24 @@ fn parse_one_declaration(
     let mods = skip_annotations_and_modifiers(cur);
     let decl = match cur.peek() {
         Some("fun") => Some(parse_fun_decl(cur)?),
-        Some("class") => Some(parse_class_like(cur, KtDeclKind::Class, mods.is_enum, diagnostics)?),
-        Some("interface") => {
-            Some(parse_class_like(cur, KtDeclKind::Interface, false, diagnostics)?)
-        }
-        Some("object") => Some(parse_class_like(cur, KtDeclKind::Object, false, diagnostics)?),
+        Some("class") => Some(parse_class_like(
+            cur,
+            KtDeclKind::Class,
+            mods.is_enum,
+            diagnostics,
+        )?),
+        Some("interface") => Some(parse_class_like(
+            cur,
+            KtDeclKind::Interface,
+            false,
+            diagnostics,
+        )?),
+        Some("object") => Some(parse_class_like(
+            cur,
+            KtDeclKind::Object,
+            false,
+            diagnostics,
+        )?),
         Some("val") | Some("var") => Some(parse_property_decl(cur)?),
         Some("typealias") => Some(parse_typealias_decl(cur)?),
         _ => None,
@@ -470,7 +517,10 @@ fn parse_type(cur: &mut Cursor) -> Result<KtType, String> {
             if cur.eat("->") {
                 let ret = parse_type(cur)?;
                 let mut ty = KtType::simple("Function");
-                ty.args = param_types.into_iter().chain(std::iter::once(ret)).collect();
+                ty.args = param_types
+                    .into_iter()
+                    .chain(std::iter::once(ret))
+                    .collect();
                 return Ok(ty);
             }
         }
@@ -525,14 +575,21 @@ fn parse_type(cur: &mut Cursor) -> Result<KtType, String> {
             if cur.eat("->") {
                 let ret = parse_type(cur)?;
                 let mut ty = KtType::simple("Function");
-                ty.args = param_types.into_iter().chain(std::iter::once(ret)).collect();
+                ty.args = param_types
+                    .into_iter()
+                    .chain(std::iter::once(ret))
+                    .collect();
                 return Ok(ty);
             }
         }
         return Err("malformed extension function type".to_string());
     }
 
-    Ok(KtType { name, args, nullable })
+    Ok(KtType {
+        name,
+        args,
+        nullable,
+    })
 }
 
 fn try_parse_function_type_params(cur: &mut Cursor) -> Result<Vec<KtType>, String> {
@@ -574,7 +631,12 @@ fn parse_params(cur: &mut Cursor) -> Result<Vec<KtParam>, String> {
             } else {
                 false
             };
-            params.push(KtParam { name, ty, has_default, is_vararg });
+            params.push(KtParam {
+                name,
+                ty,
+                has_default,
+                is_vararg,
+            });
             if cur.eat(",") {
                 continue;
             }
@@ -638,7 +700,11 @@ fn parse_fun_decl(cur: &mut Cursor) -> Result<KtDecl, String> {
     let _ = &mut name;
 
     let params = parse_params(cur)?;
-    let return_type = if cur.eat(":") { Some(parse_type(cur)?) } else { None };
+    let return_type = if cur.eat(":") {
+        Some(parse_type(cur)?)
+    } else {
+        None
+    };
     if cur.eat("where") {
         // Type-parameter bounds clause — skip to the body/semicolon.
         while !matches!(cur.peek(), Some("{") | Some("=") | Some(";") | None) {
@@ -704,7 +770,11 @@ fn parse_class_like(
         cur.expect_ident()?
     };
     let type_params = parse_type_params(cur)?;
-    let params = if cur.peek() == Some("(") { parse_params(cur)? } else { Vec::new() };
+    let params = if cur.peek() == Some("(") {
+        parse_params(cur)?
+    } else {
+        Vec::new()
+    };
 
     let mut supertypes = Vec::new();
     if cur.eat(":") {
@@ -792,7 +862,11 @@ fn parse_property_decl(cur: &mut Cursor) -> Result<KtDecl, String> {
         name = cur.expect_ident()?;
     }
 
-    let return_type = if cur.eat(":") { Some(parse_type(cur)?) } else { None };
+    let return_type = if cur.eat(":") {
+        Some(parse_type(cur)?)
+    } else {
+        None
+    };
     if cur.eat("=") {
         skip_expression_statement(cur);
     } else {

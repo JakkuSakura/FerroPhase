@@ -13,12 +13,12 @@ pub struct Vec<T> {
 impl<T> [T] {
     pub fn len(&self) -> usize { compile_error!("slice length is compiler-provided") }
 
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_empty(&self) -> bool { self.len() == 0usize }
 }
 
 impl<T> Vec<T> {
     pub const fn new() -> Vec<T> {
-        Vec { ptr: 0 as *mut T, len: 0, capacity: 0 }
+        Vec { ptr: 0 as *mut T, len: 0usize, capacity: 0usize }
     }
 
     pub fn len(&self) -> usize {
@@ -26,7 +26,7 @@ impl<T> Vec<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len == 0usize
     }
 
     pub fn capacity(&self) -> usize {
@@ -37,20 +37,20 @@ impl<T> Vec<T> {
         let len = arr.len();
         let elem_size = sizeof!(T) as usize;
         let new_ptr = ::libc::malloc((len * elem_size) as u64) as *mut T;
-        let mut idx: usize = 0;
+        let mut idx: usize = 0usize;
         while idx < len {
             let dest = (new_ptr as usize + idx * elem_size) as *mut T;
             *dest = arr[idx];
-            idx = idx + 1;
+            idx = idx + 1usize;
         }
         Vec { ptr: new_ptr, len, capacity: len }
     }
 
     pub fn push(&mut self, value: T) {
         if self.len == self.capacity {
-            let new_capacity = if self.capacity == 0 { 4 } else { self.capacity * 2 };
+            let new_capacity: usize = if self.capacity == 0usize { 4usize } else { self.capacity * 2usize };
             let elem_size = sizeof!(T) as usize;
-            let new_ptr = if self.capacity == 0 {
+        let new_ptr = if self.capacity == 0usize {
                 ::libc::malloc((new_capacity * elem_size) as u64) as *mut T
             } else {
                 ::libc::realloc(self.ptr as *mut void, (new_capacity * elem_size) as u64) as *mut T
@@ -60,14 +60,14 @@ impl<T> Vec<T> {
         }
         let dest = (self.ptr as usize + self.len * (sizeof!(T) as usize)) as *mut T;
         *dest = value;
-        self.len = self.len + 1;
+        self.len = self.len + 1usize;
     }
 
     pub fn pop(&mut self) -> ::std::option::Option<T> {
-        if self.len == 0 {
+        if self.len == 0usize {
             ::std::option::Option::None
         } else {
-            self.len = self.len - 1;
+            self.len = self.len - 1usize;
             ::std::option::Option::Some(self[self.len])
         }
     }
@@ -81,7 +81,7 @@ impl<T> Vec<T> {
     }
 
     pub fn clear(&mut self) {
-        self.len = 0;
+        self.len = 0usize;
     }
 }
 
@@ -103,13 +103,13 @@ impl Vec<&str> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
         let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
-        let mut idx: usize = 0;
+        let mut idx: usize = 0usize;
         while idx < len {
-            if idx > 0 {
+            if idx > 0usize {
                 result.extend(sep);
             }
             result.extend(self[idx]);
-            idx = idx + 1;
+            idx = idx + 1usize;
         }
         result
     }
@@ -119,13 +119,13 @@ impl Vec<::std::string::String> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
         let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
-        let mut idx: usize = 0;
+        let mut idx: usize = 0usize;
         while idx < len {
-            if idx > 0 {
+            if idx > 0usize {
                 result.extend(sep);
             }
             result.extend(self[idx].as_str());
-            idx = idx + 1;
+            idx = idx + 1usize;
         }
         result
     }

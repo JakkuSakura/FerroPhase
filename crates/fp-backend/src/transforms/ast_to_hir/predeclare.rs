@@ -415,8 +415,8 @@ impl AstToHirLowerer {
                                     } else {
                                         self.module_path.join(&variant_path.segments).to_key()
                                     };
-                                    self.record_value_symbol(
-                                        &qualified_variant,
+                                    self.record_value_path(
+                                        &self.module_path.join(&variant_path.segments),
                                         hir::Res::Def(variant_def_id.clone()),
                                         &def_type.visibility,
                                     );

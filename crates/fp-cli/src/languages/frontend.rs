@@ -26,4 +26,3 @@ pub use fp_toml::TomlFrontend;
 pub use fp_typescript::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 pub use fp_wit::WitFrontend;
-

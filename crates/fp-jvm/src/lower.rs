@@ -72,7 +72,9 @@ pub fn lower_program(
     })
 }
 
-fn collect_method_descriptors(program: &mir::MirCodeUnit) -> Result<HashMap<String, String>, JvmError> {
+fn collect_method_descriptors(
+    program: &mir::MirCodeUnit,
+) -> Result<HashMap<String, String>, JvmError> {
     let mut descriptors = HashMap::new();
     for item in &program.items {
         if let mir::ItemKind::Function(function) = &item.kind {

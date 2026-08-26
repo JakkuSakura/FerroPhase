@@ -180,8 +180,7 @@ fn parse_matcher_tokens(tokens: &[MacroTokenTree]) -> Vec<MacroMatcherToken> {
                         op,
                     }));
                     i = j;
-                }
-                else if let Some(MacroTokenTree::Token(name_tok)) = tokens.get(i + 1) {
+                } else if let Some(MacroTokenTree::Token(name_tok)) = tokens.get(i + 1) {
                     let name = name_tok.text.clone();
                     let mut j = i + 2;
                     let mut fragment = "tt".to_string();
@@ -281,7 +280,8 @@ pub(crate) fn match_macro_rule(
 ) -> Option<MacroBindings> {
     let mut bindings = MacroBindings::default();
     let mut pos = 0;
-    if match_sequence(matcher, invocation, &mut pos, &mut bindings, file_id) && pos == invocation.len()
+    if match_sequence(matcher, invocation, &mut pos, &mut bindings, file_id)
+        && pos == invocation.len()
     {
         Some(bindings)
     } else {
@@ -374,8 +374,13 @@ fn match_one(
                 }
                 let mut iter_bindings = MacroBindings::default();
                 let mut sub_pos = probe_pos;
-                if match_sequence(&rep.inner, invocation, &mut sub_pos, &mut iter_bindings, file_id)
-                    && sub_pos > probe_pos
+                if match_sequence(
+                    &rep.inner,
+                    invocation,
+                    &mut sub_pos,
+                    &mut iter_bindings,
+                    file_id,
+                ) && sub_pos > probe_pos
                 {
                     iterations.push(iter_bindings);
                     *pos = sub_pos;
@@ -419,7 +424,11 @@ fn consume_fragment(
 ) -> Option<usize> {
     match fragment {
         "tt" => {
-            if pos < invocation.len() { Some(1) } else { None }
+            if pos < invocation.len() {
+                Some(1)
+            } else {
+                None
+            }
         }
         "ident" => match invocation.get(pos) {
             Some(MacroTokenTree::Token(t)) if is_ident_like_text(&t.text) => Some(1),
@@ -512,7 +521,10 @@ fn fragment_window<'a>(
     &invocation[pos..end]
 }
 
-fn token_tree_count_for_flat_prefix(trees: &[MacroTokenTree], flat_consumed: usize) -> Option<usize> {
+fn token_tree_count_for_flat_prefix(
+    trees: &[MacroTokenTree],
+    flat_consumed: usize,
+) -> Option<usize> {
     if flat_consumed == 0 {
         return None;
     }
@@ -772,7 +784,11 @@ pub fn collect_macro_rules_defs_with_depth<'a>(
     let mut defs: HashMap<String, Vec<(usize, MacroRulesDef)>> = HashMap::new();
     for package_item in items {
         let depth = package_item.module_path.segments.len();
-        collect_macro_rules_defs_with_depth_into(std::iter::once(&package_item.item), depth, &mut defs);
+        collect_macro_rules_defs_with_depth_into(
+            std::iter::once(&package_item.item),
+            depth,
+            &mut defs,
+        );
     }
     defs
 }
@@ -888,7 +904,8 @@ fn expand_items(items: Vec<Item>, defs: &HashMap<String, MacroRulesDef>, depth: 
                 let file_id = macro_tokens_file_id(invocation_tokens);
                 let mut expanded_items = None;
                 for rule in &def.rules {
-                    let Some(bindings) = match_macro_rule(&rule.matcher, invocation_tokens, file_id)
+                    let Some(bindings) =
+                        match_macro_rule(&rule.matcher, invocation_tokens, file_id)
                     else {
                         continue;
                     };
@@ -936,10 +953,9 @@ mod tests {
             .join("../..")
             .canonicalize()
             .unwrap();
-        let macro_src = std::fs::read_to_string(
-            repo_root.join("crates/fp-rust/std/core/num/int_macros.rs"),
-        )
-        .expect("read int_macros.rs");
+        let macro_src =
+            std::fs::read_to_string(repo_root.join("crates/fp-rust/std/core/num/int_macros.rs"))
+                .expect("read int_macros.rs");
         let parser = FerroPhaseParser::new();
         parser.clear_diagnostics();
         let macro_items = parser
@@ -982,20 +998,27 @@ mod tests {
             panic!("expected impl item");
         };
         let ItemKind::Macro(item_macro) = impl_block.items[0].kind() else {
-            panic!("expected macro item inside impl, got {:?}", impl_block.items[0].kind());
+            panic!(
+                "expected macro item inside impl, got {:?}",
+                impl_block.items[0].kind()
+            );
         };
         let invocation = &item_macro.invocation;
         let file_id = macro_rules_def_file_id(def);
         for (i, rule) in def.rules.iter().enumerate() {
             match match_macro_rule(&rule.matcher, &invocation.token_trees, file_id) {
                 Some(bindings) => {
-                    eprintln!("rule {i} MATCHED, bound names: {:?}", bindings.values.keys().collect::<Vec<_>>());
+                    eprintln!(
+                        "rule {i} MATCHED, bound names: {:?}",
+                        bindings.values.keys().collect::<Vec<_>>()
+                    );
                     let substituted = substitute_template(&rule.transcriber, &bindings);
                     let flat = macro_token_trees_to_tokens(&substituted);
                     match crate::ast::parse_items_tokens(&flat, file_id) {
                         Ok(parsed) => {
                             eprintln!("re-parse OK: {} items", parsed.len());
-                            let names: Vec<_> = parsed.iter().map(|it| format!("{:?}", it.kind())).collect();
+                            let names: Vec<_> =
+                                parsed.iter().map(|it| format!("{:?}", it.kind())).collect();
                             eprintln!("first few: {:?}", &names[..names.len().min(3)]);
                         }
                         Err(e) => eprintln!("re-parse FAILED: {e:?}"),
@@ -1012,10 +1035,9 @@ mod tests {
             .join("../..")
             .canonicalize()
             .unwrap();
-        let macro_src = std::fs::read_to_string(
-            repo_root.join("crates/fp-rust/std/core/num/uint_macros.rs"),
-        )
-        .expect("read uint_macros.rs");
+        let macro_src =
+            std::fs::read_to_string(repo_root.join("crates/fp-rust/std/core/num/uint_macros.rs"))
+                .expect("read uint_macros.rs");
         let parser = FerroPhaseParser::new();
         parser.clear_diagnostics();
         let macro_items = parser
@@ -1063,14 +1085,20 @@ mod tests {
             panic!("expected impl item");
         };
         let ItemKind::Macro(item_macro) = impl_block.items[0].kind() else {
-            panic!("expected macro item inside impl, got {:?}", impl_block.items[0].kind());
+            panic!(
+                "expected macro item inside impl, got {:?}",
+                impl_block.items[0].kind()
+            );
         };
         let invocation = &item_macro.invocation;
         let file_id = macro_rules_def_file_id(def);
         for (i, rule) in def.rules.iter().enumerate() {
             match match_macro_rule(&rule.matcher, &invocation.token_trees, file_id) {
                 Some(bindings) => {
-                    eprintln!("rule {i} MATCHED, bound names: {:?}", bindings.values.keys().collect::<Vec<_>>());
+                    eprintln!(
+                        "rule {i} MATCHED, bound names: {:?}",
+                        bindings.values.keys().collect::<Vec<_>>()
+                    );
                     let substituted = substitute_template(&rule.transcriber, &bindings);
                     let flat = macro_token_trees_to_tokens(&substituted);
                     match crate::ast::parse_items_tokens(&flat, file_id) {

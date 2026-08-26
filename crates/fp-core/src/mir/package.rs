@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use super::{
-    ty, ConstInfo, DefId, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantInfo,
-    FunctionSpecializationInfo, FunctionSig, Function, ItemKind, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, MirCodeUnit, MirId, StructDefinition, StructLayout,
-    StructLayoutKey, StructuralLayoutKey, Symbol, Ty,
+    ConstInfo, DefId, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantInfo, Function,
+    FunctionSig, FunctionSpecializationInfo, ItemKind, MethodDefinition, MethodHirRef,
+    MethodLoweringInfo, MirCodeUnit, MirId, StructDefinition, StructLayout, StructLayoutKey,
+    StructuralLayoutKey, Symbol, Ty, ty,
 };
 
 /// A package's MIR-level identity — the same `hir::PackageId` a `DefId`
@@ -185,7 +185,9 @@ impl MirPackage {
     /// MIR optimizer) that rewrite bodies in place regardless of which unit
     /// they came from.
     pub fn bodies_mut(&mut self) -> impl Iterator<Item = (&super::BodyId, &mut super::Body)> {
-        self.units.values_mut().flat_map(|unit| unit.bodies.iter_mut())
+        self.units
+            .values_mut()
+            .flat_map(|unit| unit.bodies.iter_mut())
     }
 
     /// Looks up a body by `BodyId` across all units, since a package's bodies
@@ -196,7 +198,9 @@ impl MirPackage {
 
     /// Mutable counterpart to `body()`.
     pub fn body_mut(&mut self, id: super::BodyId) -> Option<&mut super::Body> {
-        self.units.values_mut().find_map(|unit| unit.bodies.get_mut(&id))
+        self.units
+            .values_mut()
+            .find_map(|unit| unit.bodies.get_mut(&id))
     }
 
     /// Mints and returns the next `MirId`, advancing the counter.
@@ -223,16 +227,22 @@ impl MirPackage {
     /// Mints and returns the next synthetic `DefId` (opaque types, etc.).
     pub fn fresh_synthetic_def_id(&mut self) -> DefId {
         let id = self.id_counters.next_synthetic_def_id.clone();
-        self.id_counters.next_synthetic_def_id =
-            self.id_counters.next_synthetic_def_id.clone().saturating_add(1);
+        self.id_counters.next_synthetic_def_id = self
+            .id_counters
+            .next_synthetic_def_id
+            .clone()
+            .saturating_add(1);
         id
     }
 
     /// Mints and returns the next synthetic HIR-level `DefId`.
     pub fn fresh_synthetic_hir_def_id(&mut self) -> DefId {
         let id = self.id_counters.next_synthetic_hir_def_id.clone();
-        self.id_counters.next_synthetic_hir_def_id =
-            self.id_counters.next_synthetic_hir_def_id.clone().saturating_add(1);
+        self.id_counters.next_synthetic_hir_def_id = self
+            .id_counters
+            .next_synthetic_hir_def_id
+            .clone()
+            .saturating_add(1);
         id
     }
 
@@ -253,11 +263,17 @@ impl MirPackage {
         self.full_layouts.extend(entries);
     }
 
-    pub fn extend_opaque_payload_sizes(&mut self, entries: impl IntoIterator<Item = (String, u64)>) {
+    pub fn extend_opaque_payload_sizes(
+        &mut self,
+        entries: impl IntoIterator<Item = (String, u64)>,
+    ) {
         self.opaque_payload_sizes.extend(entries);
     }
 
-    pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {
+    pub fn extend_adt_defs(
+        &mut self,
+        entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>,
+    ) {
         self.adt_defs.extend(entries);
     }
 
@@ -273,14 +289,19 @@ impl MirPackage {
     /// lowering instance's private one).
     pub fn extend_from(&mut self, other: MirPackage) {
         self.units.extend(other.units);
-        self.runtime_support.items.extend(other.runtime_support.items);
-        self.runtime_support.bodies.extend(other.runtime_support.bodies);
+        self.runtime_support
+            .items
+            .extend(other.runtime_support.items);
+        self.runtime_support
+            .bodies
+            .extend(other.runtime_support.bodies);
         self.full_layouts.extend(other.full_layouts);
         self.opaque_payload_sizes.extend(other.opaque_payload_sizes);
         self.adt_defs.extend(other.adt_defs);
         self.sigs.extend(other.sigs);
         self.struct_defs.extend(other.struct_defs);
-        self.struct_defs_by_tail_name.extend(other.struct_defs_by_tail_name);
+        self.struct_defs_by_tail_name
+            .extend(other.struct_defs_by_tail_name);
         self.struct_layouts.extend(other.struct_layouts);
         self.struct_layouts_by_ty.extend(other.struct_layouts_by_ty);
         self.structural_defs.extend(other.structural_defs);
@@ -293,19 +314,24 @@ impl MirPackage {
         self.const_values.extend(other.const_values);
         self.executable_consts.extend(other.executable_consts);
         self.function_sigs.extend(other.function_sigs);
-        self.generic_function_defs.extend(other.generic_function_defs);
+        self.generic_function_defs
+            .extend(other.generic_function_defs);
         for (name, methods) in other.struct_methods {
             self.struct_methods.entry(name).or_default().extend(methods);
         }
-        self.method_name_output_consensus.extend(other.method_name_output_consensus);
+        self.method_name_output_consensus
+            .extend(other.method_name_output_consensus);
         self.method_lookup_by_def.extend(other.method_lookup_by_def);
         self.method_lookup.extend(other.method_lookup);
         self.method_defs.extend(other.method_defs);
         self.method_defs_by_def.extend(other.method_defs_by_def);
         self.method_hir_defs.extend(other.method_hir_defs);
-        self.method_defs_by_self_and_name.extend(other.method_defs_by_self_and_name);
-        self.method_specializations.extend(other.method_specializations);
-        self.function_specializations.extend(other.function_specializations);
+        self.method_defs_by_self_and_name
+            .extend(other.method_defs_by_self_and_name);
+        self.method_specializations
+            .extend(other.method_specializations);
+        self.function_specializations
+            .extend(other.function_specializations);
         self.function_specialization_call_cache
             .extend(other.function_specialization_call_cache);
         self.method_specialization_call_cache

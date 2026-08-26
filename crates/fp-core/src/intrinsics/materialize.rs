@@ -87,7 +87,11 @@ pub fn materialize_block(
     for item in block.collected_items {
         collected_items.push(materialize_item(item, strategy)?);
     }
-    Ok(ast::ExprBlock { stmts, collected_items, ..block })
+    Ok(ast::ExprBlock {
+        stmts,
+        collected_items,
+        ..block
+    })
 }
 
 pub fn materialize_stmt(
@@ -324,12 +328,10 @@ pub fn materialize_expr(
             paren.expr = Box::new(materialize_expr(*paren.expr, strategy)?);
             ast::Expr::new(ast::ExprKind::Paren(paren))
         }
-        ast::ExprKind::FormatString(format) => {
-            ast::Expr::new(ast::ExprKind::FormatString(format))
-        }
-        ast::ExprKind::Item(item) => {
-            ast::Expr::new(ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)))
-        }
+        ast::ExprKind::FormatString(format) => ast::Expr::new(ast::ExprKind::FormatString(format)),
+        ast::ExprKind::Item(item) => ast::Expr::new(ast::ExprKind::Item(Box::new(
+            materialize_item(*item, strategy)?,
+        ))),
         ast::ExprKind::Value(value) => {
             let value = materialize_value(*value, strategy)?;
             ast::Expr::new(ast::ExprKind::Value(Box::new(value)))

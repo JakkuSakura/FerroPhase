@@ -220,9 +220,7 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
         hir::ExprKind::ArrayRepeat { elem, len } => {
             expr_has_unresolved_paths(elem) || expr_has_unresolved_paths(len)
         }
-        hir::ExprKind::ConstBlock(const_block) => {
-            expr_has_unresolved_paths(&const_block.body)
-        }
+        hir::ExprKind::ConstBlock(const_block) => expr_has_unresolved_paths(&const_block.body),
         hir::ExprKind::Closure(closure) => {
             closure
                 .params
@@ -274,9 +272,9 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
                 || type_has_unresolved_paths(&function.output)
         }
         hir::TypeExprKind::ConstBlock(_, body) => expr_has_unresolved_paths(body),
-        hir::TypeExprKind::Refinement { base, predicate, .. } => {
-            type_has_unresolved_paths(base) || expr_has_unresolved_paths(predicate)
-        }
+        hir::TypeExprKind::Refinement {
+            base, predicate, ..
+        } => type_has_unresolved_paths(base) || expr_has_unresolved_paths(predicate),
         hir::TypeExprKind::LiteralString(_)
         | hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
@@ -384,9 +382,7 @@ fn collect_expr_refs(
         | hir::ExprKind::Cast(value, _)
         | hir::ExprKind::Return(Some(value))
         | hir::ExprKind::Break(Some(value)) => collect_expr_refs(value, tail_map, work),
-        hir::ExprKind::Reference(reference) => {
-            collect_expr_refs(&reference.expr, tail_map, work)
-        }
+        hir::ExprKind::Reference(reference) => collect_expr_refs(&reference.expr, tail_map, work),
         hir::ExprKind::Call(callee, args) => {
             collect_expr_refs(callee, tail_map, work);
             for arg in args {
@@ -555,7 +551,9 @@ fn collect_type_refs(
             collect_type_refs(&function.output, tail_map, work);
         }
         hir::TypeExprKind::ConstBlock(_, body) => collect_expr_refs(body, tail_map, work),
-        hir::TypeExprKind::Refinement { base, predicate, .. } => {
+        hir::TypeExprKind::Refinement {
+            base, predicate, ..
+        } => {
             collect_type_refs(base, tail_map, work);
             collect_expr_refs(predicate, tail_map, work);
         }

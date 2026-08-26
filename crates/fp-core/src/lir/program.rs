@@ -53,18 +53,22 @@ impl LirProgram {
             .blobs
             .iter()
             .rev()
-            .find_map(|blob| blob.functions.iter().find(|function| &function.name == name))
+            .find_map(|blob| {
+                blob.functions
+                    .iter()
+                    .find(|function| &function.name == name)
+            })
     }
 
     /// Same as `find_function`, but searches every loaded package for a
     /// match — for a bare, unqualified name with no package of its own.
     pub fn find_function_any_package(&self, name: &Name) -> Option<&LirFunction> {
         self.packages.values().find_map(|package| {
-            package
-                .blobs
-                .iter()
-                .rev()
-                .find_map(|blob| blob.functions.iter().find(|function| &function.name == name))
+            package.blobs.iter().rev().find_map(|blob| {
+                blob.functions
+                    .iter()
+                    .find(|function| &function.name == name)
+            })
         })
     }
 
@@ -72,11 +76,15 @@ impl LirProgram {
     /// its owning package's id, so no separate package lookup is needed.
     pub fn find_function_by_def_id(&self, def_id: &crate::hir::DefId) -> Option<&LirFunction> {
         let package_id = PackageId::new(def_id.package_id.as_str());
-        self.package(&package_id)?.blobs.iter().rev().find_map(|blob| {
-            blob.functions
-                .iter()
-                .find(|function| function.def_id.as_ref() == Some(def_id))
-        })
+        self.package(&package_id)?
+            .blobs
+            .iter()
+            .rev()
+            .find_map(|blob| {
+                blob.functions
+                    .iter()
+                    .find(|function| function.def_id.as_ref() == Some(def_id))
+            })
     }
 
     /// Looks a global up by name within one specific package — same
@@ -143,7 +151,10 @@ impl LirProgram {
     /// `combined`, in push order — the manual field-by-field counterpart
     /// to what `LirBlob::extend` used to do, since `LirPackage` holds a
     /// `Vec<LirBlob>` now instead of one already-merged blob.
-    fn flatten_into(combined: &mut super::LirBlob, package: &LirPackage) -> crate::error::Result<()> {
+    fn flatten_into(
+        combined: &mut super::LirBlob,
+        package: &LirPackage,
+    ) -> crate::error::Result<()> {
         for blob in &package.blobs {
             if combined.data_layout != blob.data_layout {
                 return Err(crate::error::Error::from(

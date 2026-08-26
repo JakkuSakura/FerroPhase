@@ -8,11 +8,7 @@ use tempfile::TempDir;
 use fp_cli::cli::CliConfig;
 use fp_cli::commands::compile::{CompileArgs, compile_command};
 
-fn base_args(
-    input: std::path::PathBuf,
-    output: std::path::PathBuf,
-    target: &str,
-) -> CompileArgs {
+fn base_args(input: std::path::PathBuf, output: std::path::PathBuf, target: &str) -> CompileArgs {
     CompileArgs {
         package: None,
         input: input,

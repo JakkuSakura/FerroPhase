@@ -5,7 +5,10 @@ use fp_core::mir;
 use fp_core::mir::ty::TyKind;
 
 impl MirToLirLowerer {
-    pub(super) fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
+    pub(super) fn get_or_create_register_for_place(
+        &mut self,
+        place: &mir::Place,
+    ) -> Result<lir::LirValue> {
         if let Some(storage) = self.local_storage.get(&place.local) {
             return Ok(storage.ptr_value.clone());
         }

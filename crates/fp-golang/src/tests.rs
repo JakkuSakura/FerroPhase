@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction,
-    ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, Value,
+    Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemDefStruct, ItemKind,
+    StructuralField, Ty, TypePrimitive, Value,
 };
 
 use crate::{GoParser, GoSerializer};

@@ -1,7 +1,7 @@
 use crate::error::JvmError;
 use fp_core::lir::{
-    LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator, LirType, LirValue,
+    LirBasicBlock, LirBlob, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature,
+    LirInstruction, LirInstructionKind, LirInteger, LirRegister, LirTerminator, LirType, LirValue,
     Name,
 };
 

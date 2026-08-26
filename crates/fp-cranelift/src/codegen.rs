@@ -8,11 +8,11 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use fp_core::error::Result;
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirConstant,
+    BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirBlob, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
     LirFunctionRef, LirFunctionSignature, LirGlobalRelocation, LirInstruction, LirInstructionKind,
-    LirInteger, LirIntrinsicKind, LirBlob, LirRelocationTarget, LirTerminator, LirType,
-    LirValue, LirValueKind,
+    LirInteger, LirIntrinsicKind, LirRelocationTarget, LirTerminator, LirType, LirValue,
+    LirValueKind,
 };
 use std::collections::HashMap;
 use target_lexicon::Triple;

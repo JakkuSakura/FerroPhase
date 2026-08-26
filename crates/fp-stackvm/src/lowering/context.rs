@@ -5,7 +5,7 @@
 //! [`FunctionLowering`][super::function::FunctionLowering].
 
 use fp_bytecode::{BytecodeFunction, BytecodeProgram};
-use fp_core::lir::{LirDataLayout, LirBlob};
+use fp_core::lir::{LirBlob, LirDataLayout};
 
 use super::LowerResult;
 use super::function::FunctionLowering;

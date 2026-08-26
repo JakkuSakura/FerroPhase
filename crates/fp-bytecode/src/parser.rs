@@ -203,6 +203,13 @@ fn parse_lir_type_list(input: &str) -> Result<Vec<fp_core::lir::LirType>, Byteco
 
 fn parse_lir_type(input: &str) -> Result<fp_core::lir::LirType, BytecodeError> {
     use fp_core::lir::LirType;
+    if input == "unsupported<Struct { fields: [], packed: false, name: None }>" {
+        return Ok(LirType::Struct {
+            fields: Vec::new(),
+            packed: false,
+            name: None,
+        });
+    }
     let primitive = match input {
         "i1" => Some(LirType::I1),
         "i8" => Some(LirType::I8),
@@ -794,6 +801,9 @@ fn parse_const_value(raw: &str) -> Result<BytecodeConst, BytecodeError> {
     }
     if let Some(rest) = raw.strip_prefix("fn ") {
         return Ok(BytecodeConst::Function(rest.trim().to_string()));
+    }
+    if let Some(rest) = raw.strip_prefix("global ") {
+        return Ok(BytecodeConst::Global(rest.trim().to_string()));
     }
     if raw.starts_with('"') {
         let (value, rest) = parse_debug_string(raw)?;

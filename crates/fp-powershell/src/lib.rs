@@ -1381,9 +1381,7 @@ mod tests {
                 ]),
             },
         );
-        let inventory = ShellInventory {
-            hosts,
-        };
+        let inventory = ShellInventory { hosts };
         let script = render_node(
             vec![extern_decl(
                 "winrm_run",
@@ -1435,9 +1433,7 @@ mod tests {
                 ]),
             },
         );
-        let inventory = ShellInventory {
-            hosts,
-        };
+        let inventory = ShellInventory { hosts };
         let script = render_node(
             vec![extern_decl(
                 "winrm_run",

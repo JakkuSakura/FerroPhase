@@ -1,9 +1,9 @@
+use crate::ast::path::QualifiedPath;
 use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprFor, ExprIf, ExprIntrinsicContainer,
     ExprInvokeTarget, ExprKind, ExprMatch, ExprTry, ExprWhile, File, Item, ItemChunk,
     ItemDefFunction, ItemDefTrait, ItemImpl, ItemKind, Module, Value,
 };
-use crate::ast::path::QualifiedPath;
 
 pub fn annotate_collected_items(file: &mut File) {
     let root = QualifiedPath::new(Vec::new());
@@ -239,8 +239,7 @@ fn annotate_expr(expr: &mut Expr, module_path: &QualifiedPath) {
         | ExprKind::Name(_)
         | ExprKind::Continue(_)
         | ExprKind::FormatString(_)
-        | ExprKind::Macro(_)
-        => {}
+        | ExprKind::Macro(_) => {}
     }
 }
 

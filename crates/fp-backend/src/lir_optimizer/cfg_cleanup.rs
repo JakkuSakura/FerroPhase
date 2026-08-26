@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use fp_core::error::Error;
-use fp_core::lir::{BasicBlockId, LirFunction, LirBlob, LirTerminator};
+use fp_core::lir::{BasicBlockId, LirBlob, LirFunction, LirTerminator};
 
 pub fn remove_unreachable_blocks(program: &mut LirBlob) -> Result<usize, Error> {
     let mut total_changes = 0usize;
@@ -32,7 +32,9 @@ fn remove_unreachable_blocks_in_function(function: &mut LirFunction) -> Result<u
         if !reachable.insert(block_id) {
             continue;
         }
-        let Some(block) = block_index.get(&block_id).map(|&index| &function.basic_blocks[index])
+        let Some(block) = block_index
+            .get(&block_id)
+            .map(|&index| &function.basic_blocks[index])
         else {
             continue;
         };
@@ -249,8 +251,8 @@ fn terminator_successors(terminator: &LirTerminator) -> Vec<BasicBlockId> {
 mod tests {
     use super::*;
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
-        LirFunctionSignature, LirBlob, LirTerminator, LirType, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirBlob, LirDataLayout, LirFunction,
+        LirFunctionSignature, LirTerminator, LirType, Name,
     };
 
     #[test]

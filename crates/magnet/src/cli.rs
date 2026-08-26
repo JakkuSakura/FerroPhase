@@ -4,8 +4,7 @@ use eyre::Result;
 
 use crate::commands::{
     self, BenchOptions, BuildOptions, LockOptions, RunOptions, TestOptions, UpdateOptions,
-    export::ExportOptions, generate::GenerateOptions,
-    transpile::TranspileOptions,
+    export::ExportOptions, generate::GenerateOptions, transpile::TranspileOptions,
 };
 use crate::models::{IdentityCandidate, ManifestModel, PackageModel, ProjectIdentity};
 use crate::resolver::identity;

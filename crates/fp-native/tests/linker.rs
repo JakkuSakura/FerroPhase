@@ -1,7 +1,7 @@
 use fp_core::lir::{
-    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirBlob, LirRegister,
-    LirTerminator, LirType, LirValue, Name,
+    CallingConvention, Linkage, LirBasicBlock, LirBlob, LirConstant, LirFunction,
+    LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind,
+    LirRegister, LirTerminator, LirType, LirValue, Name,
 };
 use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
 use fp_native::link::dump::dump_macho;

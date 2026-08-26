@@ -7,8 +7,8 @@ use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-    AstPackage, TargetFilter,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId,
+    PackageMetadata, TargetFilter,
 };
 use fp_core::vfs::VirtualPath;
 use semver::{Version, VersionReq};
@@ -265,11 +265,7 @@ impl PackageProvider for TypeScriptPackageProvider {
                 .ok_or_else(|| ProviderError::ModuleNotFound(module_id.clone()))?;
             graph.insert_module((**module).clone());
         }
-        Ok(AstPackage::new(
-            id.clone(),
-            descriptor.name.clone(),
-            graph,
-        ))
+        Ok(AstPackage::new(id.clone(), descriptor.name.clone(), graph))
     }
 }
 

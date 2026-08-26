@@ -1,16 +1,16 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::ast::{File, Item, ItemKind};
-use fp_core::frontend::LanguageFrontend;
-use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata, AstPackage,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
+    PackageMetadata,
 };
+use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::{File, Item, ItemKind};
+use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
@@ -201,7 +201,11 @@ struct InputPackageProvider {
 }
 
 impl InputPackageProvider {
-    fn new(package_id: PackageId, module_path: QualifiedPath, source: File) -> ProviderResult<Self> {
+    fn new(
+        package_id: PackageId,
+        module_path: QualifiedPath,
+        source: File,
+    ) -> ProviderResult<Self> {
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_owned(),

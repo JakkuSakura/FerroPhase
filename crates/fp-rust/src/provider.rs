@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
-use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
-use fp_core::frontend::LanguageFrontend;
-use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata, AstPackage,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
+    PackageMetadata,
 };
+use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
+use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
+use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 use fp_lang::{FerroFrontend, project};
 
@@ -303,8 +303,7 @@ fn workspace_path_dependencies(
         .filter_map(|(dep_name, spec)| {
             let relative_path = spec.get("path")?.as_str()?;
             let absolute_path = package_dir.join(relative_path);
-            let canonical_path =
-                std::fs::canonicalize(&absolute_path).unwrap_or(absolute_path);
+            let canonical_path = std::fs::canonicalize(&absolute_path).unwrap_or(absolute_path);
             let (member_name, _) = canonical_members
                 .iter()
                 .find(|(_, member_path)| *member_path == canonical_path)?;
@@ -946,9 +945,8 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             }
         }
     };
-    let read = |path: &Path| -> Option<String> {
-        crate::embedded_std::read(path).map(|s| s.to_string())
-    };
+    let read =
+        |path: &Path| -> Option<String> { crate::embedded_std::read(path).map(|s| s.to_string()) };
 
     // Real rustc absolute paths this corpus actually uses (`core::option::
     // Option`, `std::result::Result`, ...) name each sub-crate as an
@@ -992,7 +990,9 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
                     "fp-rust: wrote {crate_name} parse cache ({} file(s)) to {dump_path}",
                     fresh_cache.len()
                 ),
-                Err(err) => eprintln!("fp-rust: failed to write {crate_name} cache to {dump_path}: {err}"),
+                Err(err) => {
+                    eprintln!("fp-rust: failed to write {crate_name} cache to {dump_path}: {err}")
+                }
             },
             Err(err) => eprintln!("fp-rust: failed to serialize {crate_name} cache: {err}"),
         }

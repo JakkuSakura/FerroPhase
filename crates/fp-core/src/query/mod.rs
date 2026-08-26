@@ -260,7 +260,6 @@ impl QueryKind {
             _ => None,
         }
     }
-
 }
 
 // Individual SQL statement captured during lightweight parsing.

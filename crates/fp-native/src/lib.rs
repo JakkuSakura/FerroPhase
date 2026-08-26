@@ -76,7 +76,7 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         if let Ok(source) = workspace.package_source(package_id) {
@@ -88,18 +88,23 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
             // `PrecompiledArtifact`) always uses an empty path on every
             // item — `items.len() > 1` alone isn't a safe signal, since
             // those two-item CIL/JVM packages aren't archives at all.
-            let is_archive = source.items.iter().any(|pkg_item| !pkg_item.module_path.is_empty());
+            let is_archive = source
+                .items
+                .iter()
+                .any(|pkg_item| !pkg_item.module_path.is_empty());
             if is_archive {
                 let members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)> = source
                     .items
                     .iter()
                     .filter_map(|pkg_item| match pkg_item.item.kind() {
-                        fp_core::ast::ItemKind::PrecompiledAsm(asm) => {
-                            Some((pkg_item.module_path.clone(), PrecompiledMember::Asm(asm.clone())))
-                        }
-                        fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => {
-                            Some((pkg_item.module_path.clone(), PrecompiledMember::Bytes(bytes.clone())))
-                        }
+                        fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some((
+                            pkg_item.module_path.clone(),
+                            PrecompiledMember::Asm(asm.clone()),
+                        )),
+                        fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some((
+                            pkg_item.module_path.clone(),
+                            PrecompiledMember::Bytes(bytes.clone()),
+                        )),
                         _ => None,
                     })
                     .collect();
@@ -108,10 +113,13 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
                     return Ok(());
                 }
             }
-            let asm = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
-                fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some(asm.clone()),
-                _ => None,
-            });
+            let asm = source
+                .items
+                .iter()
+                .find_map(|pkg_item| match pkg_item.item.kind() {
+                    fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some(asm.clone()),
+                    _ => None,
+                });
             if let Some(asm) = asm {
                 self.emit_precompiled(asm)?;
                 return Ok(());
@@ -119,7 +127,9 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         }
         let _ = mir;
         let lir = lir
-            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
+            })?
             .clone();
         self.emit(lir, None)?;
         Ok(())
@@ -127,9 +137,9 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
 
     fn exec(&self) -> Result<()> {
         let path = &self.config.output_path;
-        let status = std::process::Command::new(path)
-            .status()
-            .map_err(|e| fp_core::error::Error::from(format!("failed to execute '{}': {e}", path.display())))?;
+        let status = std::process::Command::new(path).status().map_err(|e| {
+            fp_core::error::Error::from(format!("failed to execute '{}': {e}", path.display()))
+        })?;
         if !status.success() {
             let code = status.code().unwrap_or(-1);
             return Err(fp_core::error::Error::from(format!(
@@ -202,7 +212,12 @@ impl NativeEmitter {
             EmitKind::Executable => {
                 let needs_external_link = format == emit::TargetFormat::MachO
                     && plan_has_undefined_symbols(&plan)
-                    && !self.config.linker_driver.as_deref().unwrap_or_default().is_empty();
+                    && !self
+                        .config
+                        .linker_driver
+                        .as_deref()
+                        .unwrap_or_default()
+                        .is_empty();
                 if needs_external_link {
                     self.link_with_clang(&out, &plan, format, arch)?;
                 } else if let Err(err) = emit::write_executable(&out, &plan) {
@@ -292,9 +307,9 @@ int main(int argc, char **argv, char **envp) {
                 cc.arg(&wrapper_c_path);
                 cc.arg("-o").arg(&wrapper_object_path);
 
-                let output = cc
-                    .output()
-                    .map_err(|err| Error::from(format!("Failed to invoke compiler '{linker}': {err}")))?;
+                let output = cc.output().map_err(|err| {
+                    Error::from(format!("Failed to invoke compiler '{linker}': {err}"))
+                })?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -467,7 +482,10 @@ impl NativeObjectPackageProvider {
     /// carries its raw bytes as an opaque `PrecompiledArtifact` and is
     /// repacked verbatim, unretargeted — this mirrors exactly what the
     /// bespoke `container/pipeline.rs` archive transpile used to do.
-    pub fn from_archive(package_id: fp_core::ast::package::PackageId, bytes: &[u8]) -> Result<Self> {
+    pub fn from_archive(
+        package_id: fp_core::ast::package::PackageId,
+        bytes: &[u8],
+    ) -> Result<Self> {
         let members = crate::archive::read_archive_members(bytes)
             .map_err(|err| Error::from(format!("Failed to parse archive input: {err}")))?;
         let object_reader = crate::container::ObjectContainerReader::new();
@@ -475,7 +493,10 @@ impl NativeObjectPackageProvider {
         for member in members {
             let item = if !member.data.is_empty() && object_reader.can_read(&member.data) {
                 let asm = crate::binary::lift_object_to_asmir(&member.data).map_err(|err| {
-                    Error::from(format!("Failed to lift archive member '{}': {err}", member.name))
+                    Error::from(format!(
+                        "Failed to lift archive member '{}': {err}",
+                        member.name
+                    ))
                 })?;
                 fp_core::ast::Item::precompiled_asm(asm)
             } else {
@@ -489,7 +510,9 @@ impl NativeObjectPackageProvider {
         Ok(Self::from_source(package_id, source))
     }
 
-    fn empty_source(package_id: &fp_core::ast::package::PackageId) -> fp_core::ast::package::AstPackage {
+    fn empty_source(
+        package_id: &fp_core::ast::package::PackageId,
+    ) -> fp_core::ast::package::AstPackage {
         fp_core::ast::package::AstPackage::new(
             package_id.clone(),
             package_id.as_str().to_string(),
@@ -521,13 +544,15 @@ impl NativeObjectPackageProvider {
 impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackageProvider {
     fn list_packages(
         &self,
-    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>> {
+    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>>
+    {
         Ok(vec![self.package_id.clone()])
     }
 
     fn workspace_packages(
         &self,
-    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>> {
+    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>>
+    {
         self.list_packages()
     }
 
@@ -538,12 +563,13 @@ impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackagePro
     fn load_package_metadata(
         &self,
         id: &fp_core::ast::package::PackageId,
-    ) -> fp_core::ast::package::provider::ProviderResult<std::sync::Arc<fp_core::ast::package::PackageDescriptor>>
-    {
+    ) -> fp_core::ast::package::provider::ProviderResult<
+        std::sync::Arc<fp_core::ast::package::PackageDescriptor>,
+    > {
         if id != &self.package_id {
-            return Err(fp_core::ast::package::provider::ProviderError::PackageNotFound(
-                id.clone(),
-            ));
+            return Err(
+                fp_core::ast::package::provider::ProviderError::PackageNotFound(id.clone()),
+            );
         }
         Ok(self.descriptor.clone())
     }
@@ -557,9 +583,9 @@ impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackagePro
         id: &fp_core::ast::package::PackageId,
     ) -> fp_core::ast::package::provider::ProviderResult<fp_core::ast::package::AstPackage> {
         if id != &self.package_id {
-            return Err(fp_core::ast::package::provider::ProviderError::PackageNotFound(
-                id.clone(),
-            ));
+            return Err(
+                fp_core::ast::package::provider::ProviderError::PackageNotFound(id.clone()),
+            );
         }
         Ok(self.source.clone())
     }

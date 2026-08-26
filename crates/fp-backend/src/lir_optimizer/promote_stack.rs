@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use fp_core::error::Error;
 use fp_core::lir::{
-    BasicBlockId, LirFunction, LirId, LirInstruction, LirInstructionKind, LirBlob,
-    LirTerminator, LirValue, LirValueKind,
+    BasicBlockId, LirBlob, LirFunction, LirId, LirInstruction, LirInstructionKind, LirTerminator,
+    LirValue, LirValueKind,
 };
 
 use crate::error::optimization_error;

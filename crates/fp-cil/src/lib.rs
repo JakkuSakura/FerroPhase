@@ -40,10 +40,13 @@ impl fp_core::backend::TargetBackend for CilBackend {
         // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
         // writes/assembles itself back out instead of going through MIR.
         if let Ok(source) = workspace.package_source(package_id) {
-            let artifact = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
-                fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
-                _ => None,
-            });
+            let artifact = source
+                .items
+                .iter()
+                .find_map(|pkg_item| match pkg_item.item.kind() {
+                    fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
+                    _ => None,
+                });
             if let Some(bytes) = artifact {
                 return self.write_passthrough(&bytes);
             }
@@ -100,7 +103,10 @@ impl fp_core::backend::TargetBackend for CilBackend {
         };
 
         let output = command.output().map_err(|e| {
-            fp_core::error::Error::from(format!("failed to execute '{}': {e}", self.output.display()))
+            fp_core::error::Error::from(format!(
+                "failed to execute '{}': {e}",
+                self.output.display()
+            ))
         })?;
         if !output.status.success() {
             let code = output.status.code().unwrap_or(-1);

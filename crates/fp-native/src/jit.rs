@@ -1,6 +1,6 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
 use fp_core::error::{Error, Result};
-use fp_core::lir::{CallingConvention, LirInstructionKind, LirBlob, LirType};
+use fp_core::lir::{CallingConvention, LirBlob, LirInstructionKind, LirType};
 #[cfg(unix)]
 use libc;
 use std::collections::HashMap;
@@ -662,9 +662,9 @@ fn collect_external_call_symbols(plan: &EmitPlan) -> Vec<String> {
 mod tests {
     use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
-        CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
-        LirFunctionSignature, LirInstruction, LirInstructionKind, LirBlob, LirRegister,
-        LirTerminator, LirType, LirValue, Name,
+        CallingConvention, Linkage, LirBasicBlock, LirBlob, LirDataLayout, LirFunction,
+        LirFunctionSignature, LirInstruction, LirInstructionKind, LirRegister, LirTerminator,
+        LirType, LirValue, Name,
     };
     use std::ffi::c_void;
 

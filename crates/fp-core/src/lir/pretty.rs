@@ -4,10 +4,10 @@ use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::ty::Ty;
 use super::{
-    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirConstantAggregate, LirConstantData,
-    LirConstantExpr, LirConstantKind, LirFloat, LirFunction, LirFunctionRef, LirGlobal,
-    LirInstruction, LirInstructionKind, LirBlob, LirQuery, LirTerminator, LirValue,
-    LirValueKind, Visibility,
+    CallingConvention, Linkage, LirBasicBlock, LirBlob, LirConstant, LirConstantAggregate,
+    LirConstantData, LirConstantExpr, LirConstantKind, LirFloat, LirFunction, LirFunctionRef,
+    LirGlobal, LirInstruction, LirInstructionKind, LirQuery, LirTerminator, LirValue, LirValueKind,
+    Visibility,
 };
 
 impl PrettyPrintable for LirBlob {

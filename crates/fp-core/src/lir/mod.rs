@@ -1086,7 +1086,7 @@ impl LirDataLayout {
             8,
             vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
         )
-            .expect("built-in x86_64 data layout is valid")
+        .expect("built-in x86_64 data layout is valid")
     }
 
     pub fn aarch64() -> Self {
@@ -1095,7 +1095,7 @@ impl LirDataLayout {
             8,
             vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
         )
-            .expect("built-in aarch64 data layout is valid")
+        .expect("built-in aarch64 data layout is valid")
     }
 
     pub fn new(
@@ -1178,7 +1178,7 @@ impl LirTerminator {
 
 #[cfg(test)]
 mod tests {
-    use super::{LirApInt, LirConstant, LirDataLayout, LirInteger, LirBlob, LirType};
+    use super::{LirApInt, LirBlob, LirConstant, LirDataLayout, LirInteger, LirType};
 
     fn data_layout() -> LirDataLayout {
         LirDataLayout::new(
@@ -1223,7 +1223,6 @@ mod tests {
             assert_eq!(layout.integer_alignment(128), Ok(16));
         }
     }
-
 }
 
 impl LirValue {

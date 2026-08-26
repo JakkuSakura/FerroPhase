@@ -21,13 +21,13 @@ fn main() {
     }
 
     // Introspection macros
-    const DATA_SIZE: usize = sizeof!(Data);
-    const DATA_FIELDS: i64 = type(Data).fields.len();
-    const DATA_HAS_A: bool = type(Data).fields.contains("a");
-    const DATA_HAS_X: bool = type(Data).fields.contains("x");
-    const HEADER_SIZE: usize = sizeof!(Header);
-    const HEADER_FIELDS: i64 = type(Header).fields.len();
-    const HEADER_HAS_VERSION: bool = type(Header).fields.contains("version");
+    const DATA_SIZE: u64 = sizeof!(Data);
+    const DATA_FIELDS: i64 = field_count!(Data);
+    const DATA_HAS_A: bool = hasfield!(Data, "a");
+    const DATA_HAS_X: bool = hasfield!(Data, "x");
+    const HEADER_SIZE: u64 = sizeof!(Header);
+    const HEADER_FIELDS: i64 = field_count!(Header);
+    const HEADER_HAS_VERSION: bool = hasfield!(Header, "version");
 
     println!("data: sizeof={}, fields={}", DATA_SIZE, DATA_FIELDS);
     println!("data: has_a={}, has_x={}", DATA_HAS_A, DATA_HAS_X);
@@ -40,7 +40,7 @@ fn main() {
     const DATA_TYPE_NAME: &str = type(Data).name;
     const DATA_FIELD_A_TYPE: &str = type(Data).field_type("a").name;
     const HEADER_FIELD_VERSION_TYPE: &str = type(Header).field_type("version").name;
-    const HAS_TO_STRING: bool = type(Data).has_method("to_string");
+    const HAS_TO_STRING: bool = hasmethod!(Data, "to_string");
 
     println!(
         "types: data='{}' a='{}' version='{}'",
@@ -49,10 +49,10 @@ fn main() {
     println!("data has to_string: {}", HAS_TO_STRING);
 
     // Compile-time layout checks
-    const MAX_SIZE: usize = 64;
+    const MAX_SIZE: u64 = 64;
     const DATA_OK: bool = DATA_SIZE <= MAX_SIZE;
     const HEADER_OK: bool = HEADER_SIZE <= MAX_SIZE;
-    const TOTAL_SIZE: usize = DATA_SIZE + HEADER_SIZE;
+    const TOTAL_SIZE: u64 = DATA_SIZE + HEADER_SIZE;
     const TOTAL_OK: bool = TOTAL_SIZE <= 96;
 
     println!(

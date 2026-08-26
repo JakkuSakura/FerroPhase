@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use fp_core::lir::LirDataLayout;
 use fp_core::ast::program::AstProgram;
+use fp_core::lir::LirDataLayout;
 
 use crate::{CompilerDriver, CompilerExecutor};
 

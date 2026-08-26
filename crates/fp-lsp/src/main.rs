@@ -9,8 +9,8 @@ use lsp_types::notification::{
 };
 use lsp_types::{
     Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams,
-    PublishDiagnosticsParams, Position, Range, ServerCapabilities, TextDocumentSyncCapability,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Uri,
 };
 
@@ -105,11 +105,7 @@ where
 
 /// Parse `text` permissively (catching panics defensively, since this server must never crash on
 /// garbage `.fp` content) and publish any syntax diagnostics produced by the lexer/parser.
-fn publish_syntax_diagnostics(
-    connection: &Connection,
-    uri: &Uri,
-    text: &str,
-) -> eyre::Result<()> {
+fn publish_syntax_diagnostics(connection: &Connection, uri: &Uri, text: &str) -> eyre::Result<()> {
     let diagnostics = collect_syntax_diagnostics(uri, text);
     publish_diagnostics(connection, uri, diagnostics)
 }

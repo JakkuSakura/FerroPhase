@@ -150,7 +150,10 @@ impl HirToMirLowerer {
                 // `lower_const` would keep producing the same
                 // `ExecutableConst` placeholder forever, and this const
                 // would never actually become a real global.
-                let value = self.hir_program.const_block_value(def_id.clone())?;
+                let value = self
+                    .hir_program
+                    .const_value(def_id.clone())
+                    .or_else(|| self.hir_program.const_block_value(def_id.clone()))?;
                 self.const_block_value_to_mir_constant(&value, konst.body.value.span)
             });
         let Some(init_constant) = folded else {

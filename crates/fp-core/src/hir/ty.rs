@@ -782,10 +782,28 @@ impl fmt::Display for Ty {
             TyKind::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
             TyKind::Slice(elem) => write!(f, "[{}]", elem),
             TyKind::RawPtr(TypeAndMut { ty, mutbl }) => {
-                write!(f, "*{} {}", if *mutbl == Mutability::Mut { "mut" } else { "const" }, ty)
+                write!(
+                    f,
+                    "*{} {}",
+                    if *mutbl == Mutability::Mut {
+                        "mut"
+                    } else {
+                        "const"
+                    },
+                    ty
+                )
             }
             TyKind::Ref(_, ty, mutbl) => {
-                write!(f, "&{}{}", if *mutbl == Mutability::Mut { "mut " } else { "" }, ty)
+                write!(
+                    f,
+                    "&{}{}",
+                    if *mutbl == Mutability::Mut {
+                        "mut "
+                    } else {
+                        ""
+                    },
+                    ty
+                )
             }
             TyKind::FnDef(def_id, args) => {
                 write!(f, "fn#{}", def_id.index)?;

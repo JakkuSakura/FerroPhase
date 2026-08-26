@@ -2,7 +2,7 @@
 //! Classic 8-queens solver using recursive backtracking.
 
 fn solve(
-    row: i64,
+    row: usize,
     cols: &mut [i64; 8],
     diag1: &mut [i64; 15],
     diag2: &mut [i64; 15],
@@ -25,14 +25,14 @@ fn solve(
     let mut count = 0;
     for col in 0..8 {
         let d1 = row + col;
-        let d2 = row - col + 7;
+        let d2 = row + 7 - col;
         if cols[col] == 0 && diag1[d1] == 0 && diag2[d2] == 0 {
             cols[col] = 1;
             diag1[d1] = 1;
             diag2[d2] = 1;
-            positions[row] = col;
+            positions[row] = col as i64;
             count += solve(
-                row + 1,
+                row + 1usize,
                 cols,
                 diag1,
                 diag2,
@@ -53,7 +53,7 @@ fn print_board(positions: &[i64; 8]) {
     println!("First solution:");
     for r in 0..8 {
         for c in 0..8 {
-            if positions[r] == c {
+            if positions[r] == c as i64 {
                 print!("Q ");
             } else {
                 print!(". ");
@@ -77,7 +77,7 @@ fn main() {
     let mut found_first = false;
 
     let total = solve(
-        0,
+        0usize,
         &mut cols,
         &mut diag1,
         &mut diag2,

@@ -206,7 +206,12 @@ impl LirInterpreter {
                 .get(&current)
                 .ok_or(VmError::Runtime(format!("undefined block {current}")))?;
             for instr in &block.instructions {
-                self.exec_instruction(instr)?;
+                self.exec_instruction(instr).map_err(|error| {
+                    VmError::Runtime(format!(
+                        "while executing {} block {} instruction {:?}: {error}",
+                        func.name, current, instr.kind
+                    ))
+                })?;
             }
             match &block.terminator {
                 LirTerminator::Return(val) => {
@@ -231,6 +236,29 @@ impl LirInterpreter {
                     } else {
                         *if_false
                     };
+                }
+                LirTerminator::Switch {
+                    value,
+                    default,
+                    cases,
+                } => {
+                    let discriminant = self.resolve_operand(value)?.value;
+                    let value = match discriminant {
+                        Value::Bool(value) => u64::from(value.value),
+                        Value::Int(value) => value.value as u64,
+                        Value::UInt(value) => value.value,
+                        other => {
+                            break Err(VmError::Runtime(format!(
+                                "switch discriminant is not an integer: {other:?}"
+                            )));
+                        }
+                    };
+                    self.last_predecessor = Some(current);
+                    current = cases
+                        .iter()
+                        .find(|(case, _)| *case == value)
+                        .map(|(_, target)| *target)
+                        .unwrap_or(*default);
                 }
                 LirTerminator::Unreachable => break Err(VmError::Runtime("unreachable".into())),
                 other => break Err(VmError::Runtime(format!("terminator: {other:?}"))),
@@ -1988,7 +2016,14 @@ impl LirInterpreter {
                 args.len()
             )));
         }
-        let value = self.run_function(&function, &resolved_args)?;
+        let value = self
+            .run_function(&function, &resolved_args)
+            .map_err(|error| {
+                VmError::Runtime(format!(
+                    "while executing function {}: {error}",
+                    function.name
+                ))
+            })?;
         let Some(ty) = result_ty else {
             return Ok(());
         };

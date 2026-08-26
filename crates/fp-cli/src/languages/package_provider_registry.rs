@@ -41,7 +41,10 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push(("fp", ferrophase));
 
     let rust = factory(|root: &Path| {
-        Some(Arc::new(fp_rust::RustPackageProvider::new(root.to_path_buf())) as Arc<dyn PackageProvider>)
+        Some(
+            Arc::new(fp_rust::RustPackageProvider::new(root.to_path_buf()))
+                as Arc<dyn PackageProvider>,
+        )
     });
     entries.push(("rust", rust.clone()));
     entries.push(("rs", rust));
@@ -52,15 +55,19 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "c",
         factory(|root: &Path| {
-            Some(Arc::new(fp_c::package::CPackageProvider::new(root.to_path_buf())) as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_c::package::CPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
     // Raw asm text has no manifest/project shape either — same one-file,
     // one-package treatment as `object`, just lifted from a parsed
     // `AsmX86_64Program`/`AsmAarch64Program` instead of a binary object.
-    let native_asm_auto =
-        factory(|root: &Path| fp_native::package::asm_text_provider(root, fp_native::package::AsmDialect::Auto));
+    let native_asm_auto = factory(|root: &Path| {
+        fp_native::package::asm_text_provider(root, fp_native::package::AsmDialect::Auto)
+    });
     entries.push(("native-asm", native_asm_auto.clone()));
     entries.push(("asm", native_asm_auto));
     let native_asm_x86_64 = factory(|root: &Path| {
@@ -86,8 +93,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     #[cfg(feature = "lang-typescript")]
     {
         let typescript = factory(|root: &Path| {
-            Some(Arc::new(fp_typescript::TypeScriptPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_typescript::TypeScriptPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("typescript", typescript.clone()));
         entries.push(("ts", typescript.clone()));
@@ -98,8 +106,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     #[cfg(feature = "lang-python")]
     {
         let python = factory(|root: &Path| {
-            Some(Arc::new(fp_python::package::PythonPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_python::package::PythonPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("python", python.clone()));
         entries.push(("py", python));
@@ -108,8 +117,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     #[cfg(feature = "lang-kotlin")]
     {
         let kotlin = factory(|root: &Path| {
-            Some(Arc::new(fp_kotlin::package::KotlinPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_kotlin::package::KotlinPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("kotlin", kotlin.clone()));
         entries.push(("kt", kotlin));
@@ -119,8 +129,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "sycl",
         factory(|root: &Path| {
-            Some(Arc::new(fp_sycl::package::SyclPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_sycl::package::SyclPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         }),
     ));
 
@@ -128,8 +139,10 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "zig",
         factory(|root: &Path| {
-            Some(Arc::new(fp_zig::package::ZigPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_zig::package::ZigPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
@@ -137,16 +150,19 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "wit",
         factory(|root: &Path| {
-            Some(Arc::new(fp_wit::package::WitPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_wit::package::WitPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
     #[cfg(feature = "lang-golang")]
     {
         let golang = factory(|root: &Path| {
-            Some(Arc::new(fp_golang::package::GoLangPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_golang::package::GoLangPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("go", golang.clone()));
         entries.push(("golang", golang));
@@ -156,9 +172,11 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "flatbuffers",
         factory(|root: &Path| {
-            Some(Arc::new(fp_flatbuffers::package::FlatbuffersPackageProvider::new(
-                root.to_path_buf(),
-            )) as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_flatbuffers::package::FlatbuffersPackageProvider::new(
+                    root.to_path_buf(),
+                )) as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
@@ -166,8 +184,10 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "hcl",
         factory(|root: &Path| {
-            Some(Arc::new(fp_hcl::package::HclPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_hcl::package::HclPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
@@ -175,8 +195,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "json",
         factory(|root: &Path| {
-            Some(Arc::new(fp_json::package::JsonPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_json::package::JsonPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         }),
     ));
 
@@ -184,9 +205,11 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "jsonschema",
         factory(|root: &Path| {
-            Some(Arc::new(fp_jsonschema::package::JsonSchemaPackageProvider::new(
-                root.to_path_buf(),
-            )) as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_jsonschema::package::JsonSchemaPackageProvider::new(
+                    root.to_path_buf(),
+                )) as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
@@ -194,8 +217,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "toml",
         factory(|root: &Path| {
-            Some(Arc::new(fp_toml::package::TomlPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_toml::package::TomlPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         }),
     ));
 
@@ -203,8 +227,10 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "sql",
         factory(|root: &Path| {
-            Some(Arc::new(fp_sql::package::SqlPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(
+                Arc::new(fp_sql::package::SqlPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>,
+            )
         }),
     ));
 
@@ -212,16 +238,18 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "prql",
         factory(|root: &Path| {
-            Some(Arc::new(fp_prql::package::PrqlPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_prql::package::PrqlPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         }),
     ));
 
     #[cfg(feature = "lang-csharp")]
     {
         let csharp = factory(|root: &Path| {
-            Some(Arc::new(fp_csharp::package::CSharpPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_csharp::package::CSharpPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("csharp", csharp.clone()));
         entries.push(("cs", csharp.clone()));
@@ -231,8 +259,9 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     #[cfg(feature = "lang-godot")]
     {
         let godot = factory(|root: &Path| {
-            Some(Arc::new(fp_godot::package::GodotPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_godot::package::GodotPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         });
         entries.push(("godot", godot.clone()));
         entries.push(("gdscript", godot.clone()));
@@ -243,11 +272,11 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push((
         "lean",
         factory(|root: &Path| {
-            Some(Arc::new(fp_lean::package::LeanPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            Some(Arc::new(fp_lean::package::LeanPackageProvider::new(
+                root.to_path_buf(),
+            )) as Arc<dyn PackageProvider>)
         }),
     ));
 
     entries
 }
-

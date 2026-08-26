@@ -54,13 +54,14 @@ impl fp_core::backend::TargetBackend for ZigBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = ZigSerializer.serialize_package(package)?;
-        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        let writer =
+            fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {
             let rel = if rel_path.contains('.') {
                 rel_path

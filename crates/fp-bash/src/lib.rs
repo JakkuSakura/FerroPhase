@@ -577,14 +577,16 @@ impl<'a> BashRenderer<'a> {
             ExprKind::Invoke(invoke) => {
                 let ExprInvokeTarget::Function(name) = &invoke.target else {
                     return Err(
-                        "bash int expression only supports function invocation targets"
-                            .to_string(),
+                        "bash int expression only supports function invocation targets".to_string(),
                     );
                 };
                 let ident = name.as_ident().ok_or_else(|| {
                     "bash int expression only supports identifier invocation targets".to_string()
                 })?;
-                Ok(format!("$({})", self.render_call(ident.as_str(), &invoke.args)?))
+                Ok(format!(
+                    "$({})",
+                    self.render_call(ident.as_str(), &invoke.args)?
+                ))
             }
             _ => Err("expected int expression".to_string()),
         }
@@ -1442,7 +1444,7 @@ pub mod package;
 mod tests {
     use super::*;
 
-use fp_core::ast::{
+    use fp_core::ast::{
         Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke, ExprInvokeTarget,
         ExprKind, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind,
         Name, Path, Ty,
@@ -1517,9 +1519,7 @@ use fp_core::ast::{
                 ]),
             },
         );
-        let inventory = ShellInventory {
-            hosts,
-        };
+        let inventory = ShellInventory { hosts };
         let script = render_node(vec![extern_decl("ssh", "bash", "ssh", 2)], expr, &inventory);
         assert!(script.contains("FP_HOST_TRANSPORT['web-1']='ssh'"));
         assert!(script.contains("ssh 'web-1' 'uptime'"));
@@ -1563,9 +1563,7 @@ use fp_core::ast::{
                 ]),
             },
         );
-        let inventory = ShellInventory {
-            hosts,
-        };
+        let inventory = ShellInventory { hosts };
         let script = render_node(
             vec![extern_decl("winrm_copy", "bash", "pwsh", 3)],
             expr,

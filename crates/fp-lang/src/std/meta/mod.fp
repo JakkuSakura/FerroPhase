@@ -44,6 +44,7 @@ pub struct TypeDescriptor {
     pub name: &str,
     pub size: i64,
     pub fields: &[FieldDescriptor],
+    pub methods: &[&str],
 }
 
 impl TypeDescriptor {

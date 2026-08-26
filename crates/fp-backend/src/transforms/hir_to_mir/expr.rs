@@ -1391,7 +1391,10 @@ impl HirToMirLowerer {
             .unwrap_or(false)
     }
 
-    pub(super) fn explicit_args_from_expected_result_ty(&self, expected_ty: &Ty) -> Option<Vec<Ty>> {
+    pub(super) fn explicit_args_from_expected_result_ty(
+        &self,
+        expected_ty: &Ty,
+    ) -> Option<Vec<Ty>> {
         let expected_ty = self.unwrap_expr_actual_ty(expected_ty);
         let expected_ty = match &expected_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -1642,7 +1645,10 @@ impl HirToMirLowerer {
         Some(inner)
     }
 
-    pub(super) fn unwrap_expr_type_expr<'a>(&self, mut ty_expr: &'a hir::TypeExpr) -> &'a hir::TypeExpr {
+    pub(super) fn unwrap_expr_type_expr<'a>(
+        &self,
+        mut ty_expr: &'a hir::TypeExpr,
+    ) -> &'a hir::TypeExpr {
         while let Some(inner) = self.expr_inner_type_expr(ty_expr) {
             ty_expr = inner;
         }
@@ -2047,9 +2053,7 @@ impl HirToMirLowerer {
                 }
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                    if let Some(struct_def) =
-                        self.struct_def(def_id)
-                    {
+                    if let Some(struct_def) = self.struct_def(def_id) {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
                                 struct_def.fields.iter().zip(elements.iter())
@@ -3194,7 +3198,10 @@ impl HirToMirLowerer {
     /// the signature-registration path (`register_impl_signature_for_item`)
     /// and the real body-lowering path (`lower_impl`) so the two can never
     /// diverge on which methods this applies to.
-    pub(super) fn is_hashmap_intrinsic_method(struct_name: Option<&str>, method_name: &str) -> bool {
+    pub(super) fn is_hashmap_intrinsic_method(
+        struct_name: Option<&str>,
+        method_name: &str,
+    ) -> bool {
         let is_hashmap_impl = struct_name
             .map(|name| name.ends_with("HashMap"))
             .unwrap_or(false);

@@ -321,13 +321,43 @@ pub fn parse_program(text: &str) -> Result<BytecodeProgram, BytecodeError> {
 pub fn lower_program(program: &mir::MirCodeUnit) -> Result<BytecodeProgram, BytecodeError> {
     let mut const_pool = Vec::new();
     let mut functions = Vec::new();
+    let function_names = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            mir::ItemKind::Function(function) => function
+                .def_id
+                .clone()
+                .map(|def_id| (def_id, function.name.as_str().to_string())),
+            mir::ItemKind::ExecutableConst(entry) => Some((
+                entry.def_id.clone(),
+                entry.function_name.as_str().to_string(),
+            )),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
 
     for item in &program.items {
+        let synthetic_function;
         let function = match &item.kind {
             mir::ItemKind::Function(func) => func,
-            mir::ItemKind::Static(_) => continue,
-            mir::ItemKind::ExecutableConst(_) => continue,
-            mir::ItemKind::Query(_) => continue,
+            mir::ItemKind::ExecutableConst(entry) => {
+                synthetic_function = mir::Function {
+                    name: entry.function_name.clone(),
+                    def_id: Some(entry.def_id.clone()),
+                    substs: Vec::new(),
+                    sig: mir::FunctionSig {
+                        inputs: Vec::new(),
+                        output: entry.ty.clone(),
+                    },
+                    body_id: entry.body_id,
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                };
+                &synthetic_function
+            }
+            mir::ItemKind::Static(_) | mir::ItemKind::Query(_) => continue,
         };
         let body =
             program
@@ -336,8 +366,17 @@ pub fn lower_program(program: &mir::MirCodeUnit) -> Result<BytecodeProgram, Byte
                 .ok_or_else(|| BytecodeError::Lowering {
                     message: format!("missing body for function {}", function.name.as_str()),
                 })?;
-        let lowered = lower_function(function, body, &mut const_pool)?;
-        functions.push(lowered);
+        let lowered = lower_function(function, body, &mut const_pool, &function_names)?;
+        let executable_alias = match &item.kind {
+            mir::ItemKind::ExecutableConst(entry) => Some(entry.def_id.comptime_const_symbol()),
+            _ => None,
+        };
+        functions.push(lowered.clone());
+        if let Some(alias) = executable_alias {
+            let mut alias_function = lowered;
+            alias_function.name = alias;
+            functions.push(alias_function);
+        }
     }
 
     let entry = functions
@@ -361,6 +400,7 @@ fn format_const(value: &BytecodeConst) -> String {
         BytecodeConst::Float(value) => format!("f64 {}", value),
         BytecodeConst::Str(value) => format!("{:?}", value),
         BytecodeConst::Function(name) => format!("fn {}", name),
+        BytecodeConst::Global(name) => format!("global {}", name),
         BytecodeConst::Null => "null".to_string(),
         BytecodeConst::Undef => "undef".to_string(),
         BytecodeConst::Tuple(items) => format_list("tuple", items),

@@ -241,7 +241,8 @@ impl IntrinsicNormalizer for Box<dyn IntrinsicNormalizer> {
         self.as_ref().parse_macro_rules_def(name, tokens)
     }
     fn prefer_macro_rules_def(&self, existing_depth: usize, new_depth: usize) -> bool {
-        self.as_ref().prefer_macro_rules_def(existing_depth, new_depth)
+        self.as_ref()
+            .prefer_macro_rules_def(existing_depth, new_depth)
     }
 }
 

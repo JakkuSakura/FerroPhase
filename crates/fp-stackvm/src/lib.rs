@@ -97,6 +97,14 @@ impl Vm {
                 })?;
 
             for instr in &block.code {
+                if let BytecodeInstr::LoadConst(id) = instr {
+                    if let Some(BytecodeConst::Global(name)) =
+                        self.program.const_pool.get(*id as usize)
+                    {
+                        stack.push(self.run_function(name, Vec::new())?);
+                        continue;
+                    }
+                }
                 execute_instr(instr, &mut locals, &mut stack, &self.program.const_pool)?;
             }
 
@@ -740,15 +748,7 @@ fn load_place(locals: &[Value], place: &BytecodePlace) -> Result<Value, VmError>
                 };
             }
             BytecodePlaceElem::Index(local) => {
-                let idx = match locals.get(*local as usize) {
-                    Some(Value::Int(value)) => *value as usize,
-                    Some(Value::UInt(value)) => *value as usize,
-                    _ => {
-                        return Err(VmError::Runtime {
-                            message: "index local is not int".to_string(),
-                        });
-                    }
-                };
+                let idx = index_value(locals.get(*local as usize), *local)?;
                 value = match value {
                     Value::Array(items) | Value::List(items) => {
                         items.get(idx).cloned().ok_or_else(|| VmError::Runtime {
@@ -818,15 +818,7 @@ fn apply_store(
             }),
         },
         BytecodePlaceElem::Index(local) => {
-            let idx = match locals.get(*local as usize) {
-                Some(Value::Int(value)) => *value as usize,
-                Some(Value::UInt(value)) => *value as usize,
-                _ => {
-                    return Err(VmError::Runtime {
-                        message: "index local is not int".to_string(),
-                    });
-                }
-            };
+            let idx = index_value(locals.get(*local as usize), *local)?;
             match base {
                 Value::Array(items) | Value::List(items) => {
                     if idx >= items.len() {
@@ -853,6 +845,7 @@ fn convert_const(value: &BytecodeConst) -> Result<Value, VmError> {
         BytecodeConst::Float(value) => Value::Float(*value),
         BytecodeConst::Str(value) => Value::Str(value.clone()),
         BytecodeConst::Function(name) => Value::Str(name.clone()),
+        BytecodeConst::Global(name) => Value::Str(name.clone()),
         BytecodeConst::Null => Value::Null,
         BytecodeConst::Undef => Value::Undefined,
         BytecodeConst::Tuple(items) => {
@@ -896,6 +889,25 @@ fn values_equal(left: &Value, right: &Value) -> bool {
                     .all(|((lk, lv), (rk, rv))| values_equal(lk, rk) && values_equal(lv, rv))
         }
         _ => false,
+    }
+}
+
+fn index_value(value: Option<&Value>, local: u32) -> Result<usize, VmError> {
+    match value {
+        Some(Value::Int(value)) if *value >= 0 => Ok(*value as usize),
+        Some(Value::UInt(value)) => Ok(*value as usize),
+        Some(Value::Float(value)) if value.is_finite() && value.fract() == 0.0 => {
+            if *value >= 0.0 {
+                Ok(*value as usize)
+            } else {
+                Err(VmError::Runtime {
+                    message: format!("index local {local} is negative: {value:?}"),
+                })
+            }
+        }
+        value => Err(VmError::Runtime {
+            message: format!("index local {local} is not integral: {value:?}"),
+        }),
     }
 }
 

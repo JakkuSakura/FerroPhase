@@ -96,7 +96,11 @@ pub struct OptimizationReport {
 
 pub trait MirPass {
     fn name(&self) -> MirPassName;
-    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error>;
+    fn run(
+        &self,
+        program: &mut mir::MirPackage,
+        engine: &mut MirQueryEngine,
+    ) -> Result<usize, Error>;
 }
 
 #[derive(Default)]
@@ -669,7 +673,11 @@ impl MirPass for ConstPropagatePass {
         MirPassName::ConstPropagate
     }
 
-    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(
+        &self,
+        program: &mut mir::MirPackage,
+        engine: &mut MirQueryEngine,
+    ) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
@@ -704,7 +712,11 @@ impl MirPass for CopyPropagatePass {
         MirPassName::CopyPropagate
     }
 
-    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(
+        &self,
+        program: &mut mir::MirPackage,
+        engine: &mut MirQueryEngine,
+    ) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
@@ -739,7 +751,11 @@ impl MirPass for SimplifyBranchesPass {
         MirPassName::SimplifyBranches
     }
 
-    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(
+        &self,
+        program: &mut mir::MirPackage,
+        engine: &mut MirQueryEngine,
+    ) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
@@ -802,7 +818,11 @@ impl MirPass for DeadStorePass {
         MirPassName::DeadStore
     }
 
-    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(
+        &self,
+        program: &mut mir::MirPackage,
+        engine: &mut MirQueryEngine,
+    ) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();

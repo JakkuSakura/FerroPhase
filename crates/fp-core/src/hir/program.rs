@@ -52,7 +52,9 @@ impl HirProgram {
     /// package's items on every query.
     pub fn add_package(&mut self, package: std::rc::Rc<HirPackage>) {
         for (name, def_id) in &package.struct_defs_by_name {
-            self.struct_defs_by_name.entry(name.clone()).or_insert_with(|| def_id.clone());
+            self.struct_defs_by_name
+                .entry(name.clone())
+                .or_insert_with(|| def_id.clone());
         }
         self.packages.insert(package.id.clone(), package);
     }
@@ -67,7 +69,9 @@ impl HirProgram {
     /// callers that genuinely need the full set (e.g. a one-time reverse
     /// index build), not a single `DefId` lookup.
     pub fn all_items(&self) -> impl Iterator<Item = &Item> {
-        self.packages.values().flat_map(|package| package.items.iter())
+        self.packages
+            .values()
+            .flat_map(|package| package.items.iter())
     }
 
     /// A definition's fully-qualified path, wherever its owning package
@@ -100,7 +104,8 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::checked_impl_self_ty`.
     pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id())?.checked_impl_self_ty(hir_id)
+        self.package(hir_id.package_id())?
+            .checked_impl_self_ty(hir_id)
     }
 
     pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
@@ -111,7 +116,8 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::function_signature`.
     pub fn function_signature(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id())?.function_signature(hir_id)
+        self.package(hir_id.package_id())?
+            .function_signature(hir_id)
     }
 
     pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
@@ -133,7 +139,8 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::refinement_hint`.
     pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
-        self.package(hir_id.package_id())?.refinement_hint(hir_id, slot)
+        self.package(hir_id.package_id())?
+            .refinement_hint(hir_id, slot)
     }
 
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
@@ -149,7 +156,8 @@ impl HirProgram {
     /// `hir_id.package_id` anyway for consistency with every other
     /// per-`HirId` accessor on this type.
     pub fn take_raw_refinement_hint(&self, hir_id: HirId) -> Option<RefinementHint> {
-        self.package(hir_id.package_id())?.take_raw_refinement_hint(hir_id)
+        self.package(hir_id.package_id())?
+            .take_raw_refinement_hint(hir_id)
     }
 
     pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
@@ -171,7 +179,8 @@ impl HirProgram {
 
     /// Cross-package counterpart of `HirPackage::local_struct_fields`.
     pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
-        self.package(&def_id.package_id)?.local_struct_fields(def_id)
+        self.package(&def_id.package_id)?
+            .local_struct_fields(def_id)
     }
 
     pub fn insert_local_struct_fields(&self, def_id: DefId, fields: Vec<(Symbol, Ty)>) {
@@ -240,7 +249,8 @@ impl HirProgram {
     }
 
     pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.package(hir_id.package_id())?.generic_method_arg(hir_id)
+        self.package(hir_id.package_id())?
+            .generic_method_arg(hir_id)
     }
 
     pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
@@ -284,7 +294,9 @@ impl HirProgram {
     }
 
     pub fn intrinsic_def(&self, def_id: DefId) -> Option<&CallKind> {
-        self.package(&def_id.package_id)?.intrinsic_defs.get(&def_id)
+        self.package(&def_id.package_id)?
+            .intrinsic_defs
+            .get(&def_id)
     }
 
     pub fn is_placeholder_def(&self, def_id: DefId) -> bool {

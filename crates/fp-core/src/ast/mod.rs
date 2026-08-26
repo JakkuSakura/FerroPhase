@@ -1,7 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
-use crate::span::Span;
 use crate::common_struct;
+use crate::span::Span;
 use std::path::PathBuf;
 
 pub use deserialize::*;
@@ -16,11 +16,11 @@ mod item_collection;
 pub mod json;
 mod macros;
 pub mod module;
-mod pat;
 pub mod package;
+mod pat;
 pub mod path;
-pub mod program;
 mod pretty;
+pub mod program;
 mod schema;
 mod serialize;
 pub mod snapshot;

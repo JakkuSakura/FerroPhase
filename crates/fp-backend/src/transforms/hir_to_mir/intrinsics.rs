@@ -7,7 +7,11 @@ use fp_core::mir::ty::{ConstKind, ConstValue, Ty, TyKind};
 use fp_core::span::Span;
 
 impl<'a> BodyBuilder<'a> {
-    pub(super) fn lower_literal(&mut self, lit: &hir::Lit, expected: Option<&Ty>) -> (mir::ConstantKind, Ty) {
+    pub(super) fn lower_literal(
+        &mut self,
+        lit: &hir::Lit,
+        expected: Option<&Ty>,
+    ) -> (mir::ConstantKind, Ty) {
         match lit {
             hir::Lit::Bool(value) => (mir::ConstantKind::Bool(*value), Ty { kind: TyKind::Bool }),
             hir::Lit::Integer(value) => {
@@ -303,7 +307,11 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn emit_printf_call(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
+    pub(super) fn emit_printf_call(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: Span,
+    ) -> Result<()> {
         let Some((template, positional_slots, named_args, name_map)) =
             self.format_call_parts(call, span)
         else {
@@ -531,10 +539,16 @@ impl<'a> BodyBuilder<'a> {
             return None;
         };
 
-        let hir::ExprKind::FormatString(template) = &first.value.kind else {
-            self.lowering
-                .emit_error(span, "format intrinsic requires a template argument");
-            return None;
+        let template = match &first.value.kind {
+            hir::ExprKind::FormatString(template) => template.clone(),
+            hir::ExprKind::Literal(hir::Lit::Str(text)) => hir::FormatString {
+                parts: vec![hir::FormatTemplatePart::Literal(text.clone())],
+            },
+            _ => {
+                self.lowering
+                    .emit_error(span, "format intrinsic requires a template argument");
+                return None;
+            }
         };
 
         let mut positional_slots: Vec<Option<hir::CallArg>> = Vec::new();
@@ -579,10 +593,14 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        Some((template.clone(), positional_slots, named_args, name_map))
+        Some((template, positional_slots, named_args, name_map))
     }
 
-    pub(super) fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
+    pub(super) fn emit_panic_intrinsic(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: Span,
+    ) -> Result<()> {
         let message = if call.callargs.is_empty() {
             "panic! macro triggered".to_string()
         } else if call.callargs.len() == 1 {
@@ -1603,7 +1621,11 @@ impl<'a> BodyBuilder<'a> {
         None
     }
 
-    pub(super) fn compute_struct_size(&mut self, span: Span, struct_ref: &StructRef) -> Option<u64> {
+    pub(super) fn compute_struct_size(
+        &mut self,
+        span: Span,
+        struct_ref: &StructRef,
+    ) -> Option<u64> {
         let layout = match self.lowering.struct_layout_for_instance(
             struct_ref.def_id.clone(),
             &struct_ref.args,

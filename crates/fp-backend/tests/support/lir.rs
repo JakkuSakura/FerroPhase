@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use fp_core::lir::{
-    self, LirBasicBlock, LirFunction, LirFunctionSignature, LirBlob, LirTerminator, LirType,
+    self, LirBasicBlock, LirBlob, LirFunction, LirFunctionSignature, LirTerminator, LirType,
 };
 
 pub fn empty_program() -> LirBlob {

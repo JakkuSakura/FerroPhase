@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, AstPackage};
+use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId};
 
 #[derive(Debug)]
 pub struct SqlPackageProvider {

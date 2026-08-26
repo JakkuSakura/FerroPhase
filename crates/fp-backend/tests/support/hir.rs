@@ -5,7 +5,9 @@ use fp_core::hir::{
 };
 use fp_core::span::Span;
 
-fn test_pkg() -> hir::PackageId { hir::PackageId::new("test") }
+fn test_pkg() -> hir::PackageId {
+    hir::PackageId::new("test")
+}
 
 pub fn literal_expr(value: i64) -> Expr {
     Expr::new(

@@ -233,12 +233,14 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
         ExprKind::Value(value) => infer_printf_spec_for_value(value.as_ref()),
         ExprKind::Select(select) => infer_printf_spec_for_select(select),
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
-        ExprKind::Reference(reference) => match fp_core::ast::resolved_expr_type(reference.referee.id()) {
-            Some(ty) => infer_printf_spec_with_replacement(Some(&ty)),
-            None => Err(fp_core::error::Error::from(
-                "missing type information for printf argument".to_string(),
-            )),
-        },
+        ExprKind::Reference(reference) => {
+            match fp_core::ast::resolved_expr_type(reference.referee.id()) {
+                Some(ty) => infer_printf_spec_with_replacement(Some(&ty)),
+                None => Err(fp_core::error::Error::from(
+                    "missing type information for printf argument".to_string(),
+                )),
+            }
+        }
         _ => Err(fp_core::error::Error::from(
             "missing type information for printf argument".to_string(),
         )),

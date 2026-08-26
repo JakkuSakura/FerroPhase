@@ -103,16 +103,21 @@ pub enum Formatter {
 impl fmt::Debug for Formatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Formatter::Command { program, args } => {
-                f.debug_struct("Command").field("program", program).field("args", args).finish()
-            }
+            Formatter::Command { program, args } => f
+                .debug_struct("Command")
+                .field("program", program)
+                .field("args", args)
+                .finish(),
             Formatter::Function(_) => f.write_str("Function(..)"),
         }
     }
 }
 
 impl Formatter {
-    pub fn command(program: impl Into<String>, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn command(
+        program: impl Into<String>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         Formatter::Command {
             program: program.into(),
             args: args.into_iter().map(Into::into).collect(),
@@ -200,7 +205,12 @@ pub struct IndentedBuffer {
 impl IndentedBuffer {
     pub fn new(config: BufferConfig) -> Self {
         let indent = Indent::new(config.indent_style.clone());
-        Self { config, indent, out: String::new(), pending: String::new() }
+        Self {
+            config,
+            indent,
+            out: String::new(),
+            pending: String::new(),
+        }
     }
 
     pub fn indent_depth(&self) -> usize {
@@ -212,7 +222,8 @@ impl IndentedBuffer {
     }
 
     fn continuation_prefix(&self) -> String {
-        self.indent.prefix_at(self.indent.depth() + self.config.continuation_indent)
+        self.indent
+            .prefix_at(self.indent.depth() + self.config.continuation_indent)
     }
 
     /// Append raw text to the current line with no spacing logic applied.
@@ -251,7 +262,11 @@ impl IndentedBuffer {
         let mut current = String::new();
         let mut budget = max_width.saturating_sub(self.indent_prefix().len());
         for word in self.pending.split(' ') {
-            let needed = if current.is_empty() { word.len() } else { current.len() + 1 + word.len() };
+            let needed = if current.is_empty() {
+                word.len()
+            } else {
+                current.len() + 1 + word.len()
+            };
             if !current.is_empty() && needed > budget {
                 lines.push(std::mem::take(&mut current));
                 budget = max_width.saturating_sub(cont_width);
@@ -278,7 +293,11 @@ impl IndentedBuffer {
             return self;
         }
         for (i, line) in self.wrap_pending().into_iter().enumerate() {
-            let prefix = if i == 0 { self.indent_prefix() } else { self.continuation_prefix() };
+            let prefix = if i == 0 {
+                self.indent_prefix()
+            } else {
+                self.continuation_prefix()
+            };
             self.out.push_str(&prefix);
             self.out.push_str(&line);
             self.out.push('\n');
@@ -382,7 +401,10 @@ impl IndentedBuffer {
     /// back in: `let saved = b.swap_buffer(String::new()); /* render into b
     /// */ let scratch = b.swap_buffer(saved);`.
     pub fn swap_buffer(&mut self, replacement: String) -> String {
-        debug_assert!(self.pending.is_empty(), "swap_buffer() called with an unterminated line pending");
+        debug_assert!(
+            self.pending.is_empty(),
+            "swap_buffer() called with an unterminated line pending"
+        );
         std::mem::replace(&mut self.out, replacement)
     }
 
@@ -665,13 +687,18 @@ impl StyledWriter {
     /// instead) since formatting is a nicety, not a correctness requirement.
     pub fn finish(&self) -> String {
         let buffer = self.buffer.borrow();
-        debug_assert!(!buffer.has_pending(), "finish() called with an unterminated line pending");
+        debug_assert!(
+            !buffer.has_pending(),
+            "finish() called with an unterminated line pending"
+        );
         let mut text = buffer.raw_contents().to_string();
         drop(buffer);
         if let Some(formatter) = &self.formatter {
             match formatter.apply(&text) {
                 Ok(formatted) => text = formatted,
-                Err(err) => tracing::warn!("StyledWriter: formatter failed, using unformatted output: {err}"),
+                Err(err) => tracing::warn!(
+                    "StyledWriter: formatter failed, using unformatted output: {err}"
+                ),
             }
         }
         if self.trailing_newline {
@@ -739,7 +766,10 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(w.finish(), "fn main() {\n    a()\n    if true {\n        b()\n    }\n}\n");
+        assert_eq!(
+            w.finish(),
+            "fn main() {\n    a()\n    if true {\n        b()\n    }\n}\n"
+        );
     }
 
     #[test]
@@ -768,7 +798,10 @@ mod tests {
 
     #[test]
     fn tabs_and_custom_spacing() {
-        let config = WriterConfig { indent_style: IndentStyle::Tabs, ..WriterConfig::default() };
+        let config = WriterConfig {
+            indent_style: IndentStyle::Tabs,
+            ..WriterConfig::default()
+        };
         let mut w = StyledWriter::new(config);
         w.block("fn main()", |w| -> Result<(), ()> {
             w.write_line("a()");
@@ -833,29 +866,57 @@ mod tests {
 
     #[test]
     fn wraps_long_lines_on_word_boundaries() {
-        let config = WriterConfig { max_width: Some(20), ..WriterConfig::default() };
+        let config = WriterConfig {
+            max_width: Some(20),
+            ..WriterConfig::default()
+        };
         let mut w = StyledWriter::new(config);
-        w.atom("let").atom("x").atom("=").atom("aaaa").atom("+").atom("bbbb").atom("+").atom("cccc").newline();
+        w.atom("let")
+            .atom("x")
+            .atom("=")
+            .atom("aaaa")
+            .atom("+")
+            .atom("bbbb")
+            .atom("+")
+            .atom("cccc")
+            .newline();
         assert_eq!(w.finish(), "let x = aaaa + bbbb\n    + cccc\n");
     }
 
     #[test]
     fn wrapping_accounts_for_indent_depth() {
-        let config = WriterConfig { max_width: Some(20), ..WriterConfig::default() };
+        let config = WriterConfig {
+            max_width: Some(20),
+            ..WriterConfig::default()
+        };
         let mut w = StyledWriter::new(config);
         w.block("fn f()", |w| -> Result<(), ()> {
-            w.atom("let").atom("x").atom("=").atom("aaaa").atom("+").atom("bbbb").atom("+").atom("cccc").newline();
+            w.atom("let")
+                .atom("x")
+                .atom("=")
+                .atom("aaaa")
+                .atom("+")
+                .atom("bbbb")
+                .atom("+")
+                .atom("cccc")
+                .newline();
             Ok(())
         })
         .unwrap();
         // Body is at depth 1 (4 spaces); continuation goes to depth 2 (8 spaces),
         // both narrowing the usable width compared to the top-level case above.
-        assert_eq!(w.finish(), "fn f() {\n    let x = aaaa +\n        bbbb + cccc\n}\n");
+        assert_eq!(
+            w.finish(),
+            "fn f() {\n    let x = aaaa +\n        bbbb + cccc\n}\n"
+        );
     }
 
     #[test]
     fn unbreakable_token_overflows_rather_than_splitting_mid_token() {
-        let config = WriterConfig { max_width: Some(10), ..WriterConfig::default() };
+        let config = WriterConfig {
+            max_width: Some(10),
+            ..WriterConfig::default()
+        };
         let mut w = StyledWriter::new(config);
         w.write_line("aaaaaaaaaaaaaaaaaaaa");
         assert_eq!(w.finish(), "aaaaaaaaaaaaaaaaaaaa\n");
@@ -864,13 +925,21 @@ mod tests {
     #[test]
     fn no_wrapping_when_max_width_unset() {
         let mut w = StyledWriter::new(WriterConfig::default());
-        w.write_line("a very long line that would exceed any reasonable width if wrapping were enabled here");
-        assert_eq!(w.finish(), "a very long line that would exceed any reasonable width if wrapping were enabled here\n");
+        w.write_line(
+            "a very long line that would exceed any reasonable width if wrapping were enabled here",
+        );
+        assert_eq!(
+            w.finish(),
+            "a very long line that would exceed any reasonable width if wrapping were enabled here\n"
+        );
     }
 
     #[test]
     fn short_line_is_unaffected_by_max_width() {
-        let config = WriterConfig { max_width: Some(80), ..WriterConfig::default() };
+        let config = WriterConfig {
+            max_width: Some(80),
+            ..WriterConfig::default()
+        };
         let mut w = StyledWriter::new(config);
         w.write_line("short");
         assert_eq!(w.finish(), "short\n");

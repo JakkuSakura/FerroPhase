@@ -1,8 +1,8 @@
 use crate::config::GoAsmTarget;
 use fp_core::error::Result;
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
-    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirBlob, LirTerminator, LirValue,
+    BasicBlockId, LirBasicBlock, LirBlob, LirConstant, LirConstantData, LirConstantKind,
+    LirFunction, LirInstruction, LirInstructionKind, LirIntrinsicKind, LirTerminator, LirValue,
     LirValueKind,
 };
 use std::fmt::Write;

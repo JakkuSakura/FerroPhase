@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use fp_core::ast::{File, Item, ItemKind};
-use fp_core::frontend::LanguageFrontend;
-use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{ProviderError, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageItem, AstPackage};
+use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageItem};
+use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::{File, Item, ItemKind};
+use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
 use crate::FerroFrontend;

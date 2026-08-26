@@ -21,11 +21,11 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use fp_core::backend::{BackendConfig, TargetBackend};
 use fp_core::ast::package::provider::PackageProvider;
+use fp_core::backend::{BackendConfig, TargetBackend};
 
-use crate::error::CliError;
 use crate::Result;
+use crate::error::CliError;
 
 /// A target-backend factory — every target needs a fresh `BackendConfig`
 /// per compile (output path, target triple, ...), so this is a
@@ -149,10 +149,13 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
             let output = fill_missing_extension(&config.workspace_root, default_ext);
             let native_target = match config.native_target.as_deref() {
                 Some(value) => Some(
-                    fp_native::config::NativeTarget::resolve(value, config.target_triple.as_deref())
-                        .ok_or_else(|| {
-                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
-                        })?,
+                    fp_native::config::NativeTarget::resolve(
+                        value,
+                        config.target_triple.as_deref(),
+                    )
+                    .ok_or_else(|| {
+                        CliError::Compilation(format!("Unsupported fp-native target: {value}"))
+                    })?,
                 ),
                 None => None,
             };
@@ -248,7 +251,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "bytecode",
         factory(|config: BackendConfig| {
-            Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
+            Ok(Box::new(fp_stackcode::BytecodeBackend {
                 output: fill_missing_extension(&config.workspace_root, "fbc"),
                 emit_text: false,
                 save_intermediates: config.save_intermediates,
@@ -258,7 +261,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "text-bytecode",
         factory(|config: BackendConfig| {
-            Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
+            Ok(Box::new(fp_stackcode::BytecodeBackend {
                 output: fill_missing_extension(&config.workspace_root, "ftbc"),
                 // `emit_text` only forces text mode for the explicit
                 // "text-bytecode" target name — `emit_package_artifact`'s own
@@ -392,7 +395,10 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         #[cfg(not(feature = "lang-kotlin"))]
         {
             let _ = config;
-            Err(disabled_feature_error("lang-kotlin", "Kotlin package emission"))
+            Err(disabled_feature_error(
+                "lang-kotlin",
+                "Kotlin package emission",
+            ))
         }
     });
     entries.push(("kotlin", kotlin.clone()));
@@ -406,7 +412,10 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         #[cfg(not(feature = "lang-python"))]
         {
             let _ = config;
-            Err(disabled_feature_error("lang-python", "Python package emission"))
+            Err(disabled_feature_error(
+                "lang-python",
+                "Python package emission",
+            ))
         }
     });
     entries.push(("python", python.clone()));
@@ -434,7 +443,10 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         #[cfg(not(feature = "lang-godot"))]
         {
             let _ = config;
-            Err(disabled_feature_error("lang-godot", "GDScript package emission"))
+            Err(disabled_feature_error(
+                "lang-godot",
+                "GDScript package emission",
+            ))
         }
     });
     entries.push(("gdscript", gdscript.clone()));

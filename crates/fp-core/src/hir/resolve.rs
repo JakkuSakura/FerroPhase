@@ -182,8 +182,7 @@ impl ModuleTree {
         self.nodes[parent.0 as usize]
             .children
             .insert(name.to_string(), id);
-        self.by_path
-            .insert(QualifiedPath::new(prefix.to_vec()), id);
+        self.by_path.insert(QualifiedPath::new(prefix.to_vec()), id);
         id
     }
 
@@ -235,7 +234,10 @@ impl ModuleTree {
     /// (used by `exported_symbols` and `load_default_prelude_defs`).
     /// Does not visit the reserved `prelude()` node — it holds no real
     /// qualified path of its own.
-    pub fn all_bindings(&self, ns: Namespace) -> impl Iterator<Item = (QualifiedPath, &SymbolEntry)> {
+    pub fn all_bindings(
+        &self,
+        ns: Namespace,
+    ) -> impl Iterator<Item = (QualifiedPath, &SymbolEntry)> {
         self.by_path.iter().flat_map(move |(path, id)| {
             self.nodes[id.0 as usize].bindings[ns as usize]
                 .iter()
@@ -248,7 +250,11 @@ impl ModuleTree {
     /// module's own value/type members with one `HashMap` iteration,
     /// instead of a flat scan over every global definition in the package
     /// filtered by qualified-path prefix.
-    pub fn bindings(&self, module: ModuleId, ns: Namespace) -> impl Iterator<Item = (&str, &SymbolEntry)> {
+    pub fn bindings(
+        &self,
+        module: ModuleId,
+        ns: Namespace,
+    ) -> impl Iterator<Item = (&str, &SymbolEntry)> {
         self.nodes[module.0 as usize].bindings[ns as usize]
             .iter()
             .map(|(name, entry)| (name.as_str(), entry))
@@ -310,7 +316,10 @@ mod tests {
         );
         assert!(matches!(
             tree.lookup(module, Namespace::Type, "Option"),
-            Some(SymbolEntry { res: Res::SelfTy, .. })
+            Some(SymbolEntry {
+                res: Res::SelfTy,
+                ..
+            })
         ));
         assert!(tree.lookup(module, Namespace::Value, "Option").is_none());
     }

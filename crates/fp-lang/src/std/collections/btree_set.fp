@@ -37,7 +37,7 @@ impl<T> BTreeSet<T> {
     }
 
     fn contains_value(&self, value: T) -> bool {
-        self.find_node_idx(value) >= 0
+        self.find_node_idx(value).is_some()
     }
 
     fn contains(&self, value: T) -> bool {
@@ -61,15 +61,15 @@ impl<T> BTreeSet<T> {
         self.len = self.len + 1;
     }
 
-    fn find_node_idx(&self, value: T) -> i64 {
+    fn find_node_idx(&self, value: T) -> ::std::option::Option<usize> {
         let mut idx: usize = 0;
         let values_len = self.values.len();
         while idx < values_len {
             if self.values[idx] == value {
-                return idx as i64;
+                return ::std::option::Option::Some(idx);
             }
             idx = idx + 1;
         }
-        -1
+        ::std::option::Option::None
     }
 }

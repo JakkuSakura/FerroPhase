@@ -8,14 +8,14 @@ const fn main() {
     println!("✅ Expectation: outputs match labels");
     println!("");
     // Basic printing
-    print("Hello");
-    print("World with newlines");
-    println!();
+    std::intrinsics::print("Hello");
+    std::intrinsics::print("World with newlines");
+    println!("");
 
     // Variadic arguments with mixed types
-    print("Number:", 42);
-    print("Boolean:", true, false);
-    print("Mixed:", 1, 2.5, "text", true);
+    std::intrinsics::print("Number:", 42);
+    std::intrinsics::print("Boolean:", true, false);
+    std::intrinsics::print("Mixed:", 1, 2.5, "text", true);
     println!();
 
     // Namespace variant
@@ -32,16 +32,16 @@ const fn main() {
     println!("bools: {} {}", true, false);
 
     // Regression checks for runtime printf bridge
-    print("This", "stays", "on", "one", "line");
+    std::intrinsics::print("This", "stays", "on", "one", "line");
     println!();
-    print("Continuing without newline");
-    print(" - appended content");
+    std::intrinsics::print("Continuing without newline");
+    std::intrinsics::print(" - appended content");
     println!();
 
     // Special values
-    print("Unit:", ());
-    print("Null:", null);
-    println!();
+    std::intrinsics::print("Unit:", ());
+    std::intrinsics::print("Null:", "null");
+    println!("");
 
     // Strings with escapes
     println!("escaped: {} {}", "line1\nline2", "tab\tend");

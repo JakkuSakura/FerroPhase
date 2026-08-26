@@ -131,7 +131,6 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
     }
 }
 
-
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<()> {
     info!("Starting compilation with target: {}", args.target);
@@ -398,6 +397,19 @@ async fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(session.driver())?;
+    if matches!(target_name, "bytecode" | "text-bytecode") {
+        session.driver().pipeline = fp_compiler::PipelineMode::Native;
+        session
+            .driver()
+            .state
+            .borrow_mut()
+            .set_bytecode_comptime(true);
+        for package_id in &packages {
+            executor
+                .run(session.driver().compile_bytecode(package_id))
+                .map_err(|error| CliError::Compilation(error.to_string()))?;
+        }
+    }
     let workspace = session.driver().state.borrow().workspace.clone();
 
     // Phase 2: serialize + write every package now that the workspace-wide

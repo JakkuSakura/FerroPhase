@@ -395,7 +395,12 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
         return ImplShapeClass::Unclassified;
     };
     if let Some(Res::Def(did)) = &path.res {
-        if impl_item.generics.params.iter().any(|param| param.def_id == *did) {
+        if impl_item
+            .generics
+            .params
+            .iter()
+            .any(|param| param.def_id == *did)
+        {
             return ImplShapeClass::Blanket;
         }
     }
@@ -531,11 +536,17 @@ impl HirPackage {
                 };
                 match resolved_did {
                     Some(did) => {
-                        self.impls_by_self_did.entry(did).or_default().push(item.def_id.clone());
+                        self.impls_by_self_did
+                            .entry(did)
+                            .or_default()
+                            .push(item.def_id.clone());
                     }
                     None => match classify_impl_shape(impl_item) {
                         ImplShapeClass::Shape(shape) => {
-                            self.impls_by_shape.entry(shape).or_default().push(item.def_id.clone());
+                            self.impls_by_shape
+                                .entry(shape)
+                                .or_default()
+                                .push(item.def_id.clone());
                         }
                         ImplShapeClass::Blanket => {
                             self.blanket_impls.push(item.def_id.clone());
@@ -554,16 +565,15 @@ impl HirPackage {
                         // stderr-only warning) so it's visible in the same
                         // diagnostic count real typing errors are.
                         ImplShapeClass::Unclassified => {
-                            self.diagnostics.add_diagnostic(
-                                crate::diagnostics::Diagnostic::error(format!(
+                            self.diagnostics
+                                .add_diagnostic(crate::diagnostics::Diagnostic::error(format!(
                                     "impl at {:?} has a self-type with no known dispatch \
                                      shape (not a resolved nominal path, not a recognized \
                                      concrete shape, not a blanket impl over its own generic \
                                      param) — it is unreachable by method/associated-item \
                                      candidate search",
                                     item.hir_id
-                                )),
-                            );
+                                )));
                         }
                     },
                 }
@@ -643,11 +653,16 @@ impl HirPackage {
 
     /// See `checked_impl_self_ty_cache`'s doc comment.
     pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
-        self.checked_impl_self_ty_cache.borrow().get(&hir_id).cloned()
+        self.checked_impl_self_ty_cache
+            .borrow()
+            .get(&hir_id)
+            .cloned()
     }
 
     pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
-        self.checked_impl_self_ty_cache.borrow_mut().insert(hir_id, ty);
+        self.checked_impl_self_ty_cache
+            .borrow_mut()
+            .insert(hir_id, ty);
     }
 
     /// See `impl_assoc_types_cache`'s doc comment.
@@ -656,7 +671,9 @@ impl HirPackage {
     }
 
     pub fn cache_impl_assoc_types(&self, hir_id: HirId, types: HashMap<Symbol, Ty>) {
-        self.impl_assoc_types_cache.borrow_mut().insert(hir_id, types);
+        self.impl_assoc_types_cache
+            .borrow_mut()
+            .insert(hir_id, types);
     }
 
     /// See `function_signature_cache`'s doc comment.
@@ -665,7 +682,9 @@ impl HirPackage {
     }
 
     pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
-        self.function_signature_cache.borrow_mut().insert(hir_id, ty);
+        self.function_signature_cache
+            .borrow_mut()
+            .insert(hir_id, ty);
     }
 
     /// See `resolved_trait_defs`'s doc comment.
@@ -674,7 +693,9 @@ impl HirPackage {
     }
 
     pub fn cache_resolved_trait_def(&self, def_id: DefId, trait_def: Rc<Trait>) {
-        self.resolved_trait_defs.borrow_mut().insert(def_id, trait_def);
+        self.resolved_trait_defs
+            .borrow_mut()
+            .insert(def_id, trait_def);
     }
 
     /// See `assoc_type_for_self_cache`'s doc comment. The outer `Option`
@@ -688,7 +709,9 @@ impl HirPackage {
     }
 
     pub fn cache_assoc_type_for_self(&self, key: (String, Symbol), result: Option<Ty>) {
-        self.assoc_type_for_self_cache.borrow_mut().insert(key, result);
+        self.assoc_type_for_self_cache
+            .borrow_mut()
+            .insert(key, result);
     }
 
     /// See `refinement_hints`'s doc comment.
@@ -697,7 +720,9 @@ impl HirPackage {
     }
 
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
-        self.refinement_hints.borrow_mut().insert((hir_id, slot), hint);
+        self.refinement_hints
+            .borrow_mut()
+            .insert((hir_id, slot), hint);
     }
 
     /// See `raw_refinement_hints`'s doc comment. Take, not peek — a raw hint
@@ -718,7 +743,9 @@ impl HirPackage {
     }
 
     pub fn insert_literal_type_hint(&self, hir_id: HirId, literals: Vec<String>) {
-        self.literal_type_hints.borrow_mut().insert(hir_id, literals);
+        self.literal_type_hints
+            .borrow_mut()
+            .insert(hir_id, literals);
     }
 
     /// See `local_struct_fields`'s doc comment.
@@ -792,7 +819,9 @@ impl HirPackage {
     }
 
     pub fn record_generic_call_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        self.generic_call_args.borrow_mut().insert(hir_id, resolution);
+        self.generic_call_args
+            .borrow_mut()
+            .insert(hir_id, resolution);
     }
 
     pub fn generic_call_args(&self) -> HashMap<HirId, GenericCallResolution> {
@@ -804,7 +833,9 @@ impl HirPackage {
     }
 
     pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        self.generic_method_args.borrow_mut().insert(hir_id, resolution);
+        self.generic_method_args
+            .borrow_mut()
+            .insert(hir_id, resolution);
     }
 
     pub fn generic_method_args(&self) -> HashMap<HirId, GenericCallResolution> {

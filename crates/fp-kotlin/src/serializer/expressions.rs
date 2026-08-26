@@ -651,8 +651,8 @@ impl KotlinEmitter {
                     // (`?:`/`.toList()`/a string-template literal) that has no
                     // generic `ast::Expr` equivalent to return instead.
                     kind @ (IntrinsicKind::Format
-                        | IntrinsicKind::Print
-                        | IntrinsicKind::Println) => {
+                    | IntrinsicKind::Print
+                    | IntrinsicKind::Println) => {
                         // Resolve each placeholder against its real argument and emit a
                         // genuine Kotlin string template, instead of a fake "arg" literal
                         // fed to `String.format(...)`.

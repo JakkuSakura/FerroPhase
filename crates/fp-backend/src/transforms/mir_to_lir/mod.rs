@@ -1,6 +1,6 @@
 // Modular MIR→LIR lowering shim; re-export implementation from submodules.
-pub(crate) use std::cell::RefCell;
 pub(crate) use fp_core::mir::ty::{Ty, TypeAndMut};
+pub(crate) use std::cell::RefCell;
 
 mod abi; // planned
 mod aggregates;

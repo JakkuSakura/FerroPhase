@@ -316,15 +316,19 @@ impl fp_core::backend::TargetBackend for LlvmBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let _ = mir;
         let lir = lir
-            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
+            })?
             .clone();
 
-        let llvm_output = if self.text_only || self.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
+        let llvm_output = if self.text_only
+            || self.output.extension().and_then(|ext| ext.to_str()) == Some("ll")
+        {
             self.output.clone()
         } else {
             self.output.with_extension("ll")
@@ -388,9 +392,14 @@ impl fp_core::backend::TargetBackend for LlvmBackend {
                 "--exec is not supported for `llvm-text` output".to_string(),
             ));
         }
-        let status = std::process::Command::new(&self.output).status().map_err(|e| {
-            fp_core::error::Error::from(format!("failed to execute '{}': {e}", self.output.display()))
-        })?;
+        let status = std::process::Command::new(&self.output)
+            .status()
+            .map_err(|e| {
+                fp_core::error::Error::from(format!(
+                    "failed to execute '{}': {e}",
+                    self.output.display()
+                ))
+            })?;
         if !status.success() {
             let code = status.code().unwrap_or(-1);
             return Err(fp_core::error::Error::from(format!(
@@ -461,7 +470,9 @@ fn link_llvm_ir_with_clang(
         if message.is_empty() {
             message = "clang failed without diagnostics".to_string();
         }
-        return Err(fp_core::error::Error::from(format!("clang failed: {message}")));
+        return Err(fp_core::error::Error::from(format!(
+            "clang failed: {message}"
+        )));
     }
     Ok(())
 }

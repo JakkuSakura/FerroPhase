@@ -14,18 +14,19 @@ fn solve(
 
     let mut count = 0;
     for col in 0..8 {
-        let d1 = row + col;
-        let d2 = row - col + 7;
+        let col_i: i64 = col as i64;
+        let d1: usize = (row + col_i) as usize;
+        let d2: usize = (row - col_i + 7) as usize;
         if cols[col] == 0 && diag1[d1] == 0 && diag2[d2] == 0 {
             cols[col] = 1;
             diag1[d1] = 1;
             diag2[d2] = 1;
-            positions[row] = col;
+            positions[row as usize] = col_i;
             count += solve(row + 1, cols, diag1, diag2, positions);
             cols[col] = 0;
             diag1[d1] = 0;
             diag2[d2] = 0;
-            positions[row] = -1;
+            positions[row as usize] = -1;
         }
     }
     count

@@ -120,7 +120,10 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn lower_place_from_projected(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
+    pub(super) fn lower_place_from_projected(
+        &mut self,
+        expr: &hir::Expr,
+    ) -> Result<Option<PlaceInfo>> {
         let Some(projected) = project_hir_assign_target(expr) else {
             return Ok(None);
         };
@@ -1527,8 +1530,7 @@ impl<'a> BodyBuilder<'a> {
                         .struct_def
                         .or_else(|| self.struct_def_from_ty(&place_info.ty))
                     {
-                        if self.lowering.struct_def(&def_id).is_some()
-                        {
+                        if self.lowering.struct_def(&def_id).is_some() {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
@@ -1631,8 +1633,7 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if self.lowering.has_enum_def(&enum_def)
-                        {
+                        if self.lowering.has_enum_def(&enum_def) {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())

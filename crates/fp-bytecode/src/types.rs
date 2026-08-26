@@ -100,6 +100,7 @@ pub enum BytecodeConst {
     Float(f64),
     Str(String),
     Function(String),
+    Global(String),
     Null,
     Undef,
     Tuple(Vec<BytecodeConst>),

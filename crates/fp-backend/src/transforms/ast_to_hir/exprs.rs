@@ -803,7 +803,21 @@ impl AstToHirLowerer {
                             .intrinsic_defs
                             .get(def_id)
                             .cloned()
-                            .or_else(|| self.hir_program.intrinsic_def(def_id.clone()).cloned());
+                            .or_else(|| self.hir_program.intrinsic_def(def_id.clone()).cloned())
+                            .or_else(|| {
+                                let hir::Item {
+                                    kind: hir::ItemKind::Function(function),
+                                    ..
+                                } = self.program_def_map.get(def_id)?
+                                else {
+                                    return None;
+                                };
+                                fp_core::lang::extract_intrinsic_item(&function.attrs)
+                                    .and_then(|tag| {
+                                        fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
+                                    })
+                                    .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
+                            });
                         if let Some(kind) = intrinsic_kind {
                             return self.transform_intrinsic_parts_to_hir(
                                 &kind,
@@ -1262,7 +1276,14 @@ impl AstToHirLowerer {
         let local = hir::Local {
             hir_id: self.next_id(),
             pat: pat.clone(),
-            ty: None,
+            ty: Some(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
+                    &ast::Name::Ident(ast::Ident::new("usize")),
+                    PathResolutionScope::Type,
+                )?),
+                Span::new(self.current_file, 0, 0),
+            )),
             init: Some(init_expr),
         };
         self.register_pattern_bindings(&local.pat);
@@ -1713,9 +1734,41 @@ impl AstToHirLowerer {
                 .collect());
         };
 
+        if !kwargs.is_empty()
+            && args.len() == kwargs.len()
+            && values.len() > param_names.len()
+        {
+            values = kwargs
+                .iter()
+                .map(|kwarg| {
+                    Ok((
+                        kwarg.name.clone().into(),
+                        self.transform_expr_to_hir(&kwarg.value)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+        }
+
         if values.len() != param_names.len() {
             if is_variadic {
-                let required = param_names.len().saturating_sub(1);
+                let required = callee
+                    .and_then(|expr| match &expr.kind {
+                        hir::ExprKind::Path(path) => path.res.as_ref(),
+                        _ => None,
+                    })
+                    .and_then(|res| match res {
+                        hir::Res::Def(def_id) => self.program_def_map.get(def_id),
+                        _ => None,
+                    })
+                    .and_then(|item| match &item.kind {
+                        hir::ItemKind::Function(function) => function
+                            .sig
+                            .inputs
+                            .iter()
+                            .position(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer)),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| param_names.len().saturating_sub(1));
                 if values.len() >= required {
                     return Ok(values
                         .into_iter()
@@ -1827,9 +1880,8 @@ impl AstToHirLowerer {
                 let is_variadic = function
                     .sig
                     .inputs
-                    .last()
-                    .map(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer))
-                    .unwrap_or(false);
+                    .iter()
+                    .any(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer));
                 Some((names, is_variadic))
             }
             _ => None,
@@ -1890,6 +1942,14 @@ impl AstToHirLowerer {
             hir::TypeExprKind::Primitive(prim),
             Span::new(self.current_file, 0, 0),
         )
+    }
+
+    pub(super) fn primitive_type_with_span(
+        &mut self,
+        prim: ast::TypePrimitive,
+        span: Span,
+    ) -> hir::TypeExpr {
+        hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Primitive(prim), span)
     }
 
     // transform_pattern_with_metadata moved to patterns.rs

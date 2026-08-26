@@ -81,16 +81,14 @@ impl<'a> BodyBuilder<'a> {
             .get(&name)
             .cloned()
             .or_else(|| {
-                path.segments
-                    .last()
-                    .and_then(|seg| {
-                        self.lowering
-                            .mir_package
-                            .borrow()
-                            .enum_variant_names
-                            .get(seg.name.as_str())
-                            .cloned()
-                    })
+                path.segments.last().and_then(|seg| {
+                    self.lowering
+                        .mir_package
+                        .borrow()
+                        .enum_variant_names
+                        .get(seg.name.as_str())
+                        .cloned()
+                })
             });
 
         fn expected_contains_enum(enum_def: hir::DefId, expected_ty: &Ty) -> bool {
@@ -299,7 +297,10 @@ impl<'a> BodyBuilder<'a> {
         self.enum_variant_from_enum_def(result_def, variant_name)
     }
 
-    pub(super) fn explicit_args_from_expected_result_ty(&self, expected_ty: &Ty) -> Option<Vec<Ty>> {
+    pub(super) fn explicit_args_from_expected_result_ty(
+        &self,
+        expected_ty: &Ty,
+    ) -> Option<Vec<Ty>> {
         let expected_ty = self.lowering.unwrap_expr_actual_ty(expected_ty);
         let expected_ty = match &expected_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -830,8 +831,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = def_id {
-            if let Some(info) = self.lowering.struct_def(&def_id)
-            {
+            if let Some(info) = self.lowering.struct_def(&def_id) {
                 if generic_args.is_empty() && !info.generics.is_empty() {
                     // No explicit turbofish — read `fp-typing`'s own
                     // already-resolved generic args for this literal
@@ -869,8 +869,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
 
-            if let Some(variant) = self.lowering.enum_variant_def(&def_id)
-            {
+            if let Some(variant) = self.lowering.enum_variant_def(&def_id) {
                 let layout = annotated_ty
                     .and_then(|ty| self.enum_layout_for_ty(ty, span))
                     .or_else(|| {
@@ -945,8 +944,7 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(expected_ty) = annotated_ty {
             if let Some(def_id) = self.struct_def_from_ty(expected_ty) {
-                if let Some(info) = self.lowering.struct_def(&def_id)
-                {
+                if let Some(info) = self.lowering.struct_def(&def_id) {
                     if let Some(layout) =
                         self.lowering.struct_layout_for_ty(expected_ty).or_else(|| {
                             self.lowering
@@ -1181,9 +1179,7 @@ impl<'a> BodyBuilder<'a> {
             (annotated_ty, self.lowering.struct_def(&def_id))
         {
             let enum_layout = match &expected_ty.kind {
-                TyKind::Adt(adt, substs)
-                    if self.lowering.has_enum_def(&adt.did) =>
-                {
+                TyKind::Adt(adt, substs) if self.lowering.has_enum_def(&adt.did) => {
                     let args: Vec<Ty> = substs
                         .iter()
                         .filter_map(|arg| match arg {

@@ -55,13 +55,13 @@ fn main() {
     println!("\n2. For loop - sum range:");
     let mut sum_1_to_10 = 0;
     for i in 1..10 {
-        sum_1_to_10 += i;
+        sum_1_to_10 += i as i64;
     }
     println!("  sum(1..10) = {}", sum_1_to_10);
 
     let mut sum_5_to_15 = 0;
     for i in 5..15 {
-        sum_5_to_15 += i;
+        sum_5_to_15 += i as i64;
     }
     println!("  sum(5..15) = {}", sum_5_to_15);
 

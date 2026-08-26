@@ -25,16 +25,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use fp_core::ast::package::AstPackage;
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprStruct,
     ExprWhile, File, FunctionSignature, Item, ItemDefEnum, ItemDefFunction, ItemDefStruct,
-    ItemKind, Name, PatternKind, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeTuple, Value,
+    ItemKind, Name, PatternKind, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeTuple,
+    Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::ast::package::AstPackage;
 use fp_core::writer::{BraceStyle, StyledWriter, WriterConfig};
 
 /// Public entry point used by the CLI target dispatch (`BuiltinLanguageTarget::C`).
@@ -96,7 +97,7 @@ impl fp_core::backend::TargetBackend for CBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
@@ -216,8 +217,10 @@ impl CEmitter {
             }
             ItemKind::Import(_) => Ok(()),
             _ => {
-                self.header_body
-                    .write_line(format!("/* unsupported item in C output: {:?} */", item.kind()));
+                self.header_body.write_line(format!(
+                    "/* unsupported item in C output: {:?} */",
+                    item.kind()
+                ));
                 Ok(())
             }
         }
@@ -232,7 +235,8 @@ impl CEmitter {
         self.header_body.write_line("{");
         self.header_body.increase_indent();
         if def.value.fields.is_empty() {
-            self.header_body.write_line("char _unused; /* empty struct */");
+            self.header_body
+                .write_line("char _unused; /* empty struct */");
         } else {
             for field in &def.value.fields {
                 let decl = self.render_declarator(&field.name.name, &field.value);
@@ -248,7 +252,11 @@ impl CEmitter {
 
     fn emit_enum(&mut self, def: &ItemDefEnum) -> Result<()> {
         let name = &def.name.name;
-        let all_unit = def.value.variants.iter().all(|v| matches!(v.value, Ty::Unit(_)));
+        let all_unit = def
+            .value
+            .variants
+            .iter()
+            .all(|v| matches!(v.value, Ty::Unit(_)));
         self.header_body.ensure_blank_line();
         if all_unit {
             self.plain_enums.insert(name.clone());
@@ -365,7 +373,11 @@ impl CEmitter {
                 let decl_ty = declared_ty
                     .map(|ty| self.render_type(ty))
                     .unwrap_or_else(|| self.render_type(&infer_placeholder_ty()));
-                match stmt.init.as_ref().and_then(|e| self.render_expr_infallible(e)) {
+                match stmt
+                    .init
+                    .as_ref()
+                    .and_then(|e| self.render_expr_infallible(e))
+                {
                     Some(value) => w.write_line(format!("{decl_ty} {name} = {value};")),
                     None => w.write_line(format!("{decl_ty} {name};")),
                 };
@@ -444,7 +456,9 @@ impl CEmitter {
         let cond = self
             .render_expr_infallible(if_expr.cond.as_ref())
             .unwrap_or_else(|| "0".to_string());
-        w.block(format!("if ({cond})"), |w| self.emit_body(w, if_expr.then.as_ref()))?;
+        w.block(format!("if ({cond})"), |w| {
+            self.emit_body(w, if_expr.then.as_ref())
+        })?;
         if let Some(else_branch) = &if_expr.elze {
             // Chained `else if` reads as one `else` block wrapping a nested
             // `if` statement rather than a flattened `else if` header —
@@ -466,7 +480,9 @@ impl CEmitter {
         let cond = self
             .render_expr_infallible(while_expr.cond.as_ref())
             .unwrap_or_else(|| "1".to_string());
-        w.block(format!("while ({cond})"), |w| self.emit_body(w, while_expr.body.as_ref()))
+        w.block(format!("while ({cond})"), |w| {
+            self.emit_body(w, while_expr.body.as_ref())
+        })
     }
 
     fn emit_loop(&mut self, w: &StyledWriter, loop_expr: &ExprLoop) -> Result<()> {
@@ -555,7 +571,11 @@ impl CEmitter {
     /// works for the common `Enum::Variant => ...` shape.
     fn match_enum_name(&self, cases: &[ExprMatchCase]) -> Option<String> {
         for case in cases {
-            if let Some(name) = case.pat.as_deref().and_then(|p| self.pattern_variant_enum(p)) {
+            if let Some(name) = case
+                .pat
+                .as_deref()
+                .and_then(|p| self.pattern_variant_enum(p))
+            {
                 return Some(name);
             }
         }
@@ -567,7 +587,9 @@ impl CEmitter {
             PatternKind::Variant(variant) => {
                 // `Enum::Variant` name expr — take the path's first segment.
                 match variant.name.kind() {
-                    ExprKind::Name(Name::Path(path)) => path.segments.first().map(|i| i.name.clone()),
+                    ExprKind::Name(Name::Path(path)) => {
+                        path.segments.first().map(|i| i.name.clone())
+                    }
                     _ => None,
                 }
             }
@@ -591,7 +613,11 @@ impl CEmitter {
     /// lower directly (bindings/tuple/struct destructuring aren't simple
     /// equality checks), so this always defers to the `if`/`else if`
     /// fallback's comment-placeholder path for now.
-    fn render_pattern_equality(&mut self, _scrutinee: &str, _pat: &fp_core::ast::Pattern) -> Option<String> {
+    fn render_pattern_equality(
+        &mut self,
+        _scrutinee: &str,
+        _pat: &fp_core::ast::Pattern,
+    ) -> Option<String> {
         None
     }
 
@@ -607,16 +633,24 @@ impl CEmitter {
             ExprKind::IntrinsicCall(call) => self.render_intrinsic_call(call),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
             ExprKind::BinOp(binop) => {
-                let lhs = self.render_expr_infallible(binop.lhs.as_ref()).unwrap_or_default();
-                let rhs = self.render_expr_infallible(binop.rhs.as_ref()).unwrap_or_default();
+                let lhs = self
+                    .render_expr_infallible(binop.lhs.as_ref())
+                    .unwrap_or_default();
+                let rhs = self
+                    .render_expr_infallible(binop.rhs.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("({lhs} {} {rhs})", render_binop(binop.kind))))
             }
             ExprKind::UnOp(unop) => {
-                let val = self.render_expr_infallible(unop.val.as_ref()).unwrap_or_default();
+                let val = self
+                    .render_expr_infallible(unop.val.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("({}{val})", render_unop(&unop.op))))
             }
             ExprKind::Paren(paren) => {
-                let inner = self.render_expr_infallible(paren.expr.as_ref()).unwrap_or_default();
+                let inner = self
+                    .render_expr_infallible(paren.expr.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("({inner})")))
             }
             ExprKind::Select(select) => {
@@ -635,15 +669,21 @@ impl CEmitter {
                         }
                     }
                 }
-                let obj = self.render_expr_infallible(select.obj.as_ref()).unwrap_or_default();
+                let obj = self
+                    .render_expr_infallible(select.obj.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("{obj}.{}", select.field.name)))
             }
             ExprKind::Reference(reference) => {
-                let inner = self.render_expr_infallible(reference.referee.as_ref()).unwrap_or_default();
+                let inner = self
+                    .render_expr_infallible(reference.referee.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("(&{inner})")))
             }
             ExprKind::Dereference(deref) => {
-                let inner = self.render_expr_infallible(deref.referee.as_ref()).unwrap_or_default();
+                let inner = self
+                    .render_expr_infallible(deref.referee.as_ref())
+                    .unwrap_or_default();
                 Ok(Some(format!("(*{inner})")))
             }
             ExprKind::Struct(struct_expr) => Ok(Some(self.render_struct_literal(struct_expr))),
@@ -659,15 +699,17 @@ impl CEmitter {
                 if path.segments.len() >= 2 {
                     let base = &path.segments[path.segments.len() - 2];
                     let last = path.segments.last().unwrap();
-                    if self.plain_enums.contains(&base.name) || self.tagged_enums.contains(&base.name) {
+                    if self.plain_enums.contains(&base.name)
+                        || self.tagged_enums.contains(&base.name)
+                    {
                         return Ok(Some(self.variant_tag(&base.name, &last.name)));
                     }
                 }
                 Ok(Some(path.join(".")))
             }
-            ExprKind::Closure(_) => {
-                Ok(Some("/* unsupported: closure requires manual lowering */ NULL".to_string()))
-            }
+            ExprKind::Closure(_) => Ok(Some(
+                "/* unsupported: closure requires manual lowering */ NULL".to_string(),
+            )),
             _ => Ok(None),
         }
     }
@@ -692,7 +734,11 @@ impl CEmitter {
         let target = match &invoke.target {
             ExprInvokeTarget::Function(name) => match name {
                 Name::Ident(ident) => ident.name.clone(),
-                Name::Path(path) => path.segments.last().map(|i| i.name.clone()).unwrap_or_default(),
+                Name::Path(path) => path
+                    .segments
+                    .last()
+                    .map(|i| i.name.clone())
+                    .unwrap_or_default(),
                 _ => return Ok(None),
             },
             _ => return Ok(None),
@@ -704,7 +750,10 @@ impl CEmitter {
     fn render_call_args(&mut self, args: &[Expr]) -> Result<String> {
         let mut rendered = Vec::new();
         for arg in args {
-            rendered.push(self.render_expr_infallible(arg).unwrap_or_else(|| "0".to_string()));
+            rendered.push(
+                self.render_expr_infallible(arg)
+                    .unwrap_or_else(|| "0".to_string()),
+            );
         }
         Ok(rendered.join(", "))
     }
@@ -712,7 +761,11 @@ impl CEmitter {
     fn render_struct_literal(&mut self, struct_expr: &ExprStruct) -> String {
         let name = match struct_expr.name.kind() {
             ExprKind::Name(Name::Ident(ident)) => ident.name.clone(),
-            ExprKind::Name(Name::Path(path)) => path.segments.last().map(|i| i.name.clone()).unwrap_or_default(),
+            ExprKind::Name(Name::Path(path)) => path
+                .segments
+                .last()
+                .map(|i| i.name.clone())
+                .unwrap_or_default(),
             _ => "/* unsupported struct name */".to_string(),
         };
         let fields = struct_expr
@@ -745,7 +798,11 @@ impl CEmitter {
             Value::String(v) => format!("\"{}\"", escape_string(&v.value)),
             Value::Tuple(tuple) => {
                 let ty = TypeTuple {
-                    types: tuple.values.iter().map(|_| infer_placeholder_ty()).collect(),
+                    types: tuple
+                        .values
+                        .iter()
+                        .map(|_| infer_placeholder_ty())
+                        .collect(),
                 };
                 let name = self.register_tuple_typedef(&ty);
                 let fields = tuple
@@ -763,7 +820,9 @@ impl CEmitter {
                     .structural
                     .fields
                     .iter()
-                    .map(|field| format!(".{} = {}", field.name.name, self.render_value(&field.value)))
+                    .map(|field| {
+                        format!(".{} = {}", field.name.name, self.render_value(&field.value))
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("({name}){{ {fields} }}")
@@ -789,13 +848,22 @@ impl CEmitter {
             Ty::Reference(reference) => format!("{}*", self.render_type(&reference.ty)),
             Ty::RawPtr(ptr) => format!("{}*", self.render_type(&ptr.ty)),
             Ty::Slice(slice) => {
-                format!("/* unsupported: dynamic slice */ {}*", self.render_type(&slice.elem))
+                format!(
+                    "/* unsupported: dynamic slice */ {}*",
+                    self.render_type(&slice.elem)
+                )
             }
             Ty::Array(array) => {
-                format!("/* array length not representable inline */ {}*", self.render_type(&array.elem))
+                format!(
+                    "/* array length not representable inline */ {}*",
+                    self.render_type(&array.elem)
+                )
             }
             Ty::Vec(vec) => {
-                format!("/* unsupported: dynamic Vec<{}> requires a runtime */ void*", self.render_type(&vec.ty))
+                format!(
+                    "/* unsupported: dynamic Vec<{}> requires a runtime */ void*",
+                    self.render_type(&vec.ty)
+                )
             }
             Ty::Unit(_) => "void".to_string(),
             Ty::Any(_) | Ty::Unknown(_) | Ty::GenericVar(_) | Ty::InferVar(_) => {
@@ -878,7 +946,11 @@ impl CEmitter {
     /// anonymous tuple type, returning its name. C has no anonymous tuple
     /// type, so this is the simplest correct representation.
     fn register_tuple_typedef(&mut self, tuple: &TypeTuple) -> String {
-        let field_types = tuple.types.iter().map(|t| self.render_type(t)).collect::<Vec<_>>();
+        let field_types = tuple
+            .types
+            .iter()
+            .map(|t| self.render_type(t))
+            .collect::<Vec<_>>();
         let mangled: String = field_types
             .iter()
             .map(|t| sanitize_type_name(t))

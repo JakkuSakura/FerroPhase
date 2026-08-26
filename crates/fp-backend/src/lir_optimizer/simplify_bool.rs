@@ -1,6 +1,6 @@
 use fp_core::error::Error;
 use fp_core::lir::{
-    LirBasicBlock, LirConstantData, LirConstantKind, LirFunction, LirInstructionKind, LirBlob,
+    LirBasicBlock, LirBlob, LirConstantData, LirConstantKind, LirFunction, LirInstructionKind,
     LirTerminator, LirValue, LirValueKind,
 };
 

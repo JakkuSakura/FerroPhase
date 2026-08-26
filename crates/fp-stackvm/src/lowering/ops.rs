@@ -8,8 +8,8 @@ use fp_bytecode::{
     BytecodeBinOp, BytecodeConst, BytecodePlace, BytecodePlaceElem, BytecodeUnOp, IntrinsicKind,
 };
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirConstant, LirFloat, LirInstructionKind, LirInteger,
-    LirType, LirValue, RegisterId,
+    BasicBlockId, CallingConvention, ComptimeOp, LirConstant, LirFloat, LirInstructionKind,
+    LirInteger, LirType, LirValue, RegisterId,
 };
 
 use super::constants;
@@ -84,11 +84,12 @@ pub(crate) fn lower_load_const(
                 block_id,
                 LirInstructionKind::Add(i64_value(0), i64_value(0)),
             )?;
-            lower_call_intrinsic(
+            lower_call_intrinsic_typed(
                 fl,
                 block_id,
                 constants::INTRINSIC_STR_ALLOC,
                 &[fl.reg_val(len_reg)?],
+                LirType::Ptr(Box::new(LirType::I8)),
             )
         }
         BytecodeConst::Function(_name) => {
@@ -97,12 +98,31 @@ pub(crate) fn lower_load_const(
                 block_id,
                 LirInstructionKind::Add(i64_value(0), i64_value(0)),
             )?;
-            lower_call_intrinsic(
+            lower_call_intrinsic_typed(
                 fl,
                 block_id,
                 constants::INTRINSIC_STR_ALLOC,
                 &[fl.reg_val(len_reg)?],
+                LirType::Ptr(Box::new(LirType::I8)),
             )
+        }
+        BytecodeConst::Global(name) => {
+            let function = fl
+                .bytecode
+                .functions
+                .iter()
+                .find(|function| function.name == *name)
+                .ok_or_else(|| {
+                    LowerError::Unsupported(format!(
+                        "global bytecode constant `{name}` has no executable function"
+                    ))
+                })?;
+            if matches!(function.return_type, LirType::Void) {
+                return Err(LowerError::Unsupported(format!(
+                    "global bytecode constant `{name}` has a void result"
+                )));
+            }
+            lower_call_intrinsic_typed(fl, block_id, name, &[], function.return_type.clone())
         }
         BytecodeConst::Null => fl.emit_in_block(
             block_id,
@@ -233,16 +253,29 @@ pub(crate) fn lower_intrinsic(
     result_type: LirType,
 ) -> LowerResult<Option<RegisterId>> {
     match kind {
-        IntrinsicKind::Println | IntrinsicKind::Print | IntrinsicKind::Format => {
-            if matches!(result_type, LirType::Void) {
-                lower_call_intrinsic_void(
-                    fl,
-                    block_id,
-                    constants::intrinsic_to_runtime_name(kind),
-                    &args,
-                )?;
-                return Ok(None);
-            }
+        IntrinsicKind::CompileWarning | IntrinsicKind::CompileError => {
+            let message = args.into_iter().next().ok_or_else(|| {
+                LowerError::Internal(format!("intrinsic {kind:?} requires one argument"))
+            })?;
+            let op = match kind {
+                IntrinsicKind::CompileWarning => ComptimeOp::CompileWarning { message },
+                IntrinsicKind::CompileError => ComptimeOp::CompileError { message },
+                _ => unreachable!(),
+            };
+            let reg =
+                fl.emit_typed_in_block(block_id, LirInstructionKind::ComptimeOp(op), result_type)?;
+            Ok(Some(reg))
+        }
+        IntrinsicKind::Println | IntrinsicKind::Print => {
+            lower_call_intrinsic_void(
+                fl,
+                block_id,
+                constants::intrinsic_to_runtime_name(kind),
+                &args,
+            )?;
+            Ok(None)
+        }
+        IntrinsicKind::Format => {
             let reg = lower_call_intrinsic_typed(
                 fl,
                 block_id,

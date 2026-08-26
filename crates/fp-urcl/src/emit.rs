@@ -1,7 +1,7 @@
 use fp_core::error::Result;
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
-    LirFunctionRef, LirInstruction, LirInstructionKind, LirIntrinsicKind, LirBlob,
+    BasicBlockId, LirBasicBlock, LirBlob, LirConstant, LirConstantData, LirConstantKind,
+    LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirIntrinsicKind,
     LirTerminator, LirValue, LirValueKind,
 };
 use std::fmt::Write;

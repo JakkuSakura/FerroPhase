@@ -1,8 +1,8 @@
 use crate::config::GoAsmTarget;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator, LirType, LirValue,
+    BasicBlockId, LirBasicBlock, LirBlob, LirConstant, LirFunction, LirFunctionSignature,
+    LirInstruction, LirInstructionKind, LirInteger, LirRegister, LirTerminator, LirType, LirValue,
     Name,
 };
 use std::collections::HashMap;

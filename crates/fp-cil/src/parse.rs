@@ -1,8 +1,8 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator,
-    LirType, LirValue, Name,
+    BasicBlockId, LirBasicBlock, LirBlob, LirConstant, LirDataLayout, LirFunction,
+    LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirRegister,
+    LirTerminator, LirType, LirValue, Name,
 };
 use std::collections::HashMap;
 

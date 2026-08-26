@@ -6,8 +6,8 @@
 //! behavior lives on these types except `ConstInfo::typed_value`, a trivial
 //! field-copying getter.
 
-use super::ty::{SubstsRef, Ty};
 use super::FunctionSig;
+use super::ty::{SubstsRef, Ty};
 use crate::hir;
 use crate::span::Span;
 use std::collections::HashMap;

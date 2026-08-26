@@ -64,7 +64,10 @@ pub fn roundtrip_items_via_hir(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(std::rc::Rc::new(fp_core::hir::HirProgram::new()), package.hir_package_id.clone());
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        package.hir_package_id.clone(),
+    );
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
     transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
@@ -74,7 +77,10 @@ pub fn roundtrip_items_via_hir_dce(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(std::rc::Rc::new(fp_core::hir::HirProgram::new()), package.hir_package_id.clone());
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        package.hir_package_id.clone(),
+    );
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);
@@ -245,7 +251,10 @@ mod tests {
             "the parameter itself must not be duplicated/removed"
         );
         let param_name = function.sig.params[0].name.name.clone();
-        assert_eq!(param_name, "x", "the parameter itself keeps its source name");
+        assert_eq!(
+            param_name, "x",
+            "the parameter itself keeps its source name"
+        );
 
         let stmts = &function.body.stmts;
         assert_eq!(
@@ -267,7 +276,10 @@ mod tests {
             panic!("expected an assignment, got {:?}", assign_stmt.expr.kind());
         };
         let ast::ExprKind::Name(Name::Ident(assign_target)) = assign.target.kind() else {
-            panic!("expected a bare name target, got {:?}", assign.target.kind());
+            panic!(
+                "expected a bare name target, got {:?}",
+                assign.target.kind()
+            );
         };
         assert_eq!(
             assign_target.name, shadow_name,

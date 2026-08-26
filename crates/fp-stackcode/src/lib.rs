@@ -1,5 +1,4 @@
-//! `TargetBackend` for the `bytecode`/`text-bytecode` targets, plus
-//! `--exec` support for them.
+//! Const evaluation support for the bytecode backend.
 //!
 //! This lives in its own crate rather than in `fp-bytecode` because
 //! running the compiled bytecode requires `fp-stackvm`'s `Vm`, and
@@ -19,6 +18,27 @@ pub struct BytecodeBackend {
     pub output: std::path::PathBuf,
     pub emit_text: bool,
     pub save_intermediates: bool,
+}
+
+pub fn interpret_const(
+    program: fp_bytecode::BytecodeProgram,
+    entry: &str,
+) -> fp_core::Result<fp_core::ast::Value> {
+    let lir = fp_stackvm::lowering::lower_program(&program)
+        .map_err(|error| fp_core::Error::from(error.to_string()))?;
+    let entry_index = lir
+        .functions
+        .iter()
+        .position(|function| function.name.as_str() == entry)
+        .ok_or_else(|| fp_core::Error::from(format!("missing const function {entry}")))?;
+    let mut functions = lir.functions.clone();
+    let mut entry_function = functions.remove(entry_index);
+    entry_function.name = fp_core::lir::Name::new("main");
+    functions.insert(0, entry_function);
+    let mut interpreter = fp_interpret::LirInterpreter::new();
+    interpreter
+        .run_main(&fp_core::lir::LirBlob { functions, ..lir })
+        .map_err(|error| fp_core::Error::from(error.to_string()))
 }
 
 impl fp_core::backend::TargetBackend for BytecodeBackend {
@@ -46,8 +66,8 @@ impl fp_core::backend::TargetBackend for BytecodeBackend {
             std::fs::create_dir_all(parent)?;
         }
 
-        let wants_text = self.emit_text
-            || self.output.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
+        let wants_text =
+            self.emit_text || self.output.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
 
         if self.save_intermediates || wants_text {
             let rendered = fp_bytecode::format_program(&bytecode);

@@ -1,7 +1,7 @@
 use fp_core::lir::{
-    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator,
-    LirType, LirValue, Name,
+    CallingConvention, Linkage, LirBasicBlock, LirBlob, LirConstant, LirFunction,
+    LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirRegister,
+    LirTerminator, LirType, LirValue, Name,
 };
 
 fn i64_value(value: u64) -> LirValue {

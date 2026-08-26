@@ -58,7 +58,7 @@ impl<K, V> HashMap<K, V> {
     }
 
     fn contains_key(&self, key: K) -> bool {
-        self.find_node_idx(key) >= 0
+        self.find_node_idx(key).is_some()
     }
 
     fn insert(&mut self, key: K, value: V) {
@@ -85,21 +85,22 @@ impl<K, V> HashMap<K, V> {
 
     fn get_unchecked(&self, key: K) -> V {
         let idx = self.find_node_idx(key);
-        if idx >= 0 {
-            return self.values[idx];
+        match idx {
+            ::std::option::Option::Some(idx) => return self.values[idx],
+            ::std::option::Option::None => {}
         }
         loop {}
     }
 
-    fn find_node_idx(&self, key: K) -> i64 {
+    fn find_node_idx(&self, key: K) -> ::std::option::Option<usize> {
         let mut idx: usize = 0;
         let keys_len = self.keys.len();
         while idx < keys_len {
             if self.keys[idx] == key {
-                return idx as i64;
+                return ::std::option::Option::Some(idx);
             }
             idx = idx + 1;
         }
-        -1
+        ::std::option::Option::None
     }
 }

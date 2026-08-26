@@ -67,13 +67,14 @@ impl fp_core::backend::TargetBackend for PythonBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirCodeUnit,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = PythonSerializer.serialize_package(package)?;
-        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        let writer =
+            fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {
             let rel = if rel_path.contains('.') {
                 rel_path
@@ -1149,14 +1150,13 @@ def pick(flag, left, right):
 
     #[test]
     fn impl_block_errors_instead_of_silently_vanishing() {
-        use fp_core::ast::{
-            ExprBlock, File, Ident, Item, ItemDefFunction, ItemImpl, ItemKind,
-        };
+        use fp_core::ast::{ExprBlock, File, Ident, Item, ItemDefFunction, ItemImpl, ItemKind};
 
         let method = ItemDefFunction::new_simple(Ident::new("greet"), ExprBlock::new());
-        let impl_block = ItemImpl::new_ident(Ident::new("Greeter"), vec![Item::new(
-            ItemKind::DefFunction(method),
-        )]);
+        let impl_block = ItemImpl::new_ident(
+            Ident::new("Greeter"),
+            vec![Item::new(ItemKind::DefFunction(method))],
+        );
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),

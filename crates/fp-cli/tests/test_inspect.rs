@@ -81,7 +81,7 @@ fn inspect_help_is_available() {
         ));
 }
 
-// `fp_stackvm_bytecode::BytecodeBackend` lowers straight from MIR and
+// `fp_stackcode::BytecodeBackend` lowers straight from MIR and
 // doesn't rename the entrypoint to a bare `main` symbol the way the
 // LIR-based backends do via `AstProgram::merged_lir_program`'s
 // entrypoint param — so the function keeps its fully qualified name

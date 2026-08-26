@@ -634,9 +634,8 @@ impl MirToLirLowerer {
                     let field_ty = fields
                         .get(idx)
                         .ok_or_else(|| fp_core::error::Error::from("missing tuple field type"))?;
-                    lowered.push(
-                        self.const_value_to_lir_constant_with_lir_type(element, field_ty)?,
-                    );
+                    lowered
+                        .push(self.const_value_to_lir_constant_with_lir_type(element, field_ty)?);
                 }
                 Ok(lir::LirConstant::aggregate(
                     lir_ty.clone(),
