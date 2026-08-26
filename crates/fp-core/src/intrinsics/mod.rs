@@ -168,6 +168,12 @@ pub trait IntrinsicNormalizer {
         None
     }
 
+    /// Expands built-in derive attributes into ordinary impl items before
+    /// HIR lowering, matching rustc's derive expansion phase.
+    fn expand_derive(&self, _item: &Item) -> Vec<Item> {
+        Vec::new()
+    }
+
     /// Called by the shared single-pass item walker
     /// (`ast_to_hir::expand_item_macros`) when it encounters a second
     /// `macro_rules!` definition for a name it's already seen earlier in
@@ -213,6 +219,10 @@ impl IntrinsicNormalizer for Box<dyn IntrinsicNormalizer> {
     }
     fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         self.as_ref().normalize_call(expr)
+    }
+
+    fn expand_derive(&self, item: &Item) -> Vec<Item> {
+        self.as_ref().expand_derive(item)
     }
     fn normalize_container(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         self.as_ref().normalize_container(expr)

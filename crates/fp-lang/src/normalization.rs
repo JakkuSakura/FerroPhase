@@ -1,8 +1,10 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType,
-    ExprStringTemplate, ExprStruct, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec,
-    FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
+    ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType, ExprStringTemplate,
+    ExprStruct, ExprUnOp,
+    FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
+    Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -20,6 +22,69 @@ use crate::macro_parser::{
     macro_token_trees_to_tokens, match_macro_rule, substitute_template, tokens_to_top_level_slices,
     wrap_tokens_in_group,
 };
+
+fn expand_clone_derive(item: &fp_core::ast::Item) -> Option<fp_core::ast::Item> {
+    let fp_core::ast::ItemKind::DefStruct(def) = item.kind() else {
+        return None;
+    };
+    let derives_clone = def.attrs.iter().any(|attr| {
+        let fp_core::ast::AttrMeta::List(list) = &attr.meta else {
+            return false;
+        };
+        list.name.last().as_str() == "derive"
+            && list.items.iter().any(|item| {
+                matches!(item, fp_core::ast::AttrMeta::Path(path) if path.last().as_str() == "Clone")
+            })
+    });
+    if !derives_clone {
+        return None;
+    }
+
+    let generic_names: Vec<_> = def
+        .value
+        .generics_params
+        .iter()
+        .map(|param| param.name.name.as_str())
+        .collect();
+    let impl_generics = if generic_names.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            generic_names
+                .iter()
+                .map(|name| format!("{name}: Clone"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let type_generics = if generic_names.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", generic_names.join(", "))
+    };
+    let fields = def
+        .value
+        .fields
+        .iter()
+        .map(|field| {
+            let name = field.name.name.as_str();
+            format!("{name}: self.{name}.clone()")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        "impl{impl_generics} Clone for {}{type_generics} {{ \
+             fn clone(&self) -> Self {{ Self {{ {fields} }} }} \
+         }}",
+        def.name.name
+    );
+    crate::ast::FerroPhaseParser::new()
+        .parse_items_ast(&source)
+        .ok()?
+        .into_iter()
+        .next()
+}
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
@@ -56,8 +121,8 @@ impl FerroIntrinsicNormalizer {
 }
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
-    fn set_macro_rules_defs(&mut self, defs: HashMap<String, MacroRulesDef>) {
-        self.macro_rules_defs = Arc::new(defs);
+    fn expand_derive(&self, item: &fp_core::ast::Item) -> Vec<fp_core::ast::Item> {
+        expand_clone_derive(item).into_iter().collect()
     }
 
     fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
@@ -85,7 +150,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, span, kind) = expr.into_parts();
         let ExprKind::Macro(macro_expr) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
+            )));
         };
 
         if let Some(name) = macro_expr.invocation.path.segments.last() {
@@ -95,9 +161,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     let replacement = Expr::value(Value::Type(ty));
                     return Ok(NormalizeOutcome::Normalized(replacement));
                 }
-                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                    id,
-                    span,
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                     ExprKind::Macro(macro_expr),
                 )));
             }
@@ -116,14 +180,14 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let mut input = tokens.as_slice();
                 return match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
                     Ok(meta) => {
-                        let enabled =
-                            fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host());
+                        let enabled = fp_core::cfg::cfg_meta_enabled(
+                            &meta,
+                            &fp_core::cfg::TargetEnv::host(),
+                        );
                         let replacement = Expr::value(Value::bool(enabled));
                         Ok(NormalizeOutcome::Normalized(replacement))
                     }
-                    Err(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                        id,
-                        span,
+                    Err(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                         ExprKind::Macro(macro_expr),
                     ))),
                 };
@@ -149,9 +213,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         let replacement = block;
                         Ok(NormalizeOutcome::Normalized(replacement))
                     }
-                    None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                        id,
-                        span,
+                    None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                         ExprKind::Macro(macro_expr),
                     ))),
                 };
@@ -168,9 +230,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "const_error" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 2 {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                        id,
-                        span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                         ExprKind::Macro(macro_expr),
                     )));
                 }
@@ -254,7 +314,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 } else {
                     let panic_expr = panic_call_from_args(iter.collect());
                     assert_compare_macro_with_panic(left, right, BinOpKind::Eq, panic_expr)
-                };
+                }
+                ;
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_ne" {
@@ -277,7 +338,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 } else {
                     let panic_expr = panic_call_from_args(iter.collect());
                     assert_compare_macro_with_panic(left, right, BinOpKind::Ne, panic_expr)
-                };
+                }
+                ;
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "matches" {
@@ -313,13 +375,13 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                                     }))),
                                 }));
                             }
-                            return Ok(NormalizeOutcome::Normalized(replacement));
+                            return Ok(NormalizeOutcome::Normalized(
+                                replacement,
+                            ));
                         }
                     }
                 }
-                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                    id,
-                    span,
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                     ExprKind::Macro(macro_expr),
                 )));
             }
@@ -342,9 +404,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 // anywhere in a large vendored file — even inside a test
                 // module — used to poison everything).
                 let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                        id,
-                        span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                         ExprKind::Macro(macro_expr),
                     )));
                 };
@@ -382,7 +442,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     id,
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        IntrinsicKind::Format,
+                        CallKind::Intrinsic(IntrinsicKind::Format),
                         call_args,
                         Vec::new(),
                     )),
@@ -403,9 +463,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 // &mut Formatter) -> fmt::Result` once both those types
                 // are mapped) needs no special handling either.
                 let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                        id,
-                        span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                         ExprKind::Macro(macro_expr),
                     )));
                 };
@@ -416,15 +474,13 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 }
                 let (mut template, skip) = build_print_template_from_args(&args[1..])?;
                 if macro_name == "writeln" {
-                    template
-                        .parts
-                        .push(FormatTemplatePart::Literal("\n".to_string()));
+                    template.parts.push(FormatTemplatePart::Literal("\n".to_string()));
                 }
                 let mut call_args = Vec::with_capacity(args.len());
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
                 call_args.extend(args[1 + skip..].iter().cloned());
                 let formatted = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    IntrinsicKind::Format,
+                    CallKind::Intrinsic(IntrinsicKind::Format),
                     call_args,
                     Vec::new(),
                 )));
@@ -457,7 +513,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     id,
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        IntrinsicKind::TypeOf,
+                        CallKind::Intrinsic(IntrinsicKind::TypeOf),
                         args,
                         Vec::new(),
                     )),
@@ -467,9 +523,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "print" || macro_name == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let kind = if macro_name == "println" {
-                    IntrinsicKind::Println
+                    CallKind::Intrinsic(IntrinsicKind::Println)
                 } else {
-                    IntrinsicKind::Print
+                    CallKind::Intrinsic(IntrinsicKind::Print)
                 };
                 let (template, skip) = build_print_template_from_args(&args)?;
                 let mut call_args = Vec::with_capacity(1 + args.len().saturating_sub(skip));
@@ -503,8 +559,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let invocation_tokens = &macro_expr.invocation.token_trees;
                 let file_id = macro_tokens_file_id(invocation_tokens);
                 for rule in &def.rules {
-                    let Some(bindings) =
-                        match_macro_rule(&rule.matcher, invocation_tokens, file_id)
+                    let Some(bindings) = match_macro_rule(&rule.matcher, invocation_tokens, file_id)
                     else {
                         continue;
                     };
@@ -512,15 +567,15 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     let flat = macro_token_trees_to_tokens(&substituted);
                     let wrapped = wrap_tokens_in_group(&flat, "{", "}", macro_expr.span());
                     if let Ok(replacement) = crate::ast::parse_expr_tokens(&wrapped, file_id) {
-                        return Ok(NormalizeOutcome::Normalized(replacement));
+                        return Ok(NormalizeOutcome::Normalized(
+                            replacement,
+                        ));
                     }
                 }
             }
         }
 
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-            id,
-            span,
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
             ExprKind::Macro(macro_expr),
         )))
     }
@@ -528,12 +583,34 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, span, kind) = expr.into_parts();
         let ExprKind::Invoke(invoke) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
+            )));
         };
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-            id,
-            span,
-            ExprKind::Invoke(invoke),
+
+        // Keep the exact language-item registry as the source of truth for
+        // operations exposed by loaded std modules. This also preserves the
+        // call-specific argument shaping used by print and filesystem ops.
+        if let Some(call) = fp_core::ast::intrinsic_call_from_invoke(&invoke) {
+            return self.normalize_call(Expr::from_parts(id, span,
+                ExprKind::IntrinsicCall(call),
+            ));
+        }
+
+        let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                ExprKind::Invoke(invoke),
+            )));
+        };
+
+        // `CallKind::Op` was retired, so `resolve_lang_intrinsic` only ever
+        // returns a genuine `CallKind::Intrinsic` here.
+        let CallKind::Intrinsic(kind) = intrinsic_kind;
+        Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
+            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                CallKind::Intrinsic(kind),
+                invoke.args,
+                invoke.kwargs,
+            )),
         )))
     }
 
@@ -558,12 +635,10 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     }
 }
 
+
 /// Apply the intrinsic normalizer to all expressions in AST items.
 /// Used in transpile mode to normalize Rust-specific patterns before serialization.
-pub fn normalize_items(
-    items: &mut [fp_core::ast::Item],
-    normalizer: &dyn IntrinsicNormalizer,
-) -> Result<()> {
+pub fn normalize_items(items: &mut [fp_core::ast::Item], normalizer: &dyn IntrinsicNormalizer) -> Result<()> {
     for item in items {
         normalize_item(item, normalizer)?;
     }
@@ -573,27 +648,13 @@ pub fn normalize_items(
 fn normalize_item(item: &mut fp_core::ast::Item, n: &dyn IntrinsicNormalizer) -> Result<()> {
     use fp_core::ast::ItemKind;
     match item.kind_mut() {
-        ItemKind::Module(m) => {
-            for c in &mut m.items {
-                normalize_item(c, n)?;
-            }
-        }
+        ItemKind::Module(m) => { for c in &mut m.items { normalize_item(c, n)?; } }
         ItemKind::DefFunction(f) => {
-            for stmt in &mut f.body.stmts {
-                normalize_stmt(stmt, n)?;
-            }
+            for stmt in &mut f.body.stmts { normalize_stmt(stmt, n)?; }
         }
-        ItemKind::Impl(imp) => {
-            for c in &mut imp.items {
-                normalize_item(c, n)?;
-            }
-        }
-        ItemKind::Expr(expr) => {
-            normalize_expr(expr, n)?;
-        }
-        ItemKind::DefConst(c) => {
-            normalize_expr(&mut c.value, n)?;
-        }
+        ItemKind::Impl(imp) => { for c in &mut imp.items { normalize_item(c, n)?; } }
+        ItemKind::Expr(expr) => { normalize_expr(expr, n)?; }
+        ItemKind::DefConst(c) => { normalize_expr(&mut c.value, n)?; }
         _ => {}
     }
     Ok(())
@@ -601,17 +662,9 @@ fn normalize_item(item: &mut fp_core::ast::Item, n: &dyn IntrinsicNormalizer) ->
 
 fn normalize_stmt(stmt: &mut BlockStmt, n: &dyn IntrinsicNormalizer) -> Result<()> {
     match stmt {
-        BlockStmt::Let(l) => {
-            if let Some(init) = &mut l.init {
-                normalize_expr(init, n)?;
-            }
-        }
-        BlockStmt::Expr(se) => {
-            normalize_expr(&mut se.expr, n)?;
-        }
-        BlockStmt::Item(item) => {
-            normalize_item(item, n)?;
-        }
+        BlockStmt::Let(l) => { if let Some(init) = &mut l.init { normalize_expr(init, n)?; } }
+        BlockStmt::Expr(se) => { normalize_expr(&mut se.expr, n)?; }
+        BlockStmt::Item(item) => { normalize_item(item, n)?; }
         _ => {}
     }
     Ok(())
@@ -620,94 +673,35 @@ fn normalize_stmt(stmt: &mut BlockStmt, n: &dyn IntrinsicNormalizer) -> Result<(
 fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
     // Walk children first
     match expr.kind_mut() {
-        ExprKind::Block(block) => {
-            for s in &mut block.stmts {
-                normalize_stmt(s, n)?;
-            }
-        }
+        ExprKind::Block(block) => { for s in &mut block.stmts { normalize_stmt(s, n)?; } }
         ExprKind::If(if_expr) => {
             normalize_expr(&mut if_expr.cond, n)?;
             normalize_expr(&mut if_expr.then, n)?;
-            if let Some(e) = &mut if_expr.elze {
-                normalize_expr(e, n)?;
-            }
+            if let Some(e) = &mut if_expr.elze { normalize_expr(e, n)?; }
         }
         ExprKind::Match(mt) => {
-            if let Some(s) = &mut mt.scrutinee {
-                normalize_expr(s, n)?;
-            }
-            for c in &mut mt.cases {
-                normalize_expr(&mut c.body, n)?;
-            }
+            if let Some(s) = &mut mt.scrutinee { normalize_expr(s, n)?; }
+            for c in &mut mt.cases { normalize_expr(&mut c.body, n)?; }
         }
-        ExprKind::While(wh) => {
-            normalize_expr(&mut wh.cond, n)?;
-            normalize_expr(&mut wh.body, n)?;
-        }
-        ExprKind::For(fr) => {
-            normalize_expr(&mut fr.iter, n)?;
-            normalize_expr(&mut fr.body, n)?;
-        }
-        ExprKind::Loop(lp) => {
-            normalize_expr(&mut lp.body, n)?;
-        }
-        ExprKind::BinOp(b) => {
-            normalize_expr(&mut b.lhs, n)?;
-            normalize_expr(&mut b.rhs, n)?;
-        }
-        ExprKind::UnOp(u) => {
-            normalize_expr(&mut u.val, n)?;
-        }
-        ExprKind::Assign(a) => {
-            normalize_expr(&mut a.target, n)?;
-            normalize_expr(&mut a.value, n)?;
-        }
-        ExprKind::Return(r) => {
-            if let Some(v) = &mut r.value {
-                normalize_expr(v, n)?;
-            }
-        }
-        ExprKind::Let(l) => {
-            normalize_expr(&mut l.expr, n)?;
-        }
-        ExprKind::Closure(cl) => {
-            normalize_expr(&mut cl.body, n)?;
-        }
-        ExprKind::Array(arr) => {
-            for v in &mut arr.values {
-                normalize_expr(v, n)?;
-            }
-        }
-        ExprKind::Struct(st) => {
-            for f in &mut st.fields {
-                if let Some(v) = &mut f.value {
-                    normalize_expr(v, n)?;
-                }
-            }
-        }
-        ExprKind::Select(sel) => {
-            normalize_expr(&mut sel.obj, n)?;
-        }
-        ExprKind::Index(idx) => {
-            normalize_expr(&mut idx.obj, n)?;
-            normalize_expr(&mut idx.index, n)?;
-        }
-        ExprKind::Paren(p) => {
-            normalize_expr(&mut p.expr, n)?;
-        }
-        ExprKind::Reference(r) => {
-            normalize_expr(&mut r.referee, n)?;
-        }
-        ExprKind::Dereference(d) => {
-            normalize_expr(&mut d.referee, n)?;
-        }
-        ExprKind::Cast(c) => {
-            normalize_expr(&mut c.expr, n)?;
-        }
+        ExprKind::While(wh) => { normalize_expr(&mut wh.cond, n)?; normalize_expr(&mut wh.body, n)?; }
+        ExprKind::For(fr) => { normalize_expr(&mut fr.iter, n)?; normalize_expr(&mut fr.body, n)?; }
+        ExprKind::Loop(lp) => { normalize_expr(&mut lp.body, n)?; }
+        ExprKind::BinOp(b) => { normalize_expr(&mut b.lhs, n)?; normalize_expr(&mut b.rhs, n)?; }
+        ExprKind::UnOp(u) => { normalize_expr(&mut u.val, n)?; }
+        ExprKind::Assign(a) => { normalize_expr(&mut a.target, n)?; normalize_expr(&mut a.value, n)?; }
+        ExprKind::Return(r) => { if let Some(v) = &mut r.value { normalize_expr(v, n)?; } }
+        ExprKind::Let(l) => { normalize_expr(&mut l.expr, n)?; }
+        ExprKind::Closure(cl) => { normalize_expr(&mut cl.body, n)?; }
+        ExprKind::Array(arr) => { for v in &mut arr.values { normalize_expr(v, n)?; } }
+        ExprKind::Struct(st) => { for f in &mut st.fields { if let Some(v) = &mut f.value { normalize_expr(v, n)?; } } }
+        ExprKind::Select(sel) => { normalize_expr(&mut sel.obj, n)?; }
+        ExprKind::Index(idx) => { normalize_expr(&mut idx.obj, n)?; normalize_expr(&mut idx.index, n)?; }
+        ExprKind::Paren(p) => { normalize_expr(&mut p.expr, n)?; }
+        ExprKind::Reference(r) => { normalize_expr(&mut r.referee, n)?; }
+        ExprKind::Dereference(d) => { normalize_expr(&mut d.referee, n)?; }
+        ExprKind::Cast(c) => { normalize_expr(&mut c.expr, n)?; }
         ExprKind::Invoke(inv) => {
-            for arg in &mut inv.args {
-                normalize_expr(arg, n)?;
-            }
+            for arg in &mut inv.args { normalize_expr(arg, n)?; }
             if let ExprInvokeTarget::Method(sel) = &mut inv.target {
                 normalize_expr(&mut sel.obj, n)?;
             }
@@ -773,60 +767,60 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
 
 fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
     match name {
-        "format" => Some(IntrinsicKind::Format),
-        "print" => Some(IntrinsicKind::Print),
-        "println" => Some(IntrinsicKind::Println),
-        "input" => Some(IntrinsicKind::Input),
-        "now" => Some(IntrinsicKind::TimeNow),
-        "sleep" => Some(IntrinsicKind::Sleep),
-        "spawn" => Some(IntrinsicKind::Spawn),
-        "join" => Some(IntrinsicKind::Join),
-        "select" => Some(IntrinsicKind::Select),
-        "read_dir" => Some(IntrinsicKind::FsReadDir),
-        "walk_dir" => Some(IntrinsicKind::FsWalkDir),
-        "read_to_string" => Some(IntrinsicKind::FsReadToString),
-        "write_string" => Some(IntrinsicKind::FsWriteString),
-        "append_string" => Some(IntrinsicKind::FsAppendString),
-        "exists" => Some(IntrinsicKind::FsExists),
-        "is_dir" => Some(IntrinsicKind::FsIsDir),
-        "is_file" => Some(IntrinsicKind::FsIsFile),
-        "create_dir_all" => Some(IntrinsicKind::FsCreateDirAll),
-        "remove_file" => Some(IntrinsicKind::FsRemoveFile),
-        "remove_dir_all" => Some(IntrinsicKind::FsRemoveDirAll),
-        "glob" => Some(IntrinsicKind::FsGlob),
-        "current_dir" => Some(IntrinsicKind::EnvCurrentDir),
-        "temp_dir" => Some(IntrinsicKind::EnvTempDir),
-        "home_dir" => Some(IntrinsicKind::EnvHomeDir),
-        "var" => Some(IntrinsicKind::EnvVar),
-        "read_stdin_to_string" => Some(IntrinsicKind::IoReadStdinToString),
-        "write_stdout" => Some(IntrinsicKind::IoWriteStdout),
-        "write_stderr" => Some(IntrinsicKind::IoWriteStderr),
-        "to_json" => Some(IntrinsicKind::YamlToJson),
-        "parse" => Some(IntrinsicKind::JsonParse),
-        "exec" => Some(IntrinsicKind::ShellExec),
-        "file_copy" => Some(IntrinsicKind::ShellFileCopy),
-        "file_template" => Some(IntrinsicKind::ShellFileTemplate),
-        "file_rsync" => Some(IntrinsicKind::ShellFileRsync),
-        "sizeof" => Some(IntrinsicKind::SizeOf),
-        "reflect_fields" => Some(IntrinsicKind::ReflectFields),
-        "hasmethod" => Some(IntrinsicKind::HasMethod),
-        "type_name" => Some(IntrinsicKind::TypeName),
-        "type_info" | "type_of" => Some(IntrinsicKind::TypeOf),
-        "clone_struct" => Some(IntrinsicKind::CloneStruct),
-        "create_struct" => Some(IntrinsicKind::CreateStruct),
-        "addfield" => Some(IntrinsicKind::AddField),
-        "hasfield" => Some(IntrinsicKind::HasField),
-        "count_fields" | "field_count" => Some(IntrinsicKind::FieldCount),
-        "method_count" => Some(IntrinsicKind::MethodCount),
-        "field_type" => Some(IntrinsicKind::FieldType),
-        "vec_type" => Some(IntrinsicKind::VecType),
-        "field_name_at" => Some(IntrinsicKind::FieldNameAt),
-        "struct_size" => Some(IntrinsicKind::StructSize),
-        "generate_method" => Some(IntrinsicKind::GenerateMethod),
-        "compile_error" => Some(IntrinsicKind::CompileError),
-        "compile_warning" => Some(IntrinsicKind::CompileWarning),
-        "catch_unwind" => Some(IntrinsicKind::CatchUnwind),
-        "catch_unwind_result" => Some(IntrinsicKind::CatchUnwindResult),
+        "format" => Some(CallKind::Intrinsic(IntrinsicKind::Format)),
+        "print" => Some(CallKind::Intrinsic(IntrinsicKind::Print)),
+        "println" => Some(CallKind::Intrinsic(IntrinsicKind::Println)),
+        "input" => Some(CallKind::Intrinsic(IntrinsicKind::Input)),
+        "now" => Some(CallKind::Intrinsic(IntrinsicKind::TimeNow)),
+        "sleep" => Some(CallKind::Intrinsic(IntrinsicKind::Sleep)),
+        "spawn" => Some(CallKind::Intrinsic(IntrinsicKind::Spawn)),
+        "join" => Some(CallKind::Intrinsic(IntrinsicKind::Join)),
+        "select" => Some(CallKind::Intrinsic(IntrinsicKind::Select)),
+        "read_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadDir)),
+        "walk_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsWalkDir)),
+        "read_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadToString)),
+        "write_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsWriteString)),
+        "append_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsAppendString)),
+        "exists" => Some(CallKind::Intrinsic(IntrinsicKind::FsExists)),
+        "is_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsDir)),
+        "is_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsFile)),
+        "create_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsCreateDirAll)),
+        "remove_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveFile)),
+        "remove_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveDirAll)),
+        "glob" => Some(CallKind::Intrinsic(IntrinsicKind::FsGlob)),
+        "current_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvCurrentDir)),
+        "temp_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvTempDir)),
+        "home_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvHomeDir)),
+        "var" => Some(CallKind::Intrinsic(IntrinsicKind::EnvVar)),
+        "read_stdin_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::IoReadStdinToString)),
+        "write_stdout" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStdout)),
+        "write_stderr" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStderr)),
+        "to_json" => Some(CallKind::Intrinsic(IntrinsicKind::YamlToJson)),
+        "parse" => Some(CallKind::Intrinsic(IntrinsicKind::JsonParse)),
+        "exec" => Some(CallKind::Intrinsic(IntrinsicKind::ShellExec)),
+        "file_copy" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileCopy)),
+        "file_template" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileTemplate)),
+        "file_rsync" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileRsync)),
+        "sizeof" => Some(CallKind::Intrinsic(IntrinsicKind::SizeOf)),
+        "reflect_fields" => Some(CallKind::Intrinsic(IntrinsicKind::ReflectFields)),
+        "hasmethod" => Some(CallKind::Intrinsic(IntrinsicKind::HasMethod)),
+        "type_name" => Some(CallKind::Intrinsic(IntrinsicKind::TypeName)),
+        "type_info" | "type_of" => Some(CallKind::Intrinsic(IntrinsicKind::TypeOf)),
+        "clone_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CloneStruct)),
+        "create_struct" => Some(CallKind::Intrinsic(IntrinsicKind::CreateStruct)),
+        "addfield" => Some(CallKind::Intrinsic(IntrinsicKind::AddField)),
+        "hasfield" => Some(CallKind::Intrinsic(IntrinsicKind::HasField)),
+        "count_fields" | "field_count" => Some(CallKind::Intrinsic(IntrinsicKind::FieldCount)),
+        "method_count" => Some(CallKind::Intrinsic(IntrinsicKind::MethodCount)),
+        "field_type" => Some(CallKind::Intrinsic(IntrinsicKind::FieldType)),
+        "vec_type" => Some(CallKind::Intrinsic(IntrinsicKind::VecType)),
+        "field_name_at" => Some(CallKind::Intrinsic(IntrinsicKind::FieldNameAt)),
+        "struct_size" => Some(CallKind::Intrinsic(IntrinsicKind::StructSize)),
+        "generate_method" => Some(CallKind::Intrinsic(IntrinsicKind::GenerateMethod)),
+        "compile_error" => Some(CallKind::Intrinsic(IntrinsicKind::CompileError)),
+        "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
+        "catch_unwind" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwind)),
+        "catch_unwind_result" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwindResult)),
         // Portable ops (`Some`/`clone`/`map_or`/...) have no `CallKind`
         // representation anymore (`CallKind::Op` was retired) — target
         // backends recognize them directly (temporarily, by bare name)
@@ -926,7 +920,9 @@ pub(crate) fn select_cfg_select_arm(token_trees: &[MacroTokenTree]) -> Option<Ve
             let flat = macro_token_trees_to_tokens(&predicate_tokens);
             let mut input = flat.as_slice();
             match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
-                Ok(meta) => fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host()),
+                Ok(meta) => {
+                    fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host())
+                }
                 Err(_) => false,
             }
         };
@@ -1361,7 +1357,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
         panic_call_with_message("panic! macro triggered")
     } else {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            IntrinsicKind::Panic,
+            CallKind::Intrinsic(IntrinsicKind::Panic),
             args,
             Vec::new(),
         )))
@@ -1370,7 +1366,7 @@ fn panic_call_from_args(args: Vec<Expr>) -> Expr {
 
 fn panic_call_with_message(message: &str) -> Expr {
     Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-        IntrinsicKind::Panic,
+        CallKind::Intrinsic(IntrinsicKind::Panic),
         vec![Expr::value(Value::string(message.to_string()))],
         Vec::new(),
     )))
@@ -1379,13 +1375,7 @@ fn panic_call_with_message(message: &str) -> Expr {
 // Allow returning Ok(None) from normalize_match without extra type annotations
 struct NoneOutcome;
 impl From<NoneOutcome> for NormalizeOutcome<Expr> {
-    fn from(_: NoneOutcome) -> Self {
-        NormalizeOutcome::Ignored(Expr::from_parts(
-            0,
-            None,
-            ExprKind::Value(Box::new(Value::Null(Default::default()))),
-        ))
-    }
+    fn from(_: NoneOutcome) -> Self { NormalizeOutcome::Ignored(Expr::from_parts(0, None, ExprKind::Value(Box::new(Value::Null(Default::default()))))) }
 }
 
 #[cfg(test)]
@@ -1395,7 +1385,7 @@ mod tests {
 
     fn intrinsic_call(kind: fp_core::intrinsics::IntrinsicKind) -> Expr {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            kind,
+            CallKind::Intrinsic(kind),
             Vec::new(),
             Vec::new(),
         )))
@@ -1414,10 +1404,32 @@ mod tests {
     }
 
     #[test]
+    fn expand_derive_materializes_clone_impl() {
+        let item = crate::ast::FerroPhaseParser::new()
+            .parse_items_ast("#[derive(Clone)] struct Wrapper<T> { value: T }")
+            .expect("parse derived struct")
+            .into_iter()
+            .next()
+            .expect("struct item");
+        let derived = FerroIntrinsicNormalizer::new().expand_derive(&item);
+
+        assert_eq!(derived.len(), 1);
+        let fp_core::ast::ItemKind::Impl(impl_item) = derived[0].kind() else {
+            panic!("expected generated Clone impl");
+        };
+        assert_eq!(impl_item.trait_ty.as_ref().and_then(Name::as_ident).map(Ident::as_str), Some("Clone"));
+        assert_eq!(impl_item.generics_params.len(), 1);
+        assert!(matches!(
+            impl_item.items.first().map(fp_core::ast::Item::kind),
+            Some(fp_core::ast::ItemKind::DefFunction(function)) if function.name.as_str() == "clone"
+        ));
+    }
+
+    #[test]
     fn normalize_call_shapes_direct_print_calls() {
         let normalizer = FerroIntrinsicNormalizer::new();
         let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            fp_core::intrinsics::IntrinsicKind::Print,
+            CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print),
             vec![Expr::value(Value::string("value".to_string()))],
             Vec::new(),
         )));
@@ -1429,10 +1441,7 @@ mod tests {
         let ExprKind::IntrinsicCall(call) = normalized.kind() else {
             panic!("expected intrinsic call to be preserved");
         };
-        assert!(matches!(
-            call.kind,
-            fp_core::intrinsics::IntrinsicKind::Print
-        ));
+        assert!(matches!(call.kind, CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print)));
         assert_eq!(call.args.len(), 1);
     }
 
@@ -1476,7 +1485,7 @@ mod tests {
             let ExprKind::IntrinsicCall(call) = normalized.kind() else {
                 panic!("expected intrinsic call to be preserved for {kind:?}");
             };
-            assert_eq!(call.kind, kind);
+            assert_eq!(call.kind, CallKind::Intrinsic(kind));
         }
     }
 

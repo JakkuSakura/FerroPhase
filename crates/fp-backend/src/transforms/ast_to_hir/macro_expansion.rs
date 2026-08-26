@@ -47,6 +47,13 @@ impl AstToHirLowerer {
         depth: usize,
     ) -> Vec<ast::Item> {
         match item.kind {
+            ItemKind::DefStruct(_) => {
+                let mut derived = normalizer.expand_derive(&item);
+                let mut items = Vec::with_capacity(1 + derived.len());
+                items.push(item);
+                items.append(&mut derived);
+                items
+            }
             ItemKind::Macro(ref item_macro) if item_macro.declared_name.is_some() => {
                 let name = item_macro
                     .declared_name
