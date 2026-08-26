@@ -924,7 +924,13 @@ impl HirTypeChecker {
                         hir::UnOp::Deref => match value_ty.kind {
                             TyKind::Ref(_, inner, _)
                             | TyKind::RawPtr(ty::TypeAndMut { ty: inner, .. }) => *inner,
-                            _ => self.error_ty("cannot dereference a non-pointer value"),
+                            kind => {
+                                let value_ty = Ty { kind };
+                                match self.deref_target(&value_ty).await {
+                                    Some(target) => target,
+                                    None => self.error_ty("cannot dereference a non-pointer value"),
+                                }
+                            }
                         },
                         hir::UnOp::Neg | hir::UnOp::Box => value_ty,
                     }
@@ -4413,10 +4419,11 @@ impl HirTypeChecker {
                         }
                         let mut scope = self.with_self_type(receiver_ty.clone());
                         let signature = scope.function_signature(function).await?;
+                        let method_actuals = scope.method_call_actuals(&signature, actuals);
                         let Some((substitutions, result)) = scope
                             .instantiate_call_with_explicit_args(
                                 &signature,
-                                actuals,
+                                &method_actuals,
                                 Some(&function.sig.generics),
                                 explicit_generic_args,
                             )?
