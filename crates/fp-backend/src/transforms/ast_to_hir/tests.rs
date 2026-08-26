@@ -330,7 +330,6 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
-
     assert!(
         program.items.is_empty(),
         "`type X = const {{ ... }};` must not synthesize a fake HIR item; uses of X \
@@ -1031,6 +1030,106 @@ fn transform_type_relative_call_without_a_method_receiver() -> Result<()> {
         kind: hir::ExprKind::Call(_, _),
         ..
     })));
+    Ok(())
+}
+
+#[test]
+fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "mod facade { \
+                 mod inner { pub struct Buffer; impl Buffer { pub fn new() -> Buffer { Buffer } } } \
+                 pub use inner::Buffer; \
+             } \
+             fn make() { facade::Buffer::new(); }",
+        )
+        .expect("parse re-exported type-relative associated function call");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let reexport = generator.lookup_global_res(
+        &QualifiedPath::new(vec!["facade".to_string(), "Buffer".to_string()]),
+        PathResolutionScope::Type,
+    );
+    assert!(
+        matches!(reexport, Some(hir::Res::Def(_))),
+        "re-export resolution: {reexport:?}"
+    );
+    let make = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "make" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("lowered make function");
+    let hir::StmtKind::Semi(hir::Expr {
+        kind: hir::ExprKind::Call(callee, _),
+        ..
+    }) = &make
+        .body
+        .as_ref()
+        .and_then(|body| body.stmts.first())
+        .expect("make call statement")
+        .kind
+    else {
+        panic!("expected associated function call");
+    };
+    let hir::ExprKind::Path(path) = &callee.kind else {
+        panic!("expected associated function path");
+    };
+    assert!(
+        matches!(path.res, Some(hir::Res::Def(_))),
+        "callee resolution: {:?}",
+        path.res
+    );
+    Ok(())
+}
+
+#[test]
+fn transform_method_call_on_runtime_field_keeps_receiver_chain() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "struct Buffer; impl Buffer { fn clear(&mut self) {} } \
+             struct Holder { data: Buffer } \
+             fn clear(holder: Holder) { holder.data.clear(); }",
+        )
+        .expect("parse method call on runtime field");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let clear = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "clear" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("lowered clear function");
+    let stmt = clear
+        .body
+        .as_ref()
+        .and_then(|body| body.stmts.first())
+        .expect("clear call statement");
+    assert!(matches!(
+        stmt.kind,
+        hir::StmtKind::Semi(hir::Expr {
+            kind: hir::ExprKind::MethodCall(_, _, _, _),
+            ..
+        })
+    ));
     Ok(())
 }
 

@@ -2142,11 +2142,19 @@ impl HirTypeChecker {
                                 scope.unify_call_types(&init_ty, &ty, &mut substitutions)?;
                                 scope.substitute_param_map(&init_ty, &substitutions)
                             };
-                            let pointer_coercion = matches!(
-                                (&ty.kind, &resolved_init.kind),
+                            let pointer_coercion = match (&ty.kind, &resolved_init.kind) {
                                 (TyKind::RawPtr(_), TyKind::Ref(_, _, _))
-                                    | (TyKind::Ref(_, _, _), TyKind::RawPtr(_))
-                            );
+                                | (TyKind::Ref(_, _, _), TyKind::RawPtr(_)) => true,
+                                (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) => {
+                                    expected.mutbl == ty::Mutability::Not
+                                        && actual.mutbl == ty::Mutability::Mut
+                                        && Self::ty_matches_with_infer_holes(
+                                            &expected.ty,
+                                            &actual.ty,
+                                        )
+                                }
+                                _ => false,
+                            };
                             let array_slice_coercion = match (&ty.kind, &resolved_init.kind) {
                                 (
                                     TyKind::Ref(_, expected, _),
@@ -5232,6 +5240,16 @@ impl HirTypeChecker {
     }
 
     fn coerce_unsized_wrapper_compatible(&self, expected: &Ty, actual: &Ty) -> bool {
+        if let (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) =
+            (&expected.kind, &actual.kind)
+        {
+            return expected.mutbl == actual.mutbl
+                && matches!(
+                    (&expected.ty.kind, &actual.ty.kind),
+                    (TyKind::Slice(expected), TyKind::Array(actual, _))
+                        if Self::ty_matches_with_infer_holes(expected, actual)
+                );
+        }
         let (TyKind::Adt(expected_def, expected_args), TyKind::Adt(actual_def, actual_args)) =
             (&expected.kind, &actual.kind)
         else {

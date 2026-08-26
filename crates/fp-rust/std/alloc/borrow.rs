@@ -184,8 +184,8 @@ where
 // #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, B: ?Sized + ToOwned> Borrow<B> for Cow<'a, B>
-// where
-//     B::Owned: Borrow<B>,
+where
+    B::Owned: Borrow<B>,
 {
     fn borrow(&self) -> &B {
         &**self

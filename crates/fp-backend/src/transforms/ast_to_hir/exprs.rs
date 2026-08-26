@@ -329,8 +329,6 @@ impl AstToHirLowerer {
                                     span,
                                 },
                                 is_context: false,
-                                as_tuple: false,
-                                as_dict: false,
                                 default: None,
                             })
                         })
@@ -769,29 +767,37 @@ impl AstToHirLowerer {
                 if receiver_can_be_type_path
                     && let Some(mut segments) = self.path_segments_from_expr(&select.obj)
                 {
-                    let base_name = ast::Name::Path(ast::Path::plain(segments.clone()));
-                    let base_path =
-                        self.name_to_hir_path_with_scope(&base_name, PathResolutionScope::Type)?;
-                    if matches!(
-                        base_path.res,
-                        Some(hir::Res::Def(_))
-                            | Some(hir::Res::Builtin(_))
-                            | Some(hir::Res::SelfTy)
-                    ) {
-                        segments.push(select.field.clone());
-                        let name = ast::Name::Path(ast::Path::plain(segments));
-                        let mut path =
-                            self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
-                        if path.res.is_none() {
-                            path.res = base_path.res;
+                    let root_is_runtime_value = segments.first().is_some_and(|segment| {
+                        segment.name.as_str() == "self"
+                            || self.resolve_lexical_value_symbol(&segment.name).is_some()
+                    });
+                    if !root_is_runtime_value {
+                        let base_name = ast::Name::Path(ast::Path::plain(segments.clone()));
+                        let base_path = self.name_to_hir_path_with_scope(
+                            &base_name,
+                            PathResolutionScope::Type,
+                        )?;
+                        if matches!(
+                            base_path.res,
+                            Some(hir::Res::Def(_))
+                                | Some(hir::Res::Builtin(_))
+                                | Some(hir::Res::SelfTy)
+                        ) {
+                            segments.push(select.field.clone());
+                            let name = ast::Name::Path(ast::Path::plain(segments));
+                            let mut path = self
+                                .name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
+                            if path.res.is_none() {
+                                path.res = base_path.res;
+                            }
+                            let func_expr = hir::Expr {
+                                hir_id: self.next_id(),
+                                kind: hir::ExprKind::Path(path),
+                                span: self.create_span(1),
+                            };
+                            let args = self.transform_call_args_strict(&invoke.args)?;
+                            return Ok(hir::ExprKind::Call(Box::new(func_expr), args));
                         }
-                        let func_expr = hir::Expr {
-                            hir_id: self.next_id(),
-                            kind: hir::ExprKind::Path(path),
-                            span: self.create_span(1),
-                        };
-                        let args = self.transform_call_args_strict(&invoke.args)?;
-                        return Ok(hir::ExprKind::Call(Box::new(func_expr), args));
                     }
                 }
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
@@ -853,43 +859,55 @@ impl AstToHirLowerer {
                     }
                 }
 
-                let path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+                let mut path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+                if path.res.is_none() {
+                    let base_name = match name {
+                        ast::Name::Path(source) if source.segments.len() > 1 => {
+                            let mut base = source.clone();
+                            base.segments.pop();
+                            Some(ast::Name::Path(base))
+                        }
+                        ast::Name::ParameterPath(source) if source.segments.len() > 1 => {
+                            let mut base = source.clone();
+                            base.segments.pop();
+                            Some(ast::Name::ParameterPath(base))
+                        }
+                        _ => None,
+                    };
+                    if let Some(base_name) = base_name {
+                        path.res = self
+                            .name_to_hir_path_with_scope(
+                                &base_name,
+                                PathResolutionScope::Type,
+                            )?
+                            .res;
+                    }
+                }
+
+                // A call's callee is only ever a compiler intrinsic/portable
+                // op because its *own resolved declaration* was tagged
+                // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
+                // `catch_unwind`'s real (stub-bodied) declaration, or
+                // `std::time::now`'s. But recognizing this HERE, pre-
+                // typecheck, forces every match through the low-level
+                // `transform_intrinsic_call_to_hir` path, which can only
+                // represent a genuine `IntrinsicKind` — many `#[op(...)]`s
+                // (`Vec::new`, `Iter`, `AsRef`, `OptionSome`, `ResultOk`, ...)
+                // have no such equivalent and exist purely for POST-typecheck,
+                // backend-specific materialization. Always lower as an
+                // ordinary `Call` here; reclassification (by this same real
+                // `DefId`, never by re-deriving it from the call site's own
+                // name/path) happens post-typecheck instead — see
+                // `hir_to_mir::expr::lower_call` (`Native`) and
+                // `HirToAstLifter::try_lift_call_as_intrinsic`
+                // (`Transpile`), both consulting the same
+                // `program.op_defs`/`intrinsic_defs` tables via
+                // `transforms::resolve_call_kind`.
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),
                     span: self.create_span(1),
                 };
-                if let hir::ExprKind::Path(path) = &func_expr.kind {
-                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                        let intrinsic_kind = self
-                            .package
-                            .intrinsic_defs
-                            .get(def_id)
-                            .cloned()
-                            .or_else(|| self.hir_program.intrinsic_def(def_id.clone()).cloned())
-                            .or_else(|| {
-                                let hir::Item {
-                                    kind: hir::ItemKind::Function(function),
-                                    ..
-                                } = self.program_def_map.get(def_id)?
-                                else {
-                                    return None;
-                                };
-                                fp_core::lang::extract_intrinsic_item(&function.attrs)
-                                    .and_then(|tag| {
-                                        fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
-                                    })
-                                    .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
-                            });
-                        if let Some(kind) = intrinsic_kind {
-                            return self.transform_intrinsic_parts_to_hir(
-                                &kind,
-                                &invoke.args,
-                                &invoke.kwargs,
-                            );
-                        }
-                    }
-                }
                 let args =
                     self.transform_call_args_bound(&invoke.args, &invoke.kwargs, Some(&func_expr))?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
@@ -1371,14 +1389,7 @@ impl AstToHirLowerer {
         let local = hir::Local {
             hir_id: self.next_id(),
             pat: pat.clone(),
-            ty: Some(hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
-                    &ast::Name::Ident(ast::Ident::new("usize")),
-                    PathResolutionScope::Type,
-                )?),
-                Span::new(self.current_file, 0, 0),
-            )),
+            ty: None,
             init: Some(init_expr),
         };
         self.register_pattern_bindings(&local.pat);
@@ -1708,23 +1719,14 @@ impl AstToHirLowerer {
         &mut self,
         call: &ast::ExprIntrinsicCall,
     ) -> Result<hir::ExprKind> {
-        self.transform_intrinsic_parts_to_hir(&call.kind, &call.args, &call.kwargs)
-    }
-
-    fn transform_intrinsic_parts_to_hir(
-        &mut self,
-        kind: &CallKind,
-        args: &[ast::Expr],
-        kwargs: &[ast::ExprKwArg],
-    ) -> Result<hir::ExprKind> {
-        let mut callargs = Vec::with_capacity(args.len() + kwargs.len());
-        for (index, arg) in args.iter().enumerate() {
+        let mut callargs = Vec::with_capacity(call.args.len() + call.kwargs.len());
+        for (index, arg) in call.args.iter().enumerate() {
             callargs.push(hir::CallArg {
                 name: hir::Symbol::new(format!("arg{}", index)),
                 value: self.transform_expr_to_hir(arg)?,
             });
         }
-        for kwarg in kwargs {
+        for kwarg in &call.kwargs {
             callargs.push(hir::CallArg {
                 name: kwarg.name.clone().into(),
                 value: self.transform_expr_to_hir(&kwarg.value)?,
@@ -1732,7 +1734,7 @@ impl AstToHirLowerer {
         }
 
         if matches!(
-            *kind,
+            call.kind,
             CallKind::Print | CallKind::Println | CallKind::Format
         ) {
             let mut existing = callargs
@@ -1788,7 +1790,7 @@ impl AstToHirLowerer {
         }
 
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-            kind: kind.clone(),
+            kind: call.kind.clone(),
             callargs,
         }))
     }
@@ -1829,38 +1831,9 @@ impl AstToHirLowerer {
                 .collect());
         };
 
-        if !kwargs.is_empty() && args.len() == kwargs.len() && values.len() > param_names.len() {
-            values = kwargs
-                .iter()
-                .map(|kwarg| {
-                    Ok((
-                        kwarg.name.clone().into(),
-                        self.transform_expr_to_hir(&kwarg.value)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
-        }
-
         if values.len() != param_names.len() {
             if is_variadic {
-                let required = callee
-                    .and_then(|expr| match &expr.kind {
-                        hir::ExprKind::Path(path) => path.res.as_ref(),
-                        _ => None,
-                    })
-                    .and_then(|res| match res {
-                        hir::Res::Def(def_id) => self.program_def_map.get(def_id),
-                        _ => None,
-                    })
-                    .and_then(|item| match &item.kind {
-                        hir::ItemKind::Function(function) => function
-                            .sig
-                            .inputs
-                            .iter()
-                            .position(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer)),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| param_names.len().saturating_sub(1));
+                let required = param_names.len().saturating_sub(1);
                 if values.len() >= required {
                     return Ok(values
                         .into_iter()
@@ -1972,8 +1945,9 @@ impl AstToHirLowerer {
                 let is_variadic = function
                     .sig
                     .inputs
-                    .iter()
-                    .any(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer));
+                    .last()
+                    .map(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer))
+                    .unwrap_or(false);
                 Some((names, is_variadic))
             }
             _ => None,
@@ -2017,13 +1991,6 @@ impl AstToHirLowerer {
                     None
                 }
             })
-            .or_else(|| {
-                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                    self.lookup_symbol(&key, hir::Namespace::Type)
-                } else {
-                    None
-                }
-            })
     }
 
     // make_path_segment moved to helpers.rs
@@ -2034,14 +2001,6 @@ impl AstToHirLowerer {
             hir::TypeExprKind::Primitive(prim),
             Span::new(self.current_file, 0, 0),
         )
-    }
-
-    pub(super) fn primitive_type_with_span(
-        &mut self,
-        prim: ast::TypePrimitive,
-        span: Span,
-    ) -> hir::TypeExpr {
-        hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Primitive(prim), span)
     }
 
     // transform_pattern_with_metadata moved to patterns.rs
