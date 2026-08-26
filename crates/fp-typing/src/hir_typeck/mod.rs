@@ -498,8 +498,8 @@ impl HirTypeChecker {
     /// `ITEM_CHECK_FAILURE_CODE` so `has_typing_errors` can gate later
     /// stages on real gaps without also tripping on every recovered,
     /// harmless mismatch also sitting in the same manager.
-    fn record_item_check_failure(&self, message: impl Into<String>) {
-        let diagnostic = crate::types::typing_diagnostic(message, None)
+    fn record_item_check_failure(&self, message: impl Into<String>, span: fp_core::span::Span) {
+        let diagnostic = crate::types::typing_diagnostic(message, Some(span))
             .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
         self.package().diagnostics.add_diagnostic(diagnostic);
     }
@@ -572,7 +572,7 @@ impl HirTypeChecker {
                     .map(ToString::to_string)
                     .or_else(|| Some(format!("{item_label} ({def_id})")));
                 if let Err(error) = item_checker.check_item(&item).await {
-                    item_checker.record_item_check_failure(format!("{error}"));
+                    item_checker.record_item_check_failure(format!("{error}"), item.span);
                 }
             }) as Pin<Box<dyn Future<Output = ()>>>
         })
