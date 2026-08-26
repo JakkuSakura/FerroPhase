@@ -990,7 +990,7 @@ impl HirToMirLowerer {
                         }),
                     };
                 }
-                hir::TypeExprKind::Ptr(inner) => {
+                hir::TypeExprKind::Ptr { inner: inner, .. } => {
                     let inner_ty = self.lower_type_expr_with_context(inner, method_context);
                     return Ty {
                         kind: TyKind::RawPtr(TypeAndMut {
@@ -1024,7 +1024,7 @@ impl HirToMirLowerer {
                         }),
                     };
                 }
-                hir::TypeExprKind::Ptr(inner) => {
+                hir::TypeExprKind::Ptr { inner: inner, .. } => {
                     let inner_ty =
                         self.lower_type_expr_with_context_and_substs(inner, method_context, substs);
                     return Ty {

@@ -609,6 +609,41 @@ pub enum Option<T> {
     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
 }
 
+#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+const impl<T> ops::Try for Option<T> {
+    type Output = T;
+    type Residual = Option<convert::Infallible>;
+
+    #[inline]
+    fn from_output(output: Self::Output) -> Self {
+        Some(output)
+    }
+
+    #[inline]
+    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            Some(value) => ControlFlow::Continue(value),
+            None => ControlFlow::Break(None),
+        }
+    }
+}
+
+#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+const impl<T> ops::FromResidual<Option<convert::Infallible>> for Option<T> {
+    #[inline]
+    fn from_residual(_: Option<convert::Infallible>) -> Self {
+        None
+    }
+}
+
+#[unstable(feature = "try_trait_v2_residual", issue = "91285")]
+#[rustc_const_unstable(feature = "const_try_residual", issue = "91285")]
+const impl<T> Residual<T> for Option<convert::Infallible> {
+    type TryType = Option<T>;
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // Type implementation
 /////////////////////////////////////////////////////////////////////////////

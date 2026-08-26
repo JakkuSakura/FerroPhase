@@ -2129,7 +2129,7 @@ impl HirToMirLowerer {
                     self.infer_generic_from_type_expr(inner, actual_ty, generics, substs, span)?;
                 }
             }
-            hir::TypeExprKind::Ptr(inner) => {
+            hir::TypeExprKind::Ptr { inner: inner, .. } => {
                 if let TyKind::RawPtr(actual_inner) = &actual_ty.kind {
                     self.infer_generic_from_type_expr(
                         inner,
@@ -3003,7 +3003,7 @@ impl HirToMirLowerer {
                     ),
                 }
             }
-            hir::TypeExprKind::Ptr(inner) => {
+            hir::TypeExprKind::Ptr { inner: inner, .. } => {
                 let inner_ty = self.lower_type_expr_with_substs(inner, substs);
                 Ty {
                     kind: TyKind::RawPtr(TypeAndMut {
@@ -3229,7 +3229,7 @@ impl HirToMirLowerer {
                 .segments
                 .last()
                 .map(|seg| String::from(seg.name.clone())),
-            hir::TypeExprKind::Ref(inner) | hir::TypeExprKind::Ptr(inner) => {
+            hir::TypeExprKind::Ref(inner) | hir::TypeExprKind::Ptr { inner: inner, .. } => {
                 self.struct_name_from_type(inner)
             }
             _ => None,

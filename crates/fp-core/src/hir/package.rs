@@ -383,7 +383,9 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
     // the same bucket.
     match &impl_item.self_ty.kind {
         TypeExprKind::Ref(_) => return ImplShapeClass::Shape("&".to_string()),
-        TypeExprKind::Ptr(_) => return ImplShapeClass::Shape("*const".to_string()),
+        TypeExprKind::Ptr { mutable, .. } => {
+            return ImplShapeClass::Shape(if *mutable { "*mut" } else { "*const" }.to_string());
+        }
         TypeExprKind::Slice(_) => return ImplShapeClass::Shape("[]".to_string()),
         TypeExprKind::Array(_, _) => return ImplShapeClass::Shape("[;N]".to_string()),
         TypeExprKind::Tuple(elems) if !elems.is_empty() => {

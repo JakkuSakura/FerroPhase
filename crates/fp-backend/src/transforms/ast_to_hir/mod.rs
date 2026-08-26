@@ -163,11 +163,6 @@ pub struct AstToHirLowerer {
     /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
     hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
-    /// `impl` items whose self-type didn't resolve on a *tolerant*
-    /// `predeclare_items` pass because the name is only reachable through
-    /// an import that hadn't been processed yet — see `transform_package`,
-    /// which retries these once imports are resolved.
-    pending_impls: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
     /// Same idea as `pending_impls`, for a transparent type alias
     /// (`type Result = result::Result<(), Error>;`) whose RHS names a
     /// module-qualified path (`result::Result`) that isn't reachable yet
@@ -178,6 +173,8 @@ pub struct AstToHirLowerer {
     /// `transform_package`'s own step comments — so this defers exactly
     /// the same way `pending_impls` does, retried once imports exist.
     pending_type_aliases: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
+    /// Impl items deferred until imports have been resolved.
+    pending_impls: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
     /// `(module_path, alias)` pairs already registered by
     /// `register_import_binding`, so re-running it (e.g. `append_item`'s
     /// own `ItemKind::Import` handling, after `transform_package`'s
@@ -341,8 +338,8 @@ impl AstToHirLowerer {
             intrinsic_normalizer: None,
             workspace: None,
             hir_program,
-            pending_impls: Vec::new(),
             pending_type_aliases: Vec::new(),
+            pending_impls: Vec::new(),
             resolved_import_aliases: HashSet::new(),
             diagnostics: DiagnosticManager::new(),
         }
@@ -666,13 +663,7 @@ impl AstToHirLowerer {
         for segment in &path.segments {
             match segment {
                 ast::ItemImportTree::Crate => {
-                    scope = self
-                        .module_path
-                        .segments
-                        .first()
-                        .cloned()
-                        .into_iter()
-                        .collect();
+                    scope = self.module_path.segments.first().cloned().into_iter().collect();
                     started = true;
                 }
                 ast::ItemImportTree::Root => {
@@ -728,26 +719,7 @@ impl AstToHirLowerer {
         }
         let self_def_id = match self_path.res {
             Some(hir::Res::Def(ref def_id)) => Some(def_id.clone()),
-            _ => {
-                let relative = self.module_path.join(
-                    &self_path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.name.as_str().to_owned())
-                        .collect::<Vec<_>>(),
-                );
-                match self.lookup_global_res(&relative, PathResolutionScope::Type) {
-                    Some(hir::Res::Def(def_id)) => Some(def_id),
-                    _ => self_path
-                        .segments
-                        .first()
-                        .and_then(|segment| self.resolve_type_symbol(segment.name.as_str()))
-                        .and_then(|res| match res {
-                            hir::Res::Def(def_id) => Some(def_id),
-                            _ => None,
-                        }),
-                }
-            }
+            _ => None,
         };
         let self_def_id = self_def_id.as_ref();
         let self_def_id = match self_def_id {
@@ -766,6 +738,19 @@ impl AstToHirLowerer {
                 return Err(fp_core::Error::from("unresolved impl self type"));
             }
         };
+
+        // During predeclaration, impl generic parameters are entered into a
+        // temporary lexical type scope so `impl<T> Trait for T` can resolve
+        // its self path. They are not nominal workspace definitions and
+        // therefore have no entry in `global_type_defs_by_def_id`; preserve
+        // the lexical path as the canonical blanket-impl key instead.
+        if self.type_scopes.iter().rev().any(|scope| {
+            scope.values().any(|res| matches!(res, hir::Res::Def(id) if id == self_def_id))
+        }) {
+            return Ok(fp_core::ast::path::QualifiedPath::new(
+                self_path.segments.iter().map(|segment| segment.name.as_str().to_owned()).collect(),
+            ));
+        }
 
         let relative = self.module_path.join(
             &self_path
@@ -1000,44 +985,49 @@ impl AstToHirLowerer {
             .filter(|(key, _)| key.rsplit("::").next().unwrap_or(key.as_str()) == name)
             .collect();
         candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
-        candidates
-            .into_iter()
-            .min_by_key(|(_, res)| {
-                let hir::Res::Def(def_id) = res else {
-                    // Non-`Def` resolutions (a module, a local, ...) have no
-                    // alias/depth to compare — treat as maximally preferred
-                    // among themselves via stable key order alone.
-                    return (0usize, 0usize, 0usize);
-                };
-                // A trait (real std has both `core::error::Error` the trait and
-                // `fmt::Error`/`io::Error` distinct structs sharing the bare
-                // name `Error`) ranks behind a real nominal type — a bare type
-                // reference almost always means the concrete type, not the
-                // trait (a trait bound/object position spells it `dyn Error`/
-                // a generic bound instead, resolved separately). HIR has no
-                // first-class trait item — a trait's own `DefId` is a
-                // placeholder `Const`, never a real Struct/Enum, so
-                // `placeholder_defs`/`is_placeholder_def` is the same signal,
-                // checked against this in-progress package first (a trait
-                // declared in *this* package is placeholder-tagged there, not
-                // in `hir_program`, which only ever holds already-published
-                // dependencies).
-                let is_trait = self.package.placeholder_defs.contains(def_id)
-                    || self.hir_program.is_placeholder_def(def_id.clone());
-                // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
-                // ranks behind a real nominal declaration (`enum Result`).
-                let is_alias = self.package.type_alias_targets.contains_key(def_id)
-                    || self.hir_program.type_alias_target(def_id.clone()).is_some();
-                let depth = self
-                    .package
-                    .def_paths
-                    .get(def_id)
-                    .or_else(|| self.hir_program.def_path(def_id.clone()))
-                    .map(|path| path.segments.len())
-                    .unwrap_or(usize::MAX);
-                (is_trait as usize, is_alias as usize, depth)
-            })
-            .map(|(_, res)| res)
+        candidates.into_iter().min_by_key(|(_, res)| {
+            let hir::Res::Def(def_id) = res else {
+                // Non-`Def` resolutions (a module, a local, ...) have no
+                // alias/depth to compare — treat as maximally preferred
+                // among themselves via stable key order alone.
+                return (0usize, 0usize, 0usize);
+            };
+            // A trait (real std has both `core::error::Error` the trait and
+            // `fmt::Error`/`io::Error` distinct structs sharing the bare
+            // name `Error`) ranks behind a real nominal type — a bare type
+            // reference almost always means the concrete type, not the
+            // trait (a trait bound/object position spells it `dyn Error`/
+            // a generic bound instead, resolved separately). HIR has no
+            // first-class trait item — a trait's own `DefId` is a
+            // placeholder `Const`, never a real Struct/Enum, so
+            // `placeholder_defs`/`is_placeholder_def` is the same signal,
+            // checked against this in-progress package first (a trait
+            // declared in *this* package is placeholder-tagged there, not
+            // in `hir_program`, which only ever holds already-published
+            // dependencies).
+            let is_trait = self.package.placeholder_defs.contains(def_id)
+                || self
+                    .hir_program
+                    .is_placeholder_def(def_id.clone());
+            // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
+            // ranks behind a real nominal declaration (`enum Result`).
+            let is_alias = self.package.type_alias_targets.contains_key(def_id)
+                || self
+                    .hir_program
+                    .type_alias_target(def_id.clone())
+                    .is_some();
+            let depth = self
+                .package
+                .def_paths
+                .get(def_id)
+                .or_else(|| {
+                    self.hir_program
+                        .def_path(def_id.clone())
+                })
+                .map(|path| path.segments.len())
+                .unwrap_or(usize::MAX);
+            (is_trait as usize, is_alias as usize, depth)
+        }).map(|(_, res)| res)
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -1383,15 +1373,7 @@ impl AstToHirLowerer {
         // chains resolve, not just direct single-hop imports.
         self.resolve_pending_imports(package)?;
 
-        // 3: retry deferred impls, now strict — imports are resolved, so
-        // anything that still fails here is a genuine error, not a
-        // forward-reference timing issue.
-        for (module_path, item) in std::mem::take(&mut self.pending_impls) {
-            self.with_module_scope(&module_path, |this| {
-                this.predeclare_items(std::slice::from_ref(&item), false)
-            })?;
-        }
-        // Same retry for a type alias whose module-qualified RHS
+        // 3: type aliases whose module-qualified RHS
         // (`type Result = result::Result<(), Error>;`) was deferred above.
         for (module_path, item) in std::mem::take(&mut self.pending_type_aliases) {
             self.with_module_scope(&module_path, |this| {
@@ -1416,7 +1398,16 @@ impl AstToHirLowerer {
         // depend on this package's own tables at all.
         self.load_default_prelude_defs();
 
-        // 4: append — unchanged.
+        // Deferred impl headers are lowered after the package prelude is
+        // installed as well as after imports, since source impls commonly
+        // use bare prelude types such as `Option`.
+        for (module_path, item) in std::mem::take(&mut self.pending_impls) {
+            self.with_module_scope(&module_path, |this| {
+                this.predeclare_items(std::slice::from_ref(&item), false)
+            })?;
+        }
+
+        // 5: append — unchanged.
         for package_item in &package_items {
             self.with_module_scope(&package_item.module_path, |this| {
                 this.append_item(&mut program, &package_item.item)
@@ -2501,13 +2492,8 @@ impl AstToHirLowerer {
 
     /// Transform an AST type into a HIR type
     fn transform_type_to_hir(&mut self, ty: &ast::Ty) -> Result<hir::TypeExpr> {
-        let span = self.normalize_span(ty.span());
-        let result = match ty {
-            ast::Ty::Primitive(prim) => {
-                let mut lowered = self.primitive_type_to_hir(*prim);
-                lowered.span = span;
-                Ok(lowered)
-            }
+        match ty {
+            ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
                 let alias_info = self
                     .lookup_type_alias_with_key(&[struct_ty.name.name.to_string()])
@@ -2528,7 +2514,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Reference(reference) => {
@@ -2536,31 +2522,26 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Ref(Box::new(inner)),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::RawPtr(raw_ptr) => {
                 let inner = self.transform_type_to_hir(&raw_ptr.ty)?;
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Ptr(Box::new(inner)),
-                    span,
+                    hir::TypeExprKind::Ptr {
+                        inner: Box::new(inner),
+                        mutable: raw_ptr.mutability == Some(true),
+                    },
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
-            ast::Ty::Unit(_) => {
-                let mut lowered = self.create_unit_type();
-                lowered.span = span;
-                Ok(lowered)
-            }
-            ast::Ty::Nothing(_) => {
-                let mut lowered = self.create_null_type();
-                lowered.span = span;
-                Ok(lowered)
-            }
+            ast::Ty::Unit(_) => Ok(self.create_unit_type()),
+            ast::Ty::Nothing(_) => Ok(self.create_null_type()),
             ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
                 hir::TypeExprKind::Any,
-                span,
+                Span::new(self.current_file, 0, 0),
             )),
             ast::Ty::TypeBounds(bounds) => {
                 // `dyn Fn(..) -> ..`/`FnMut`/`FnOnce` bounds (`dyn FnMut(&T)
@@ -2615,20 +2596,20 @@ impl AstToHirLowerer {
                         Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Path(path),
-                            span,
+                            Span::new(self.current_file, 0, 0),
                         ))
                     }
                     None => Ok(hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Infer,
-                        span,
+                        Span::new(self.current_file, 0, 0),
                     )),
                 }
             }
             ast::Ty::Unknown(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
                 hir::TypeExprKind::Infer,
-                span,
+                Span::new(self.current_file, 0, 0),
             )),
             ast::Ty::Tuple(tuple) => {
                 let elements = tuple
@@ -2639,7 +2620,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Tuple(elements),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Structural(structural) => {
@@ -2656,7 +2637,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Structural(hir::TypeStructural { fields }),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Vec(vec_ty) => {
@@ -2671,7 +2652,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Array(array_ty) => {
@@ -2680,7 +2661,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Array(elem, Some(len_expr)),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Slice(slice_ty) => {
@@ -2688,7 +2669,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Slice(elem),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::TypeBinaryOp(type_op) => {
@@ -2709,36 +2690,21 @@ impl AstToHirLowerer {
                         lhs: Box::new(lhs),
                         rhs: Box::new(rhs),
                     }),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Value(type_value) => {
                 let expr = match type_value.value.as_ref() {
-                    ast::Value::Int(_) => self
-                        .primitive_type_with_span(ast::TypePrimitive::Int(ast::TypeInt::I64), span),
-                    ast::Value::Bool(_) => {
-                        self.primitive_type_with_span(ast::TypePrimitive::Bool, span)
+                    ast::Value::Int(_) => {
+                        self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))
                     }
-                    ast::Value::Decimal(_) => self.primitive_type_with_span(
-                        ast::TypePrimitive::Decimal(ast::DecimalType::F64),
-                        span,
-                    ),
-                    ast::Value::String(_) => {
-                        self.primitive_type_with_span(ast::TypePrimitive::String, span)
-                    }
-                    ast::Value::Char(_) => {
-                        self.primitive_type_with_span(ast::TypePrimitive::Char, span)
-                    }
-                    ast::Value::Unit(_) => {
-                        let mut lowered = self.create_unit_type();
-                        lowered.span = span;
-                        lowered
-                    }
-                    ast::Value::Null(_) | ast::Value::None(_) => {
-                        let mut lowered = self.create_null_type();
-                        lowered.span = span;
-                        lowered
-                    }
+                    ast::Value::Bool(_) => self.primitive_type_to_hir(ast::TypePrimitive::Bool),
+                    ast::Value::Decimal(_) => self
+                        .primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64)),
+                    ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
+                    ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
+                    ast::Value::Unit(_) => self.create_unit_type(),
+                    ast::Value::Null(_) | ast::Value::None(_) => self.create_null_type(),
                     ast::Value::Type(ty) => {
                         return self.transform_type_to_hir(ty);
                     }
@@ -2754,7 +2720,7 @@ impl AstToHirLowerer {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Error,
-                            span,
+                            Span::new(self.current_file, 0, 0),
                         ));
                     }
                 };
@@ -2795,7 +2761,7 @@ impl AstToHirLowerer {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Path(path),
-                            span,
+                            Span::new(self.current_file, 0, 0),
                         ));
                     }
                 }
@@ -2818,7 +2784,7 @@ impl AstToHirLowerer {
                 Ok(hir::TypeExpr::new(
                     hir_id,
                     hir::TypeExprKind::ConstBlock(def_id, body),
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Refinement(refinement) => {
@@ -2874,7 +2840,7 @@ impl AstToHirLowerer {
                                 return Ok(hir::TypeExpr::new(
                                     self.next_id(),
                                     hir::TypeExprKind::Path(path),
-                                    span,
+                                    Span::new(self.current_file, 0, 0),
                                 ));
                             }
                         }
@@ -2931,13 +2897,13 @@ impl AstToHirLowerer {
                     return Ok(hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Path(path),
-                        span,
+                        Span::new(self.current_file, 0, 0),
                     ));
                 }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,
-                    span,
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::ImplTraits(impl_traits) => {
@@ -3022,14 +2988,7 @@ impl AstToHirLowerer {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
-        };
-        result.map(|mut type_expr| {
-            // Individual type constructors historically used a dummy span;
-            // the AST type span is the authoritative source range for the
-            // lowered root node and must survive into type checking.
-            type_expr.span = span;
-            type_expr
-        })
+        }
     }
 
     /// Create a simple HIR literal expression

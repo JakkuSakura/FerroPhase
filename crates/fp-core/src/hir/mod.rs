@@ -387,7 +387,7 @@ pub enum ExprKind {
     Unary(UnOp, Box<Expr>),
     Reference(ExprReference),
     Call(Box<Expr>, Vec<CallArg>),
-    MethodCall(Box<Expr>, Symbol, Vec<CallArg>),
+    MethodCall(Box<Expr>, Symbol, Option<GenericArgs>, Vec<CallArg>),
     FieldAccess(Box<Expr>, Symbol),
     Index(Box<Expr>, Box<Expr>),
     Slice(SliceExpr),
@@ -631,7 +631,10 @@ pub enum TypeExprKind {
     Tuple(Vec<Box<TypeExpr>>),
     Array(Box<TypeExpr>, Option<Box<Expr>>),
     Slice(Box<TypeExpr>),
-    Ptr(Box<TypeExpr>),
+    Ptr {
+        inner: Box<TypeExpr>,
+        mutable: bool,
+    },
     Ref(Box<TypeExpr>),
     FnPtr(FnPtrType),
     /// A `const { ... }` block appearing in type position (either the value
@@ -1118,7 +1121,7 @@ impl ExprKind {
                     .into_iter()
                     .chain(args.iter().map(CallArg::span)),
             ),
-            ExprKind::MethodCall(receiver, _, args) => Span::union(
+            ExprKind::MethodCall(receiver, _, _, args) => Span::union(
                 Some(receiver.span())
                     .into_iter()
                     .chain(args.iter().map(CallArg::span)),
@@ -1390,7 +1393,7 @@ impl TypeExprKind {
                     .chain(len.as_ref().map(|expr| expr.span())),
             ),
             TypeExprKind::Slice(ty) => ty.span(),
-            TypeExprKind::Ptr(ty) => ty.span(),
+            TypeExprKind::Ptr { inner: ty, .. } => ty.span(),
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
             TypeExprKind::ConstBlock(_, body) => body.span(),

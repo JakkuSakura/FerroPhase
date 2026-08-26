@@ -681,29 +681,12 @@ fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
     if skip_symbol(&mut probe, "::").is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    if !try_eat_symbol(&mut probe, "<") {
+    let args = parse_optional_type_args(&mut probe)?;
+    if args.is_empty() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    let mut depth = 1usize;
-    while let Some((token, rest)) = probe.split_first() {
-        probe = rest;
-        if token.kind != TokenKind::Symbol {
-            continue;
-        }
-        match token.lexeme.as_str() {
-            "<" => depth += 1,
-            "<<" => depth += 2,
-            ">" => {
-                depth -= 1;
-                if depth == 0 {
-                    *input = probe;
-                    return Ok(Postfix::Turbofish);
-                }
-            }
-            _ => {}
-        }
-    }
-    Err(ErrMode::Cut(ContextError::new()))
+    *input = probe;
+    Ok(Postfix::Turbofish(args))
 }
 
 fn parse_call_suffix(input: &mut &[Token], file: FileId) -> ModalResult<Postfix> {
@@ -1043,7 +1026,7 @@ enum Postfix {
     /// onward so `apply_postfixes`/AST-to-HIR lowering can tell them apart
     /// instead of only being able to distinguish them once resolved.
     ConstField(Ident),
-    Turbofish,
+    Turbofish(Vec<Ty>),
     Call(Vec<Expr>, Vec<ExprKwArg>),
     Index(Expr),
 }
@@ -1063,6 +1046,7 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 span: span_from_expr(&expr),
                 obj: Box::new(expr),
                 field,
+                generic_args: Vec::new(),
                 select: ExprSelectType::Field,
             })
             .into(),
@@ -1070,10 +1054,18 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 span: span_from_expr(&expr),
                 obj: Box::new(expr),
                 field,
+                generic_args: Vec::new(),
                 select: ExprSelectType::Const,
             })
             .into(),
-            Postfix::Turbofish => expr,
+            Postfix::Turbofish(args) => match expr.kind {
+                ExprKind::Select(mut select) => {
+                    select.generic_args = args;
+                    expr = Expr::new(ExprKind::Select(select));
+                    expr
+                }
+                _ => expr,
+            },
             Postfix::Call(args, kwargs) => ExprKind::Invoke(ExprInvoke {
                 span: span_from_expr(&expr),
                 target: ExprInvokeTarget::expr(expr),

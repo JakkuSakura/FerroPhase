@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprCast, ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg,
-    ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect,
-    ExprSelectType, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
-    ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, Pattern,
-    PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct,
-    PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference,
-    TypeSlice, TypeStruct, TypeTuple, Value,
+    ExprCast, ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
+    ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect, ExprSelectType,
+    ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
+    FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefConst, ItemDefEnum,
+    ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, Pattern, PatternIdent, PatternKind,
+    PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct, PatternVariant,
+    StmtLet, StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference, TypeSlice,
+    TypeStruct, TypeTuple, Value,
 };
 use fp_core::error::Result;
 use fp_core::hir;
@@ -68,7 +68,10 @@ pub struct HirToAstLifter<'a> {
 }
 
 impl<'a> HirToAstLifter<'a> {
-    pub fn new(program: &'a hir::HirPackage, hir_program: Option<&'a hir::HirProgram>) -> Self {
+    pub fn new(
+        program: &'a hir::HirPackage,
+        hir_program: Option<&'a hir::HirProgram>,
+    ) -> Self {
         Self {
             program,
             hir_program,
@@ -102,9 +105,7 @@ impl<'a> HirToAstLifter<'a> {
         } else {
             let renamed = format!("{name}{}", hir_id.local_id.0);
             frame.insert(renamed.clone());
-            self.renamed_locals
-                .borrow_mut()
-                .insert(hir_id, renamed.clone());
+            self.renamed_locals.borrow_mut().insert(hir_id, renamed.clone());
             renamed
         }
     }
@@ -167,7 +168,9 @@ impl<'a> HirToAstLifter<'a> {
             lifted.push((path.clone(), ast_item));
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
-        let items = self.reconstruct_closures(items.clone()).unwrap_or(items);
+        let items = self
+            .reconstruct_closures(items.clone())
+            .unwrap_or(items);
         paths.into_iter().zip(items).collect()
     }
 
@@ -234,7 +237,9 @@ impl<'a> HirToAstLifter<'a> {
             }
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
-        let items = self.reconstruct_closures(items.clone()).unwrap_or(items);
+        let items = self
+            .reconstruct_closures(items.clone())
+            .unwrap_or(items);
         paths.into_iter().zip(items).collect()
     }
 
@@ -364,11 +369,8 @@ impl<'a> HirToAstLifter<'a> {
             // scope in Kotlin and friends — seed the body block's scope
             // frame with them so a same-named top-level `let` gets renamed
             // instead of colliding (see `declare_binding_name`).
-            let param_names: HashSet<String> = sig
-                .params
-                .iter()
-                .map(|param| param.name.name.clone())
-                .collect();
+            let param_names: HashSet<String> =
+                sig.params.iter().map(|param| param.name.name.clone()).collect();
             // A parameter reassigned in the body (e.g. Rust's `&mut`/`mut`
             // parameter + `Option::take()`) can't be emitted as a direct
             // reassignment in Kotlin and friends — parameters are always an
@@ -422,7 +424,9 @@ impl<'a> HirToAstLifter<'a> {
         // this turns every instance method into a mis-rendered "static"
         // one once real typed HIR→AST lifting is reached, rather than the
         // pre-typecheck AST fallback that never lost it.
-        let is_self_param = |param: &hir::Param| matches!(&param.pat.kind, hir::PatKind::Binding { name, .. } if name.as_str() == "self");
+        let is_self_param = |param: &hir::Param| {
+            matches!(&param.pat.kind, hir::PatKind::Binding { name, .. } if name.as_str() == "self")
+        };
         // HIR's `Param.ty` for a lowered `self` (`make_self_param`, on the
         // AST→HIR side) carries no `&` vs `&mut` distinction at all — both
         // wrap in the same `TypeExprKind::Ref`, with the actual mutability
@@ -515,42 +519,49 @@ impl<'a> HirToAstLifter<'a> {
                 op: lift_unop(op),
                 val: Box::new(self.lift_expr(value)?),
             })),
-            hir::ExprKind::Reference(reference) => {
-                Expr::new(ast::ExprKind::Reference(ExprReference {
-                    span: expr.span,
-                    referee: Box::new(self.lift_expr(&reference.expr)?),
-                    mutable: Some(matches!(reference.mutable, hir::ty::Mutability::Mut)),
-                }))
-            }
-            hir::ExprKind::Call(callee, args) => {
-                Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
-                    span: expr.span,
-                    target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
-                    args: self.lift_positional_args(args)?,
-                    kwargs: self.lift_keyword_args(args)?,
-                }))
-            }
-            hir::ExprKind::MethodCall(receiver, name, args) => {
+            hir::ExprKind::Reference(reference) => Expr::new(ast::ExprKind::Reference(ExprReference {
+                span: expr.span,
+                referee: Box::new(self.lift_expr(&reference.expr)?),
+                mutable: Some(matches!(reference.mutable, hir::ty::Mutability::Mut)),
+            })),
+            hir::ExprKind::Call(callee, args) => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                span: expr.span,
+                target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
+                args: self.lift_positional_args(args)?,
+                kwargs: self.lift_keyword_args(args)?,
+            })),
+            hir::ExprKind::MethodCall(receiver, name, generic_args, args) => {
                 Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                     span: expr.span,
                     target: ast::ExprInvokeTarget::Method(ExprSelect {
                         span: expr.span,
                         obj: Box::new(self.lift_expr(receiver)?),
                         field: Ident::new(name.as_str()),
+                        generic_args: generic_args
+                            .as_ref()
+                            .map(|args| {
+                                args.args
+                                    .iter()
+                                    .filter_map(|arg| match arg {
+                                        hir::GenericArg::Type(ty) => self.lift_type(ty).ok(),
+                                        hir::GenericArg::Const(_) => None,
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                         select: ExprSelectType::Method,
                     }),
                     args: self.lift_positional_args(args)?,
                     kwargs: self.lift_keyword_args(args)?,
                 }))
             }
-            hir::ExprKind::FieldAccess(base, field) => {
-                Expr::new(ast::ExprKind::Select(ExprSelect {
-                    span: expr.span,
-                    obj: Box::new(self.lift_expr(base)?),
-                    field: Ident::new(field.as_str()),
-                    select: ExprSelectType::Field,
-                }))
-            }
+            hir::ExprKind::FieldAccess(base, field) => Expr::new(ast::ExprKind::Select(ExprSelect {
+                span: expr.span,
+                obj: Box::new(self.lift_expr(base)?),
+                field: Ident::new(field.as_str()),
+                generic_args: Vec::new(),
+                select: ExprSelectType::Field,
+            })),
             hir::ExprKind::Index(base, index) => Expr::new(ast::ExprKind::Index(ExprIndex {
                 span: expr.span,
                 obj: Box::new(self.lift_expr(base)?),
@@ -601,17 +612,15 @@ impl<'a> HirToAstLifter<'a> {
                     .collect(),
                 update: None,
             })),
-            hir::ExprKind::If(cond, then_branch, else_branch) => {
-                Expr::new(ast::ExprKind::If(ExprIf {
-                    span: expr.span,
-                    cond: Box::new(self.lift_expr(cond)?),
-                    then: Box::new(self.lift_expr(then_branch)?),
-                    elze: else_branch
-                        .as_ref()
-                        .map(|expr| self.lift_expr(expr).map(Box::new))
-                        .transpose()?,
-                }))
-            }
+            hir::ExprKind::If(cond, then_branch, else_branch) => Expr::new(ast::ExprKind::If(ExprIf {
+                span: expr.span,
+                cond: Box::new(self.lift_expr(cond)?),
+                then: Box::new(self.lift_expr(then_branch)?),
+                elze: else_branch
+                    .as_ref()
+                    .map(|expr| self.lift_expr(expr).map(Box::new))
+                    .transpose()?,
+            })),
             hir::ExprKind::Match(scrutinee, arms) => Expr::new(ast::ExprKind::Match(ExprMatch {
                 span: expr.span,
                 scrutinee: Some(Box::new(self.lift_expr(scrutinee)?)),
@@ -763,10 +772,7 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::ExprKind::Array(values) => Expr::new(ast::ExprKind::Array(ExprArray {
                 span: expr.span,
-                values: values
-                    .iter()
-                    .map(|v| self.lift_expr(v))
-                    .collect::<Result<Vec<_>>>()?,
+                values: values.iter().map(|v| self.lift_expr(v)).collect::<Result<Vec<_>>>()?,
             })),
             hir::ExprKind::ArrayRepeat { elem, len } => {
                 Expr::new(ast::ExprKind::ArrayRepeat(ast::ExprArrayRepeat {
@@ -777,10 +783,7 @@ impl<'a> HirToAstLifter<'a> {
             }
             hir::ExprKind::Tuple(values) => Expr::new(ast::ExprKind::Tuple(ExprTuple {
                 span: expr.span,
-                values: values
-                    .iter()
-                    .map(|v| self.lift_expr(v))
-                    .collect::<Result<Vec<_>>>()?,
+                values: values.iter().map(|v| self.lift_expr(v)).collect::<Result<Vec<_>>>()?,
             })),
             hir::ExprKind::ConstBlock(const_block) => {
                 Expr::new(ast::ExprKind::ConstBlock(ast::ExprConstBlock {
@@ -845,9 +848,7 @@ impl<'a> HirToAstLifter<'a> {
             .expr_type(expr.hir_id.clone())
             .and_then(|ty| self.hir_ty_to_ast(&ty))
         {
-            self.resolved_expr_types
-                .borrow_mut()
-                .insert(lifted.id(), ty);
+            self.resolved_expr_types.borrow_mut().insert(lifted.id(), ty);
         }
         Ok(lifted.with_span(expr.span))
     }
@@ -860,11 +861,7 @@ impl<'a> HirToAstLifter<'a> {
     /// frame with `seed` before lifting its statements — used to seed a
     /// function body's top-level scope with its parameter names (see
     /// `lift_function_item`), since they share one scope in most targets.
-    fn lift_block_with_scope(
-        &self,
-        block: &hir::Block,
-        seed: HashSet<String>,
-    ) -> Result<ExprBlock> {
+    fn lift_block_with_scope(&self, block: &hir::Block, seed: HashSet<String>) -> Result<ExprBlock> {
         self.scope_names.borrow_mut().push(seed);
         let result = self.lift_block_stmts(block);
         self.scope_names.borrow_mut().pop();
@@ -907,12 +904,7 @@ impl<'a> HirToAstLifter<'a> {
         self.scope_names.borrow_mut().push(param_names);
         let shadows: Vec<(String, String)> = reassigned_params
             .iter()
-            .map(|(hir_id, name)| {
-                (
-                    self.declare_binding_name(hir_id.clone(), name),
-                    name.clone(),
-                )
-            })
+            .map(|(hir_id, name)| (self.declare_binding_name(hir_id.clone(), name), name.clone()))
             .collect();
         let result = self.lift_block_stmts(block);
         self.scope_names.borrow_mut().pop();
@@ -995,11 +987,7 @@ impl<'a> HirToAstLifter<'a> {
                 };
                 Ok(BlockStmt::Let(ast::StmtLet {
                     pat,
-                    init: local
-                        .init
-                        .as_ref()
-                        .map(|expr| self.lift_expr(expr))
-                        .transpose()?,
+                    init: local.init.as_ref().map(|expr| self.lift_expr(expr)).transpose()?,
                     diverge: None,
                 }))
             }
@@ -1032,25 +1020,17 @@ impl<'a> HirToAstLifter<'a> {
     fn lift_pat(&self, pat: &hir::Pat) -> Result<Pattern> {
         Ok(match &pat.kind {
             hir::PatKind::Wild => Pattern::new(PatternKind::Wildcard(ast::PatternWildcard {})),
-            hir::PatKind::Binding { name, mutable } => {
-                Pattern::new(PatternKind::Ident(PatternIdent {
-                    ident: Ident::new(name.as_str()),
-                    mutability: Some(*mutable),
-                }))
-            }
+            hir::PatKind::Binding { name, mutable } => Pattern::new(PatternKind::Ident(PatternIdent {
+                ident: Ident::new(name.as_str()),
+                mutability: Some(*mutable),
+            })),
             hir::PatKind::Tuple(items) => Pattern::new(PatternKind::Tuple(PatternTuple {
-                patterns: items
-                    .iter()
-                    .map(|p| self.lift_pat(p))
-                    .collect::<Result<Vec<_>>>()?,
+                patterns: items.iter().map(|p| self.lift_pat(p)).collect::<Result<Vec<_>>>()?,
             })),
             hir::PatKind::TupleStruct(path, items) => {
                 Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
                     name: Name::path(self.lift_path(path)),
-                    patterns: items
-                        .iter()
-                        .map(|p| self.lift_pat(p))
-                        .collect::<Result<Vec<_>>>()?,
+                    patterns: items.iter().map(|p| self.lift_pat(p)).collect::<Result<Vec<_>>>()?,
                 }))
             }
             hir::PatKind::Struct(path, fields, has_rest) => {
@@ -1109,17 +1089,12 @@ impl<'a> HirToAstLifter<'a> {
             hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty(path)? {
                 Some(ty) => ty,
                 None => match self.type_expr_path_source_name(path) {
-                    Some(name) => {
-                        Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(name)]))))
-                    }
+                    Some(name) => Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(name)])))),
                     None => Ty::path(self.lift_path(path)),
                 },
             },
             hir::TypeExprKind::Tuple(items) => Ty::Tuple(TypeTuple {
-                types: items
-                    .iter()
-                    .map(|ty| self.lift_type(ty))
-                    .collect::<Result<Vec<_>>>()?,
+                types: items.iter().map(|ty| self.lift_type(ty)).collect::<Result<Vec<_>>>()?,
             }),
             hir::TypeExprKind::Array(elem, Some(len)) => Ty::Array(TypeArray {
                 elem: Box::new(self.lift_type(elem)?),
@@ -1136,9 +1111,9 @@ impl<'a> HirToAstLifter<'a> {
                 mutability: None,
                 lifetime: None,
             }),
-            hir::TypeExprKind::Ptr(inner) => Ty::RawPtr(ast::TypeRawPtr {
+            hir::TypeExprKind::Ptr { inner, mutable } => Ty::RawPtr(ast::TypeRawPtr {
                 ty: Box::new(self.lift_type(inner)?),
-                mutability: None,
+                mutability: (*mutable).then_some(true),
             }),
             hir::TypeExprKind::FnPtr(function) => Ty::Function(TypeFunction {
                 params: function
@@ -1156,10 +1131,7 @@ impl<'a> HirToAstLifter<'a> {
                     .fields
                     .iter()
                     .map(|field| {
-                        Ok(StructuralField::new(
-                            Ident::new(field.name.as_str()),
-                            self.lift_type(&field.ty)?,
-                        ))
+                        Ok(StructuralField::new(Ident::new(field.name.as_str()), self.lift_type(&field.ty)?))
                     })
                     .collect::<Result<Vec<_>>>()?,
             }),
@@ -1174,15 +1146,13 @@ impl<'a> HirToAstLifter<'a> {
                 inner: None,
             }),
             hir::TypeExprKind::Any => Ty::Any(ast::TypeAny),
-            hir::TypeExprKind::Refinement {
-                base,
-                binder,
-                predicate,
-            } => Ty::Refinement(Box::new(ast::TypeRefinement::new(
-                self.lift_type(base)?,
-                Ident::new(binder.as_str()),
-                self.lift_expr(predicate)?,
-            ))),
+            hir::TypeExprKind::Refinement { base, binder, predicate } => Ty::Refinement(Box::new(
+                ast::TypeRefinement::new(
+                    self.lift_type(base)?,
+                    Ident::new(binder.as_str()),
+                    self.lift_expr(predicate)?,
+                ),
+            )),
             hir::TypeExprKind::LiteralString(value) => Ty::Literal(ast::TypeLiteralString {
                 value: value.clone(),
             }),
@@ -1222,12 +1192,7 @@ impl<'a> HirToAstLifter<'a> {
         let fields = def
             .fields
             .iter()
-            .map(|field| {
-                Ok(StructuralField::new(
-                    Ident::new(field.name.as_str()),
-                    self.lift_type(&field.ty)?,
-                ))
-            })
+            .map(|field| Ok(StructuralField::new(Ident::new(field.name.as_str()), self.lift_type(&field.ty)?)))
             .collect::<Result<Vec<_>>>()?;
         Ok(Some(Ty::Structural(ast::TypeStructural { fields })))
     }
@@ -1314,30 +1279,26 @@ impl<'a> HirToAstLifter<'a> {
                 hir::ty::UintTy::U128 => TypeInt::U128,
                 hir::ty::UintTy::Usize => TypeInt::U64,
             }))),
-            TyKind::Float(float_ty) => {
-                Some(Ty::Primitive(TypePrimitive::Decimal(match float_ty {
-                    // `ast::DecimalType` has no narrower/wider variants than
-                    // f32/f64, so f16/f128 are lossily folded into their
-                    // nearest ast-representable width. This only affects
-                    // codegen backends that go through the ast layer; HIR
-                    // typechecking (the primary target for f16/f128 support)
-                    // keeps the precise width via `hir::ty::FloatTy`.
-                    hir::ty::FloatTy::F16 => DecimalType::F32,
-                    hir::ty::FloatTy::F32 => DecimalType::F32,
-                    hir::ty::FloatTy::F64 => DecimalType::F64,
-                    hir::ty::FloatTy::F128 => DecimalType::F64,
-                })))
-            }
+            TyKind::Float(float_ty) => Some(Ty::Primitive(TypePrimitive::Decimal(match float_ty {
+                // `ast::DecimalType` has no narrower/wider variants than
+                // f32/f64, so f16/f128 are lossily folded into their
+                // nearest ast-representable width. This only affects
+                // codegen backends that go through the ast layer; HIR
+                // typechecking (the primary target for f16/f128 support)
+                // keeps the precise width via `hir::ty::FloatTy`.
+                hir::ty::FloatTy::F16 => DecimalType::F32,
+                hir::ty::FloatTy::F32 => DecimalType::F32,
+                hir::ty::FloatTy::F64 => DecimalType::F64,
+                hir::ty::FloatTy::F128 => DecimalType::F64,
+            }))),
             TyKind::Never => Some(Ty::Nothing(ast::TypeNothing)),
             TyKind::Tuple(items) => {
                 let types: Vec<Ty> = items.iter().filter_map(|t| self.hir_ty_to_ast(t)).collect();
                 (types.len() == items.len()).then(|| Ty::Tuple(TypeTuple { types }))
             }
-            TyKind::Slice(elem) => self.hir_ty_to_ast(elem).map(|elem| {
-                Ty::Slice(TypeSlice {
-                    elem: Box::new(elem),
-                })
-            }),
+            TyKind::Slice(elem) => self
+                .hir_ty_to_ast(elem)
+                .map(|elem| Ty::Slice(TypeSlice { elem: Box::new(elem) })),
             // Array's const-generic length isn't carried here (no HIR expr
             // available from a resolved `HirTy` alone) — approximate as a
             // `Vec`, matching `lift_type`'s own treatment of a length-less array.
@@ -1382,16 +1343,10 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let name = self
-                        .program
-                        .def_paths
-                        .get(&adt.did)?
-                        .segments
-                        .last()?
-                        .as_str();
-                    Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
-                        Ident::new(format!("{}<{}>", name, args.join(", "))),
-                    ])))))
+                    let name = self.program.def_paths.get(&adt.did)?.segments.last()?.as_str();
+                    Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(
+                        format!("{}<{}>", name, args.join(", ")),
+                    )])))))
                 }
             }
             TyKind::FnDef(def_id, _) | TyKind::Closure(def_id, _) | TyKind::Opaque(def_id, _) => {
@@ -1431,13 +1386,7 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let name = self
-                    .program
-                    .def_paths
-                    .get(&adt.did)?
-                    .segments
-                    .last()?
-                    .as_str();
+                let name = self.program.def_paths.get(&adt.did)?.segments.last()?.as_str();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1459,10 +1408,7 @@ impl<'a> HirToAstLifter<'a> {
                     // invalid) wrapper name.
                     let args: Vec<String> = type_substs
                         .iter()
-                        .map(|t| {
-                            self.resolved_ty_source_name(t)
-                                .unwrap_or_else(|| "Any".to_string())
-                        })
+                        .map(|t| self.resolved_ty_source_name(t).unwrap_or_else(|| "Any".to_string()))
                         .collect();
                     Some(format!("{}<{}>", name, args.join(", ")))
                 }
@@ -1632,7 +1578,7 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
         hir::TypeExprKind::Array(elem, _) | hir::TypeExprKind::Slice(elem) => {
             type_expr_contains_infer(elem)
         }
-        hir::TypeExprKind::Ptr(inner) | hir::TypeExprKind::Ref(inner) => {
+        hir::TypeExprKind::Ptr { inner, .. } | hir::TypeExprKind::Ref(inner) => {
             type_expr_contains_infer(inner)
         }
         hir::TypeExprKind::Path(path) => path.segments.iter().any(|seg| {
@@ -1655,10 +1601,7 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
 /// "reassigning a val" codegen error) rather than silently emitting wrong
 /// behavior.
 fn block_assigns_local(block: &hir::Block, target: hir::HirId) -> bool {
-    block
-        .stmts
-        .iter()
-        .any(|stmt| stmt_assigns_local(stmt, target.clone()))
+    block.stmts.iter().any(|stmt| stmt_assigns_local(stmt, target.clone()))
         || block
             .expr
             .as_deref()
@@ -1672,7 +1615,9 @@ fn stmt_assigns_local(stmt: &hir::Stmt, target: hir::HirId) -> bool {
             .as_ref()
             .is_some_and(|expr| expr_assigns_local(expr, target)),
         hir::StmtKind::Item(_) => false,
-        hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => expr_assigns_local(expr, target),
+        hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+            expr_assigns_local(expr, target)
+        }
     }
 }
 
@@ -1699,11 +1644,9 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::Reference(r) => expr_assigns_local(&r.expr, target),
         hir::ExprKind::Call(callee, args) => {
             expr_assigns_local(callee, target.clone())
-                || args
-                    .iter()
-                    .any(|arg| expr_assigns_local(&arg.value, target.clone()))
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
         }
-        hir::ExprKind::MethodCall(recv, method, args) => {
+        hir::ExprKind::MethodCall(recv, method, _, args) => {
             // `Option::take()` has no real HIR-level assignment node — its
             // "reset the receiver to `None`" half is only synthesized as
             // text by the Kotlin serializer's own `.take()` special case
@@ -1719,9 +1662,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
                 );
             resets_target
                 || expr_assigns_local(recv, target.clone())
-                || args
-                    .iter()
-                    .any(|arg| expr_assigns_local(&arg.value, target.clone()))
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
         }
         hir::ExprKind::FieldAccess(inner, _) => expr_assigns_local(inner, target),
         hir::ExprKind::Index(base, index) => {
@@ -1729,53 +1670,38 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         }
         hir::ExprKind::Slice(s) => {
             expr_assigns_local(&s.base, target.clone())
-                || s.start
-                    .as_deref()
-                    .is_some_and(|e| expr_assigns_local(e, target.clone()))
-                || s.end
-                    .as_deref()
-                    .is_some_and(|e| expr_assigns_local(e, target))
+                || s.start.as_deref().is_some_and(|e| expr_assigns_local(e, target.clone()))
+                || s.end.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Cast(inner, _) => expr_assigns_local(inner, target),
-        hir::ExprKind::Struct(_, fields) => fields
-            .iter()
-            .any(|field| expr_assigns_local(&field.expr, target.clone())),
+        hir::ExprKind::Struct(_, fields) => {
+            fields.iter().any(|field| expr_assigns_local(&field.expr, target.clone()))
+        }
         hir::ExprKind::If(cond, then_expr, else_expr) => {
             expr_assigns_local(cond, target.clone())
                 || expr_assigns_local(then_expr, target.clone())
-                || else_expr
-                    .as_deref()
-                    .is_some_and(|e| expr_assigns_local(e, target))
+                || else_expr.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Match(scrutinee, arms) => {
             expr_assigns_local(scrutinee, target.clone())
                 || arms.iter().any(|arm| {
-                    arm.guard
-                        .as_ref()
-                        .is_some_and(|g| expr_assigns_local(g, target.clone()))
+                    arm.guard.as_ref().is_some_and(|g| expr_assigns_local(g, target.clone()))
                         || expr_assigns_local(&arm.body, target.clone())
                 })
         }
         hir::ExprKind::Try(t) => {
             expr_assigns_local(&t.expr, target.clone())
-                || t.catches
-                    .iter()
-                    .any(|c| expr_assigns_local(&c.body, target.clone()))
-                || t.elze
-                    .as_deref()
-                    .is_some_and(|e| expr_assigns_local(e, target.clone()))
-                || t.finally
-                    .as_deref()
-                    .is_some_and(|e| expr_assigns_local(e, target))
+                || t.catches.iter().any(|c| expr_assigns_local(&c.body, target.clone()))
+                || t.elze.as_deref().is_some_and(|e| expr_assigns_local(e, target.clone()))
+                || t.finally.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Block(b) => block_assigns_local(b, target),
-        hir::ExprKind::IntrinsicCall(ic) => ic
-            .callargs
-            .iter()
-            .any(|arg| expr_assigns_local(&arg.value, target.clone())),
-        hir::ExprKind::Let(_, _, init) => init
-            .as_deref()
-            .is_some_and(|e| expr_assigns_local(e, target)),
+        hir::ExprKind::IntrinsicCall(ic) => {
+            ic.callargs.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
+        }
+        hir::ExprKind::Let(_, _, init) => {
+            init.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
         hir::ExprKind::Return(e) | hir::ExprKind::Break(e) => {
             e.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
@@ -1786,9 +1712,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::For(_pat, iter, b) => {
             expr_assigns_local(iter, target.clone()) || block_assigns_local(b, target)
         }
-        hir::ExprKind::With(a, b) => {
-            expr_assigns_local(a, target.clone()) || expr_assigns_local(b, target)
-        }
+        hir::ExprKind::With(a, b) => expr_assigns_local(a, target.clone()) || expr_assigns_local(b, target),
         hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => {
             items.iter().any(|e| expr_assigns_local(e, target.clone()))
         }
@@ -1829,14 +1753,8 @@ fn rust_primitive_source_name(primitive: &fp_core::ast::TypePrimitive) -> String
         TypePrimitive::Decimal(_) => "f64".to_string(),
         TypePrimitive::List => "Vec".to_string(),
         TypePrimitive::Int(int_ty) => match int_ty {
-            TypeInt::I8 => "i8",
-            TypeInt::I16 => "i16",
-            TypeInt::I32 => "i32",
-            TypeInt::I64 => "i64",
-            TypeInt::U8 => "u8",
-            TypeInt::U16 => "u16",
-            TypeInt::U32 => "u32",
-            TypeInt::U64 => "u64",
+            TypeInt::I8 => "i8", TypeInt::I16 => "i16", TypeInt::I32 => "i32", TypeInt::I64 => "i64",
+            TypeInt::U8 => "u8", TypeInt::U16 => "u16", TypeInt::U32 => "u32", TypeInt::U64 => "u64",
             _ => "i64",
         }
         .to_string(),
@@ -1930,16 +1848,11 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
     match expr.kind_mut() {
         ast::ExprKind::Struct(st) => {
             let struct_name = match st.name.kind() {
-                ast::ExprKind::Name(Name::Path(p)) => p
-                    .segments
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::"),
-                ast::ExprKind::Name(Name::Ident(id)) => id.name.clone(),
-                _ => {
-                    return;
+                ast::ExprKind::Name(Name::Path(p)) => {
+                    p.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join("::")
                 }
+                ast::ExprKind::Name(Name::Ident(id)) => id.name.clone(),
+                _ => { return; }
             };
             let last_seg = struct_name.rsplit("::").next().unwrap_or(&struct_name);
             if let Some(param_types) = types.get(last_seg) {
@@ -1949,20 +1862,13 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
                     // `hir::ExprKind::Closure` lifting arm above), so it's
                     // promoted into `PatternKind::Type` directly rather than
                     // stamped onto a since-removed `Pattern.ty` cache field.
-                    let params: Vec<Pattern> = param_types
-                        .iter()
-                        .enumerate()
-                        .map(|(i, ty)| {
-                            let ident_pat = Pattern::from(PatternKind::Ident(PatternIdent {
-                                ident: Ident::new(format!("__p{}", i)),
-                                mutability: None,
-                            }));
-                            Pattern::from(PatternKind::Type(ast::PatternType::new(
-                                ident_pat,
-                                ty.clone(),
-                            )))
-                        })
-                        .collect();
+                    let params: Vec<Pattern> = param_types.iter().enumerate().map(|(i, ty)| {
+                        let ident_pat = Pattern::from(PatternKind::Ident(PatternIdent {
+                            ident: Ident::new(format!("__p{}", i)),
+                            mutability: None,
+                        }));
+                        Pattern::from(PatternKind::Type(ast::PatternType::new(ident_pat, ty.clone())))
+                    }).collect();
                     let span = expr.span;
                     // Replace this struct with a closure — the body is a placeholder
                     expr.kind = ast::ExprKind::Closure(ExprClosure {
@@ -2011,41 +1917,27 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
                 recon_closures_in_expr(&mut case.body, types);
             }
         }
-        ast::ExprKind::Let(l) => {
-            recon_closures_in_expr(&mut l.expr, types);
-        }
+        ast::ExprKind::Let(l) => { recon_closures_in_expr(&mut l.expr, types); }
         ast::ExprKind::Assign(a) => {
             recon_closures_in_expr(&mut a.value, types);
             recon_closures_in_expr(&mut a.target, types);
         }
         ast::ExprKind::Return(r) => {
-            if let Some(ref mut v) = r.value {
-                recon_closures_in_expr(v, types);
-            }
+            if let Some(ref mut v) = r.value { recon_closures_in_expr(v, types); }
         }
         ast::ExprKind::BinOp(bin) => {
             recon_closures_in_expr(&mut bin.lhs, types);
             recon_closures_in_expr(&mut bin.rhs, types);
         }
-        ast::ExprKind::UnOp(un) => {
-            recon_closures_in_expr(&mut un.val, types);
-        }
-        ast::ExprKind::Select(sel) => {
-            recon_closures_in_expr(&mut sel.obj, types);
-        }
+        ast::ExprKind::UnOp(un) => { recon_closures_in_expr(&mut un.val, types); }
+        ast::ExprKind::Select(sel) => { recon_closures_in_expr(&mut sel.obj, types); }
         ast::ExprKind::Index(idx) => {
             recon_closures_in_expr(&mut idx.obj, types);
             recon_closures_in_expr(&mut idx.index, types);
         }
-        ast::ExprKind::Closure(cl) => {
-            recon_closures_in_expr(&mut cl.body, types);
-        }
-        ast::ExprKind::Cast(c) => {
-            recon_closures_in_expr(&mut c.expr, types);
-        }
-        ast::ExprKind::Reference(r) => {
-            recon_closures_in_expr(&mut r.referee, types);
-        }
+        ast::ExprKind::Closure(cl) => { recon_closures_in_expr(&mut cl.body, types); }
+        ast::ExprKind::Cast(c) => { recon_closures_in_expr(&mut c.expr, types); }
+        ast::ExprKind::Reference(r) => { recon_closures_in_expr(&mut r.referee, types); }
         ast::ExprKind::While(wh) => {
             recon_closures_in_expr(&mut wh.cond, types);
             recon_closures_in_expr(&mut wh.body, types);
@@ -2054,9 +1946,7 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
             recon_closures_in_expr(&mut fr.iter, types);
             recon_closures_in_expr(&mut fr.body, types);
         }
-        ast::ExprKind::Loop(lp) => {
-            recon_closures_in_expr(&mut lp.body, types);
-        }
+        ast::ExprKind::Loop(lp) => { recon_closures_in_expr(&mut lp.body, types); }
         ast::ExprKind::Try(tr) => {
             recon_closures_in_expr(&mut tr.expr, types);
             for catch in &mut tr.catches {
@@ -2064,14 +1954,10 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
             }
         }
         ast::ExprKind::Array(arr) => {
-            for val in &mut arr.values {
-                recon_closures_in_expr(val, types);
-            }
+            for val in &mut arr.values { recon_closures_in_expr(val, types); }
         }
         ast::ExprKind::Tuple(tup) => {
-            for val in &mut tup.values {
-                recon_closures_in_expr(val, types);
-            }
+            for val in &mut tup.values { recon_closures_in_expr(val, types); }
         }
         _ => {}
     }

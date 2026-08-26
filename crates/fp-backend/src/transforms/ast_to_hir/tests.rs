@@ -9,6 +9,7 @@ use fp_core::frontend::LanguageFrontend;
 use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
+use fp_lang::ast::FerroPhaseParser;
 use std::collections::HashMap;
 
 fn test_data_layout() -> LirDataLayout {
@@ -806,6 +807,7 @@ fn transform_generic_function_and_method() -> Result<()> {
             span: Span::null(),
             obj: Box::new(ast::Expr::ident(ident("self"))),
             field: ident("value"),
+            generic_args: Vec::new(),
             select: ast::ExprSelectType::Field,
         }))),
     );
@@ -895,6 +897,74 @@ fn transform_generic_function_and_method() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast("struct Buffer; impl Buffer { fn clear(&mut self) {} }")
+        .expect("parse inherent method with mutable receiver");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let method = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Impl(impl_item) => impl_item.items.iter().find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "clear" => {
+                    Some(function)
+                }
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("lowered clear method");
+
+    assert_eq!(method.sig.inputs.len(), 1);
+    assert!(matches!(method.sig.inputs[0].ty.kind, hir::TypeExprKind::Ref(_)));
+    Ok(())
+}
+
+#[test]
+fn transform_type_relative_call_without_a_method_receiver() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "struct Buffer; impl Buffer { fn new() -> Buffer { Buffer } } fn make() { Buffer::new(); }",
+        )
+        .expect("parse type-relative associated function call");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let make = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "make" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("lowered make function");
+    let call = make
+        .body
+        .as_ref()
+        .and_then(|body| body.stmts.first())
+        .expect("make call statement");
+
+    assert!(matches!(call.kind, hir::StmtKind::Semi(hir::Expr {
+        kind: hir::ExprKind::Call(_, _),
+        ..
+    })));
+    Ok(())
+}
+
 /// Same shape as `transform_generic_function_and_method`'s struct+impl
 /// case, but the items live in a *nested* module path (e.g.
 /// `["std", "sys", "stdio"]`, mirroring how `fp-rust`'s vendored real-std
@@ -912,6 +982,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
             span: Span::null(),
             obj: Box::new(ast::Expr::ident(ident("self"))),
             field: ident("value"),
+            generic_args: Vec::new(),
             select: ast::ExprSelectType::Field,
         }))),
     );
@@ -1423,7 +1494,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     collect_paths(&arg.value, out);
                 }
             }
-            hir::ExprKind::MethodCall(receiver, _, args) => {
+            hir::ExprKind::MethodCall(receiver, _, _, args) => {
                 collect_paths(receiver, out);
                 for arg in args {
                     collect_paths(&arg.value, out);

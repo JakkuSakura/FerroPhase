@@ -20,8 +20,8 @@ impl AstToHirLowerer {
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
         self.package.module_tree = hir::resolve::ModuleTree::new();
-        self.pending_impls.clear();
         self.pending_type_aliases.clear();
+        self.pending_impls.clear();
         self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
@@ -66,15 +66,6 @@ impl AstToHirLowerer {
                 prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
-        if std::env::var("FP_DEBUG_PRELUDE").is_ok() {
-            eprintln!(
-                "DEBUG load_default_prelude_defs: package_id={:?} {} type aliases, {} value aliases, has String={}",
-                self.package_id,
-                type_aliases.len(),
-                value_aliases.len(),
-                type_aliases.iter().any(|(name, _)| name == "String"),
-            );
-        }
         let prelude_module = self.package.module_tree.prelude();
         for (name, res) in type_aliases {
             self.package.module_tree.bind(
@@ -506,10 +497,7 @@ impl AstToHirLowerer {
                                     && !is_primitive_type_name(name)
                             })
                             .unwrap_or(false);
-                    if defer {
-                        self.pending_impls
-                            .push((self.module_path.clone(), item.clone()));
-                    } else {
+                    if !defer {
                         self.allocate_def_id_for_item(item);
                         // A self-type can be permanently unresolvable — not a
                         // timing issue an import-order retry would fix, but a
@@ -626,6 +614,23 @@ impl AstToHirLowerer {
                                     method_path.pop();
                                 }
                                 _ => continue,
+                            }
+                        }
+                    } else {
+                        self.pending_impls
+                            .push((self.module_path.clone(), item.clone()));
+                        // Collection still assigns stable identities to the
+                        // impl and its members. Header resolution belongs to
+                        // the later HIR transform, after imports are fixed,
+                        // just as rustc resolves impl headers in its late
+                        // resolver. Do not enqueue or replay the AST item.
+                        self.allocate_def_id_for_item(item);
+                        for impl_item in &impl_block.items {
+                            if matches!(
+                                impl_item.kind(),
+                                ast::ItemKind::DefFunction(_) | ast::ItemKind::DefConst(_)
+                            ) {
+                                self.allocate_def_id_for_item(impl_item);
                             }
                         }
                     }

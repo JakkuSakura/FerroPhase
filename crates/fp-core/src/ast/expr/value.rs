@@ -1377,6 +1377,8 @@ common_struct! {
         pub span: Span,
         pub obj: BExpr,
         pub field: Ident,
+        #[serde(default)]
+        pub generic_args: Vec<Ty>,
         pub select: ExprSelectType,
     }
 }

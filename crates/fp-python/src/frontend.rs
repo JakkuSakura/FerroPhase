@@ -585,6 +585,7 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             span: Span::null(),
             obj: Box::new(lower_expr(&attr.value)?),
             field: Ident::new(attr.attr.as_str()),
+            generic_args: Vec::new(),
             select: ExprSelectType::Field,
         }))),
         PyExpr::Subscript(subscript) => {

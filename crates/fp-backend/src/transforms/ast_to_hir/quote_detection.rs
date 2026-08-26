@@ -90,12 +90,10 @@ pub(super) fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> 
     };
     match name {
         Name::Ident(ident) => Some(ident.name.as_str()),
-        Name::Path(path) if path.prefix == fp_core::ast::path::PathPrefix::Plain => {
+        Name::Path(path) => {
             path.segments.first().map(|seg| seg.name.as_str())
         }
-        Name::ParameterPath(param_path)
-            if param_path.prefix == fp_core::ast::path::PathPrefix::Plain =>
-        {
+        Name::ParameterPath(param_path) => {
             param_path
                 .segments
                 .first()

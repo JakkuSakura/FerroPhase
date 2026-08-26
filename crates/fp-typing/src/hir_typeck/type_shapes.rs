@@ -48,6 +48,25 @@ pub(super) fn ty_contains_param(ty: &Ty) -> bool {
     }
 }
 
+pub(super) fn ty_contains_error(ty: &Ty) -> bool {
+    match &ty.kind {
+        TyKind::Error(_) => true,
+        TyKind::Ref(_, inner, _) => ty_contains_error(inner),
+        TyKind::RawPtr(value) => ty_contains_error(&value.ty),
+        TyKind::Slice(inner) | TyKind::Array(inner, _) => ty_contains_error(inner),
+        TyKind::Tuple(tys) => tys.iter().any(|ty| ty_contains_error(ty)),
+        TyKind::Adt(_, args) => args.iter().any(|arg| match arg {
+            GenericArg::Type(ty) => ty_contains_error(ty),
+            GenericArg::Const(_) | GenericArg::Lifetime(_) => false,
+        }),
+        TyKind::FnPtr(signature) => {
+            signature.binder.value.inputs.iter().any(|ty| ty_contains_error(ty))
+                || ty_contains_error(&signature.binder.value.output)
+        }
+        _ => false,
+    }
+}
+
 /// The same erased shape a plain `str`/string literal already resolves to
 /// (`literal_ty`'s `Lit::Str` arm) — used by literal/union string type
 /// resolution so every one of those erases identically.

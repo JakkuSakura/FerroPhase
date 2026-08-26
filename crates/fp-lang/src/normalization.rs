@@ -433,10 +433,11 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ExprKind::Invoke(ExprInvoke {
                         span: span.unwrap_or_default(),
                         target: ExprInvokeTarget::Method(ExprSelect {
-                            span: span.unwrap_or_default(),
-                            obj: Box::new(args[0].clone()),
-                            field: Ident::new("append"),
-                            select: ExprSelectType::Method,
+                        span: span.unwrap_or_default(),
+                        obj: Box::new(args[0].clone()),
+                        field: Ident::new("append"),
+                        generic_args: Vec::new(),
+                        select: ExprSelectType::Method,
                         }),
                         args: vec![formatted],
                         kwargs: Vec::new(),

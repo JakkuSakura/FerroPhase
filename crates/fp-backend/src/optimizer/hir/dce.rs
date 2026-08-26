@@ -125,7 +125,7 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
             expr_has_unresolved_paths(callee)
                 || args.iter().any(|arg| expr_has_unresolved_paths(&arg.value))
         }
-        hir::ExprKind::MethodCall(receiver, _, args) => {
+        hir::ExprKind::MethodCall(receiver, _, _, args) => {
             expr_has_unresolved_paths(receiver)
                 || args.iter().any(|arg| expr_has_unresolved_paths(&arg.value))
         }
@@ -262,7 +262,7 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
                     .is_some_and(|expr| expr_has_unresolved_paths(expr))
         }
         hir::TypeExprKind::Slice(inner)
-        | hir::TypeExprKind::Ptr(inner)
+        | hir::TypeExprKind::Ptr { inner: inner, .. }
         | hir::TypeExprKind::Ref(inner) => type_has_unresolved_paths(inner),
         hir::TypeExprKind::FnPtr(function) => {
             function
@@ -389,7 +389,7 @@ fn collect_expr_refs(
                 collect_expr_refs(&arg.value, tail_map, work);
             }
         }
-        hir::ExprKind::MethodCall(receiver, _, args) => {
+        hir::ExprKind::MethodCall(receiver, _, _, args) => {
             collect_expr_refs(receiver, tail_map, work);
             for arg in args {
                 collect_expr_refs(&arg.value, tail_map, work);
@@ -542,7 +542,7 @@ fn collect_type_refs(
             }
         }
         hir::TypeExprKind::Slice(inner)
-        | hir::TypeExprKind::Ptr(inner)
+        | hir::TypeExprKind::Ptr { inner: inner, .. }
         | hir::TypeExprKind::Ref(inner) => collect_type_refs(inner, tail_map, work),
         hir::TypeExprKind::FnPtr(function) => {
             for input in &function.inputs {

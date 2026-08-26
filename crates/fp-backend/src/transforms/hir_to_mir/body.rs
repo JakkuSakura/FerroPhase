@@ -183,12 +183,7 @@ impl<'a> BodyBuilder<'a> {
         matches!(expr.kind, hir::ExprKind::Literal(hir::Lit::Null))
     }
 
-    pub(super) fn update_null_tracking(
-        &mut self,
-        place: mir::Place,
-        ty: Option<&Ty>,
-        expr: &hir::Expr,
-    ) {
+    pub(super) fn update_null_tracking(&mut self, place: mir::Place, ty: Option<&Ty>, expr: &hir::Expr) {
         if !place.projection.is_empty() {
             return;
         }
@@ -295,7 +290,7 @@ impl<'a> BodyBuilder<'a> {
             hir::TypeExprKind::Array(item, _) | hir::TypeExprKind::Slice(item) => {
                 Self::type_expr_mentions_self(item)
             }
-            hir::TypeExprKind::Ptr(item) | hir::TypeExprKind::Ref(item) => {
+            hir::TypeExprKind::Ptr { inner: item, .. } | hir::TypeExprKind::Ref(item) => {
                 Self::type_expr_mentions_self(item)
             }
             hir::TypeExprKind::FnPtr(function) => {
@@ -401,10 +396,7 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn struct_def_from_ty_by_name(
-        lowering: &HirToMirLowerer,
-        ty: &Ty,
-    ) -> Option<hir::DefId> {
+    pub(super) fn struct_def_from_ty_by_name(lowering: &HirToMirLowerer, ty: &Ty) -> Option<hir::DefId> {
         lowering
             .mir_package
             .borrow()
@@ -873,7 +865,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     pub(super) fn ensure_terminated(&mut self) {
-        for block in &mut self.blocks {
+        if let Some(block) = self.blocks.last_mut() {
             if block.terminator.is_none() {
                 block.terminator = Some(mir::Terminator {
                     source_info: self.span,
@@ -2041,7 +2033,8 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = generic_def_id {
-            if let Some(function) = self.lowering.generic_function_def(&def_id) {
+            if let Some(function) = self.lowering.generic_function_def(&def_id)
+            {
                 let is_result_ctor = matches!(callee_tail, Some("Ok" | "Err"));
                 if explicit_args.is_empty() {
                     if let Some(inferred) = self.infer_explicit_args_from_expected_return(
@@ -2576,10 +2569,7 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn param_names_from_params(
-        &self,
-        params: &[hir::Param],
-    ) -> Option<Vec<hir::Symbol>> {
+    pub(super) fn param_names_from_params(&self, params: &[hir::Param]) -> Option<Vec<hir::Symbol>> {
         let mut names = Vec::with_capacity(params.len());
         for param in params {
             match &param.pat.kind {
@@ -2879,18 +2869,14 @@ impl<'a> BodyBuilder<'a> {
                 .expect("segments len checked")
                 .name
                 .clone();
-            let method_info = self
+            if let Some(info) = self
                 .lowering
                 .mir_package
                 .borrow()
                 .struct_methods
                 .get(&String::from(struct_name.clone()))
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
-                .cloned();
-            if let Some(info) = method_info {
-                if let Some(def_id) = &info.def_id {
-                    self.lowering.ensure_method_lowered(def_id.clone())?;
-                }
+            {
                 let literal = match info.def_id {
                     Some(ref def_id) => mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
                     None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
@@ -2933,7 +2919,10 @@ impl<'a> BodyBuilder<'a> {
             // existing `current_package_id` guard already handles.
             if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
                 self.lowering.ensure_method_lowered(def_id.clone())?;
-                let literal = mir::ConstantKind::FnDef(def_id.clone(), info.substs.clone());
+                let literal = match info.def_id {
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
+                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
+                };
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
@@ -2980,50 +2969,9 @@ impl<'a> BodyBuilder<'a> {
         }
         self.active_exprs.insert(expr.hir_id.clone());
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id.clone());
-        if let hir::ExprKind::MethodCall(receiver, _method, args) = &expr.kind {
-            if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
-                == Some(IntrinsicKind::Len)
-                && self
-                    .lowering
-                    .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
-                    .is_some()
-                && args.is_empty()
-            {
-                if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
-                    let ty = expected.cloned().unwrap_or_else(|| Ty {
-                        kind: TyKind::Uint(UintTy::Usize),
-                    });
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::Constant(
-                            self.lowering
-                                .const_value_to_constant(expr.span, &value, &ty),
-                        ),
-                        ty,
-                    });
-                }
-            }
-        }
-        if self
-            .lowering
-            .typeck_reflection_field_intrinsic(expr.hir_id.clone())
-            .is_some()
-        {
-            if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
-                let ty = expected.cloned().unwrap_or_else(|| constant.ty.clone());
-                return Ok(OperandInfo {
-                    operand: mir::Operand::Constant(mir::Constant {
-                        ty: ty.clone(),
-                        ..constant
-                    }),
-                    ty,
-                });
-            }
-        }
         if matches!(
             expr.kind,
-            hir::ExprKind::FieldAccess(_, _)
-                | hir::ExprKind::MethodCall(_, _, _)
-                | hir::ExprKind::Cast(_, _)
+            hir::ExprKind::FieldAccess(_, _) | hir::ExprKind::MethodCall(_, _, _, _)
         ) {
             if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
                 let ty = expected
@@ -3185,7 +3133,8 @@ impl<'a> BodyBuilder<'a> {
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if has_explicit_args {
-                        if let Some(function) = self.lowering.generic_function_def(def_id) {
+                        if let Some(function) = self.lowering.generic_function_def(def_id)
+                        {
                             let info = self
                                 .lowering
                                 .ensure_function_specialization_from_explicit_args(
@@ -3209,7 +3158,8 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let Some(expected_sig) = expected_sig.as_ref() {
-                        if let Some(function) = self.lowering.generic_function_def(def_id) {
+                        if let Some(function) = self.lowering.generic_function_def(def_id)
+                        {
                             let expected_has_opaque = expected_sig
                                 .inputs
                                 .iter()
@@ -3256,23 +3206,49 @@ impl<'a> BodyBuilder<'a> {
                             ty: const_info.ty,
                         });
                     }
-                    if let Some(value) = self
+                    if let Some((name, ty)) = self
                         .lowering
-                        .hir_program
-                        .const_value(def_id.clone())
-                        .or_else(|| self.lowering.hir_program.const_block_value(def_id.clone()))
+                        .mir_package
+                        .borrow()
+                        .executable_consts
+                        .get(def_id)
+                        .cloned()
                     {
-                        if let Some(constant) = self
-                            .lowering
-                            .const_block_value_to_mir_constant(&value, expr.span)
-                        {
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                ty: ty.clone(),
+                                user_ty: None,
+                                literal: mir::ConstantKind::Global(mir::Path::from_symbol(
+                                    name.clone(),
+                                )),
+                            }),
+                            ty: ty.clone(),
+                        });
+                    }
+                    let const_def_item =
+                        self.lowering
+                            .hir_item(def_id.clone())
+                            .and_then(|item| match &item.kind {
+                                hir::ItemKind::Const(konst) => Some(konst.clone()),
+                                _ => None,
+                            });
+                    if let Some(konst) = const_def_item {
+                        self.lowering.ensure_item_lowered(def_id.clone())?;
+                        if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                             return Ok(OperandInfo {
-                                ty: constant.ty.clone(),
-                                operand: mir::Operand::Constant(constant),
+                                operand: mir::Operand::Constant(const_info.typed_value()),
+                                ty: const_info.ty.clone(),
                             });
                         }
-                    }
-                    if !self.const_items.contains_key(def_id) {
+                        // `ensure_item_lowered`'s non-foldable fallback
+                        // (a call-shaped initializer) registers this
+                        // const's real global via `executable_consts`,
+                        // not `const_values` — check that too before
+                        // giving up and inlining the body as ordinary
+                        // code, which would silently bypass the real
+                        // global this const's own top-level declaration
+                        // needs to exist as.
                         if let Some((name, ty)) = self
                             .lowering
                             .mir_package
@@ -3293,68 +3269,6 @@ impl<'a> BodyBuilder<'a> {
                                 ty: ty.clone(),
                             });
                         }
-                    }
-                    let const_def_item =
-                        self.lowering
-                            .hir_item(def_id.clone())
-                            .and_then(|item| match &item.kind {
-                                hir::ItemKind::Const(konst) => Some(konst.clone()),
-                                _ => None,
-                            });
-                    if let Some(konst) = const_def_item {
-                        self.lowering.ensure_item_lowered(def_id.clone())?;
-                        if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::Constant(const_info.typed_value()),
-                                ty: const_info.ty.clone(),
-                            });
-                        }
-                        if let Some(value) = self
-                            .lowering
-                            .hir_program
-                            .const_value(def_id.clone())
-                            .or_else(|| self.lowering.hir_program.const_block_value(def_id.clone()))
-                        {
-                            if let Some(constant) = self
-                                .lowering
-                                .const_block_value_to_mir_constant(&value, expr.span)
-                            {
-                                return Ok(OperandInfo {
-                                    ty: constant.ty.clone(),
-                                    operand: mir::Operand::Constant(constant),
-                                });
-                            }
-                        }
-                        // `ensure_item_lowered`'s non-foldable fallback
-                        // (a call-shaped initializer) registers this
-                        // const's real global via `executable_consts`,
-                        // not `const_values` — check that too before
-                        // giving up and inlining the body as ordinary
-                        // code, which would silently bypass the real
-                        // global this const's own top-level declaration
-                        // needs to exist as.
-                        if !self.const_items.contains_key(def_id) {
-                            if let Some((name, ty)) = self
-                                .lowering
-                                .mir_package
-                                .borrow()
-                                .executable_consts
-                                .get(def_id)
-                                .cloned()
-                            {
-                                return Ok(OperandInfo {
-                                    operand: mir::Operand::Constant(mir::Constant {
-                                        span: expr.span,
-                                        ty: ty.clone(),
-                                        user_ty: None,
-                                        literal: mir::ConstantKind::Global(mir::Path::from_symbol(
-                                            name.clone(),
-                                        )),
-                                    }),
-                                    ty: ty.clone(),
-                                });
-                            }
-                        }
                         let ty = self.lower_type_expr(&konst.ty);
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
                         let place = mir::Place::from_local(local_id);
@@ -3368,15 +3282,6 @@ impl<'a> BodyBuilder<'a> {
                         });
                     } else if let Some(konst) = self.const_items.get(def_id).cloned() {
                         let ty = self.lower_type_expr(&konst.ty);
-                        if let Some(constant) = self
-                            .lowering
-                            .lower_const_expr(&konst.body.value, Some(&ty), None)
-                        {
-                            return Ok(OperandInfo {
-                                ty: constant.ty.clone(),
-                                operand: mir::Operand::Constant(constant),
-                            });
-                        }
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
                         let place = mir::Place::from_local(local_id);
                         self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
@@ -3388,7 +3293,8 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if let Some(variant) = self.lowering.enum_variant_def(def_id) {
+                    if let Some(variant) = self.lowering.enum_variant_def(def_id)
+                    {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)
                         });
@@ -3903,7 +3809,36 @@ impl<'a> BodyBuilder<'a> {
                 });
             }
             hir::ExprKind::IntrinsicCall(call) => {
-                let kind = call.kind;
+                // Portable `#[op(...)]` calls with no low-level intrinsic
+                // equivalent (`CallKind::Op` variants that don't map via
+                // `intrinsic_kind()`) haven't been normalized/materialized
+                // away by the time MIR lowering runs -- fail loudly here
+                // rather than silently mis-lowering them, matching the
+                // "unsupported intrinsic" fallback already used below for
+                // intrinsics this function doesn't otherwise handle.
+                let Some(kind) = call.kind.intrinsic_kind() else {
+                    self.lowering.emit_error(
+                        expr.span,
+                        format!(
+                            "portable op {:?} reached MIR operand lowering, which only handles genuine intrinsics",
+                            call.kind
+                        ),
+                    );
+                    let unit_ty = self.lowering.error_ty();
+                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: unit_ty,
+                    });
+                };
                 if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                     self.emit_printf_call(call, expr.span)?;
                     let unit_ty = HirToMirLowerer::unit_ty();
@@ -4483,22 +4418,6 @@ impl<'a> BodyBuilder<'a> {
             // guard's "recursive expression detected" — a false positive
             // that masks the actual failure. Emit that failure directly.
             hir::ExprKind::FieldAccess(_, _) => {
-                if self
-                    .lowering
-                    .typeck_reflection_field_intrinsic_expr(expr)
-                    .is_some()
-                {
-                    if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
-                        let ty = expected.cloned().unwrap_or_else(|| constant.ty.clone());
-                        return Ok(OperandInfo {
-                            operand: mir::Operand::Constant(mir::Constant {
-                                ty: ty.clone(),
-                                ..constant
-                            }),
-                            ty,
-                        });
-                    }
-                }
                 let message = "unable to lower field access to an operand: neither a \
                      constant value nor a real place could be computed for it";
                 self.lowering.emit_error(expr.span, message);
@@ -4938,12 +4857,11 @@ impl<'a> BodyBuilder<'a> {
             expected_return,
             span,
         )?;
-        let literal = mir::ConstantKind::FnDef(def.def_id.clone(), info.substs.clone());
         let func_operand = mir::Operand::Constant(mir::Constant {
             span,
             ty: info.fn_ty.clone(),
             user_ty: None,
-            literal,
+            literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
         });
         let continue_block = self.new_block();
         let terminator = mir::Terminator {

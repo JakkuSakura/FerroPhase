@@ -507,6 +507,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
     let select = ast::ExprSelect {
         obj: expr_index.obj,
         field: ast::Ident::new("get_unchecked"),
+        generic_args: Vec::new(),
         select: ast::ExprSelectType::Method,
         span: Span::null(),
     };

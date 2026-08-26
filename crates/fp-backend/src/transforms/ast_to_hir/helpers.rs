@@ -636,15 +636,6 @@ impl AstToHirLowerer {
                 }
             }
             if let Some(first) = segments.first() {
-                let debug =
-                    std::env::var("FP_DEBUG_ASSOC").is_ok() && first.name.as_str() == "String";
-                if debug {
-                    eprintln!(
-                        "DEBUG assoc-path first={:?} resolve_type_symbol={:?}",
-                        first.name.as_str(),
-                        self.resolve_type_symbol(first.name.as_str())
-                    );
-                }
                 if scope == PathResolutionScope::Value {
                     if let Some(hir::Res::Def(type_def_id)) =
                         self.resolve_type_symbol(first.name.as_str())
@@ -687,11 +678,6 @@ impl AstToHirLowerer {
                             }
                         }
                         type_paths.sort();
-                        if debug {
-                            eprintln!(
-                                "DEBUG assoc-path type_def_id={type_def_id:?} type_paths={type_paths:?}"
-                            );
-                        }
                         for type_path in type_paths {
                             let mut associated_path = Self::parse_path(&type_path)
                                 .map_err(|error| fp_core::Error::from(format!("{error:?}")))?

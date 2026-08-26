@@ -120,10 +120,7 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn lower_place_from_projected(
-        &mut self,
-        expr: &hir::Expr,
-    ) -> Result<Option<PlaceInfo>> {
+    pub(super) fn lower_place_from_projected(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
         let Some(projected) = project_hir_assign_target(expr) else {
             return Ok(None);
         };
@@ -721,8 +718,8 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Match(scrutinee, arms) => {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
-            hir::ExprKind::IntrinsicCall(call) => match call.kind {
-                kind => match kind {
+            hir::ExprKind::IntrinsicCall(call) => match call.kind.intrinsic_kind() {
+                Some(kind) => match kind {
                     IntrinsicKind::Print | IntrinsicKind::Println => {
                         self.emit_printf_call(call, expr.span)?;
                         let statement = mir::Statement {
@@ -964,7 +961,7 @@ impl<'a> BodyBuilder<'a> {
                         self.push_statement(statement);
                     }
                 },
-                _ => {
+                None => {
                     // Portable op with no intrinsic equivalent and no
                     // constant-folding rule -- same "not yet supported"
                     // fallback the wildcard arm above uses for intrinsics
@@ -986,29 +983,7 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(statement);
                 }
             },
-            hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
-                    == Some(IntrinsicKind::Len)
-                    && self
-                        .lowering
-                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
-                        .is_some()
-                    && args.is_empty()
-                {
-                    if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
-                        let constant =
-                            self.lowering
-                                .const_value_to_constant(expr.span, &value, expected_ty);
-                        self.push_statement(mir::Statement {
-                            source_info: expr.span,
-                            kind: mir::StatementKind::Assign(
-                                place.clone(),
-                                mir::Rvalue::Use(mir::Operand::Constant(constant)),
-                            ),
-                        });
-                        return Ok(());
-                    }
-                }
+            hir::ExprKind::MethodCall(receiver, method_name, _, args) => {
                 if let Some(constant) =
                     self.lowering
                         .lower_const_expr(expr, Some(expected_ty), None)
@@ -1022,8 +997,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                     return Ok(());
                 }
-                let mut resolved_info: Option<(hir::DefId, MethodLoweringInfo, Option<PlaceInfo>)> =
-                    None;
+                let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
@@ -1031,7 +1005,7 @@ impl<'a> BodyBuilder<'a> {
                     // shape as `compute_adt_layout` — see `resolve_callee_path`'s
                     // matching comment.
                     if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
-                        resolved_info = Some((def_id.clone(), info, None));
+                        resolved_info = Some((info, None));
                         // Signature presence doesn't imply the body's been
                         // lowered yet — ensure it now.
                         self.lowering.ensure_method_lowered(def_id)?;
@@ -1057,94 +1031,57 @@ impl<'a> BodyBuilder<'a> {
                 // the receiver's own slice-shaped place, reusing the same
                 // `lower_slice_len_place`/`lower_slice_ptr_place` helpers
                 // the hand-written env/fs intrinsics already use.
-                if self
-                    .lowering
-                    .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
-                    .is_none()
-                {
-                    if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
-                        == Some(IntrinsicKind::Len)
-                    {
-                        let is_len = true;
-                        if let Some(receiver_place) = self.lower_place(receiver)? {
-                            let mut base_ty = receiver_place.ty.clone();
-                            let mut base_place = receiver_place.place.clone();
-                            loop {
-                                match &base_ty.kind {
-                                    TyKind::Ref(_, inner, _) => {
-                                        base_place.projection.push(mir::PlaceElem::Deref);
-                                        base_ty = inner.as_ref().clone();
-                                    }
-                                    TyKind::RawPtr(type_and_mut) => {
-                                        base_place.projection.push(mir::PlaceElem::Deref);
-                                        base_ty = type_and_mut.ty.as_ref().clone();
-                                    }
-                                    _ => break,
+                let str_intrinsic_name = |name: &str| -> Option<bool> {
+                    if name == "len" || name.ends_with("::len") {
+                        Some(true)
+                    } else if name == "as_ptr" || name.ends_with("::as_ptr") {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(is_len) = str_intrinsic_name(method_name.as_str()) {
+                    if let Some(receiver_place) = self.lower_place(receiver)? {
+                        let mut base_ty = receiver_place.ty.clone();
+                        let mut base_place = receiver_place.place.clone();
+                        loop {
+                            match &base_ty.kind {
+                                TyKind::Ref(_, inner, _) => {
+                                    base_place.projection.push(mir::PlaceElem::Deref);
+                                    base_ty = inner.as_ref().clone();
                                 }
-                            }
-                            if let TyKind::Slice(_) = &base_ty.kind {
-                                let (field_place, declared_ty) = if is_len {
-                                    (
-                                        self.lower_slice_len_place(base_place),
-                                        Ty {
-                                            kind: TyKind::Uint(UintTy::Usize),
-                                        },
-                                    )
-                                } else {
-                                    (
-                                        self.lower_slice_ptr_place(base_place),
-                                        self.lowering.raw_string_ptr_ty(),
-                                    )
-                                };
-                                if (place.local as usize) < self.locals.len() {
-                                    self.locals[place.local as usize].ty = declared_ty;
+                                TyKind::RawPtr(type_and_mut) => {
+                                    base_place.projection.push(mir::PlaceElem::Deref);
+                                    base_ty = type_and_mut.ty.as_ref().clone();
                                 }
-                                self.push_statement(mir::Statement {
-                                    source_info: expr.span,
-                                    kind: mir::StatementKind::Assign(
-                                        place,
-                                        mir::Rvalue::Use(mir::Operand::copy(field_place)),
-                                    ),
-                                });
-                                return Ok(());
+                                _ => break,
                             }
                         }
-                        if (method_name.as_str() == "as_ptr"
-                            || method_name.as_str().ends_with("::as_ptr"))
-                            && args.is_empty()
-                        {
-                            if let Some(receiver_place) = self.lower_place(receiver)? {
-                                let mut base_ty = receiver_place.ty.clone();
-                                let mut base_place = receiver_place.place.clone();
-                                loop {
-                                    match &base_ty.kind {
-                                        TyKind::Ref(_, inner, _) => {
-                                            base_place.projection.push(mir::PlaceElem::Deref);
-                                            base_ty = inner.as_ref().clone();
-                                        }
-                                        TyKind::RawPtr(type_and_mut) => {
-                                            base_place.projection.push(mir::PlaceElem::Deref);
-                                            base_ty = type_and_mut.ty.as_ref().clone();
-                                        }
-                                        _ => break,
-                                    }
-                                }
-                                if matches!(&base_ty.kind, TyKind::Slice(_)) {
-                                    let ptr_place = self.lower_slice_ptr_place(base_place);
-                                    let ptr_ty = self.lowering.raw_string_ptr_ty();
-                                    if (place.local as usize) < self.locals.len() {
-                                        self.locals[place.local as usize].ty = ptr_ty.clone();
-                                    }
-                                    self.push_statement(mir::Statement {
-                                        source_info: expr.span,
-                                        kind: mir::StatementKind::Assign(
-                                            place,
-                                            mir::Rvalue::Use(mir::Operand::copy(ptr_place)),
-                                        ),
-                                    });
-                                    return Ok(());
-                                }
+                        if let TyKind::Slice(_) = &base_ty.kind {
+                            let (field_place, declared_ty) = if is_len {
+                                (
+                                    self.lower_slice_len_place(base_place),
+                                    Ty {
+                                        kind: TyKind::Uint(UintTy::Usize),
+                                    },
+                                )
+                            } else {
+                                (
+                                    self.lower_slice_ptr_place(base_place),
+                                    self.lowering.raw_string_ptr_ty(),
+                                )
+                            };
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = declared_ty;
                             }
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::Use(mir::Operand::copy(field_place)),
+                                ),
+                            });
+                            return Ok(());
                         }
                     }
                 }
@@ -1534,7 +1471,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if let Some((def_id, info, _cached_place)) = resolved_info {
+                if let Some((info, _cached_place)) = resolved_info {
                     let receiver_expected = info.sig.inputs.get(0);
                     let receiver_operand = self.lower_operand(receiver, receiver_expected)?;
 
@@ -1546,7 +1483,10 @@ impl<'a> BodyBuilder<'a> {
                         lowered_args.push(operand.operand);
                     }
 
-                    let literal = mir::ConstantKind::FnDef(def_id, info.substs.clone());
+                    let literal = match info.def_id {
+                        Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
+                        None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
+                    };
                     let func_operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
                         ty: info.fn_ty.clone(),
@@ -1587,7 +1527,8 @@ impl<'a> BodyBuilder<'a> {
                         .struct_def
                         .or_else(|| self.struct_def_from_ty(&place_info.ty))
                     {
-                        if self.lowering.struct_def(&def_id).is_some() {
+                        if self.lowering.struct_def(&def_id).is_some()
+                        {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
@@ -1600,9 +1541,6 @@ impl<'a> BodyBuilder<'a> {
                                         .cloned()
                                 });
                             if let Some(def) = method_def {
-                                if def.function.sig.generics.params.is_empty() {
-                                    self.lowering.ensure_method_lowered(def.def_id.clone())?;
-                                }
                                 let method_ctx = self
                                     .lowering
                                     .make_method_context(&def.self_ty, &def.assoc_types);
@@ -1654,15 +1592,13 @@ impl<'a> BodyBuilder<'a> {
                                     expr.span,
                                 )?;
 
-                                let literal = mir::ConstantKind::FnDef(
-                                    def.def_id.clone(),
-                                    info.substs.clone(),
-                                );
                                 let func_operand = mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal,
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.fn_name.clone(),
+                                    )),
                                 });
 
                                 let continue_block = self.new_block();
@@ -1695,7 +1631,8 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if self.lowering.has_enum_def(&enum_def) {
+                        if self.lowering.has_enum_def(&enum_def)
+                        {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
@@ -1759,15 +1696,13 @@ impl<'a> BodyBuilder<'a> {
                                     expr.span,
                                 )?;
 
-                                let literal = mir::ConstantKind::FnDef(
-                                    def.def_id.clone(),
-                                    info.substs.clone(),
-                                );
                                 let func_operand = mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal,
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                        info.fn_name.clone(),
+                                    )),
                                 });
 
                                 let continue_block = self.new_block();
@@ -1838,35 +1773,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if self.lowering.typeck_method_intrinsic(expr.hir_id.clone())
-                    == Some(IntrinsicKind::Len)
-                    && args.is_empty()
-                {
-                    if self
-                        .lowering
-                        .typeck_reflection_field_intrinsic(receiver.hir_id.clone())
-                        .is_some()
-                    {
-                        if let Some(value) = self.lowering.lower_reflection_fields_len(receiver) {
-                            let len_ty = Ty {
-                                kind: TyKind::Uint(UintTy::Usize),
-                            };
-                            if (place.local as usize) < self.locals.len() {
-                                self.locals[place.local as usize].ty = len_ty.clone();
-                            }
-                            self.push_statement(mir::Statement {
-                                source_info: expr.span,
-                                kind: mir::StatementKind::Assign(
-                                    place.clone(),
-                                    mir::Rvalue::Use(mir::Operand::Constant(
-                                        self.lowering
-                                            .const_value_to_constant(expr.span, &value, &len_ty),
-                                    )),
-                                ),
-                            });
-                            return Ok(());
-                        }
-                    }
+                if method_name.as_str() == "len" && args.is_empty() {
                     if let Some(constant) = self.lowering.lower_const_expr(receiver, None, None) {
                         if let Some(len) = self.lowering.const_len_from_constant(&constant) {
                             let len_ty = Ty {
@@ -2131,112 +2038,6 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
 
-                if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
-                    let method_def = self
-                        .lowering
-                        .mir_package
-                        .borrow()
-                        .method_defs_by_def
-                        .get(&def_id)
-                        .cloned();
-                    if let Some(def) = method_def {
-                        if let Some(struct_def_id) = def.self_def.clone() {
-                            let extra_args: Vec<&hir::Expr> =
-                                args.iter().map(|arg| &arg.value).collect();
-                            self.call_real_method_into_place(
-                                struct_def_id,
-                                method_name,
-                                receiver,
-                                &extra_args,
-                                place,
-                                Some(expected_ty),
-                                expr.span,
-                            )?;
-                            return Ok(());
-                        }
-                    }
-                }
-
-                if let Ok(Some(receiver_info)) = self.lower_place(receiver) {
-                    if let Some(struct_def_id) = receiver_info
-                        .struct_def
-                        .or_else(|| self.struct_def_from_ty(&receiver_info.ty))
-                    {
-                        let has_method = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .method_defs_by_self_and_name
-                            .contains_key(&(struct_def_id.clone(), method_name.to_string()));
-                        if has_method {
-                            let extra_args: Vec<&hir::Expr> =
-                                args.iter().map(|arg| &arg.value).collect();
-                            self.call_real_method_into_place(
-                                struct_def_id,
-                                method_name,
-                                receiver,
-                                &extra_args,
-                                place,
-                                Some(expected_ty),
-                                expr.span,
-                            )?;
-                            return Ok(());
-                        }
-                    }
-                }
-
-                let unique_method = {
-                    let package = self.lowering.mir_package.borrow();
-                    let mut matches = package.method_defs_by_def.values().filter(|def| {
-                        def.method_name == method_name.as_str() && def.self_def.is_some()
-                    });
-                    let first = matches.next().cloned();
-                    if matches.next().is_none() {
-                        first
-                    } else {
-                        None
-                    }
-                };
-                let typed_method = self
-                    .lowering
-                    .typeck_expr_type(receiver.hir_id.clone())
-                    .and_then(|ty| self.struct_def_from_ty(&ty))
-                    .and_then(|struct_def_id| {
-                        let package = self.lowering.mir_package.borrow();
-                        package
-                            .method_defs_by_self_and_name
-                            .get(&(struct_def_id, method_name.to_string()))
-                            .and_then(|def_id| package.method_defs_by_def.get(def_id))
-                            .cloned()
-                    });
-                let local_method = self
-                    .local_id_from_expr(receiver)
-                    .and_then(|local_id| self.local_structs.get(&local_id).cloned())
-                    .and_then(|struct_def_id| {
-                        let package = self.lowering.mir_package.borrow();
-                        package
-                            .method_defs_by_self_and_name
-                            .get(&(struct_def_id, method_name.to_string()))
-                            .and_then(|def_id| package.method_defs_by_def.get(def_id))
-                            .cloned()
-                    });
-                let unique_method = local_method.or(typed_method).or(unique_method);
-                let method_def_id = unique_method
-                    .as_ref()
-                    .map(|def| def.def_id.clone())
-                    .or_else(|| {
-                        let package = self.lowering.mir_package.borrow();
-                        let mut matches = package
-                            .method_lookup_by_def
-                            .iter()
-                            .filter(|(_, info)| info.fn_name == method_name.as_str());
-                        let first = matches.next().map(|(def_id, _)| def_id.clone());
-                        if matches.next().is_none() {
-                            first
-                        } else {
-                            None
-                        }
-                    });
                 let receiver_operand = self.lower_operand(receiver, None)?;
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
                 let mut input_tys = Vec::with_capacity(args.len() + 1);
@@ -2306,14 +2107,11 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                let literal = method_def_id
-                    .map(|def_id| mir::ConstantKind::FnDef(def_id, Vec::new()))
-                    .unwrap_or_else(|| mir::ConstantKind::Fn(Symbol::new(method_name.clone())));
                 let func_operand = mir::Operand::Constant(mir::Constant {
                     span: expr.span,
                     ty: self.lowering.function_pointer_ty(&sanitized_sig),
                     user_ty: None,
-                    literal,
+                    literal: mir::ConstantKind::Fn(Symbol::new(method_name.clone())),
                 });
 
                 let continue_block = self.new_block();

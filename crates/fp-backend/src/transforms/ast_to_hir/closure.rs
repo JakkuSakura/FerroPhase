@@ -1271,6 +1271,7 @@ impl CaptureReplacer {
                                 span: fp_core::span::Span::null(),
                                 obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                 field: ident.clone(),
+                                generic_args: Vec::new(),
                                 select: ast::ExprSelectType::Field,
                             }));
                         expr_struct.id = expr.id();
@@ -1345,6 +1346,7 @@ impl CaptureReplacer {
                                         span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                         field: ident.clone(),
+                                        generic_args: Vec::new(),
                                         select: ast::ExprSelectType::Field,
                                     }));
                                 fp_core::ast::set_resolved_expr_type(

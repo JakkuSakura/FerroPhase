@@ -86,7 +86,7 @@ impl HirToMirLowerer {
                     ),
                 }
             }
-            hir::TypeExprKind::Ptr(inner) => {
+            hir::TypeExprKind::Ptr { inner: inner, .. } => {
                 let inner_ty = self.lower_type_expr_with_context(inner, method_context);
                 Ty {
                     kind: TyKind::RawPtr(TypeAndMut {
@@ -361,7 +361,7 @@ impl HirToMirLowerer {
                     kind: TyKind::Slice(Box::new(elem_ty)),
                 }
             }
-            hir::TypeExprKind::Ptr(inner) => {
+            hir::TypeExprKind::Ptr { inner: inner, .. } => {
                 let inner_ty = self.lower_type_expr(inner);
                 Ty {
                     kind: TyKind::RawPtr(TypeAndMut {
@@ -832,7 +832,7 @@ impl HirToMirLowerer {
             (hir::TypeExprKind::Slice(a_elem), hir::TypeExprKind::Slice(b_elem)) => {
                 self.type_exprs_equivalent(a_elem, b_elem)
             }
-            (hir::TypeExprKind::Ptr(a), hir::TypeExprKind::Ptr(b)) => {
+            (hir::TypeExprKind::Ptr { inner: a, .. }, hir::TypeExprKind::Ptr { inner: b, .. }) => {
                 self.type_exprs_equivalent(a, b)
             }
             (hir::TypeExprKind::Ref(a), hir::TypeExprKind::Ref(b)) => {

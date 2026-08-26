@@ -749,11 +749,15 @@ impl AstToHirLowerer {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
                 if let Some(mut segments) = self.path_segments_from_expr(&select.obj) {
-                    let primitive_base = segments
-                        .iter()
-                        .rev()
-                        .find(|segment| is_primitive_type_name(segment.as_str()));
-                    if primitive_base.is_some() {
+                    let base_name = ast::Name::Path(ast::Path::plain(segments.clone()));
+                    let base_path =
+                        self.name_to_hir_path_with_scope(&base_name, PathResolutionScope::Type)?;
+                    if matches!(
+                        base_path.res,
+                        Some(hir::Res::Def(_))
+                            | Some(hir::Res::Builtin(_))
+                            | Some(hir::Res::SelfTy)
+                    ) {
                         segments.push(select.field.clone());
                         let name = ast::Name::Path(ast::Path::plain(segments));
                         let path =
@@ -768,10 +772,25 @@ impl AstToHirLowerer {
                     }
                 }
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
+                let generic_args = if select.generic_args.is_empty() {
+                    None
+                } else {
+                    Some(hir::GenericArgs {
+                        args: select
+                            .generic_args
+                            .iter()
+                            .map(|ty| {
+                                self.transform_type_to_hir(ty)
+                                    .map(|ty| hir::GenericArg::Type(Box::new(ty)))
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    })
+                };
                 let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(
                     Box::new(receiver),
                     select.field.clone().into(),
+                    generic_args,
                     args,
                 ))
             }

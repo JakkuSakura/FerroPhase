@@ -567,7 +567,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .join(", ");
             format!("{}({})", format_expr_inline(callee, ctx), args)
         }
-        ExprKind::MethodCall(receiver, name, args) => {
+        ExprKind::MethodCall(receiver, name, _, args) => {
             let args = args
                 .iter()
                 .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
@@ -959,7 +959,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             format!("[{}; {}]", fmt_type_expr(elem, ctx), len_str)
         }
         TypeExprKind::Slice(elem) => format!("[{}]", fmt_type_expr(elem, ctx)),
-        TypeExprKind::Ptr(inner) => format!("*{}", fmt_type_expr(inner, ctx)),
+        TypeExprKind::Ptr { inner, mutable } => format!("*{}{}", if *mutable { "mut " } else { "const " }, fmt_type_expr(inner, ctx)),
         TypeExprKind::Ref(inner) => format!("&{}", fmt_type_expr(inner, ctx)),
         TypeExprKind::FnPtr(fn_ptr) => {
             let inputs = fn_ptr

@@ -1,7 +1,8 @@
 use super::*;
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
-    AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, Name, PatternKind,
+    AttrMeta, AttrStyle, BlockStmt, ExprInvokeTarget, ExprKind, ItemKind, MacroDelimiter, Name,
+    PatternKind,
     QuoteItemKind, Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
@@ -1574,7 +1575,14 @@ fn parse_expr_ast_handles_raw_ref_identifier_binding() {
 fn parse_expr_ast_supports_turbofish_method_call() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-    parser.parse_expr_ast("ap.arg::<u64>()").unwrap();
+    let expr = parser.parse_expr_ast("ap.arg::<u64>()").unwrap();
+    let ExprKind::Invoke(invoke) = expr.kind() else {
+        panic!("expected invocation, got {:?}", expr.kind());
+    };
+    let ExprInvokeTarget::Method(select) = &invoke.target else {
+        panic!("expected method invocation, got {:?}", invoke.target);
+    };
+    assert_eq!(select.generic_args.len(), 1);
 }
 
 #[test]
