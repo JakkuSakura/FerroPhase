@@ -1129,6 +1129,49 @@ fn indexes_function_local_trait_impl_by_local_type() -> Result<()> {
 }
 
 #[test]
+fn resolves_local_struct_constructor_inside_impl_method() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "struct Box; impl<'a> From<String> for Box { fn from(err: String) { struct StringError(String); impl From<String> for StringError { fn from(value: String) {} } let value = StringError(err); } }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let package = generator.transform_package(&package)?;
+    let string_error = package
+        .def_map
+        .values()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "StringError" => {
+                Some(item.def_id.clone())
+            }
+            _ => None,
+        })
+        .expect("materialized local struct");
+    let method = package.items.iter().find_map(|item| match &item.kind {
+        hir::ItemKind::Impl(impl_def) => impl_def.items.iter().find_map(|item| match &item.kind {
+            hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "from" => {
+                Some(function)
+            }
+            _ => None,
+        }),
+        _ => None,
+    }).expect("lowered impl method");
+    let body = method.body.as_ref().expect("method body");
+    let local = body.stmts.iter().find_map(|stmt| {
+        let hir::StmtKind::Local(local) = &stmt.kind else { return None };
+        let init = local.init.as_ref()?;
+        let hir::ExprKind::Call(callee, _) = &init.kind else { return None };
+        let hir::ExprKind::Path(path) = &callee.kind else { return None };
+        (path.res == Some(hir::Res::Def(string_error.clone()))).then_some(local)
+    }).expect("local constructor call");
+    assert!(local.init.is_some());
+    Ok(())
+}
+
+#[test]
 fn transform_type_relative_call_without_a_method_receiver() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let items = parser
