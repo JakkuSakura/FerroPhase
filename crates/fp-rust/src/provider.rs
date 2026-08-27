@@ -80,11 +80,19 @@ impl RustPackageProvider {
         // specifically for real Rust/Cargo projects, so `Cargo.toml` is
         // authoritative here even if a stale/unrelated `Magnet.toml` also
         // exists at the same root — see that function's doc comment.
-        let members = project::find_manifest(&root)
-            .map(|manifest_root| project::list_cargo_members(&manifest_root))
+        let members = cargo_workspace_root(&root)
+            .map(|workspace_root| project::list_cargo_members(&workspace_root))
             .unwrap_or_default()
             .into_iter()
-            .map(|(name, dir)| (name, MemberRoot::Dir(dir)))
+            .map(|(name, dir)| {
+                // Cargo identifies a package by `[package].name`, not by the
+                // directory containing its manifest.  Workspace members are
+                // commonly named alike, but path dependencies are allowed to
+                // point at a differently named package (and can also be
+                // renamed in the dependency table).
+                let package_name = cargo_package_name(&dir).unwrap_or(name);
+                (package_name, MemberRoot::Dir(dir))
+            })
             .collect();
         Self {
             members,
@@ -283,10 +291,6 @@ fn workspace_path_dependencies(
     let Ok(manifest) = content.parse::<toml::Value>() else {
         return Vec::new();
     };
-    let Some(dependencies) = manifest.get("dependencies").and_then(|v| v.as_table()) else {
-        return Vec::new();
-    };
-
     let canonical_members: Vec<(String, PathBuf)> = members
         .iter()
         .map(|(name, root)| {
@@ -298,9 +302,16 @@ fn workspace_path_dependencies(
         })
         .collect();
 
-    dependencies
-        .iter()
-        .filter_map(|(dep_name, spec)| {
+    let mut result = Vec::new();
+    for (table_name, kind) in [
+        ("dependencies", DependencyKind::Normal),
+        ("dev-dependencies", DependencyKind::Development),
+        ("build-dependencies", DependencyKind::Build),
+    ] {
+        let Some(dependencies) = manifest.get(table_name).and_then(|v| v.as_table()) else {
+            continue;
+        };
+        result.extend(dependencies.iter().filter_map(|(dep_name, spec)| {
             let relative_path = spec.get("path")?.as_str()?;
             let absolute_path = package_dir.join(relative_path);
             let canonical_path = std::fs::canonicalize(&absolute_path).unwrap_or(absolute_path);
@@ -311,13 +322,87 @@ fn workspace_path_dependencies(
                 package: dep_name.clone(),
                 resolved_package_id: Some(PackageId::new(member_name)),
                 constraint: None,
-                kind: DependencyKind::Normal,
+                kind: kind.clone(),
                 features: Vec::new(),
-                optional: false,
+                optional: spec
+                    .get("optional")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false),
                 target: Default::default(),
             })
-        })
-        .collect()
+        }));
+    }
+    result
+}
+
+fn cargo_package_name(package_dir: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(package_dir.join("Cargo.toml")).ok()?;
+    let manifest = content.parse::<toml::Value>().ok()?;
+    manifest
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
+}
+
+/// Find the Cargo workspace containing the package selected by `root`.
+///
+/// `project::find_manifest` intentionally returns the nearest manifest. That
+/// is the package manifest when the provider is created for a workspace
+/// member, but the provider needs the enclosing workspace manifest to expose
+/// sibling packages as dependencies. Only an ancestor with an explicit
+/// `[workspace].members` entry resolving back to the selected package is
+/// accepted, so an unrelated parent Cargo project cannot capture a standalone
+/// package by accident.
+fn cargo_workspace_root(root: &Path) -> Option<PathBuf> {
+    let package_root = nearest_cargo_root(root)?;
+    let package_root = std::fs::canonicalize(&package_root).unwrap_or(package_root);
+    if cargo_manifest_has_workspace(&package_root) {
+        return Some(package_root);
+    }
+    let mut candidate = package_root.as_path();
+
+    loop {
+        if candidate.join("Cargo.toml").is_file()
+            && cargo_manifest_has_workspace(candidate)
+            && project::list_cargo_members(candidate)
+                .into_iter()
+                .any(|(_, member)| same_path(&member, &package_root))
+        {
+            return Some(candidate.to_path_buf());
+        }
+
+        candidate = candidate.parent()?;
+    }
+}
+
+fn nearest_cargo_root(root: &Path) -> Option<PathBuf> {
+    let mut current = if root.is_dir() {
+        root.to_path_buf()
+    } else {
+        root.parent()?.to_path_buf()
+    };
+
+    loop {
+        if current.join("Cargo.toml").is_file() {
+            return Some(current);
+        }
+        current = current.parent()?.to_path_buf();
+    }
+}
+
+fn cargo_manifest_has_workspace(root: &Path) -> bool {
+    std::fs::read_to_string(root.join("Cargo.toml"))
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .and_then(|manifest| manifest.get("workspace").cloned())
+        .is_some()
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    left == right
 }
 
 /// Computes the flat, file-derived `PackageItem` path tag for a source file
@@ -1105,6 +1190,15 @@ fn fp_relative_to_module_segments(package_name: &str, relative: &str) -> Vec<Str
 mod provider_tests {
     use super::*;
 
+    fn repository_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .expect("fp-rust is nested below the repository root")
+            .to_path_buf()
+    }
+
     #[test]
     fn rust_sysroot_packages_report_direct_dependencies() {
         let provider = RustStdProvider;
@@ -1135,6 +1229,115 @@ mod provider_tests {
                 .collect();
             assert_eq!(actual, dependencies);
         }
+    }
+
+    #[test]
+    fn workspace_path_dependency_uses_cargo_package_id_and_root() {
+        let root = repository_root();
+        let provider = RustPackageProvider::new(root.clone());
+
+        let package_ids = provider.list_packages().unwrap();
+        assert!(package_ids.iter().any(|id| id.as_str() == "skln-git"));
+        assert!(package_ids.iter().any(|id| id.as_str() == "skln-core"));
+
+        let git = provider
+            .load_package_metadata(&PackageId::new("skln-git"))
+            .unwrap();
+        let dependency = git
+            .metadata
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.package == "skln-core")
+            .expect("skln-git should expose its path dependency");
+        assert_eq!(
+            dependency.resolved_package_id,
+            Some(PackageId::new("skln-core"))
+        );
+        assert_eq!(dependency.kind, DependencyKind::Normal);
+
+        let core = provider
+            .load_package_metadata(&PackageId::new("skln-core"))
+            .unwrap();
+        assert_eq!(
+            core.root.to_path_buf(),
+            root.join("crates/skln-core").canonicalize().unwrap()
+        );
+        assert_eq!(
+            core.manifest_path.to_path_buf(),
+            root.join("crates/skln-core/Cargo.toml")
+                .canonicalize()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn member_directory_discovers_sibling_workspace_packages() {
+        let workspace = repository_root();
+        let member = workspace.join("crates/skln-git");
+        let provider = RustPackageProvider::new(member);
+        let package_ids = provider.list_packages().unwrap();
+
+        assert!(package_ids.iter().any(|id| id.as_str() == "skln-git"));
+        assert!(package_ids.iter().any(|id| id.as_str() == "skln-core"));
+    }
+
+    #[test]
+    fn workspace_path_dependency_uses_declared_package_name() {
+        let root = std::env::temp_dir().join(format!(
+            "fp-rust-provider-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let consumer = root.join("consumer");
+        let renamed_dir = root.join("renamed-dir");
+        std::fs::create_dir_all(consumer.join("src")).unwrap();
+        std::fs::create_dir_all(renamed_dir.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"consumer\", \"renamed-dir\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            consumer.join("Cargo.toml"),
+            "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nrenamed = { package = \"actual-core\", path = \"../renamed-dir\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            renamed_dir.join("Cargo.toml"),
+            "[package]\nname = \"actual-core\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let provider = RustPackageProvider::new(root.clone());
+        let package_ids = provider.list_packages().unwrap();
+        assert!(package_ids.iter().any(|id| id.as_str() == "actual-core"));
+        assert!(!package_ids.iter().any(|id| id.as_str() == "renamed-dir"));
+
+        let consumer_metadata = provider
+            .load_package_metadata(&PackageId::new("consumer"))
+            .unwrap();
+        let dependency = consumer_metadata
+            .metadata
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.package == "renamed")
+            .expect("the dependency alias should be retained");
+        assert_eq!(
+            dependency.resolved_package_id,
+            Some(PackageId::new("actual-core"))
+        );
+
+        let actual_metadata = provider
+            .load_package_metadata(&PackageId::new("actual-core"))
+            .unwrap();
+        assert_eq!(
+            actual_metadata.root.to_path_buf().canonicalize().unwrap(),
+            renamed_dir.canonicalize().unwrap()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
