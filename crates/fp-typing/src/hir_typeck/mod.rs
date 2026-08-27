@@ -115,6 +115,7 @@ pub struct HirTypeChecker {
     /// <Item = T>`) instead of only ever resolving `T::AssocName` once `T`
     /// is a concrete type.
     generic_param_bounds: HashMap<hir::Symbol, Vec<hir::TypeExpr>>,
+    projection_param_bounds: HashMap<ty::ParamTy, Vec<hir::TypeExpr>>,
     /// Each in-scope generic parameter's own explicit associated-type
     /// bindings (`I: Iterator<Item = U>` binds `Item` to `U`), keyed and
     /// merged identically to `generic_param_bounds` — see
@@ -196,6 +197,7 @@ impl HirTypeChecker {
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
             generic_param_bounds: HashMap::new(),
+            projection_param_bounds: HashMap::new(),
             generic_param_bindings: HashMap::new(),
             self_type: None,
             assoc_types: None,
@@ -223,6 +225,7 @@ impl HirTypeChecker {
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
             generic_param_bounds: HashMap::new(),
+            projection_param_bounds: HashMap::new(),
             generic_param_bindings: HashMap::new(),
             self_type: None,
             assoc_types: None,
@@ -753,6 +756,10 @@ impl HirTypeChecker {
     /// doc comment for why this is name-keyed rather than `DefId`-keyed.
     fn generic_param_bounds(&self, name: &hir::Symbol) -> Option<&[hir::TypeExpr]> {
         self.generic_param_bounds.get(name).map(Vec::as_slice)
+    }
+
+    fn projection_param_bounds(&self, param: &ty::ParamTy) -> Option<&[hir::TypeExpr]> {
+        self.projection_param_bounds.get(param).map(Vec::as_slice)
     }
 
     /// The explicit associated-type bindings for a still-generic type
@@ -2376,8 +2383,11 @@ impl HirTypeChecker {
                         }),
                     };
                     if !assoc_type.bounds.is_empty() {
-                        self.generic_param_bounds
-                            .entry(name)
+                        self.projection_param_bounds
+                            .entry(ty::ParamTy {
+                                index: u32::MAX,
+                                name: name.clone(),
+                            })
                             .or_default()
                             .extend(assoc_type.bounds);
                     }
@@ -4139,7 +4149,15 @@ impl HirTypeChecker {
         param_name: &hir::Symbol,
         method_name: &hir::Symbol,
     ) -> Result<Option<Ty>> {
-        let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
+        let projection_param = ty::ParamTy {
+            index: u32::MAX,
+            name: param_name.clone(),
+        };
+        let bounds = self
+            .projection_param_bounds(&projection_param)
+            .or_else(|| self.generic_param_bounds(param_name))
+            .map(<[_]>::to_vec);
+        let Some(bounds) = bounds else {
             return Ok(None);
         };
         let param_ty = Ty {
@@ -4487,7 +4505,11 @@ impl HirTypeChecker {
         // resolved method's own `DefId` and its instantiated generic
         // args/output against `actuals`, not just the bare signature.
         if let TyKind::Param(param) = &receiver_ty.kind {
-            let Some(bounds) = self.generic_param_bounds(&param.name).map(<[_]>::to_vec) else {
+            let bounds = self
+                .projection_param_bounds(param)
+                .or_else(|| self.generic_param_bounds(&param.name))
+                .map(<[_]>::to_vec);
+            let Some(bounds) = bounds else {
                 return Ok(None);
             };
             let mut flattened = Vec::new();
@@ -5103,13 +5125,11 @@ impl HirTypeChecker {
             let mut scope = self.with_generics(&def.generics);
             let payload_result = scope.check_type_expr(payload).await;
             let payload = payload_result?;
-            for (name, bounds) in &scope.generic_param_bounds {
-                if name.as_str().starts_with('<') {
-                    self.generic_param_bounds
-                        .entry(name.clone())
-                        .or_default()
-                        .extend(bounds.clone());
-                }
+            for (param, bounds) in &scope.projection_param_bounds {
+                self.projection_param_bounds
+                    .entry(param.clone())
+                    .or_default()
+                    .extend(bounds.clone());
             }
             let payload = scope.substitute_params(payload, scrutinee_args, &def.generics.params);
             drop(scope);
