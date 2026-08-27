@@ -527,7 +527,7 @@ pub(super) fn lower_const_field_access(
     let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
         return None;
     };
-    if call.kind.intrinsic_kind() != Some(IntrinsicKind::TypeOf) || call.callargs.len() != 1 {
+    if call.kind != IntrinsicKind::TypeOf || call.callargs.len() != 1 {
         return None;
     }
     let type_arg = &call.callargs[0].value;

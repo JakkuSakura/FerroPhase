@@ -1520,6 +1520,8 @@ impl AstToHirLowerer {
                         },
                         ty: self_ty.clone(),
                         is_context: false,
+                        as_tuple: false,
+                        as_dict: false,
                         default: None,
                     };
                     let method = hir::Function::new(

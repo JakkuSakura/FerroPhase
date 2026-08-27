@@ -2070,7 +2070,7 @@ impl HirTypeChecker {
                     }
                 }
                 hir::ExprKind::Query(_) => self.error_ty("query typing is not implemented"),
-                hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call).await?,
+                hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call, expr.span).await?,
                 hir::ExprKind::FormatString(format) => {
                     for part in &format.parts {
                         if let hir::FormatTemplatePart::Placeholder(placeholder) = part {
@@ -3273,6 +3273,30 @@ impl HirTypeChecker {
                     },
                 },
                 args,
+            ),
+        })
+    }
+
+    fn well_known_enum_ty(&self, name: &str) -> Option<Ty> {
+        let program = self.program_rc();
+        let item = program.all_items().find(
+            |item| matches!(&item.kind, hir::ItemKind::Enum(def) if def.name.as_str() == name),
+        )?;
+        Some(Ty {
+            kind: TyKind::Adt(
+                AdtDef {
+                    did: item.def_id.clone(),
+                    variants: Vec::new(),
+                    flags: AdtFlags::IS_ENUM,
+                    repr: ReprOptions {
+                        int: None,
+                        align: None,
+                        pack: None,
+                        flags: ReprFlags::empty(),
+                        field_shuffle_seed: 0,
+                    },
+                },
+                Vec::new(),
             ),
         })
     }

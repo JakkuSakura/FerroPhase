@@ -329,6 +329,8 @@ impl AstToHirLowerer {
                                     span,
                                 },
                                 is_context: false,
+                                as_tuple: false,
+                                as_dict: false,
                                 default: None,
                             })
                         })

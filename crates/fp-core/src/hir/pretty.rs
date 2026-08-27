@@ -794,7 +794,7 @@ fn format_arg_ref(arg_ref: &FormatArgRef) -> String {
 }
 
 fn render_call_kind(kind: &CallKind) -> String {
-    kind.name()
+    kind.name().to_string()
 }
 
 fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {

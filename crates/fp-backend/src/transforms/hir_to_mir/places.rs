@@ -718,8 +718,8 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Match(scrutinee, arms) => {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
-            hir::ExprKind::IntrinsicCall(call) => match call.kind.intrinsic_kind() {
-                Some(kind) => match kind {
+            hir::ExprKind::IntrinsicCall(call) => match call.kind {
+                kind => match kind {
                     IntrinsicKind::Print | IntrinsicKind::Println => {
                         self.emit_printf_call(call, expr.span)?;
                         let statement = mir::Statement {
@@ -960,27 +960,6 @@ impl<'a> BodyBuilder<'a> {
                         };
                         self.push_statement(statement);
                     }
-                },
-                None => {
-                    // Portable op with no intrinsic equivalent and no
-                    // constant-folding rule -- same "not yet supported"
-                    // fallback the wildcard arm above uses for intrinsics
-                    // this function doesn't otherwise handle.
-                    self.lowering.emit_warning(
-                        expr.span,
-                        format!(
-                            "portable op {:?} is not yet supported for MIR assignment",
-                            call.kind
-                        ),
-                    );
-                    let statement = mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            place.clone(),
-                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
-                        ),
-                    };
-                    self.push_statement(statement);
                 }
             },
             hir::ExprKind::MethodCall(receiver, method_name, _, args) => {
