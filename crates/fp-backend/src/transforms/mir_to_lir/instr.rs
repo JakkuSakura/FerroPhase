@@ -2539,15 +2539,20 @@ impl MirToLirLowerer {
                 mir::ConstantKind::Str(_) => Ok(lir::LirValue::constant(
                     self.constant_to_lir_constant(constant, &constant.ty)?,
                 )),
-                mir::ConstantKind::Int(value) => Ok(lir::LirValue::constant(
-                    self.integer_constant(&self.lir_type_from_ty(&constant.ty), *value)
-                        .map_err(|error| {
+                mir::ConstantKind::Int(value) => {
+                    let target_ty = self.lir_type_from_ty(&constant.ty);
+                    let value = if *value == 0 && matches!(target_ty, lir::LirType::Ptr(_)) {
+                        lir::LirConstant::null(target_ty)
+                    } else {
+                        self.integer_constant(&target_ty, *value).map_err(|error| {
                             fp_core::error::Error::from(format!(
                                 "constant at {:?} with MIR type {:?}: {}",
                                 constant.span, constant.ty, error
                             ))
-                        })?,
-                )),
+                        })?
+                    };
+                    Ok(lir::LirValue::constant(value))
+                }
                 mir::ConstantKind::UInt(value) => Ok(lir::LirValue::constant(
                     self.unsigned_constant(&self.lir_type_from_ty(&constant.ty), *value)
                         .map_err(|error| {

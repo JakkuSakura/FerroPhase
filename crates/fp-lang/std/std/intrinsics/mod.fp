@@ -2,7 +2,6 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod json;
-pub mod path;
 pub mod proc_macro;
 pub mod task;
 pub mod test;

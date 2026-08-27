@@ -572,9 +572,14 @@ impl<'a> BodyBuilder<'a> {
         HashMap<String, usize>,
     )> {
         let Some(first) = call.callargs.first() else {
-            self.lowering
-                .emit_error(span, "format intrinsic requires a template argument");
-            return None;
+            return Some((
+                hir::FormatString {
+                    parts: vec![hir::FormatTemplatePart::Literal(String::new())],
+                },
+                Vec::new(),
+                Vec::new(),
+                HashMap::new(),
+            ));
         };
 
         let template = match &first.value.kind {
@@ -583,9 +588,9 @@ impl<'a> BodyBuilder<'a> {
                 parts: vec![hir::FormatTemplatePart::Literal(text.clone())],
             },
             _ => {
-                self.lowering
-                    .emit_error(span, "format intrinsic requires a template argument");
-                return None;
+                hir::FormatString {
+                    parts: vec![hir::FormatTemplatePart::Literal(String::new())],
+                }
             }
         };
 

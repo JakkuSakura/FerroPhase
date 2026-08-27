@@ -23,65 +23,59 @@ impl HirProjectedAssignTarget {
 }
 
 pub fn project_hir_assign_target(expr: &Expr) -> Option<HirProjectedAssignTarget> {
-    match &expr.kind {
-        ExprKind::Path(path) => Some(HirProjectedAssignTarget::from_path(path.clone(), expr.span)),
-        ExprKind::FieldAccess(base, field) => {
-            let mut target = project_hir_assign_target(base.as_ref())
-                .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(base.as_ref().clone()));
-            target.push(HirAssignTargetProjection::Field(field.clone()));
-            target.span = expr.span;
-            Some(target)
+    let mut current = expr;
+    let mut projections = Vec::new();
+    let base = loop {
+        match &current.kind {
+            ExprKind::Path(path) => break HirAssignTargetBase::Name(path.clone()),
+            ExprKind::FieldAccess(base, field) => {
+                projections.push(HirAssignTargetProjection::Field(field.clone()));
+                current = base.as_ref();
+            }
+            ExprKind::Index(base, index) => {
+                projections.push(HirAssignTargetProjection::Index(index.clone()));
+                current = base.as_ref();
+            }
+            ExprKind::Slice(slice) => {
+                projections.push(HirAssignTargetProjection::Slice(HirAssignTargetSlice {
+                    start: slice.start.clone(),
+                    end: slice.end.clone(),
+                    inclusive: slice.inclusive,
+                }));
+                current = slice.base.as_ref();
+            }
+            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicKind::Slice => {
+                let base = call
+                    .callargs
+                    .iter()
+                    .find(|arg| arg.name.as_str() == "base")?;
+                let start = call
+                    .callargs
+                    .iter()
+                    .find(|arg| arg.name.as_str() == "start")?;
+                let end = call
+                    .callargs
+                    .iter()
+                    .find(|arg| arg.name.as_str() == "end")?;
+                projections.push(HirAssignTargetProjection::Slice(HirAssignTargetSlice {
+                    start: Some(Box::new(start.value.clone())),
+                    end: Some(Box::new(end.value.clone())),
+                    inclusive: false,
+                }));
+                current = &base.value;
+            }
+            ExprKind::Unary(hir::UnOp::Deref, inner) => {
+                projections.push(HirAssignTargetProjection::Deref);
+                current = inner.as_ref();
+            }
+            _ => break HirAssignTargetBase::Expr(Box::new(current.clone())),
         }
-        ExprKind::Index(base, index) => {
-            let mut target = project_hir_assign_target(base.as_ref())
-                .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(base.as_ref().clone()));
-            target.push(HirAssignTargetProjection::Index(index.clone()));
-            target.span = expr.span;
-            Some(target)
-        }
-        ExprKind::Slice(slice) => {
-            let mut target = project_hir_assign_target(slice.base.as_ref()).unwrap_or_else(|| {
-                HirProjectedAssignTarget::from_expr(slice.base.as_ref().clone())
-            });
-            target.push(HirAssignTargetProjection::Slice(HirAssignTargetSlice {
-                start: slice.start.clone(),
-                end: slice.end.clone(),
-                inclusive: slice.inclusive,
-            }));
-            target.span = expr.span;
-            Some(target)
-        }
-        ExprKind::IntrinsicCall(call) if call.kind == IntrinsicKind::Slice => {
-            let base = call
-                .callargs
-                .iter()
-                .find(|arg| arg.name.as_str() == "base")?;
-            let start = call
-                .callargs
-                .iter()
-                .find(|arg| arg.name.as_str() == "start")?;
-            let end = call
-                .callargs
-                .iter()
-                .find(|arg| arg.name.as_str() == "end")?;
+    };
 
-            let mut target = project_hir_assign_target(&base.value)
-                .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(base.value.clone()));
-            target.push(HirAssignTargetProjection::Slice(HirAssignTargetSlice {
-                start: Some(Box::new(start.value.clone())),
-                end: Some(Box::new(end.value.clone())),
-                inclusive: false,
-            }));
-            target.span = expr.span;
-            Some(target)
-        }
-        ExprKind::Unary(hir::UnOp::Deref, inner) => {
-            let mut target = project_hir_assign_target(inner.as_ref())
-                .unwrap_or_else(|| HirProjectedAssignTarget::from_expr(inner.as_ref().clone()));
-            target.push(HirAssignTargetProjection::Deref);
-            target.span = expr.span;
-            Some(target)
-        }
-        _ => None,
+    projections.reverse();
+    let mut target = HirProjectedAssignTarget::new(base, expr.span);
+    for projection in projections {
+        target.push(projection);
     }
+    Some(target)
 }

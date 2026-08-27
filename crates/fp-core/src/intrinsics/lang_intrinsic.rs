@@ -45,8 +45,6 @@ pub enum LangIntrinsic {
     IoWriteStderr,
     YamlToJson,
     JsonParse,
-    TestCommandMockReset,
-    TestCommandMockPush,
     TestCommandMockTakeCalls,
     TestCommandMockApply,
     CatchUnwind,
@@ -308,18 +306,6 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "json_parse",
         capability: LangIntrinsicCapability::BackendLimited,
         call_kind: Some(CallKind::JsonParse),
-    },
-    LangIntrinsicSpec {
-        intrinsic: LangIntrinsic::TestCommandMockReset,
-        lang_item: "test_command_mock_reset",
-        capability: LangIntrinsicCapability::InterpreterOnly,
-        call_kind: Some(CallKind::TestCommandMockReset),
-    },
-    LangIntrinsicSpec {
-        intrinsic: LangIntrinsic::TestCommandMockPush,
-        lang_item: "test_command_mock_push",
-        capability: LangIntrinsicCapability::InterpreterOnly,
-        call_kind: Some(CallKind::TestCommandMockPush),
     },
     LangIntrinsicSpec {
         intrinsic: LangIntrinsic::TestCommandMockTakeCalls,

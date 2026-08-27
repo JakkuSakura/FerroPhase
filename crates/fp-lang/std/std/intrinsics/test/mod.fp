@@ -5,14 +5,6 @@ pub struct CommandMockMatch {
     pub status: i64,
 }
 
-#[intrinsic = "test_command_mock_reset"]
-pub fn command_mock_reset() { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "test_command_mock_push"]
-pub fn command_mock_push(pattern: &str, stdout: &str, stderr: &str, status: i64) {
-    compile_error!("compiler intrinsic")
-}
-
 #[intrinsic = "test_command_mock_take_calls"]
 pub fn command_mock_take_calls() -> ::alloc::Vec<&str> { compile_error!("compiler intrinsic") }
 

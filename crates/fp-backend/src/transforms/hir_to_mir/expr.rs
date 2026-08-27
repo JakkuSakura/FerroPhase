@@ -461,7 +461,7 @@ impl HirToMirLowerer {
     /// Same dispatch as `hir_item`, for `def_paths` — used by
     /// `def_path_str`, which every `register_struct`/`register_enum` call
     /// now goes through instead of being handed a whole `def_paths` map.
-    pub(super) fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
+    pub(crate) fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
         self.hir_program.def_path(def_id)
     }
 

@@ -189,7 +189,12 @@ impl MirToLirLowerer {
                     .map_err(|error| fp_core::error::Error::from(error.to_string()))?
             }
             mir::ConstantKind::Int(value) => {
-                self.integer_constant(&target_ty, *value).map_err(|error| {
+                let result = if *value == 0 && matches!(target_ty, lir::LirType::Ptr(_)) {
+                    Ok(lir::LirConstant::null(target_ty.clone()))
+                } else {
+                    self.integer_constant(&target_ty, *value)
+                };
+                result.map_err(|error| {
                     fp_core::error::Error::from(format!(
                         "constant at {:?}: {}",
                         constant.span, error

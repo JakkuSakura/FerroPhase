@@ -107,3 +107,18 @@ fn projects_intrinsic_slice_compatibility_path() {
     assert!(slice.end.is_some());
     assert!(!slice.inclusive);
 }
+
+#[test]
+fn deep_projection_is_bounded() {
+    let mut expr = path_expr(1000, "value");
+    for index in 0..512 {
+        expr = Expr::new(
+            hid(1001 + index),
+            ExprKind::FieldAccess(Box::new(expr), Symbol::new("field")),
+            span(),
+        );
+    }
+
+    let projected = project_hir_assign_target(&expr).expect("deep projection should terminate");
+    assert_eq!(projected.projections.len(), 512);
+}

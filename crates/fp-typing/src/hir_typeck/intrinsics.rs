@@ -115,8 +115,6 @@ impl HirTypeChecker {
             | IntrinsicKind::FsRemoveDirAll
             | IntrinsicKind::IoWriteStdout
             | IntrinsicKind::IoWriteStderr
-            | IntrinsicKind::TestCommandMockReset
-            | IntrinsicKind::TestCommandMockPush
             | IntrinsicKind::TestCommandMockApply
             | IntrinsicKind::Sleep
             | IntrinsicKind::Yield

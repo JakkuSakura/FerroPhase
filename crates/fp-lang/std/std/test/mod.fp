@@ -60,19 +60,6 @@ fn run() -> TestReport {
     run_tests()
 }
 
-pub fn reset_command_mocks() {
-    ::std::intrinsics::test::command_mock_reset();
-}
-
-pub fn mock_command(
-    pattern: &str,
-    stdout: &str = "",
-    stderr: &str = "",
-    status: i64 = 0,
-) {
-    ::std::intrinsics::test::command_mock_push(pattern, stdout, stderr, status);
-}
-
 pub fn take_command_calls() -> ::alloc::Vec<&str> {
     ::std::intrinsics::test::command_mock_take_calls()
 }

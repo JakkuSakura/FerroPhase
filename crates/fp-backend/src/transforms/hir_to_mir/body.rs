@@ -3569,26 +3569,7 @@ impl<'a> BodyBuilder<'a> {
                     Some(const_info) => const_info,
                     None => self.lower_operand(base, None)?,
                 };
-                if let Some(struct_def_id) = self.real_indexable_struct_def_id(&base_info.ty) {
-                    let element_ty = expected
-                        .cloned()
-                        .unwrap_or_else(|| self.lowering.error_ty());
-                    let local_id = self.allocate_temp(element_ty.clone(), expr.span);
-                    let local_place = mir::Place::from_local(local_id);
-                    let result_ty = self.call_real_method_into_place(
-                        struct_def_id,
-                        "index",
-                        base,
-                        &[index],
-                        local_place.clone(),
-                        Some(&element_ty),
-                        expr.span,
-                    )?;
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::copy(local_place),
-                        ty: result_ty,
-                    });
-                }
+                /*
                 if self.is_list_container(&base_info.ty) {
                     let index_ty = Ty {
                         kind: TyKind::Uint(UintTy::Usize),
@@ -3627,6 +3608,8 @@ impl<'a> BodyBuilder<'a> {
                         ty: element_ty,
                     });
                 }
+                */
+                /*
                 if self.is_map_container(&base_info.ty) {
                     let index_operand = self.lower_operand(index, None)?;
                     let mut value_ty = expected
@@ -3733,79 +3716,69 @@ impl<'a> BodyBuilder<'a> {
                         ty: value_ty,
                     });
                 }
-                let index_ty = Ty {
-                    kind: TyKind::Uint(UintTy::Usize),
-                };
-                let index_operand = self.lower_operand(index, Some(&index_ty))?;
-                let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
-                let index_place = mir::Place::from_local(index_local);
-                self.push_statement(mir::Statement {
-                    source_info: index.span,
-                    kind: mir::StatementKind::Assign(
-                        index_place.clone(),
-                        mir::Rvalue::Use(index_operand.operand),
-                    ),
-                });
-
-                let (mut place, mut base_ty) = match base_info.operand {
-                    mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-                        (place, base_info.ty.clone())
-                    }
-                    other => {
-                        let local_id = self.allocate_temp(base_info.ty.clone(), expr.span);
-                        let place = mir::Place::from_local(local_id);
-                        self.push_statement(mir::Statement {
-                            source_info: expr.span,
-                            kind: mir::StatementKind::Assign(
-                                place.clone(),
-                                mir::Rvalue::Use(other),
-                            ),
-                        });
-                        (place, base_info.ty.clone())
-                    }
-                };
-
-                loop {
-                    match &base_ty.kind {
-                        TyKind::Ref(_, inner, _) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = inner.as_ref().clone();
-                        }
-                        TyKind::RawPtr(type_and_mut) => {
-                            place.projection.push(mir::PlaceElem::Deref);
-                            base_ty = type_and_mut.ty.as_ref().clone();
-                        }
-                        _ => break,
-                    }
+                */
+                let mut structural_ty = base_info.ty.clone();
+                while let TyKind::Ref(_, inner, _) = &structural_ty.kind {
+                    structural_ty = inner.as_ref().clone();
                 }
-
-                let element_ty = match &base_ty.kind {
-                    TyKind::Array(elem, _) => *elem.clone(),
-                    TyKind::Slice(elem) => *elem.clone(),
-                    _ => {
-                        self.lowering.emit_error(
-                            expr.span,
-                            format!(
-                                "index access requires array, slice, or supported container; found {:?}",
-                                base_ty.kind
-                            ),
-                        );
-                        let ty = expected
-                            .cloned()
-                            .unwrap_or_else(|| self.lowering.error_ty());
-                        return Ok(OperandInfo {
-                            operand: mir::Operand::Constant(
-                                self.lowering.error_constant(expr.span),
-                            ),
-                            ty,
-                        });
-                    }
+                if matches!(structural_ty.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
+                    let index_ty = Ty { kind: TyKind::Uint(UintTy::Usize) };
+                    let index_operand = self.lower_operand(index, Some(&index_ty))?;
+                    let mut place_info = match self.lower_place(base)? {
+                        Some(place) => place,
+                        None => self.materialize_expr_place(base)?,
+                    };
+                    let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
+                    self.push_statement(mir::Statement {
+                        source_info: index.span,
+                        kind: mir::StatementKind::Assign(
+                            mir::Place::from_local(index_local),
+                            mir::Rvalue::Use(index_operand.operand),
+                        ),
+                    });
+                    place_info.place.projection.push(mir::PlaceElem::Index(index_local));
+                    place_info.ty = self.expect_array_element_ty(&structural_ty)
+                        .unwrap_or_else(|| self.lowering.error_ty());
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(place_info.place),
+                        ty: place_info.ty,
+                    });
+                }
+                let Some(method_def_id) = self
+                    .lowering
+                    .typeck_method_resolution(expr.hir_id.clone())
+                else {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "index expression has no resolved std Index implementation",
+                    );
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                        ty: expected.cloned().unwrap_or_else(|| self.lowering.error_ty()),
+                    });
                 };
-
-                place.projection.push(mir::PlaceElem::Index(index_local));
+                let element_ty = expected
+                    .cloned()
+                    .or_else(|| self.lowering.typeck_expr_type(expr.hir_id.clone()))
+                    .unwrap_or_else(|| self.lowering.error_ty());
+                let local_id = self.allocate_temp(element_ty.clone(), expr.span);
+                let local_place = mir::Place::from_local(local_id);
+                let generic_args = self
+                    .lowering
+                    .typeck_generic_method_arg(expr.hir_id.clone())
+                    .unwrap_or_default();
+                let result_ty = self.call_method_def_into_place(
+                    method_def_id,
+                    generic_args,
+                    base,
+                    &[index],
+                    local_place.clone(),
+                    Some(&element_ty),
+                    expr.span,
+                )?;
                 return Ok(OperandInfo {
-                    operand: mir::Operand::copy(place),
-                    ty: element_ty,
+                    operand: mir::Operand::copy(local_place),
+                    ty: result_ty,
                 });
             }
             hir::ExprKind::IntrinsicCall(call) => {
@@ -4716,7 +4689,25 @@ impl<'a> BodyBuilder<'a> {
     }
 
     pub(super) fn container_type_name(&self, ty: &Ty) -> Option<String> {
+        let mut ty = ty;
+        while let TyKind::Ref(_, inner, _) = &ty.kind {
+            ty = inner.as_ref();
+        }
+        if let TyKind::Adt(adt, _) = &ty.kind {
+            if let Some(definition) = self.lowering.struct_def(&adt.did) {
+                return Some(definition.name);
+            }
+        }
         self.lowering.display_type_name(ty)
+    }
+
+    fn container_name_tail(name: &str) -> &str {
+        name.rsplit("::")
+            .next()
+            .unwrap_or(name)
+            .split('<')
+            .next()
+            .unwrap_or(name)
     }
 
     pub(super) fn is_list_container(&self, ty: &Ty) -> bool {
@@ -4724,13 +4715,13 @@ impl<'a> BodyBuilder<'a> {
             return true;
         }
         self.container_type_name(ty)
-            .map(|name| matches!(name.as_str(), "Vec" | "List" | "list"))
+            .map(|name| matches!(Self::container_name_tail(&name), "Vec" | "List" | "list"))
             .unwrap_or(false)
     }
 
     pub(super) fn is_map_container(&self, ty: &Ty) -> bool {
         self.container_type_name(ty)
-            .map(|name| name == "HashMap")
+            .map(|name| Self::container_name_tail(&name) == "HashMap")
             .unwrap_or(false)
     }
 
@@ -4792,25 +4783,44 @@ impl<'a> BodyBuilder<'a> {
         expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<Ty> {
-        let def = self
+        let method_def_id = self
             .lowering
             .mir_package
             .borrow()
             .method_defs_by_self_and_name
             .get(&(struct_def_id.clone(), method_name.to_string()))
-            .and_then(|def_id| {
-                self.lowering
-                    .mir_package
-                    .borrow()
-                    .method_defs_by_def
-                    .get(def_id)
-                    .cloned()
-            })
+            .cloned()
             .ok_or_else(|| {
                 crate::error::optimization_error(format!(
-                    "no method `{}` found on struct {:?}",
-                    method_name, struct_def_id
+                    "no method `{}` found on struct {:?}", method_name, struct_def_id
                 ))
+            })?;
+        self.call_method_def_into_place(
+            method_def_id,
+            Vec::new(),
+            receiver,
+            extra_args,
+            place,
+            expected_return,
+            span,
+        )
+    }
+
+    pub(super) fn call_method_def_into_place(
+        &mut self,
+        method_def_id: hir::DefId,
+        generic_args: Vec<Ty>,
+        receiver: &hir::Expr,
+        extra_args: &[&hir::Expr],
+        place: mir::Place,
+        expected_return: Option<&Ty>,
+        span: Span,
+    ) -> Result<Ty> {
+        let def = self
+            .lowering
+            .ensure_generic_method_def(method_def_id.clone())
+            .ok_or_else(|| {
+                crate::error::optimization_error(format!("no method definition for {method_def_id:?}"))
             })?;
         let method_ctx = self
             .lowering
@@ -4830,7 +4840,7 @@ impl<'a> BodyBuilder<'a> {
         }
         let info = self.lowering.ensure_method_specialization(
             &def,
-            &[],
+            &generic_args,
             &arg_types,
             expected_return,
             span,
