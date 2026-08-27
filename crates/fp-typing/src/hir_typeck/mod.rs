@@ -5291,22 +5291,12 @@ impl HirTypeChecker {
         use fp_core::intrinsics::IntrinsicKind;
 
         // `IntrinsicCallExpr.kind` is a `CallKind`, which also covers
-        // `#[op(...)]`-tagged calls that AST-level recognition folded into
-        // an `IntrinsicCall` (see `fp-core/src/intrinsics/calls.rs`'s
-        // `CallKind::Op`/`CallKind::intrinsic_kind`). Most `OpKind` variants
-        // are just the portable name for a genuine low-level intrinsic
-        // (`OpKind::Println` == `IntrinsicKind::Println`, etc.) and
-        // type-check exactly the same way, so resolve down to the
-        // `IntrinsicKind` they share and run the ordinary rules below.
-        // The few genuinely high-level ops with no intrinsic equivalent
+        // An `IntrinsicCallExpr` carries the closed intrinsic identity
+        // directly. Portable operations with no intrinsic equivalent
         // (`Option`/`Result`/`Vec` constructors, `collect`, `find`, ...)
-        // fall to `check_high_level_op` instead.
-        // `CallKind::Op` was retired, so `intrinsic_kind()` is always `Some`
-        // now — every `IntrinsicCallExpr` is a genuine low-level intrinsic.
-        let kind = call
-            .kind
-            .intrinsic_kind()
-            .expect("CallKind is always Intrinsic now that CallKind::Op is retired");
+        // remain ordinary calls and are handled by their target-specific
+        // lowering paths instead.
+        let kind = call.kind;
         // `sizeof!`/`field_count!`/`method_count!`'s single argument names
         // a *type* (a struct, or — inside a generic function/impl body —
         // the function's own type parameter, e.g. `sizeof!(T)` in
