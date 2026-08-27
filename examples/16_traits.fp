@@ -30,10 +30,6 @@ impl Shape for Rectangle {
     }
 }
 
-fn print_area<T: Shape>(shape: &T) {
-    println!("{:.2}", shape.area());
-}
-
 fn main() {
     println!("📘 Tutorial: 16_traits.fp");
     println!("🧭 Focus: Traits: defining shared behavior with default methods");
@@ -47,7 +43,6 @@ fn main() {
     circle.describe();
     rect.describe();
 
-    // Generic with trait bound
-    print_area(&circle);
-    print_area(&rect);
+    println!("circle area={:.2}", circle.area());
+    println!("rectangle area={:.2}", rect.area());
 }

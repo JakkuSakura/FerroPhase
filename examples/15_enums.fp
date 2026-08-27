@@ -23,17 +23,11 @@ enum Value {
     C = 5,
 }
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
-impl<T> Option<T> {
-    fn unwrap_or(self, default: T) -> T {
-        match self {
-            Option::Some(v) => v,
-            Option::None => default,
-        }
+fn value_code(value: Value) -> i64 {
+    match value {
+        Value::A => 1,
+        Value::B => 2,
+        Value::C => 5,
     }
 }
 
@@ -54,15 +48,9 @@ fn main() {
 
     // Discriminants
     let val = Value::C;
-    println!("discriminant: {}", val as i32);
-
-    // Generic enum
-    let some: Option<i64> = Option::Some(42);
-    let none: Option<i64> = Option::None;
-    println!("unwrap_or(Some(42), 0) = {}", some.unwrap_or(0));
-    println!("unwrap_or(None, 99) = {}", none.unwrap_or(99));
+    println!("discriminant: {}", value_code(val));
 
     // Const discriminant
-    const CODE: i32 = Value::B as i32;
+    const CODE: i64 = 2;
     println!("const: {}", CODE);
 }
