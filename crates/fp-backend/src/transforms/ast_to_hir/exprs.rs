@@ -1566,13 +1566,14 @@ impl AstToHirLowerer {
         let kind = match stmt {
             ast::BlockStmt::Expr(expr_stmt) => {
                 if let ast::ExprKind::Let(let_expr) = expr_stmt.expr.kind() {
-                    let pat = self.transform_pattern(&let_expr.pat)?;
+                    let (pat, explicit_ty, _) =
+                        self.transform_pattern_with_metadata(&let_expr.pat)?;
                     self.register_pattern_bindings(&pat);
                     let init = self.transform_expr_to_hir(&let_expr.expr)?;
                     let local = hir::Local {
                         hir_id: self.next_id(),
                         pat,
-                        ty: None,
+                        ty: explicit_ty,
                         init: Some(init),
                     };
                     hir::StmtKind::Local(local)
@@ -2016,10 +2017,10 @@ impl AstToHirLowerer {
         &mut self,
         let_expr: &ast::ExprLet,
     ) -> Result<hir::ExprKind> {
-        let pat = self.transform_pattern(&let_expr.pat)?;
+        let (pat, explicit_ty, _) = self.transform_pattern_with_metadata(&let_expr.pat)?;
         self.register_pattern_bindings(&pat);
         let init = self.transform_expr_to_hir(&let_expr.expr)?;
-        let ty = self.create_unit_type();
+        let ty = explicit_ty.unwrap_or_else(|| self.create_unit_type());
 
         Ok(hir::ExprKind::Let(pat, Box::new(ty), Some(Box::new(init))))
     }

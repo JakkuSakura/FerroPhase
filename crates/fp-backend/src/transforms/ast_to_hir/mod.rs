@@ -1334,7 +1334,11 @@ impl AstToHirLowerer {
         // entirely.
         if !self.lowering_config.capabilities.first_class_closures {
             let dependency_struct_field_types = self.workspace_struct_field_types();
-            lower_closures_in_items(&mut lowered_items, &dependency_struct_field_types)?;
+            lower_closures_in_items(
+                &mut lowered_items,
+                &dependency_struct_field_types,
+                self.package_id.as_str(),
+            )?;
         }
         let generated_count = lowered_items.len() - original_len;
         let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
@@ -4039,8 +4043,10 @@ impl AstToHirLowerer {
 fn lower_closures_in_items(
     items: &mut Vec<ast::Item>,
     dependency_struct_field_types: &HashMap<String, Vec<(String, ast::Ty)>>,
+    package_name: &str,
 ) -> Result<Vec<Diagnostic>> {
-    let mut pass = ClosureLowering::new();
+    let mut pass = ClosureLowering::new(sanitize_generated_symbol_prefix(package_name));
+    pass.reserve_generated_names(items);
     pass.struct_field_types = dependency_struct_field_types.clone();
     pass.collect_struct_field_types(items);
     pass.find_and_transform_functions(items)?;
@@ -4055,9 +4061,22 @@ fn lower_closures_in_items(
 }
 
 fn lower_closures_in_expr(expr: &mut ast::Expr) -> Result<(Vec<ast::Item>, Vec<Diagnostic>)> {
-    let mut pass = ClosureLowering::new();
+    let mut pass = ClosureLowering::new("expr".to_string());
     pass.rewrite_in_expr(expr)?;
     Ok((pass.generated_items, pass.diagnostics))
+}
+
+fn sanitize_generated_symbol_prefix(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";

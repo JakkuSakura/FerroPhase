@@ -15,6 +15,7 @@ pub(super) struct Capture {
 
 pub(super) struct ClosureLowering {
     counter: usize,
+    symbol_prefix: String,
     function_infos: HashMap<String, ClosureInfo>,
     struct_infos: HashMap<String, ClosureInfo>,
     variable_infos: HashMap<String, ClosureInfo>,
@@ -35,9 +36,10 @@ pub(super) struct ClosureLowering {
 }
 // TODO: move to new file
 impl ClosureLowering {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(symbol_prefix: String) -> Self {
         Self {
             counter: 0,
+            symbol_prefix,
             function_infos: HashMap::new(),
             struct_infos: HashMap::new(),
             variable_infos: HashMap::new(),
@@ -46,6 +48,104 @@ impl ClosureLowering {
             struct_field_types: HashMap::new(),
             current_param_types: HashMap::new(),
         }
+    }
+
+    pub(super) fn reserve_generated_names(&mut self, items: &[ast::Item]) {
+        for item in items {
+            self.reserve_generated_names_in_item(item);
+        }
+    }
+
+    fn reserve_generated_names_in_item(&mut self, item: &ast::Item) {
+        match item.kind() {
+            ast::ItemKind::Module(module) => {
+                for item in &module.items {
+                    self.reserve_generated_names_in_item(item);
+                }
+            }
+            ast::ItemKind::DefFunction(function) => {
+                self.reserve_generated_names_in_block(&function.body)
+            }
+            ast::ItemKind::DefStruct(definition) => {
+                self.reserve_generated_name(definition.name.as_str())
+            }
+            ast::ItemKind::DefConst(definition) => {
+                self.reserve_generated_names_in_expr(definition.value.as_ref())
+            }
+            ast::ItemKind::DefStatic(definition) => {
+                self.reserve_generated_names_in_expr(definition.value.as_ref())
+            }
+            ast::ItemKind::Expr(expression) => self.reserve_generated_names_in_expr(expression),
+            _ => {}
+        }
+    }
+
+    fn reserve_generated_names_in_block(&mut self, block: &ast::ExprBlock) {
+        for statement in &block.stmts {
+            match statement {
+                ast::BlockStmt::Expr(statement) => {
+                    self.reserve_generated_names_in_expr(statement.expr.as_ref())
+                }
+                ast::BlockStmt::Let(statement) => {
+                    if let Some(init) = &statement.init {
+                        self.reserve_generated_names_in_expr(init);
+                    }
+                }
+                ast::BlockStmt::Defer(statement) => {
+                    self.reserve_generated_names_in_expr(statement.expr.as_ref())
+                }
+                ast::BlockStmt::Item(item) => self.reserve_generated_names_in_item(item),
+                ast::BlockStmt::Noop => {}
+            }
+        }
+    }
+
+    fn reserve_generated_names_in_expr(&mut self, expr: &ast::Expr) {
+        match expr.kind() {
+            ast::ExprKind::Struct(struct_expr) => {
+                if let Some(name) = extract_ident(struct_expr.name.as_ref()) {
+                    self.reserve_generated_name(name.as_str());
+                }
+                for field in &struct_expr.fields {
+                    if let Some(value) = &field.value {
+                        self.reserve_generated_names_in_expr(value);
+                    }
+                }
+            }
+            ast::ExprKind::Value(value) => {
+                if let ast::Value::Struct(structure) = value.as_ref() {
+                    self.reserve_generated_name(structure.ty.name.as_str());
+                }
+            }
+            ast::ExprKind::Block(block) => self.reserve_generated_names_in_block(block),
+            ast::ExprKind::Invoke(invoke) => {
+                if let ast::ExprInvokeTarget::Expr(target) = &invoke.target {
+                    self.reserve_generated_names_in_expr(target);
+                }
+                for argument in &invoke.args {
+                    self.reserve_generated_names_in_expr(argument);
+                }
+            }
+            ast::ExprKind::Let(let_expr) => self.reserve_generated_names_in_expr(&let_expr.expr),
+            ast::ExprKind::Closure(closure) => self.reserve_generated_names_in_expr(&closure.body),
+            ast::ExprKind::BinOp(binop) => {
+                self.reserve_generated_names_in_expr(&binop.lhs);
+                self.reserve_generated_names_in_expr(&binop.rhs);
+            }
+            ast::ExprKind::Paren(paren) => self.reserve_generated_names_in_expr(&paren.expr),
+            _ => {}
+        }
+    }
+
+    fn reserve_generated_name(&mut self, name: &str) {
+        let prefix = format!("__Closure{}_", self.symbol_prefix);
+        let Some(index) = name
+            .strip_prefix(&prefix)
+            .and_then(|suffix| suffix.parse::<usize>().ok())
+        else {
+            return;
+        };
+        self.counter = self.counter.max(index.saturating_add(1));
     }
 
     /// One-time pre-pass collecting every struct's declared field types,
@@ -256,7 +356,17 @@ impl ClosureLowering {
                     self.find_and_transform_functions(&mut module.items)?;
                 }
                 ast::ItemKind::DefFunction(func) => {
-                    if let Some(info) = self.transform_function(func)? {
+                    let previous = std::mem::replace(
+                        &mut self.current_param_types,
+                        func.sig
+                            .params
+                            .iter()
+                            .map(|param| (param.name.as_str().to_string(), param.ty.clone()))
+                            .collect(),
+                    );
+                    let info = self.transform_function(func)?;
+                    self.current_param_types = previous;
+                    if let Some(info) = info {
                         self.function_infos
                             .insert(func.name.as_str().to_string(), info.clone());
                         self.struct_infos
@@ -342,12 +452,10 @@ impl ClosureLowering {
         let ast::ExprKind::Closure(closure) = expr.kind() else {
             return;
         };
-        if matches!(
-            fp_core::ast::resolved_expr_type(expr.id()),
-            Some(ast::Ty::Function(_))
-        ) {
-            return;
-        }
+        let existing_params = match fp_core::ast::resolved_expr_type(expr.id()) {
+            Some(ast::Ty::Function(function)) => Some(function.params.clone()),
+            _ => None,
+        };
         // Prefer the real, structurally-derived parameter type
         // (`closure_param_ty_for_invoke`) when the closure takes exactly
         // one parameter (true for every method this derivation currently
@@ -358,16 +466,33 @@ impl ClosureLowering {
         // access on an `Any`-typed parameter would silently resolve to an
         // error placeholder instead of erroring loudly, so callers should
         // supply a real type whenever one is derivable.
-        let params = match (param_ty, closure.params.len()) {
-            (Some(ty), 1) => vec![ty.clone()],
-            _ => vec![ast::Ty::Any(ast::TypeAny); closure.params.len()],
-        };
+        let params = closure
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, pattern)| match pattern.kind() {
+                ast::PatternKind::Type(typed) => typed.ty.clone(),
+                _ if index == 0 && closure.params.len() == 1 => param_ty
+                    .cloned()
+                    .or_else(|| {
+                        existing_params
+                            .as_ref()
+                            .and_then(|params| params.get(index).cloned())
+                    })
+                    .unwrap_or(ast::Ty::Any(ast::TypeAny)),
+                _ => existing_params
+                    .as_ref()
+                    .and_then(|params| params.get(index).cloned())
+                    .unwrap_or(ast::Ty::Any(ast::TypeAny)),
+            })
+            .collect();
         // Same reasoning applies to the closure's own return type — left
         // `Unknown`, it reproduces the identical "silently becomes a null
         // placeholder" failure one step later, now at the synthetic
         // `__closureN_call` function's return position.
         let ret_ty = ret_ty
             .cloned()
+            .or_else(|| closure.ret_ty.as_deref().cloned())
             .unwrap_or(ast::Ty::Unknown(ast::TypeUnknown));
         fp_core::ast::set_resolved_expr_type(
             expr.id(),
@@ -380,10 +505,8 @@ impl ClosureLowering {
     }
 
     fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
-        let Some(expr_ty) = fp_core::ast::resolved_expr_type(expr.id()) else {
-            return Ok(None);
-        };
-        let ast::Ty::Function(fn_ty) = expr_ty.clone() else {
+        Self::ensure_closure_has_function_ty(expr, None, None);
+        let Some(ast::Ty::Function(fn_ty)) = fp_core::ast::resolved_expr_type(expr.id()) else {
             return Ok(None);
         };
 
@@ -394,26 +517,55 @@ impl ClosureLowering {
         let mut param_names = Vec::new();
         let mut param_set = HashSet::new();
         for param in &closure.params {
-            if let ast::PatternKind::Ident(ident) = param.kind() {
+            let ident = match param.kind() {
+                ast::PatternKind::Ident(ident) => ident,
+                ast::PatternKind::Type(typed) => match typed.pat.kind() {
+                    ast::PatternKind::Ident(ident) => ident,
+                    _ => {
+                        self.add_error(
+                            Diagnostic::error(
+                                "only simple identifier parameters are supported in closures"
+                                    .to_string(),
+                            )
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(param.span()),
+                        );
+                        return Ok(None);
+                    }
+                },
+                _ => {
+                    self.add_error(
+                        Diagnostic::error(
+                            "only simple identifier parameters are supported in closures"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(param.span()),
+                    );
+                    return Ok(None);
+                }
+            };
+            {
                 let name = ident.ident.name.as_str().to_string();
                 param_set.insert(name.clone());
                 param_names.push(name);
-            } else {
-                self.add_error(
-                    Diagnostic::error(
-                        "only simple identifier parameters are supported in closures".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(param.span()),
-                );
-                return Ok(None);
             }
         }
 
-        let captures = self.collect_captures(closure.body.as_ref(), &param_set)?;
+        let mut captures = self.collect_captures(closure.body.as_ref(), &param_set)?;
+        for capture in &mut captures {
+            if let Some(param_ty) = self.current_param_types.get(capture.name.as_str()) {
+                capture.ty = param_ty.clone();
+            }
+        }
 
-        let struct_ident = ast::Ident::new(format!("__Closure{}", self.counter));
-        let call_ident = ast::Ident::new(format!("__closure{}_call", self.counter));
+        let closure_id = self.counter;
+        let struct_ident =
+            ast::Ident::new(format!("__Closure{}_{}", self.symbol_prefix, closure_id));
+        let call_ident = ast::Ident::new(format!(
+            "__closure{}_{}_call",
+            self.symbol_prefix, closure_id
+        ));
         self.counter += 1;
 
         let mut struct_fields: Vec<ast::StructuralField> = captures
@@ -590,6 +742,15 @@ impl ClosureLowering {
             return self.rewrite_in_expr(expr);
         }
 
+        // Normalization wraps expressions recovered from a scoped context in
+        // `Closured`. The wrapper is compile-time bookkeeping, while native
+        // closure lowering must see the enclosed lambda itself.
+        if let ast::ExprKind::Closured(closured) = expr.kind_mut() {
+            let inner = (*closured.expr).clone();
+            *expr = inner;
+            return self.rewrite_in_expr(expr);
+        }
+
         if let Some(info) = self.transform_closure_expr(expr)? {
             self.struct_infos
                 .insert(info.env_struct_ident.as_str().to_string(), info);
@@ -649,7 +810,20 @@ impl ClosureLowering {
                 self.rewrite_in_expr(expr_for.iter.as_mut())?;
                 self.rewrite_in_expr(expr_for.body.as_mut())?;
             }
-            ast::ExprKind::Let(expr_let) => self.rewrite_in_expr(expr_let.expr.as_mut())?,
+            ast::ExprKind::Let(expr_let) => {
+                Self::ensure_closure_has_function_ty(expr_let.expr.as_mut(), None, None);
+                self.rewrite_in_expr(expr_let.expr.as_mut())?;
+                if let Some(info) = self.closure_info_from_expr(expr_let.expr.as_ref()) {
+                    let mut names = Vec::new();
+                    collect_pattern_idents(expr_let.pat.as_ref(), &mut names);
+                    for name in names {
+                        self.variable_infos.insert(name, info.clone());
+                    }
+                    expr_let.pat = Box::new(ast::Pattern::from(ast::PatternKind::Type(
+                        ast::PatternType::new((*expr_let.pat).clone(), info.env_struct_ty),
+                    )));
+                }
+            }
             ast::ExprKind::Macro(_) => {}
             ast::ExprKind::Quote(q) => {
                 for stmt in &mut q.block.stmts {
@@ -851,6 +1025,11 @@ impl ClosureLowering {
             ast::BlockStmt::Defer(stmt_defer) => self.rewrite_in_expr(stmt_defer.expr.as_mut())?,
             ast::BlockStmt::Let(stmt_let) => {
                 if let Some(init) = stmt_let.init.as_mut() {
+                    // Local closures do not have a call-site parameter
+                    // from which to infer a signature. Preserve explicit
+                    // parameter annotations so they can be lowered into a
+                    // callable environment just like closure arguments.
+                    Self::ensure_closure_has_function_ty(init, None, None);
                     self.rewrite_in_expr(init)?;
                     if let Some(info) = self.closure_info_from_expr(init) {
                         let mut names = Vec::new();

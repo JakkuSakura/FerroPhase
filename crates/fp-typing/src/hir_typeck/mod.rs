@@ -2262,7 +2262,13 @@ impl HirTypeChecker {
                             resolved_init
                         }
                         (Some(annotation), None) => scope.check_type_expr(annotation).await?,
-                        (None, Some(init)) => scope.check_expr(init).await?,
+                        (None, Some(init)) => {
+                            let ty = scope.check_expr(init).await?;
+                            scope
+                                .package()
+                                .record_expr_type(init.hir_id.clone(), ty.clone());
+                            ty
+                        }
                         (None, None) => scope.error_ty("local binding needs a type or initializer"),
                     };
                     scope.bind_pattern(&local.pat, ty).await?;
