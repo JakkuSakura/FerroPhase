@@ -381,6 +381,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
 const CORE_PACKAGE_NAME: &str = "core";
 const ALLOC_PACKAGE_NAME: &str = "alloc";
 const STD_PACKAGE_NAME: &str = "std";
+const TEST_PACKAGE_NAME: &str = "test";
 const LIBC_PACKAGE_NAME: &str = "libc";
 
 /// Real Rust sysroots vendor `core`/`alloc`/`std` as three independent
@@ -393,7 +394,7 @@ const LIBC_PACKAGE_NAME: &str = "libc";
 /// Option`, ...) a *different* qualified key than the one their actual
 /// definitions were stored under.
 ///
-/// `PackageProvider` for the `core`/`alloc`/`std`/`libc` package IDs
+/// `PackageProvider` for the `core`/`alloc`/`std`/`test`/`libc` package IDs
 /// (`RustPackageProvider`'s counterpart to `fp_lang::provider::
 /// FerroPhaseProvider`). `libc` is delegated straight to `fp-lang`'s
 /// embedded copy — there's nothing Rust-specific about C ABI
@@ -412,6 +413,10 @@ impl RustStdProvider {
             CORE_PACKAGE_NAME => vec![],
             ALLOC_PACKAGE_NAME => vec![CORE_PACKAGE_NAME],
             STD_PACKAGE_NAME => vec![CORE_PACKAGE_NAME, ALLOC_PACKAGE_NAME, LIBC_PACKAGE_NAME],
+            // Mirrors library/test/Cargo.toml from rust-src. `getopts` is a
+            // build-only external dependency and is intentionally not
+            // advertised because this provider cannot load registry crates.
+            TEST_PACKAGE_NAME => vec![STD_PACKAGE_NAME, CORE_PACKAGE_NAME, LIBC_PACKAGE_NAME],
             _ => vec![],
         }
     }
@@ -423,6 +428,7 @@ impl PackageProvider for RustStdProvider {
             PackageId::new(CORE_PACKAGE_NAME),
             PackageId::new(ALLOC_PACKAGE_NAME),
             PackageId::new(STD_PACKAGE_NAME),
+            PackageId::new(TEST_PACKAGE_NAME),
             PackageId::new(LIBC_PACKAGE_NAME),
         ])
     }
@@ -441,7 +447,7 @@ impl PackageProvider for RustStdProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
-            CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME => {
+            CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME | TEST_PACKAGE_NAME => {
                 crate::embedded_std::root_dir().join(id.as_str())
             }
             LIBC_PACKAGE_NAME => fp_lang::embedded_libc::root_dir(),
@@ -479,6 +485,7 @@ impl PackageProvider for RustStdProvider {
             CORE_PACKAGE_NAME => load_real_std_subcrate(CORE_PACKAGE_NAME),
             ALLOC_PACKAGE_NAME => load_real_std_subcrate(ALLOC_PACKAGE_NAME),
             STD_PACKAGE_NAME => load_real_std_subcrate(STD_PACKAGE_NAME),
+            TEST_PACKAGE_NAME => load_real_std_subcrate(TEST_PACKAGE_NAME),
             LIBC_PACKAGE_NAME => load_embedded_fp_package(
                 LIBC_PACKAGE_NAME,
                 fp_lang::embedded_libc::root_dir(),
@@ -1092,6 +1099,43 @@ fn fp_relative_to_module_segments(package_name: &str, relative: &str) -> Vec<Str
         segments.push(part.to_string());
     }
     segments
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+
+    #[test]
+    fn rust_sysroot_packages_report_direct_dependencies() {
+        let provider = RustStdProvider;
+        let expected = [
+            (CORE_PACKAGE_NAME, &[][..]),
+            (ALLOC_PACKAGE_NAME, &[CORE_PACKAGE_NAME][..]),
+            (
+                STD_PACKAGE_NAME,
+                &[CORE_PACKAGE_NAME, ALLOC_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
+            ),
+            (
+                TEST_PACKAGE_NAME,
+                &[STD_PACKAGE_NAME, CORE_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
+            ),
+        ];
+
+        let packages = provider.list_packages().unwrap();
+        for (name, dependencies) in expected {
+            assert!(packages.iter().any(|id| id.as_str() == name));
+            let metadata = provider
+                .load_package_metadata(&PackageId::new(name))
+                .unwrap();
+            let actual: Vec<_> = metadata
+                .metadata
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.resolved_package_id.as_ref().unwrap().as_str())
+                .collect();
+            assert_eq!(actual, dependencies);
+        }
+    }
 }
 
 #[cfg(test)]
