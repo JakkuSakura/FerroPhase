@@ -440,6 +440,28 @@ impl HirTypeChecker {
                     record,
                 )
             }
+            (TyKind::Dynamic(expected_predicates, _), TyKind::Dynamic(actual_predicates, _)) => {
+                let Some(expected_principal) = expected_predicates.first() else {
+                    return if actual_predicates.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(Error::from("trait-object principal mismatch"))
+                    };
+                };
+                if actual_predicates.first() != Some(expected_principal)
+                    || !expected_predicates
+                        .iter()
+                        .skip(1)
+                        .all(|bound| actual_predicates.contains(bound))
+                {
+                    return if record {
+                        self.require_same(&expected, &actual)
+                    } else {
+                        Err(Error::from("trait-object upcast predicate mismatch"))
+                    };
+                }
+                Ok(())
+            }
             (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => {
                 expected
                     .iter()

@@ -1049,14 +1049,9 @@ fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamRecei
     }
     let _ = ident_like(&mut probe)?;
     if skip_symbol(&mut probe, ":").is_ok() {
-        let _ = parse_type_expr(&mut probe)?;
+        let ty = parse_type_expr(&mut probe)?;
         *input = probe;
-        return Ok(Some(match (by_ref, mutable) {
-            (true, true) => FunctionParamReceiver::RefMut,
-            (true, false) => FunctionParamReceiver::Ref,
-            (false, true) => FunctionParamReceiver::MutValue,
-            (false, false) => FunctionParamReceiver::Value,
-        }));
+        return Ok(Some(FunctionParamReceiver::Typed(Box::new(ty))));
     }
     *input = probe;
     let receiver = match (by_ref, mutable) {

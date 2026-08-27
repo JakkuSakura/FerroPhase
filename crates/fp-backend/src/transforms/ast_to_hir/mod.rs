@@ -2693,32 +2693,26 @@ impl AstToHirLowerer {
                         }
                     }
                 }
-                // `dyn Trait` (extra `+ Send`/`Sync`-style bounds carry no
-                // separate identity, so only the primary trait matters).
-                // Resolve it to a real path the same way a concrete struct
-                // type name is resolved above — leaving this as `Infer`
-                // erases the trait name before typechecking even starts,
-                // which then collapses `Arc<dyn Trait>` down to a bare
-                // `Arc` once hir_to_ast tries to render the generic arg.
-                let primary_trait_name = bounds.bounds.first().and_then(|expr| match expr.kind() {
-                    ast::ExprKind::Name(name) => Some(name.clone()),
-                    _ => None,
-                });
-                match primary_trait_name {
-                    Some(name) => {
-                        let path =
-                            self.name_to_hir_path_with_scope(&name, PathResolutionScope::Type)?;
-                        Ok(hir::TypeExpr::new(
-                            self.next_id(),
-                            hir::TypeExprKind::Path(path),
-                            Span::new(self.current_file, 0, 0),
-                        ))
-                    }
-                    None => Ok(hir::TypeExpr::new(
+                let dynamic_bounds = bounds
+                    .bounds
+                    .iter()
+                    .filter_map(|bound| {
+                        self.ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                            .ok()
+                    })
+                    .collect::<Vec<_>>();
+                if dynamic_bounds.is_empty() {
+                    Ok(hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Infer,
                         Span::new(self.current_file, 0, 0),
-                    )),
+                    ))
+                } else {
+                    Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Dynamic(dynamic_bounds),
+                        Span::new(self.current_file, 0, 0),
+                    ))
                 }
             }
             ast::Ty::Unknown(_) => Ok(hir::TypeExpr::new(

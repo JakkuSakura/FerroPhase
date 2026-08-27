@@ -641,6 +641,9 @@ pub enum TypeExprKind {
     },
     Ref(Box<TypeExpr>),
     FnPtr(FnPtrType),
+    /// A dynamic trait object. The first path is the principal trait and
+    /// remaining paths are additional (normally auto-trait) bounds.
+    Dynamic(Vec<Path>),
     /// A `const { ... }` block appearing in type position (either the value
     /// of a `type X = const { ... };` alias or nested inside another type,
     /// e.g. an array length). The block's own const-ness comes purely from
@@ -1404,6 +1407,7 @@ impl TypeExprKind {
             TypeExprKind::Ptr { inner: ty, .. } => ty.span(),
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
+            TypeExprKind::Dynamic(bounds) => Span::union(bounds.iter().map(Path::span)),
             TypeExprKind::ConstBlock(_, body) => body.span(),
             TypeExprKind::Never
             | TypeExprKind::Infer

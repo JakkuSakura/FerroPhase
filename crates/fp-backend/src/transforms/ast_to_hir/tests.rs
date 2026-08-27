@@ -998,6 +998,38 @@ fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
 }
 
 #[test]
+fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast("struct Box<T> { value: T } struct S; impl S { fn take(self: Box<Self>) {} }")
+        .expect("parse explicit boxed receiver");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let receiver = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Impl(impl_item) => impl_item.items.iter().find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(function) => function.sig.inputs.first(),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("lowered receiver");
+    let hir::TypeExprKind::Path(path) = &receiver.ty.kind else {
+        panic!("expected Box path receiver");
+    };
+
+    assert_eq!(path.segments.last().unwrap().name.as_str(), "Box");
+    assert_eq!(path.segments.last().unwrap().args.as_ref().unwrap().args.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn transform_trait_associated_type_bounds() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let items = parser
@@ -1032,6 +1064,67 @@ fn transform_trait_associated_type_bounds() -> Result<()> {
     };
     assert!(matches!(bound.res, Some(hir::Res::Def(_))));
     assert_eq!(bound.segments.last().unwrap().name.as_str(), "Borrow");
+    Ok(())
+}
+
+#[test]
+fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "trait Error {} trait Send {} trait Sync {} \
+             struct Holder { value: dyn Error + Send + Sync }",
+        )
+        .expect("parse dynamic type bounds");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let holder = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    let hir::TypeExprKind::Dynamic(bounds) = &holder.fields[0].ty.kind else {
+        panic!("expected dynamic field type");
+    };
+
+    assert_eq!(bounds.len(), 3);
+    assert!(bounds.iter().all(|bound| matches!(bound.res, Some(hir::Res::Def(_)))));
+    Ok(())
+}
+
+#[test]
+fn indexes_function_local_trait_impl_by_local_type() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast(
+            "trait Marker {} fn make() { struct Local; impl Marker for Local {} }",
+        )
+        .expect("parse function-local trait impl");
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let package = generator.transform_package(&package)?;
+    let local_id = package
+        .def_map
+        .values()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Local" => {
+                Some(item.def_id.clone())
+            }
+            _ => None,
+        })
+        .expect("materialized local struct");
+
+    assert_eq!(package.impls_by_self_did.get(&local_id).map(Vec::len), Some(1));
     Ok(())
 }
 

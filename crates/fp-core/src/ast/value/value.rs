@@ -788,7 +788,9 @@ common_enum! {
         Ref,
         RefStatic,
         RefMut,
-        RefMutStatic
+        RefMutStatic,
+        /// An explicit receiver type, such as `self: Box<Self>`.
+        Typed(Box<Ty>)
     }
 }
 

@@ -262,5 +262,6 @@ fn receiver_tag(receiver: &FunctionParamReceiver) -> u8 {
         FunctionParamReceiver::RefStatic => 4,
         FunctionParamReceiver::RefMut => 5,
         FunctionParamReceiver::RefMutStatic => 6,
+        FunctionParamReceiver::Typed(_) => 7,
     }
 }

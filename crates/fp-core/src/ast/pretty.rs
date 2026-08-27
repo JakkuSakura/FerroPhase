@@ -1156,6 +1156,9 @@ fn render_function_receiver(receiver: &ast::FunctionParamReceiver) -> String {
         ast::FunctionParamReceiver::RefStatic => "&'static self".into(),
         ast::FunctionParamReceiver::RefMut => "&mut self".into(),
         ast::FunctionParamReceiver::RefMutStatic => "&'static mut self".into(),
+        ast::FunctionParamReceiver::Typed(ty) => {
+            format!("self: {}", render_ty_brief(ty))
+        }
     }
 }
 

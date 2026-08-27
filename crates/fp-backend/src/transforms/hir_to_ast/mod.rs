@@ -1125,6 +1125,12 @@ impl<'a> HirToAstLifter<'a> {
                 generics_params: Vec::new(),
                 ret_ty: Some(Box::new(self.lift_type(&function.output)?)),
             }),
+            hir::TypeExprKind::Dynamic(bounds) => Ty::TypeBounds(ast::TypeBounds {
+                bounds: bounds
+                    .iter()
+                    .map(|bound| ast::Expr::name(ast::Name::path(self.lift_path(bound))))
+                    .collect(),
+            }),
             hir::TypeExprKind::Never => Ty::Nothing(ast::TypeNothing),
             hir::TypeExprKind::Infer | hir::TypeExprKind::Error => Ty::Unknown(ast::TypeUnknown),
             hir::TypeExprKind::Structural(structural) => Ty::Structural(ast::TypeStructural {

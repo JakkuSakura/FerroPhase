@@ -406,6 +406,9 @@ impl HirToMirLowerer {
                     }),
                 }
             }
+            hir::TypeExprKind::Dynamic(_) => self
+                .typeck_type_expr_type(ty_expr.hir_id.clone())
+                .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Never => Ty {
                 kind: TyKind::Never,
             },

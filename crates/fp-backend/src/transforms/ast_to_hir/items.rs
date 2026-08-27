@@ -327,6 +327,7 @@ impl AstToHirLowerer {
         self_ty: hir::TypeExpr,
     ) -> Result<hir::Param> {
         let ty = match receiver {
+            ast::FunctionParamReceiver::Typed(ty) => self.transform_type_to_hir(ty)?,
             ast::FunctionParamReceiver::Ref
             | ast::FunctionParamReceiver::RefStatic
             | ast::FunctionParamReceiver::RefMut

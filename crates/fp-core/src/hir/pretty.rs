@@ -345,12 +345,7 @@ fn write_impl_assoc_type(
     )
 }
 
-fn write_trait(
-    item: &Item,
-    tr: &Trait,
-    f: &mut Formatter<'_>,
-    ctx: &mut PrettyCtx<'_>,
-) -> fmt::Result {
+fn write_trait(item: &Item, tr: &Trait, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
     let vis = fmt_visibility(&item.visibility);
     let generics = fmt_generics(&tr.generics, ctx);
     let span_suffix = if ctx.options.show_spans {
@@ -363,9 +358,7 @@ fn write_trait(
         for (idx, trait_item) in tr.items.iter().enumerate() {
             match &trait_item.kind {
                 TraitItemKind::Method(func) => write_impl_method(func, f, ctx)?,
-                TraitItemKind::AssocType(assoc) => {
-                    ctx.writeln(f, format!("type {};", assoc.name))?
-                }
+                TraitItemKind::AssocType(assoc) => ctx.writeln(f, format!("type {};", assoc.name))?,
             }
             if idx + 1 < tr.items.len() {
                 ctx.writeln(f, "")?;
@@ -801,7 +794,7 @@ fn format_arg_ref(arg_ref: &FormatArgRef) -> String {
 }
 
 fn render_call_kind(kind: &CallKind) -> String {
-    kind.name().to_string()
+    kind.name()
 }
 
 fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
@@ -973,9 +966,15 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             let output_str = fmt_type_expr(&fn_ptr.output, ctx);
             format!("fn({}) -> {}", inputs_str, output_str)
         }
-        TypeExprKind::ConstBlock(_, body) => {
-            format!("const {{ {} }}", format_expr_inline(body, ctx))
-        }
+        TypeExprKind::Dynamic(bounds) => format!(
+            "dyn {}",
+            bounds
+                .iter()
+                .map(|bound| fmt_path(bound, ctx))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        ),
+        TypeExprKind::ConstBlock(_, body) => format!("const {{ {} }}", format_expr_inline(body, ctx)),
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),

@@ -817,7 +817,6 @@ impl HirTypeChecker {
         Ok(())
     }
 
-
     fn check_expr<'a>(&'a mut self, expr: &'a hir::Expr) -> crate::BoxFuture<'a, Result<Ty>> {
         Box::pin(async move {
             let ty = match &expr.kind {
@@ -2224,6 +2223,9 @@ impl HirTypeChecker {
                                 &ty,
                                 &resolved_init,
                             );
+                            let trait_object_unsize = scope
+                                .trait_object_wrapper_unsize_compatible(&ty, &resolved_init)
+                                .await;
                             let mut compatibility_substitutions = HashMap::new();
                             let unifies = scope
                                 .unify_call_types_probe(
@@ -2235,6 +2237,7 @@ impl HirTypeChecker {
                             if !pointer_coercion
                                 && !array_slice_coercion
                                 && !coerce_unsized
+                                && !trait_object_unsize
                                 && !unifies
                                 && !Self::ty_matches_with_infer_holes(&ty, &resolved_init)
                             {
@@ -2386,6 +2389,25 @@ impl HirTypeChecker {
                                 bound_vars: Vec::new(),
                             },
                         }),
+                    }
+                }
+                hir::TypeExprKind::Dynamic(bounds) => {
+                    let predicates = bounds
+                        .iter()
+                        .filter_map(|bound| {
+                            let hir::Res::Def(def_id) = bound.res.as_ref()? else {
+                                return None;
+                            };
+                            Some(ty::ExistentialPredicate::Trait(
+                                ty::ExistentialTraitRef {
+                                    def_id: def_id.clone(),
+                                    substs: Vec::new(),
+                                },
+                            ))
+                        })
+                        .collect();
+                    Ty {
+                        kind: TyKind::Dynamic(predicates, ty::Region::ReErased),
                     }
                 }
                 hir::TypeExprKind::Never => Ty::never(),
@@ -5357,6 +5379,80 @@ impl HirTypeChecker {
                 && expected != actual
         })
     }
+
+    async fn trait_object_wrapper_unsize_compatible(
+        &mut self,
+        expected: &Ty,
+        actual: &Ty,
+    ) -> bool {
+        let (TyKind::Adt(expected_def, expected_args), TyKind::Adt(actual_def, actual_args)) =
+            (&expected.kind, &actual.kind)
+        else {
+            return false;
+        };
+        if expected_def.did != actual_def.did || expected_args.len() != actual_args.len() {
+            return false;
+        }
+        for (expected_arg, actual_arg) in expected_args.iter().zip(actual_args) {
+            let (GenericArg::Type(expected_inner), GenericArg::Type(actual_inner)) =
+                (expected_arg, actual_arg)
+            else {
+                continue;
+            };
+            let TyKind::Dynamic(predicates, _) = &expected_inner.kind else {
+                continue;
+            };
+            let Some(ty::ExistentialPredicate::Trait(principal)) = predicates.first() else {
+                continue;
+            };
+            let TyKind::Adt(actual_adt, _) = &actual_inner.kind else {
+                continue;
+            };
+            let program = self.program_rc();
+            let candidates: Vec<_> = program
+                .impls_for_adt(actual_adt.did.clone())
+                .chain(program.blanket_impls())
+                .cloned()
+                .collect();
+            for item in candidates {
+                let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                    continue;
+                };
+                let Some(hir::TypeExpr {
+                    kind: hir::TypeExprKind::Path(trait_path),
+                    ..
+                }) = &impl_item.trait_ty
+                else {
+                    continue;
+                };
+                if trait_path.res != Some(hir::Res::Def(principal.def_id.clone())) {
+                    continue;
+                }
+                if matches!(
+                    &impl_item.self_ty.kind,
+                    hir::TypeExprKind::Path(hir::Path {
+                        res: Some(hir::Res::Def(self_id)),
+                        ..
+                    }) if *self_id == actual_adt.did
+                ) {
+                    return true;
+                }
+                let mut scope = self.with_generics(&impl_item.generics);
+                let Ok(impl_self) = scope.checked_impl_self_ty(&impl_item.self_ty).await else {
+                    continue;
+                };
+                let mut substitutions = HashMap::new();
+                if scope
+                    .unify_call_types_probe(&impl_self, actual_inner, &mut substitutions)
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
 
     /// `require_same`, but with a real span attached — use at any call site
     /// that already has the offending expression's span in scope (e.g.
