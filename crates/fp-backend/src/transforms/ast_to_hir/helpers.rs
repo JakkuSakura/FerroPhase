@@ -541,6 +541,42 @@ impl AstToHirLowerer {
 
         if segments.len() > 1 && path_prefix == PathPrefix::Plain && !first_is_shadowable_primitive
         {
+            // Resolve an imported module alias before applying the relative
+            // path heuristic below. Rustc resolves `marker` in
+            // `marker::Mut` first, then resolves `Mut` inside the module it
+            // names. Without this ordering, an alias such as
+            // `use super::node::marker` can fall through to suffix lookup
+            // and select an unrelated public module (`core::marker`).
+            if let Some(hir::Res::Module(module_path)) = match scope {
+                PathResolutionScope::Value => self.resolve_value_symbol(&segments[0].name),
+                PathResolutionScope::Type => self.resolve_type_symbol(&segments[0].name),
+            } {
+                let mut aliased = module_path;
+                aliased.extend(
+                    segments
+                        .iter()
+                        .skip(1)
+                        .map(|segment| segment.name.as_str().to_string()),
+                );
+                let aliased = QualifiedPath::new(aliased);
+                if let Some(res) = self.lookup_global_res(&aliased, scope) {
+                    let offset = aliased.segments.len().saturating_sub(segments.len());
+                    return Ok(hir::Path {
+                        segments: aliased
+                            .segments
+                            .iter()
+                            .enumerate()
+                            .map(|(index, name)| {
+                                let args = (index >= offset)
+                                    .then(|| segments[index - offset].args.clone())
+                                    .flatten();
+                                self.make_path_segment(name, args)
+                            })
+                            .collect(),
+                        res: Some(res),
+                    });
+                }
+            }
             let local_path = self.module_path.join(
                 &segments
                     .iter()
@@ -951,7 +987,35 @@ impl AstToHirLowerer {
                 self.name_to_hir_path_with_scope(name, scope)
             }
             ast::ExprKind::Select(select) => {
-                let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
+                // `T::ASSOC` is a type-relative path. Resolve its base in
+                // the type namespace, as rustc does for a qualified path,
+                // even when the surrounding expression is in value scope.
+                let type_base = self.ast_expr_to_hir_path(
+                    &select.obj,
+                    if matches!(select.select, ast::ExprSelectType::Const) {
+                        PathResolutionScope::Type
+                    } else {
+                        scope
+                    },
+                )?;
+                let value_base = if matches!(select.select, ast::ExprSelectType::Const) {
+                    Some(self.ast_expr_to_hir_path(
+                        &select.obj,
+                        PathResolutionScope::Value,
+                    )?)
+                } else {
+                    None
+                };
+                // A module-qualified constant (`self::CONST` or
+                // `module::CONST`) also uses `::`, but its base is a module,
+                // not a type-relative path. Preserve rustc's namespace
+                // fallback for that case after the type-relative lookup.
+                let mut base = match value_base {
+                    Some(value_base) if matches!(value_base.res, Some(hir::Res::Module(_))) => {
+                        value_base
+                    }
+                    _ => type_base,
+                };
                 let seg = self.make_path_segment(&select.field.name, None);
                 base.segments.push(seg);
                 Ok(base)

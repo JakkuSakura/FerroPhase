@@ -837,6 +837,24 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
 }
 
 #[test]
+fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()> {
+    let frontend = fp_lang::FerroFrontend::new();
+    let parsed = frontend.parse_file(
+        "mod node { pub(super) struct NodeRef {} }\nmod map { use super::node::NodeRef; }",
+        std::path::Path::new("sibling.rs"),
+    )?;
+    let package = package_from_items(parsed.ast.items.into_iter().collect())?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    generator.transform_package(&package)?;
+    let binding = generator.tree_lookup_raw("map::NodeRef", hir::Namespace::Type);
+    assert!(matches!(binding.map(|entry| &entry.res), Some(hir::Res::Def(_))));
+    Ok(())
+}
+
+#[test]
 fn transform_intrinsic_container_to_hir() -> Result<()> {
     let mut generator = AstToHirLowerer::new(
         std::rc::Rc::new(hir::HirProgram::new()),
@@ -1341,6 +1359,134 @@ fn transform_method_call_on_runtime_field_keeps_receiver_chain() -> Result<()> {
             ..
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "trait Layout { const IS_ZST: bool; } \
+         fn read<T: Layout>() -> bool { T::IS_ZST }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let read = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "read" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("read function present");
+    let generic_def_id = read.sig.generics.params[0].def_id.clone();
+    let body_expr = read
+        .body
+        .as_ref()
+        .and_then(|body| body.expr.as_deref())
+        .expect("read body expression");
+    let hir::ExprKind::Path(path) = &body_expr.kind else {
+        panic!("expected associated constant path, got {:?}", body_expr.kind);
+    };
+    assert_eq!(
+        path.segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["T", "IS_ZST"]
+    );
+    assert_eq!(
+        path.res,
+        Some(hir::Res::Def(generic_def_id)),
+        "type-relative associated constants resolve their base type in AST→HIR"
+    );
+    Ok(())
+}
+
+#[test]
+fn transform_associated_const_uses_type_namespace_for_base() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "trait Layout { const IS_ZST: bool; } \
+         fn read<T: Layout>() -> bool { let T = false; T::IS_ZST }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let read = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "read" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("read function present");
+    let generic_def_id = read.sig.generics.params[0].def_id.clone();
+    let body_expr = read
+        .body
+        .as_ref()
+        .and_then(|body| body.expr.as_deref())
+        .expect("read body expression");
+    let hir::ExprKind::Path(path) = &body_expr.kind else {
+        panic!("expected associated constant path, got {:?}", body_expr.kind);
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(generic_def_id)));
+    Ok(())
+}
+
+#[test]
+fn transform_module_const_keeps_value_namespace_for_base() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "mod values { pub const FLAG: bool = true; } \
+         fn read() -> bool { values::FLAG }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let read = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "read" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("read function present");
+    let body_expr = read
+        .body
+        .as_ref()
+        .and_then(|body| body.expr.as_deref())
+        .expect("read body expression");
+    let hir::ExprKind::Path(path) = &body_expr.kind else {
+        panic!("expected module constant path, got {:?}", body_expr.kind);
+    };
+    assert_eq!(
+        path.segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["values", "FLAG"]
+    );
+    assert!(
+        matches!(path.res, Some(hir::Res::Def(_))),
+        "module-qualified constants resolve to the module's value definition"
+    );
     Ok(())
 }
 

@@ -947,7 +947,13 @@ impl AstToHirLowerer {
         // unresolvable, since a plain runtime field access has no notion
         // of a type-relative base at all.
         if matches!(select.select, ast::ExprSelectType::Const) {
-            let mut path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?;
+            let type_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
+            let value_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?;
+            let mut path = if matches!(value_path.res, Some(hir::Res::Module(_))) {
+                value_path
+            } else {
+                type_path
+            };
             let seg = self.make_path_segment(&select.field.name, None);
             path.segments.push(seg);
             return Ok(hir::ExprKind::Path(path));

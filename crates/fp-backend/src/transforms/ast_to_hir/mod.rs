@@ -368,13 +368,14 @@ impl AstToHirLowerer {
     }
 
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
-        self.package
+        let exports = self.package
             .module_tree
             .all_bindings(hir::Namespace::Value)
             .chain(self.package.module_tree.all_bindings(hir::Namespace::Type))
             .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
             .map(|(path, entry)| (path.to_key(), entry.res.clone()))
-            .collect()
+            .collect::<HashMap<_, _>>();
+        exports
     }
 
     /// `type_aliases` (unlike the module tree's value/type bindings) has no
@@ -1374,6 +1375,16 @@ impl AstToHirLowerer {
         // expands an *expression*-position invocation: match each rule in
         // declaration order, substitute the bindings, re-parse the result.
         let package_items = self.expand_item_macros(package_items);
+
+        // The Rust provider flattens inline modules into package items while
+        // retaining each item's owning module path. Those paths are real
+        // modules even when no separate provider descriptor exists, such as
+        // `alloc::collections::btree::node::marker`.
+        for package_item in &package_items {
+            self.package
+                .module_tree
+                .ensure_module(&package_item.module_path);
+        }
 
         let mut program = hir::HirPackage::new(self.package.id.clone());
         self.seed_workspace_definitions(&mut program);
