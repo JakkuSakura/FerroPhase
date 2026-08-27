@@ -209,6 +209,8 @@ fn lowers_identity_function_with_parameter() {
         pat: param_pat.clone(),
         ty: param_ty.clone(),
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
 
@@ -718,6 +720,8 @@ fn lowers_index_expression_into_place_projection() {
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
     let idx_param = hir::Param {
@@ -725,6 +729,8 @@ fn lowers_index_expression_into_place_projection() {
         pat: idx_pat.clone(),
         ty: idx_ty,
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
 
@@ -832,6 +838,8 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
 
@@ -934,6 +942,8 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
     let start_param = hir::Param {
@@ -941,6 +951,8 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         pat: start_pat.clone(),
         ty: usize_ty.clone(),
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
     let end_param = hir::Param {
@@ -948,6 +960,8 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         pat: end_pat.clone(),
         ty: usize_ty,
         is_context: false,
+        as_tuple: false,
+        as_dict: false,
         default: None,
     };
 
