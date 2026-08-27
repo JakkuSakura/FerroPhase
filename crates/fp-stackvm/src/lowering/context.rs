@@ -24,7 +24,11 @@ pub fn lower_program(program: &BytecodeProgram) -> LowerResult<LirBlob> {
 
 fn validate_program(program: &BytecodeProgram) -> LowerResult<()> {
     if let Some(entry) = &program.entry {
-        if !program.functions.iter().any(|function| function.name == *entry) {
+        if !program
+            .functions
+            .iter()
+            .any(|function| function.name == *entry)
+        {
             return Err(super::LowerError::Internal(format!(
                 "entry function `{entry}` is not present in the program"
             )));
@@ -78,7 +82,9 @@ fn validate_program(program: &BytecodeProgram) -> LowerResult<()> {
                 fp_bytecode::BytecodeTerminator::SwitchInt {
                     targets, otherwise, ..
                 } => {
-                    if let fp_bytecode::BytecodeTerminator::SwitchInt { values, .. } = &block.terminator {
+                    if let fp_bytecode::BytecodeTerminator::SwitchInt { values, .. } =
+                        &block.terminator
+                    {
                         if values.len() != targets.len() {
                             return Err(super::LowerError::Internal(format!(
                                 "function `{}` block {} has {} switch values but {} targets",
@@ -89,7 +95,11 @@ fn validate_program(program: &BytecodeProgram) -> LowerResult<()> {
                             )));
                         }
                     }
-                    targets.iter().copied().chain(std::iter::once(*otherwise)).collect()
+                    targets
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(*otherwise))
+                        .collect()
                 }
                 fp_bytecode::BytecodeTerminator::Call { target, .. } => vec![*target],
                 fp_bytecode::BytecodeTerminator::Return
@@ -114,11 +124,7 @@ fn validate_program(program: &BytecodeProgram) -> LowerResult<()> {
     Ok(())
 }
 
-fn validate_local(
-    function: &BytecodeFunction,
-    block_id: u32,
-    local: u32,
-) -> LowerResult<()> {
+fn validate_local(function: &BytecodeFunction, block_id: u32, local: u32) -> LowerResult<()> {
     if (local as usize) >= function.local_types.len() {
         return Err(super::LowerError::Internal(format!(
             "function `{}` block {} references missing local {}",
@@ -201,14 +207,13 @@ impl<'a> LoweringContext<'a> {
             .iter()
             .map(|local| local.ty.clone())
             .collect();
-        let mut fl =
-            FunctionLowering::new(
-                self.bytecode,
-                &mut lir_func,
-                entry_block_id,
-                local_types,
-                bytecode_predecessors(func),
-            );
+        let mut fl = FunctionLowering::new(
+            self.bytecode,
+            &mut lir_func,
+            entry_block_id,
+            local_types,
+            bytecode_predecessors(func),
+        );
 
         // The LirInterpreter pre-allocates stack slots for all locals
         // declared in func.locals during function execution. We reference
@@ -304,7 +309,11 @@ fn bytecode_successors(terminator: &fp_bytecode::BytecodeTerminator) -> Vec<u32>
         }
         fp_bytecode::BytecodeTerminator::SwitchInt {
             targets, otherwise, ..
-        } => targets.iter().copied().chain(std::iter::once(*otherwise)).collect(),
+        } => targets
+            .iter()
+            .copied()
+            .chain(std::iter::once(*otherwise))
+            .collect(),
         fp_bytecode::BytecodeTerminator::Call { target, .. } => vec![*target],
         _ => Vec::new(),
     }
@@ -321,7 +330,11 @@ fn bytecode_predecessors(func: &BytecodeFunction) -> HashMap<u32, Vec<u32>> {
             }
             fp_bytecode::BytecodeTerminator::SwitchInt {
                 targets, otherwise, ..
-            } => targets.iter().copied().chain(std::iter::once(*otherwise)).collect(),
+            } => targets
+                .iter()
+                .copied()
+                .chain(std::iter::once(*otherwise))
+                .collect(),
             fp_bytecode::BytecodeTerminator::Call { target, .. } => vec![*target],
             _ => Vec::new(),
         };

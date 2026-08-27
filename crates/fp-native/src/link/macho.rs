@@ -829,11 +829,10 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 }
                 let imm = delta_pages as u32;
                 let adrp_offset = text_offset as usize + reloc.offset as usize;
-                let mut adrp = u32::from_le_bytes(
-                    out[adrp_offset..adrp_offset + 4]
-                        .try_into()
-                        .map_err(|e| Error::from(format!("GOT ADRP relocation out of range: {e}")))?,
-                );
+                let mut adrp =
+                    u32::from_le_bytes(out[adrp_offset..adrp_offset + 4].try_into().map_err(
+                        |e| Error::from(format!("GOT ADRP relocation out of range: {e}")),
+                    )?);
                 adrp &= !((0x3 << 29) | (0x7ffff << 5));
                 adrp |= ((imm & 0x3) << 29) | (((imm >> 2) & 0x7ffff) << 5);
                 out[adrp_offset..adrp_offset + 4].copy_from_slice(&adrp.to_le_bytes());
@@ -843,11 +842,10 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 if pageoff % 8 != 0 {
                     return Err(Error::from("unaligned AArch64 GOT entry"));
                 }
-                let mut ldr = u32::from_le_bytes(
-                    out[ldr_offset..ldr_offset + 4]
-                        .try_into()
-                        .map_err(|e| Error::from(format!("GOT LDR relocation out of range: {e}")))?,
-                );
+                let mut ldr =
+                    u32::from_le_bytes(out[ldr_offset..ldr_offset + 4].try_into().map_err(
+                        |e| Error::from(format!("GOT LDR relocation out of range: {e}")),
+                    )?);
                 ldr &= !(0xfff << 10);
                 ldr |= (pageoff / 8) << 10;
                 out[ldr_offset..ldr_offset + 4].copy_from_slice(&ldr.to_le_bytes());

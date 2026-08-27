@@ -200,7 +200,9 @@ impl CompilerState {
     /// static initializer), so append-only storage would retain an orphaned
     /// synthetic function for native emission.
     pub fn clear_lir_package(&mut self, package_id: &PackageId) {
-        Rc::make_mut(&mut self.lir_program).packages.remove(package_id);
+        Rc::make_mut(&mut self.lir_program)
+            .packages
+            .remove(package_id);
     }
 
     /// `package_id`'s own LIR, every one of its blobs (see `lir::LirPackage`'s

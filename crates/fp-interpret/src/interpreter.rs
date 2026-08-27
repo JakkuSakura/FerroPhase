@@ -35,21 +35,31 @@ fn json_to_runtime_value(value: serde_json::Value) -> LirResult<Value> {
         serde_json::Value::Null => Ok(Value::null()),
         serde_json::Value::Bool(value) => Ok(Value::bool(value)),
         serde_json::Value::Number(value) => value
-            .as_i64().map(Value::int)
+            .as_i64()
+            .map(Value::int)
             .or_else(|| value.as_u64().map(Value::uint))
             .or_else(|| value.as_f64().map(Value::decimal))
             .ok_or_else(|| VmError::Runtime("unsupported JSON number".into())),
         serde_json::Value::String(value) => Ok(Value::string(value)),
         serde_json::Value::Array(values) => Ok(Value::List(ValueList::new(
-            values.into_iter().map(json_to_runtime_value).collect::<LirResult<Vec<_>>>()?,
+            values
+                .into_iter()
+                .map(json_to_runtime_value)
+                .collect::<LirResult<Vec<_>>>()?,
         ))),
-        serde_json::Value::Object(values) => Ok(Value::Structural(
-            fp_core::ast::ValueStructural::new(values.into_iter().map(|(name, value)| {
-                Ok(fp_core::ast::ValueField::new(
-                    fp_core::ast::Ident::new(name), json_to_runtime_value(value)?,
-                ))
-            }).collect::<LirResult<Vec<_>>>()?),
-        )),
+        serde_json::Value::Object(values) => {
+            Ok(Value::Structural(fp_core::ast::ValueStructural::new(
+                values
+                    .into_iter()
+                    .map(|(name, value)| {
+                        Ok(fp_core::ast::ValueField::new(
+                            fp_core::ast::Ident::new(name),
+                            json_to_runtime_value(value)?,
+                        ))
+                    })
+                    .collect::<LirResult<Vec<_>>>()?,
+            )))
+        }
     }
 }
 
@@ -652,11 +662,7 @@ impl LirInterpreter {
                         "landing pad instruction has no result type".into(),
                     ));
                 }
-                self.write_typed_result(
-                    dst,
-                    result_type,
-                    Self::default_value_for_type(result_type),
-                )
+                self.write_typed_result(dst, result_type, Self::default_value_for_type(result_type))
             }
             LirInstructionKind::InlineAsm { .. } | LirInstructionKind::ExecQuery(_) => {
                 Err(VmError::Runtime("unsupported".into()))
@@ -1931,14 +1937,7 @@ impl LirInterpreter {
                 let handle = usize::try_from(pointer.value)
                     .map_err(|_| VmError::Runtime("negative function handle".into()))?;
                 if let Some(Value::String(name)) = self.state.objects.get(handle).cloned() {
-                    return self.handle_call_named(
-                        dst,
-                        &name.value,
-                        args,
-                        None,
-                        None,
-                        result_ty,
-                    );
+                    return self.handle_call_named(dst, &name.value, args, None, None, result_ty);
                 }
             }
             return self.handle_unionify_closure_call(dst, function, args, result_ty);
@@ -2106,7 +2105,7 @@ impl LirInterpreter {
             None => {
                 return Err(VmError::Runtime(format!(
                     "intrinsic '{name}' has no result type"
-                )))
+                )));
             }
         };
         let unit = || TypedValue {
@@ -2231,7 +2230,7 @@ impl LirInterpreter {
             None => {
                 return Err(VmError::Runtime(format!(
                     "bytecode intrinsic '{name}' has no result type"
-                )))
+                )));
             }
         };
         let result = |value: Value| TypedValue {
@@ -2298,7 +2297,8 @@ impl LirInterpreter {
                         .find(|entry| entry.key == args[1].value)
                         .map(|entry| entry.value.clone()),
                     Value::Struct(value) => {
-                        let field = self.struct_field_by_name(&value.structural.fields, &args[1], name)?;
+                        let field =
+                            self.struct_field_by_name(&value.structural.fields, &args[1], name)?;
                         Some(field.value.clone())
                     }
                     Value::Structural(value) => {
@@ -2325,17 +2325,29 @@ impl LirInterpreter {
                     let field_index = self.bc_integer_arg(name, args, 1)? as usize;
                     let replacement = args[2].value.clone();
                     match &mut value {
-                        Value::Struct(structure) => structure
-                            .structural
-                            .fields
-                            .get_mut(field_index)
-                            .ok_or_else(|| VmError::Runtime(format!("field index {field_index} out of bounds")))?
-                            .value = replacement,
-                        Value::Structural(structure) => structure
-                            .fields
-                            .get_mut(field_index)
-                            .ok_or_else(|| VmError::Runtime(format!("field index {field_index} out of bounds")))?
-                            .value = replacement,
+                        Value::Struct(structure) => {
+                            structure
+                                .structural
+                                .fields
+                                .get_mut(field_index)
+                                .ok_or_else(|| {
+                                    VmError::Runtime(format!(
+                                        "field index {field_index} out of bounds"
+                                    ))
+                                })?
+                                .value = replacement
+                        }
+                        Value::Structural(structure) => {
+                            structure
+                                .fields
+                                .get_mut(field_index)
+                                .ok_or_else(|| {
+                                    VmError::Runtime(format!(
+                                        "field index {field_index} out of bounds"
+                                    ))
+                                })?
+                                .value = replacement
+                        }
                         _ => unreachable!(),
                     }
                     let new_handle = self.state.objects.len() as u64;
@@ -2468,7 +2480,7 @@ impl LirInterpreter {
                     Some(_) => {
                         return Err(VmError::Runtime(
                             "token stream source must be a string".into(),
-                        ))
+                        ));
                     }
                     None => return Err(VmError::Runtime(format!("dangling handle {handle}"))),
                 };
@@ -2523,9 +2535,11 @@ impl LirInterpreter {
                     Some(value) => {
                         return Err(VmError::Runtime(format!(
                             "{name} expects a string, got {value:?}"
-                        )))
+                        )));
                     }
-                    None => return Err(VmError::Runtime(format!("dangling string handle {handle}"))),
+                    None => {
+                        return Err(VmError::Runtime(format!("dangling string handle {handle}")));
+                    }
                 };
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&source)
                     .map_err(|error| VmError::Runtime(format!("failed to parse YAML: {error}")))?;
@@ -2558,7 +2572,9 @@ impl LirInterpreter {
                 let value = json_to_runtime_value(parsed)?;
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(value);
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "println" => {
                 for arg in args {
@@ -2607,12 +2623,12 @@ impl LirInterpreter {
                     Some(value) => {
                         return Err(VmError::Runtime(format!(
                             "catch_unwind expects a function reference, got {value:?}"
-                        )))
+                        )));
                     }
                     None => {
                         return Err(VmError::Runtime(format!(
                             "dangling function handle {function_handle}"
-                        )))
+                        )));
                     }
                 };
                 let function = self
@@ -2624,19 +2640,14 @@ impl LirInterpreter {
                         ))
                     })
                     .cloned()
-                    .ok_or_else(|| {
-                        VmError::Runtime(format!("missing function {function_name}"))
-                    })?;
+                    .ok_or_else(|| VmError::Runtime(format!("missing function {function_name}")))?;
                 let fields = match self.run_function(&function, &[]) {
                     Ok(value) => vec![
                         fp_core::ast::ValueField::new(
                             fp_core::ast::Ident::new("ok"),
                             Value::bool(true),
                         ),
-                        fp_core::ast::ValueField::new(
-                            fp_core::ast::Ident::new("value"),
-                            value,
-                        ),
+                        fp_core::ast::ValueField::new(fp_core::ast::Ident::new("value"), value),
                         fp_core::ast::ValueField::new(
                             fp_core::ast::Ident::new("error"),
                             Value::None(Default::default()),
@@ -2660,7 +2671,9 @@ impl LirInterpreter {
                 let handle = self.state.objects.len() as i64;
                 self.state
                     .objects
-                    .push(Value::Structural(fp_core::ast::ValueStructural::new(fields)));
+                    .push(Value::Structural(fp_core::ast::ValueStructural::new(
+                        fields,
+                    )));
                 Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
                     handle,
                 ))))
@@ -2673,12 +2686,10 @@ impl LirInterpreter {
                     Some(value) => {
                         return Err(VmError::Runtime(format!(
                             "{name} expects a string, got {value:?}"
-                        )))
+                        )));
                     }
                     None => {
-                        return Err(VmError::Runtime(format!(
-                            "dangling string handle {handle}"
-                        )))
+                        return Err(VmError::Runtime(format!("dangling string handle {handle}")));
                     }
                 };
                 let output = std::process::Command::new("sh")
@@ -2811,7 +2822,10 @@ impl LirInterpreter {
                     return Err(VmError::Runtime(format!("{name} expects a string path")));
                 };
                 let entries = std::fs::read_dir(&path.value).map_err(|error| {
-                    VmError::Runtime(format!("failed to read directory '{}': {error}", path.value))
+                    VmError::Runtime(format!(
+                        "failed to read directory '{}': {error}",
+                        path.value
+                    ))
                 })?;
                 let mut paths = Vec::new();
                 for entry in entries {
@@ -2851,7 +2865,10 @@ impl LirInterpreter {
                 let mut pending = vec![std::path::PathBuf::from(&path.value)];
                 while let Some(directory) = pending.pop() {
                     let entries = std::fs::read_dir(&directory).map_err(|error| {
-                        VmError::Runtime(format!("failed to walk '{}': {error}", directory.display()))
+                        VmError::Runtime(format!(
+                            "failed to walk '{}': {error}",
+                            directory.display()
+                        ))
                     })?;
                     for entry in entries {
                         let entry = entry.map_err(|error| {
@@ -2859,9 +2876,16 @@ impl LirInterpreter {
                         })?;
                         let entry_path = entry.path();
                         paths.push(entry_path.to_string_lossy().into_owned());
-                        if entry.file_type().map_err(|error| {
-                            VmError::Runtime(format!("failed to inspect '{}': {error}", entry_path.display()))
-                        })?.is_dir() {
+                        if entry
+                            .file_type()
+                            .map_err(|error| {
+                                VmError::Runtime(format!(
+                                    "failed to inspect '{}': {error}",
+                                    entry_path.display()
+                                ))
+                            })?
+                            .is_dir()
+                        {
                             pending.push(entry_path);
                         }
                     }
@@ -2900,7 +2924,10 @@ impl LirInterpreter {
                 let mut pending = vec![std::path::PathBuf::from(".")];
                 while let Some(directory) = pending.pop() {
                     let entries = std::fs::read_dir(&directory).map_err(|error| {
-                        VmError::Runtime(format!("failed to read '{}': {error}", directory.display()))
+                        VmError::Runtime(format!(
+                            "failed to read '{}': {error}",
+                            directory.display()
+                        ))
                     })?;
                     for entry in entries {
                         let entry = entry.map_err(|error| {
@@ -2911,9 +2938,16 @@ impl LirInterpreter {
                         if matcher.is_match(&entry_path) || matcher.is_match(relative_path) {
                             matches.push(entry_path.to_string_lossy().into_owned());
                         }
-                        if entry.file_type().map_err(|error| {
-                            VmError::Runtime(format!("failed to inspect '{}': {error}", entry_path.display()))
-                        })?.is_dir() {
+                        if entry
+                            .file_type()
+                            .map_err(|error| {
+                                VmError::Runtime(format!(
+                                    "failed to inspect '{}': {error}",
+                                    entry_path.display()
+                                ))
+                            })?
+                            .is_dir()
+                        {
                             pending.push(entry_path);
                         }
                     }
@@ -2933,8 +2967,8 @@ impl LirInterpreter {
                     list_handle,
                 ))))
             }
-            "path_join" | "path_parent" | "path_file_name" | "path_extension"
-            | "path_stem" | "path_normalize" | "path_is_absolute" => {
+            "path_join" | "path_parent" | "path_file_name" | "path_extension" | "path_stem"
+            | "path_normalize" | "path_is_absolute" => {
                 if name == "path_join" {
                     if args.len() < 2 {
                         return Err(VmError::Runtime(
@@ -2953,7 +2987,9 @@ impl LirInterpreter {
                 };
                 let first = path_value(&args[0])?;
                 if name == "path_is_absolute" {
-                    return Ok(result(Value::bool(std::path::Path::new(&first).is_absolute())));
+                    return Ok(result(Value::bool(
+                        std::path::Path::new(&first).is_absolute(),
+                    )));
                 }
                 let text = match name {
                     "path_join" => {
@@ -2996,10 +3032,11 @@ impl LirInterpreter {
                 };
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(Value::string(text));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
-            "env_current_dir" | "env_temp_dir" | "env_home_dir" | "env_var"
-            | "env_var_exists" => {
+            "env_current_dir" | "env_temp_dir" | "env_home_dir" | "env_var" | "env_var_exists" => {
                 let takes_name = matches!(name, "env_var" | "env_var_exists");
                 Self::require_bc_arity(name, args, usize::from(takes_name))?;
                 let string_arg = |arg: &TypedValue| -> LirResult<String> {
@@ -3010,7 +3047,9 @@ impl LirInterpreter {
                     Ok(value.value.clone())
                 };
                 if name == "env_var_exists" {
-                    return Ok(result(Value::bool(std::env::var_os(string_arg(&args[0])?).is_some())));
+                    return Ok(result(Value::bool(
+                        std::env::var_os(string_arg(&args[0])?).is_some(),
+                    )));
                 }
                 let value = match name {
                     "env_current_dir" => std::env::current_dir()
@@ -3018,8 +3057,9 @@ impl LirInterpreter {
                         .to_string_lossy()
                         .into_owned(),
                     "env_temp_dir" => std::env::temp_dir().to_string_lossy().into_owned(),
-                    "env_home_dir" => std::env::var("HOME")
-                        .map_err(|error| VmError::Runtime(format!("HOME is unavailable: {error}")))?,
+                    "env_home_dir" => std::env::var("HOME").map_err(|error| {
+                        VmError::Runtime(format!("HOME is unavailable: {error}"))
+                    })?,
                     "env_var" => std::env::var(string_arg(&args[0])?).map_err(|error| {
                         VmError::Runtime(format!("environment variable is unavailable: {error}"))
                     })?,
@@ -3027,18 +3067,22 @@ impl LirInterpreter {
                 };
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(Value::string(value));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "io_read_stdin_to_string" => {
                 Self::require_bc_arity(name, args, 0)?;
                 use std::io::Read;
                 let mut contents = String::new();
-                std::io::stdin().read_to_string(&mut contents).map_err(|error| {
-                    VmError::Runtime(format!("failed to read stdin: {error}"))
-                })?;
+                std::io::stdin()
+                    .read_to_string(&mut contents)
+                    .map_err(|error| VmError::Runtime(format!("failed to read stdin: {error}")))?;
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(Value::string(contents));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "io_write_stdout" | "io_write_stderr" => {
                 Self::require_bc_arity(name, args, 1)?;
@@ -3075,7 +3119,7 @@ impl LirInterpreter {
                     ref value => {
                         return Err(VmError::Runtime(format!(
                             "debug_assertions expects bool, got {value:?}"
-                        )))
+                        )));
                     }
                 };
                 if !condition {
@@ -3106,9 +3150,10 @@ impl LirInterpreter {
                 }
                 use std::io::BufRead;
                 let mut line = String::new();
-                std::io::stdin().lock().read_line(&mut line).map_err(|error| {
-                    VmError::Runtime(format!("failed to read input: {error}"))
-                })?;
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut line)
+                    .map_err(|error| VmError::Runtime(format!("failed to read input: {error}")))?;
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(Value::string(
                     line.strip_suffix('\n')
@@ -3116,7 +3161,9 @@ impl LirInterpreter {
                         .unwrap_or(&line)
                         .to_string(),
                 ));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "type_name" => {
                 Self::require_bc_arity(name, args, 1)?;
@@ -3147,8 +3194,12 @@ impl LirInterpreter {
                     _ => "value",
                 };
                 let handle = self.state.objects.len() as i64;
-                self.state.objects.push(Value::string(type_name.to_string()));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                self.state
+                    .objects
+                    .push(Value::string(type_name.to_string()));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "type_of" => {
                 Self::require_bc_arity(name, args, 1)?;
@@ -3156,11 +3207,8 @@ impl LirInterpreter {
                     Value::Unit(_) => Ty::unit(),
                     Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
                     Value::Int(_) => Ty::Primitive(TypePrimitive::i64()),
-                    Value::UInt(_) => Ty::Primitive(TypePrimitive::Int(
-                        fp_core::ast::TypeInt::U64,
-                    )),
-                    Value::Decimal(_) | Value::BigDecimal(_) =>
-                        Ty::Primitive(TypePrimitive::f64()),
+                    Value::UInt(_) => Ty::Primitive(TypePrimitive::Int(fp_core::ast::TypeInt::U64)),
+                    Value::Decimal(_) | Value::BigDecimal(_) => Ty::Primitive(TypePrimitive::f64()),
                     Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
                     Value::String(_) => Ty::Primitive(TypePrimitive::String),
                     Value::List(_) => Ty::Primitive(TypePrimitive::List),
@@ -3181,9 +3229,7 @@ impl LirInterpreter {
                             })
                             .collect(),
                     }),
-                    Value::Function(_) | Value::UnionifyClosure(_) => {
-                        Ty::unknown()
-                    }
+                    Value::Function(_) | Value::UnionifyClosure(_) => Ty::unknown(),
                     _ => Ty::unknown(),
                 };
                 Ok(result(Value::Type(ty)))
@@ -3245,7 +3291,7 @@ impl LirInterpreter {
                     value => {
                         return Err(VmError::Runtime(format!(
                             "field_count expects a struct, got {value:?}"
-                        )))
+                        )));
                     }
                 };
                 Ok(result(integer_value(
@@ -3271,7 +3317,7 @@ impl LirInterpreter {
                     value => {
                         return Err(VmError::Runtime(format!(
                             "field_name_at expects a struct, got {value:?}"
-                        )))
+                        )));
                     }
                 }
                 .ok_or_else(|| VmError::Runtime(format!("field index {index} out of bounds")))?
@@ -3280,7 +3326,9 @@ impl LirInterpreter {
                 .clone();
                 let handle = self.state.objects.len() as i64;
                 self.state.objects.push(Value::string(field_name));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             "has_field" => {
                 Self::require_bc_arity(name, args, 2)?;
@@ -3290,9 +3338,13 @@ impl LirInterpreter {
                     .objects
                     .get(field_handle)
                     .cloned()
-                    .ok_or(VmError::Runtime(format!("dangling field name handle {field_handle}")))?
+                    .ok_or(VmError::Runtime(format!(
+                        "dangling field name handle {field_handle}"
+                    )))?
                 else {
-                    return Err(VmError::Runtime("has_field expects a string field name".into()));
+                    return Err(VmError::Runtime(
+                        "has_field expects a string field name".into(),
+                    ));
                 };
                 let object = match &args[0].value {
                     Value::Pointer(pointer) if pointer.value >= 0 => self
@@ -3315,7 +3367,7 @@ impl LirInterpreter {
                     value => {
                         return Err(VmError::Runtime(format!(
                             "has_field expects a struct, got {value:?}"
-                        )))
+                        )));
                     }
                 };
                 Ok(result(Value::bool(exists)))
@@ -3329,10 +3381,7 @@ impl LirInterpreter {
             }
             "method_count" => {
                 Self::require_bc_arity(name, args, 1)?;
-                Ok(result(integer_value(
-                    0,
-                    lir_type_info(result_ty).1,
-                )))
+                Ok(result(integer_value(0, lir_type_info(result_ty).1)))
             }
             "field_type" => {
                 Self::require_bc_arity(name, args, 2)?;
@@ -3372,7 +3421,7 @@ impl LirInterpreter {
                     value => {
                         return Err(VmError::Runtime(format!(
                             "reflect_fields expects a struct, got {value:?}"
-                        )))
+                        )));
                     }
                 };
                 let list = Value::List(ValueList::new(names));
@@ -3393,14 +3442,14 @@ impl LirInterpreter {
                 let mut fields = Vec::with_capacity(args.len() / 2);
                 for pair in args.chunks_exact(2) {
                     let handle = self.container_handle(name, &pair[0])?;
-                    let Value::String(field_name) = self
-                        .state
-                        .objects
-                        .get(handle)
-                        .cloned()
-                        .ok_or(VmError::Runtime(format!(
-                            "dangling field name handle {handle}"
-                        )))?
+                    let Value::String(field_name) =
+                        self.state
+                            .objects
+                            .get(handle)
+                            .cloned()
+                            .ok_or(VmError::Runtime(format!(
+                                "dangling field name handle {handle}"
+                            )))?
                     else {
                         return Err(VmError::Runtime(
                             "create_struct field names must be strings".into(),
@@ -3414,8 +3463,12 @@ impl LirInterpreter {
                 let handle = self.state.objects.len() as i64;
                 self.state
                     .objects
-                    .push(Value::Structural(fp_core::ast::ValueStructural::new(fields)));
-                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(handle))))
+                    .push(Value::Structural(fp_core::ast::ValueStructural::new(
+                        fields,
+                    )));
+                Ok(result(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    handle,
+                ))))
             }
             _ => Err(VmError::Runtime(format!("unknown bc intrinsic: {name}"))),
         }
@@ -3436,7 +3489,7 @@ impl LirInterpreter {
             Value::Pointer(_) => {
                 return Err(VmError::Runtime(format!(
                     "invalid container handle for {name}"
-                )))
+                )));
             }
             _ => self.integer_value(value)?,
         };

@@ -204,24 +204,27 @@ mod tests {
                     param_types: vec![],
                     return_type: fp_core::lir::LirType::I64,
                     local_types: vec![fp_core::lir::LirType::I64],
-                    blocks: vec![BytecodeBlock {
-                        id: 0,
-                        code: vec![],
-                        terminator: BytecodeTerminator::Call {
-                            callee: BytecodeCallee::Function("helper".into()),
-                            arg_count: 0,
-                            destination: Some(BytecodePlace {
-                                local: 0,
-                                projection: vec![],
-                            }),
-                            result_type: fp_core::lir::LirType::I64,
-                            target: 1,
+                    blocks: vec![
+                        BytecodeBlock {
+                            id: 0,
+                            code: vec![],
+                            terminator: BytecodeTerminator::Call {
+                                callee: BytecodeCallee::Function("helper".into()),
+                                arg_count: 0,
+                                destination: Some(BytecodePlace {
+                                    local: 0,
+                                    projection: vec![],
+                                }),
+                                result_type: fp_core::lir::LirType::I64,
+                                target: 1,
+                            },
                         },
-                    }, BytecodeBlock {
-                        id: 1,
-                        code: vec![],
-                        terminator: BytecodeTerminator::Return,
-                    }],
+                        BytecodeBlock {
+                            id: 1,
+                            code: vec![],
+                            terminator: BytecodeTerminator::Return,
+                        },
+                    ],
                 },
             ],
             entry: Some("main".to_string()),
@@ -244,10 +247,7 @@ mod tests {
                 ))],
                 blocks: vec![BytecodeBlock {
                     id: 0,
-                    code: vec![
-                        BytecodeInstr::LoadConst(0),
-                        BytecodeInstr::StoreLocal(0),
-                    ],
+                    code: vec![BytecodeInstr::LoadConst(0), BytecodeInstr::StoreLocal(0)],
                     terminator: BytecodeTerminator::Return,
                 }],
             }],
@@ -370,7 +370,10 @@ mod tests {
         let i64_ty = fp_core::lir::LirType::I64;
         let ptr_ty = fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::I8));
         let program = BytecodeProgram {
-            const_pool: vec![BytecodeConst::Int(42), BytecodeConst::Function("helper".into())],
+            const_pool: vec![
+                BytecodeConst::Int(42),
+                BytecodeConst::Function("helper".into()),
+            ],
             functions: vec![
                 BytecodeFunction {
                     name: "helper".into(),
@@ -379,10 +382,7 @@ mod tests {
                     local_types: vec![i64_ty.clone()],
                     blocks: vec![BytecodeBlock {
                         id: 0,
-                        code: vec![
-                            BytecodeInstr::LoadConst(0),
-                            BytecodeInstr::StoreLocal(0),
-                        ],
+                        code: vec![BytecodeInstr::LoadConst(0), BytecodeInstr::StoreLocal(0)],
                         terminator: BytecodeTerminator::Return,
                     }],
                 },
@@ -394,10 +394,7 @@ mod tests {
                     blocks: vec![
                         BytecodeBlock {
                             id: 0,
-                            code: vec![
-                                BytecodeInstr::LoadConst(1),
-                                BytecodeInstr::StoreLocal(1),
-                            ],
+                            code: vec![BytecodeInstr::LoadConst(1), BytecodeInstr::StoreLocal(1)],
                             terminator: BytecodeTerminator::Call {
                                 callee: BytecodeCallee::Local(BytecodePlace {
                                     local: 1,
@@ -435,10 +432,7 @@ mod tests {
     fn end_to_end_map_lookup() {
         let i64_ty = fp_core::lir::LirType::I64;
         let program = BytecodeProgram {
-            const_pool: vec![
-                BytecodeConst::Int(7),
-                BytecodeConst::Int(42),
-            ],
+            const_pool: vec![BytecodeConst::Int(7), BytecodeConst::Int(42)],
             functions: vec![BytecodeFunction {
                 name: "main".into(),
                 param_types: vec![],
@@ -568,7 +562,12 @@ mod tests {
                 name: "main".into(),
                 param_types: vec![],
                 return_type: ptr_ty.clone(),
-                local_types: vec![ptr_ty.clone(), ptr_ty.clone(), ptr_ty.clone(), ptr_ty.clone()],
+                local_types: vec![
+                    ptr_ty.clone(),
+                    ptr_ty.clone(),
+                    ptr_ty.clone(),
+                    ptr_ty.clone(),
+                ],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![
@@ -850,10 +849,7 @@ mod tests {
         let i64_ty = fp_core::lir::LirType::I64;
         let ptr_ty = fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::I8));
         let program = BytecodeProgram {
-            const_pool: vec![
-                BytecodeConst::Str("answer".into()),
-                BytecodeConst::Int(42),
-            ],
+            const_pool: vec![BytecodeConst::Str("answer".into()), BytecodeConst::Int(42)],
             functions: vec![BytecodeFunction {
                 name: "main".into(),
                 param_types: vec![],
@@ -901,10 +897,7 @@ mod tests {
         let i64_ty = fp_core::lir::LirType::I64;
         let ptr_ty = fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::I8));
         let program = BytecodeProgram {
-            const_pool: vec![
-                BytecodeConst::Str("answer".into()),
-                BytecodeConst::Int(42),
-            ],
+            const_pool: vec![BytecodeConst::Str("answer".into()), BytecodeConst::Int(42)],
             functions: vec![BytecodeFunction {
                 name: "main".into(),
                 param_types: vec![],
@@ -947,10 +940,8 @@ mod tests {
     fn end_to_end_fs_write_string() {
         let i64_ty = fp_core::lir::LirType::I64;
         let ptr_ty = fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::I8));
-        let path = std::env::temp_dir().join(format!(
-            "fp-stackvm-write-test-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("fp-stackvm-write-test-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let program = BytecodeProgram {
             const_pool: vec![
@@ -1002,10 +993,8 @@ mod tests {
     fn end_to_end_fs_append_string() {
         let i64_ty = fp_core::lir::LirType::I64;
         let ptr_ty = fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::I8));
-        let path = std::env::temp_dir().join(format!(
-            "fp-stackvm-append-test-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("fp-stackvm-append-test-{}", std::process::id()));
         std::fs::write(&path, "a").expect("test file setup should succeed");
         let program = BytecodeProgram {
             const_pool: vec![
@@ -1092,7 +1081,11 @@ mod tests {
     #[test]
     fn end_to_end_forward_stack_join() {
         let program = BytecodeProgram {
-            const_pool: vec![BytecodeConst::Bool(false), BytecodeConst::Int(11), BytecodeConst::Int(22)],
+            const_pool: vec![
+                BytecodeConst::Bool(false),
+                BytecodeConst::Int(11),
+                BytecodeConst::Int(22),
+            ],
             functions: vec![BytecodeFunction {
                 name: "main".into(),
                 param_types: vec![],

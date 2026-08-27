@@ -205,12 +205,9 @@ impl LirProgram {
             }
             for function in &blob.functions {
                 if let Some(def_id) = &function.def_id {
-                    combined
-                        .functions
-                        .retain(|existing| {
-                            existing.def_id.as_ref() != Some(def_id)
-                                && existing.name != function.name
-                        });
+                    combined.functions.retain(|existing| {
+                        existing.def_id.as_ref() != Some(def_id) && existing.name != function.name
+                    });
                 } else {
                     combined
                         .functions
@@ -219,7 +216,9 @@ impl LirProgram {
                 combined.functions.push(function.clone());
             }
             for global in &blob.globals {
-                combined.globals.retain(|existing| existing.name != global.name);
+                combined
+                    .globals
+                    .retain(|existing| existing.name != global.name);
                 combined.globals.push(global.clone());
             }
             combined

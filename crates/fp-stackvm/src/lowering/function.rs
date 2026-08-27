@@ -535,7 +535,8 @@ impl<'a> FunctionLowering<'a> {
         for predecessor in predecessors {
             incoming.push((predecessor, self.exit_stacks.get(&predecessor).cloned()));
         }
-        let Some((_, Some(first_stack))) = incoming.iter().find(|(_, stack)| stack.is_some()) else {
+        let Some((_, Some(first_stack))) = incoming.iter().find(|(_, stack)| stack.is_some())
+        else {
             return Err(LowerError::Unsupported(format!(
                 "block {block_id} has no resolved operand-stack predecessor"
             )));

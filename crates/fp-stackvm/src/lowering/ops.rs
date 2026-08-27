@@ -295,13 +295,7 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicKind::Panic => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_panic",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_panic", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::CatchUnwind => {
@@ -321,13 +315,8 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicKind::JsonParse => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_json_parse",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_json_parse", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::Slice => {
@@ -388,33 +377,17 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicKind::FsReadDir => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_fs_read_dir",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_fs_read_dir", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::FsWalkDir => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_fs_walk_dir",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_fs_walk_dir", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::FsGlob => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_fs_glob",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_fs_glob", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::PathJoin
@@ -476,23 +449,12 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicKind::Input => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_input",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_input", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::TypeName => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_type_name",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_type_name", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::TypeOf => {
@@ -502,23 +464,11 @@ pub(crate) fn lower_intrinsic(
                     args.len()
                 )));
             }
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_type_of",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_type_of", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::Sleep => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_sleep",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_sleep", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::Spawn | IntrinsicKind::Join | IntrinsicKind::Select => {
@@ -546,83 +496,42 @@ pub(crate) fn lower_intrinsic(
             Ok(None)
         }
         IntrinsicKind::SizeOf => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_size_of",
-                &args,
-                result_type,
-            )?;
+            let reg = lower_call_intrinsic_typed(fl, block_id, "__bc_size_of", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::FieldCount => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_field_count",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_field_count", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::FieldNameAt => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_field_name_at",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_field_name_at", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::HasField => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_has_field",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_has_field", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::HasMethod => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_has_method",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_has_method", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::MethodCount => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_method_count",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_method_count", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::FieldType => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_field_type",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_field_type", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::StructSize => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_struct_size",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_struct_size", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::ReflectFields => {
@@ -636,13 +545,8 @@ pub(crate) fn lower_intrinsic(
             Ok(Some(reg))
         }
         IntrinsicKind::CreateStruct => {
-            let reg = lower_call_intrinsic_typed(
-                fl,
-                block_id,
-                "__bc_create_struct",
-                &args,
-                result_type,
-            )?;
+            let reg =
+                lower_call_intrinsic_typed(fl, block_id, "__bc_create_struct", &args, result_type)?;
             Ok(Some(reg))
         }
         IntrinsicKind::YamlToJson => {
