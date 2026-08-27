@@ -151,14 +151,15 @@ impl MirPackage {
     /// only way this package's `units` map is ever written, so re-lowering
     /// one item after a comptime value resolves is always this exact call
     /// with a fresh unit, never a partial in-place edit. Also (re)records
-    /// the unit's own function signature into `sigs`, if it lowered to a
-    /// `Function` item — the incremental counterpart to a whole-module
-    /// predeclare sweep.
+    /// every function item's signature into `sigs` — including methods nested
+    /// in an impl unit, whose `DefId` does not equal the unit's top-level
+    /// owner. This is the incremental counterpart to a whole-module
+    /// predeclare sweep and is required for cross-package method calls.
     pub fn insert_unit(&mut self, def_id: DefId, unit: MirCodeUnit) {
         for item in &unit.items {
             if let ItemKind::Function(func) = &item.kind {
-                if func.def_id.as_ref() == Some(&def_id) {
-                    self.sigs.insert(def_id.clone(), func.clone());
+                if let Some(function_def_id) = &func.def_id {
+                    self.sigs.insert(function_def_id.clone(), func.clone());
                 }
             }
         }

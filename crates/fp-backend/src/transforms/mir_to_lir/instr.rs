@@ -119,9 +119,19 @@ impl MirToLirLowerer {
             struct_layouts: RefCell::new(HashMap::new()),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
-            function_signatures: HashMap::new(),
-            function_call_conventions: HashMap::new(),
-            function_declarations: HashMap::new(),
+            function_signatures: HashMap::from([(
+                "fp_panic".to_string(),
+                lir::LirFunctionSignature {
+                    params: vec![lir::LirType::Ptr(Box::new(lir::LirType::I8))],
+                    return_type: lir::LirType::Void,
+                    is_variadic: false,
+                },
+            )]),
+            function_call_conventions: HashMap::from([(
+                "fp_panic".to_string(),
+                lir::CallingConvention::C,
+            )]),
+            function_declarations: HashMap::from([("fp_panic".to_string(), true)]),
             function_package_ids: HashMap::new(),
             runtime_symbol_map: |_| None,
             mir_program,
@@ -277,6 +287,22 @@ impl MirToLirLowerer {
         let mut lir_program = lir::LirBlob::new(self.data_layout.clone());
         match mir_item.kind {
             mir::ItemKind::Function(mir_func) => {
+                if mir_func
+                    .sig
+                    .inputs
+                    .iter()
+                    .chain(std::iter::once(&mir_func.sig.output))
+                    .any(|ty| self.contains_unresolved_param(ty))
+                    || bodies
+                        .get(&mir_func.body_id)
+                        .is_some_and(|body| {
+                            body.locals
+                                .iter()
+                                .any(|local| self.contains_unresolved_param(&local.ty))
+                        })
+                {
+                    return Ok(lir_program);
+                }
                 lir_program
                     .functions
                     .push(self.transform_function_with_bodies(mir_func, bodies)?);
@@ -454,6 +480,14 @@ impl MirToLirLowerer {
                         .is_some()
                 {
                     return false;
+                }
+                if adt.variants.iter().any(|variant| {
+                    variant.fields.iter().any(|field| {
+                        let field_ty = Self::instantiate_ty(&field.ty, substs);
+                        self.contains_unresolved_param(&field_ty)
+                    })
+                }) {
+                    return true;
                 }
                 // Not yet cached for this exact instantiation, but
                 // `lir_type_from_ty` can still compute it on demand (via
@@ -3819,6 +3853,26 @@ impl MirToLirLowerer {
                 debug_info: None,
             });
             return Ok(lir::LirValue::register(instr_id, target_ty.clone()));
+        }
+
+        // Pointer representations are ABI-compatible at the call boundary:
+        // a reference to a slice/string wrapper and a raw byte pointer both
+        // carry one machine address. Preserve that address with an explicit
+        // bitcast when a runtime function declares the narrower pointer ABI.
+        if matches!(&current_ty, lir::LirType::Ptr(_))
+            && matches!(&target_ty, lir::LirType::Ptr(_))
+        {
+            let instr_id = self.next_id();
+            instructions.push(lir::LirInstruction {
+                id: instr_id,
+                kind: lir::LirInstructionKind::Bitcast(value, target_ty.clone()),
+                result: Some(lir::LirRegister {
+                    id: instr_id,
+                    ty: target_ty.clone(),
+                }),
+                debug_info: None,
+            });
+            return Ok(lir::LirValue::register(instr_id, target_ty));
         }
 
         // Pointer/integer interop is emitted only for explicit typed pairs.
