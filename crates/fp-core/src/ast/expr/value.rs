@@ -1151,6 +1151,9 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
         | CallKind::IoWriteStderr
         | CallKind::YamlToJson
         | CallKind::JsonParse
+        | CallKind::HostPtrRead
+        | CallKind::HostPtrWrite
+        | CallKind::HostPtrOffset
         | CallKind::TestCommandMockReset
         | CallKind::TestCommandMockPush
         | CallKind::TestCommandMockTakeCalls

@@ -255,7 +255,7 @@ fn parse_static_item(
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Static)?;
-    let _mutable = skip_keyword(input, Keyword::Mut).is_ok();
+    let mutable = skip_keyword(input, Keyword::Mut).is_ok();
     let name = ident_like(input)?;
     skip_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
@@ -264,6 +264,7 @@ fn parse_static_item(
     skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefStatic(ItemDefStatic {
         attrs,
+        mutable: mutable.then_some(true),
         ty_annotation: None,
         visibility,
         name,

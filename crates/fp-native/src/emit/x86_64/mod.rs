@@ -1594,6 +1594,13 @@ fn load_value(
             Ok(())
         }
         AsmValue::Global(name, ty) => {
+            // A pointer-typed global is the native representation of a
+            // host-global address.  Loading it as a scalar would dereference
+            // the host symbol once before the explicit host-pointer load.
+            if matches!(ty, AsmType::Ptr(_)) {
+                emit_mov_symbol_addr(asm, dst, name, 0)?;
+                return Ok(());
+            }
             if is_aggregate_type(ty) {
                 emit_mov_symbol_addr(asm, dst, name, 0)?;
                 return Ok(());

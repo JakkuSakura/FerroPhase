@@ -2170,6 +2170,11 @@ impl AstToHirLowerer {
                     self.map_visibility(&const_def.visibility),
                 )
             }
+            ItemKind::DefStatic(static_def) if attrs_has_name(&static_def.attrs, "host") => {
+                self.register_value_def(&static_def.name.name, def_id.clone(), &static_def.visibility);
+                let konst = self.transform_static_def(static_def)?;
+                (hir::ItemKind::Const(konst), self.map_visibility(&static_def.visibility))
+            }
             ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(
                     &struct_def.name.name,
@@ -2437,6 +2442,7 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(decl.name.name.clone()),
                     ty,
                     body,
+                    mutable: false, is_host: false,
                 };
                 (hir::ItemKind::Const(konst), hir::Visibility::Public)
             }
@@ -2460,6 +2466,7 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(def_type.name.name.clone()),
                     ty: self.create_simple_type("bool"),
                     body,
+                    mutable: false, is_host: false,
                 };
                 (hir::ItemKind::Const(konst), hir::Visibility::Private)
             }
@@ -2508,6 +2515,7 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(format!("__fp_error_{def_id}")),
                     ty: self.create_simple_type("bool"),
                     body,
+                    mutable: false, is_host: false,
                 };
                 return Ok(hir::Item {
                     hir_id,
@@ -2594,6 +2602,28 @@ impl AstToHirLowerer {
             name: hir::Symbol::new(const_def.name.name.clone()),
             ty,
             body,
+            mutable: const_def.mutable.unwrap_or(false),
+            is_host: false,
+        })
+    }
+
+    fn transform_static_def(&mut self, def: &ast::ItemDefStatic) -> Result<hir::Const> {
+        let ty = self.transform_type_to_hir(&def.ty)?;
+        let is_host = attrs_has_name(&def.attrs, "host");
+        // A host global has no Ferro-owned initializer. Keep a typed dummy
+        // body for the HIR shape while avoiding recursive lowering of the
+        // source initializer during native compilation.
+        let value = if is_host {
+            self.create_simple_literal(0)
+        } else {
+            self.transform_expr_to_hir(def.value.as_ref())?
+        };
+        Ok(hir::Const {
+            name: hir::Symbol::new(def.name.name.clone()),
+            ty,
+            body: hir::Body { hir_id: self.next_id(), params: Vec::new(), value },
+            mutable: def.mutable.unwrap_or(false),
+            is_host,
         })
     }
 

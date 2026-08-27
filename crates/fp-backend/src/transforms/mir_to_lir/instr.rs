@@ -1097,6 +1097,78 @@ impl MirToLirLowerer {
                 }
 
                 let lir_kind = match kind {
+                    IntrinsicKind::HostPtrRead
+                    | IntrinsicKind::HostPtrWrite
+                    | IntrinsicKind::HostPtrOffset => {
+                        let expected = destination_lir_ty.clone();
+                        let required = match kind {
+                            IntrinsicKind::HostPtrRead | IntrinsicKind::HostPtrOffset => 2,
+                            IntrinsicKind::HostPtrWrite => 2,
+                            _ => unreachable!(),
+                        };
+                        if args.len() != required {
+                            return Err(fp_core::error::Error::from(format!(
+                                "{} expects {required} arguments, got {}",
+                                kind.name(), args.len()
+                            )));
+                        }
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            values.push(self.transform_operand(arg)?);
+                            intrinsic_instructions.extend(self.take_queued_instructions());
+                        }
+                        let pointer = values[0].clone();
+                        let pointer_ty = self.type_of_operand(&args[0]).ok_or_else(|| {
+                            fp_core::error::Error::from("host pointer operation has no pointer type")
+                        })?;
+                        if !matches!(pointer_ty, lir::LirType::Ptr(_)) {
+                            return Err(fp_core::error::Error::from(
+                                "host pointer operation expects a pointer argument",
+                            ));
+                        }
+                        let id = self.next_id();
+                        let result_ty = expected.ok_or_else(|| {
+                            fp_core::error::Error::from("host pointer operation has no result type")
+                        })?;
+                        let instruction = match kind {
+                            IntrinsicKind::HostPtrRead => lir::LirInstructionKind::Load {
+                                address: pointer,
+                                alignment: Some(self.alignment_for_lir_type(&result_ty)),
+                                volatile: false,
+                            },
+                            IntrinsicKind::HostPtrWrite => {
+                                intrinsic_instructions.push(lir::LirInstruction {
+                                    id,
+                                    kind: lir::LirInstructionKind::Store {
+                                        value: values[1].clone(),
+                                        address: pointer,
+                                        alignment: Some(self.alignment_for_lir_type(&self.type_of_operand(&args[1]).ok_or_else(|| fp_core::error::Error::from("host pointer write has no value type"))?)),
+                                        volatile: false,
+                                    },
+                                    result: None,
+                                    debug_info: None,
+                                });
+                                return Ok(intrinsic_instructions);
+                            }
+                            IntrinsicKind::HostPtrOffset => lir::LirInstructionKind::GetElementPtr {
+                                ptr: pointer,
+                                indices: vec![values[1].clone()],
+                                inbounds: false,
+                            },
+                            _ => unreachable!(),
+                        };
+                        intrinsic_instructions.push(lir::LirInstruction {
+                            id,
+                            kind: instruction,
+                            result: Some(lir::LirRegister {
+                                id,
+                                ty: result_ty.clone(),
+                            }),
+                            debug_info: None,
+                        });
+                        result_value = Some(lir::LirValue::register(id, result_ty));
+                        return Ok(intrinsic_instructions);
+                    }
                     IntrinsicKind::Format => lir::LirIntrinsicKind::Format,
                     IntrinsicKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
                     IntrinsicKind::ProcMacroTokenStreamFromStr => {

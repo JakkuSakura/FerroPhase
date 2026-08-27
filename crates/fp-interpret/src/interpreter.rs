@@ -28,6 +28,7 @@ pub struct LirInterpreter {
     /// `find_function_any_package`/`find_function_by_def_id`) instead of a
     /// separately maintained lookup cache.
     program: Option<Rc<fp_core::lir::LirProgram>>,
+    host_globals: HostGlobalRegistry,
 }
 
 fn json_to_runtime_value(value: serde_json::Value) -> LirResult<Value> {
@@ -80,8 +81,13 @@ impl LirInterpreter {
             extern_sigs: HashMap::new(),
             last_predecessor: None,
             program: None,
+            host_globals: HostGlobalRegistry::new(),
         }
     }
+
+    pub fn set_host_globals(&mut self, registry: HostGlobalRegistry) { self.host_globals = registry; }
+
+    pub fn host_globals(&self) -> &HostGlobalRegistry { &self.host_globals }
 
     /// Loads every package's own LIR from `program` — the one place
     /// globals get materialized into interpreter memory (`global_values`)
@@ -93,6 +99,21 @@ impl LirInterpreter {
         for package in program.packages.values() {
             let blobs: Vec<&LirBlob> = package.blobs.iter().collect();
             self.populate_globals_batch(&blobs)?;
+            for blob in &blobs {
+                for global in &blob.globals {
+                    if !matches!(global.linkage, fp_core::lir::Linkage::External | fp_core::lir::Linkage::AvailableExternally) { continue; }
+                    let host = self.host_globals.get(global.name.as_str()).ok_or_else(|| VmError::Runtime(format!("unresolved external host global {}", global.name)))?;
+                    if host.descriptor.ty != global.ty { return Err(VmError::TypeMismatch { expected: format!("host global {} has {:?}", global.name, global.ty), found: format!("{:?}", host.descriptor.ty) }); }
+                    let address = self.state.mem.heap_alloc(self.data_layout.size_of(&global.ty).map_err(|error| VmError::Runtime(error.to_string()))?, global.alignment.unwrap_or(self.data_layout.align_of(&global.ty).map_err(|error| VmError::Runtime(error.to_string()))?))?;
+                    self.global_values.insert(global.name.to_string(), address);
+                    let size = self.data_layout.size_of(&global.ty)
+                        .map_err(|error| VmError::Runtime(error.to_string()))?;
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(host.address() as *const u8, size as usize)
+                    };
+                    self.state.mem.store_bytes(address, bytes)?;
+                }
+            }
         }
         self.program = Some(program);
         Ok(())
@@ -300,7 +321,26 @@ impl LirInterpreter {
         self.state.pop_frame();
         self.state.regs.gpr = saved_registers;
         self.register_values = saved_register_values;
+        self.sync_host_globals() ?;
         result
+    }
+
+    fn sync_host_globals(&mut self) -> LirResult<()> {
+        for (name, host) in self.host_globals.iter() {
+            if !host.descriptor.mutable { continue; }
+            let Some(address) = self.global_values.get(name).copied() else { continue; };
+            let size = self.data_layout.size_of(&host.descriptor.ty)
+                .map_err(|error| VmError::Runtime(error.to_string()))?;
+            let bytes = self.state.mem.load_bytes(address, size)?;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    host.address(),
+                    bytes.len(),
+                );
+            }
+        }
+        Ok(())
     }
 
     fn exec_instruction(&mut self, instr: &LirInstruction) -> LirResult<()> {
@@ -893,6 +933,11 @@ impl LirInterpreter {
         for program in programs {
             self.data_layout = program.data_layout.clone();
             for global in &program.globals {
+                if matches!(global.linkage, fp_core::lir::Linkage::External | fp_core::lir::Linkage::AvailableExternally)
+                    && self.host_globals.get(global.name.as_str()).is_some()
+                {
+                    continue;
+                }
                 if self.global_values.contains_key(global.name.as_str()) {
                     continue;
                 }

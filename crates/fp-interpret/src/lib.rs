@@ -1,9 +1,11 @@
 mod ffi;
+mod host_globals;
 mod integer;
 mod interpreter;
 mod render;
 mod vm;
 pub use interpreter::LirInterpreter;
+pub use host_globals::{HostGlobal, HostGlobalDescriptor, HostGlobalError, HostGlobalRegistry};
 pub(crate) use interpreter::TypedValue;
 
 use std::collections::HashMap;

@@ -643,6 +643,13 @@ impl HirTypeChecker {
                 }
                 hir::ItemKind::Const(constant) => {
                     let declared_ty = self.check_type_expr(&constant.ty).await?;
+                    if constant.is_host {
+                        self.package()
+                            .record_type_expr_type(constant.ty.hir_id.clone(), declared_ty.clone());
+                        self.package()
+                            .record_const_type(item.def_id.clone(), declared_ty);
+                        return Ok(());
+                    }
                     let mut scope = self.with_expected_expr_type(declared_ty.clone());
                     let body_ty = scope.check_body(&constant.body).await?;
                     let package = self.package();
@@ -3791,6 +3798,12 @@ impl HirTypeChecker {
             });
         };
         match &item.kind {
+            // Host statics are externally initialized globals. Their HIR
+            // body is only a typed placeholder, so resolving the value must
+            // use the declaration directly rather than checking that body.
+            hir::ItemKind::Const(constant) if constant.is_host => {
+                self.check_type_expr(&constant.ty).await
+            }
             // A tuple struct's name used in value position (`Wrapping(x)`,
             // `TryFromIntError(())`) is its own constructor function, not
             // a bare type — its fields have no names of their own

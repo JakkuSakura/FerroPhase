@@ -272,6 +272,8 @@ pub struct Const {
     pub name: Symbol,
     pub ty: TypeExpr,
     pub body: Body,
+    pub mutable: bool,
+    pub is_host: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

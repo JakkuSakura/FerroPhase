@@ -383,6 +383,9 @@ pub enum IntrinsicKind {
     ShellFileTemplate,
     ShellFileRsync,
     Unionify,
+    HostPtrRead,
+    HostPtrWrite,
+    HostPtrOffset,
 }
 
 impl IntrinsicKind {
@@ -464,6 +467,9 @@ impl IntrinsicKind {
             Self::ShellFileTemplate => "shell_file_template",
             Self::ShellFileRsync => "shell_file_rsync",
             Self::Unionify => "unionify",
+            Self::HostPtrRead => "host_ptr_read",
+            Self::HostPtrWrite => "host_ptr_write",
+            Self::HostPtrOffset => "host_ptr_offset",
         }
     }
 }

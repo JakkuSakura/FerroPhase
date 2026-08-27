@@ -153,6 +153,15 @@ impl<'a> BodyBuilder<'a> {
                     .register_enum(item.def_id.clone(), enm, item.span);
             }
             hir::ItemKind::Const(konst) => {
+                if konst.is_host {
+                    let ty = self.lowering.lower_type_expr(&konst.ty);
+                    self.lowering.extra_items.push(mir::Item { mir_id: self.lowering.mir_package.borrow_mut().fresh_mir_id(), kind: mir::ItemKind::Static(mir::Static {
+                        name: konst.name.clone().into(), ty: ty.clone(),
+                        init: mir::Operand::Constant(mir::Constant { span: konst.body.value.span, ty, user_ty: None, literal: mir::ConstantKind::Undef }),
+                        mutability: if konst.mutable { mir::Mutability::Mut } else { mir::Mutability::Not },
+                    }) });
+                    return Ok(());
+                }
                 self.lowering.ensure_item_lowered(item.def_id.clone())?;
                 self.const_items.insert(item.def_id.clone(), konst.clone());
                 // Emit a Static/ExecutableConst MIR item for every

@@ -1355,6 +1355,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "fp-backend",
+ "fp-host-layout-derive",
  "itertools 0.13.0",
  "miette",
  "num-bigint",
@@ -1465,6 +1466,15 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "hcl-rs",
+]
+
+[[package]]
+name = "fp-host-layout-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

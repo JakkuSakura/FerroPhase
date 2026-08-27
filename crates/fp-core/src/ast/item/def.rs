@@ -136,6 +136,8 @@ common_struct! {
         #[serde(default)]
         pub attrs: Vec<Attribute>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mutable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
         pub visibility: Visibility,
         pub name: Ident,

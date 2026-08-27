@@ -61,6 +61,9 @@ pub enum LangIntrinsic {
     FieldType,
     Len,
     Unionify,
+    HostPtrRead,
+    HostPtrWrite,
+    HostPtrOffset,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +116,24 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "unionify",
         capability: LangIntrinsicCapability::ConstOnly,
         call_kind: Some(CallKind::Unionify),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::HostPtrRead,
+        lang_item: "host_ptr_read",
+        capability: LangIntrinsicCapability::BackendLimited,
+        call_kind: Some(CallKind::HostPtrRead),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::HostPtrWrite,
+        lang_item: "host_ptr_write",
+        capability: LangIntrinsicCapability::BackendLimited,
+        call_kind: Some(CallKind::HostPtrWrite),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::HostPtrOffset,
+        lang_item: "host_ptr_offset",
+        capability: LangIntrinsicCapability::BackendLimited,
+        call_kind: Some(CallKind::HostPtrOffset),
     },
     LangIntrinsicSpec {
         intrinsic: LangIntrinsic::FsReadDir,

@@ -222,6 +222,10 @@ impl AstToHirLowerer {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
                 }
+                ItemKind::DefStatic(def_static) if attrs_has_name(&def_static.attrs, "host") => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_value_def(&def_static.name.name, def_id, &def_static.visibility);
+                }
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(

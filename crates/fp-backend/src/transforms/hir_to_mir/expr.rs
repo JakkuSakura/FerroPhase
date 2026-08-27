@@ -984,6 +984,27 @@ impl HirToMirLowerer {
                 hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
                 hir::ItemKind::Const(const_item) => {
                     let ty = self.lower_type_expr(&const_item.ty);
+                    if const_item.is_host {
+                        mir_program.items.push(mir::Item {
+                            mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
+                            kind: mir::ItemKind::Static(mir::Static {
+                                name: const_item.name.clone().into(),
+                                ty: ty.clone(),
+                                init: mir::Operand::Constant(mir::Constant {
+                                    span: const_item.body.value.span,
+                                    ty,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Undef,
+                                }),
+                                mutability: if const_item.mutable {
+                                    mir::Mutability::Mut
+                                } else {
+                                    mir::Mutability::Not
+                                },
+                            }),
+                        });
+                        continue;
+                    }
                     if Self::is_unit_ty(&ty) {
                         // Unit consts don't need a static allocation; keep them as inline constants.
                         self.ensure_item_lowered(item.def_id.clone())?;
@@ -1148,6 +1169,27 @@ impl HirToMirLowerer {
             hir::ItemKind::Const(const_item) => {
                 self.lowered_items.insert(def_id.clone());
                 let ty = self.lower_type_expr(&const_item.ty);
+                if const_item.is_host {
+                    self.extra_items.push(mir::Item {
+                        mir_id: self.mir_package.borrow_mut().fresh_mir_id(),
+                        kind: mir::ItemKind::Static(mir::Static {
+                            name: const_item.name.clone().into(),
+                            ty: ty.clone(),
+                            init: mir::Operand::Constant(mir::Constant {
+                                span: const_item.body.value.span,
+                                ty,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Undef,
+                            }),
+                            mutability: if const_item.mutable {
+                                mir::Mutability::Mut
+                            } else {
+                                mir::Mutability::Not
+                            },
+                        }),
+                    });
+                    return Ok(());
+                }
                 if Self::is_unit_ty(&ty) {
                     // Unit consts don't need a static allocation; keep them
                     // as inline constants — already registered by
@@ -1230,6 +1272,8 @@ impl HirToMirLowerer {
                 params: Vec::new(),
                 value: (**body).clone(),
             },
+            mutable: false,
+            is_host: false,
         };
         let key = self.const_key(name.as_str(), body.span);
         let mir_item = self.lower_executable_const(def_id, &konst, ty, key, Some(block.hir_id))?;

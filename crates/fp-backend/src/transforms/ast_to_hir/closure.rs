@@ -73,7 +73,9 @@ impl ClosureLowering {
                 self.reserve_generated_names_in_expr(definition.value.as_ref())
             }
             ast::ItemKind::DefStatic(definition) => {
-                self.reserve_generated_names_in_expr(definition.value.as_ref())
+                if !attrs_has_name(&definition.attrs, "host") {
+                    self.reserve_generated_names_in_expr(definition.value.as_ref())
+                }
             }
             ast::ItemKind::Expr(expression) => self.reserve_generated_names_in_expr(expression),
             _ => {}
@@ -729,7 +731,9 @@ impl ClosureLowering {
                     self.current_param_types = previous;
                 }
                 ast::ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
-                ast::ItemKind::DefStatic(def) => self.rewrite_in_expr(def.value.as_mut())?,
+                ast::ItemKind::DefStatic(def) if !attrs_has_name(&def.attrs, "host") => {
+                    self.rewrite_in_expr(def.value.as_mut())?
+                }
                 ast::ItemKind::Expr(expr) => self.rewrite_in_expr(expr)?,
                 _ => {}
             }
@@ -1062,6 +1066,9 @@ impl ClosureLowering {
                 }
             }
             ast::ItemKind::DefStatic(def) => {
+                if attrs_has_name(&def.attrs, "host") {
+                    return Ok(());
+                }
                 self.rewrite_in_expr(def.value.as_mut())?;
                 if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
                     self.variable_infos
@@ -1367,7 +1374,9 @@ impl CaptureCollector {
         match item.kind() {
             ast::ItemKind::Expr(expr) => self.visit(expr),
             ast::ItemKind::DefConst(def) => self.visit(def.value.as_ref()),
-            ast::ItemKind::DefStatic(def) => self.visit(def.value.as_ref()),
+            ast::ItemKind::DefStatic(def) if !attrs_has_name(&def.attrs, "host") => {
+                self.visit(def.value.as_ref())
+            }
             ast::ItemKind::DefFunction(func) => self.visit_block(&func.body),
             ast::ItemKind::Module(module) => {
                 for item in &module.items {
@@ -1688,7 +1697,9 @@ impl CaptureReplacer {
         match item.kind_mut() {
             ast::ItemKind::Expr(expr) => self.visit(expr),
             ast::ItemKind::DefConst(def) => self.visit(def.value.as_mut()),
-            ast::ItemKind::DefStatic(def) => self.visit(def.value.as_mut()),
+            ast::ItemKind::DefStatic(def) if !attrs_has_name(&def.attrs, "host") => {
+                self.visit(def.value.as_mut())
+            }
             ast::ItemKind::DefFunction(func) => self.visit_block(&mut func.body),
             ast::ItemKind::Module(module) => {
                 for item in &mut module.items {
