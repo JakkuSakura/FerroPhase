@@ -289,7 +289,7 @@ mod tests {
     fn parse_embedded_std_sources() {
         let frontend = FerroFrontend::new();
         let mut files = Vec::new();
-        collect_fp_files(Path::new("src/std"), &mut files);
+        collect_fp_files(Path::new("std"), &mut files);
         for path in files {
             let source = fs::read_to_string(&path).expect("read std source");
             let result = frontend.parse(&source, Some(&path));
@@ -302,8 +302,9 @@ mod tests {
             if source.contains("#[intrinsic") {
                 assert!(
                     path.components()
-                        .any(|component| component.as_os_str() == "intrinsics"),
-                    "intrinsic markers must live under std/intrinsics: {}",
+                        .any(|component| component.as_os_str() == "intrinsics")
+                        || path.components().any(|component| component.as_os_str() == "alloc"),
+                    "intrinsic markers must live under an intrinsic or allocation package: {}",
                     path.display()
                 );
             }
@@ -314,7 +315,8 @@ mod tests {
     fn parses_string_literal_types_example() {
         let frontend = FerroFrontend::new();
         let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/41_string_literal_types.fp");
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/broken/41_string_literal_types.fp");
         let source = fs::read_to_string(&path).expect("read example source");
         let result = frontend.parse(&source, Some(&path));
         assert!(

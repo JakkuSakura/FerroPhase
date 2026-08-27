@@ -14,7 +14,6 @@ use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
-use crate::embedded_libc;
 use crate::embedded_std;
 use crate::module_source::FerroModuleSourceResolver;
 
@@ -23,6 +22,8 @@ use crate::module_source::FerroModuleSourceResolver;
 /// filesystem to watch — `refresh` is a no-op.
 pub struct FerroPhaseProvider;
 
+const CORE_PACKAGE_NAME: &str = "core";
+const ALLOC_PACKAGE_NAME: &str = "alloc";
 const STD_PACKAGE_NAME: &str = "std";
 const LIBC_PACKAGE_NAME: &str = "libc";
 
@@ -121,8 +122,10 @@ fn load_embedded_package(
 impl PackageProvider for FerroPhaseProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(vec![
-            PackageId::new(STD_PACKAGE_NAME),
+            PackageId::new(CORE_PACKAGE_NAME),
+            PackageId::new(ALLOC_PACKAGE_NAME),
             PackageId::new(LIBC_PACKAGE_NAME),
+            PackageId::new(STD_PACKAGE_NAME),
         ])
     }
 
@@ -140,15 +143,22 @@ impl PackageProvider for FerroPhaseProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
-            STD_PACKAGE_NAME => embedded_std::root_dir(),
-            LIBC_PACKAGE_NAME => embedded_libc::root_dir(),
+            CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME | LIBC_PACKAGE_NAME => {
+                embedded_std::package_root(id.as_str())
+            }
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
-        if id.as_str() == STD_PACKAGE_NAME {
+        for dependency in match id.as_str() {
+            CORE_PACKAGE_NAME => &[][..],
+            ALLOC_PACKAGE_NAME => &[CORE_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
+            LIBC_PACKAGE_NAME => &[CORE_PACKAGE_NAME][..],
+            STD_PACKAGE_NAME => &[CORE_PACKAGE_NAME, ALLOC_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
+            _ => &[][..],
+        } {
             metadata.dependencies.push(DependencyDescriptor {
-                package: LIBC_PACKAGE_NAME.to_string(),
-                resolved_package_id: Some(PackageId::new(LIBC_PACKAGE_NAME)),
+                package: dependency.to_string(),
+                resolved_package_id: Some(PackageId::new(*dependency)),
                 constraint: None,
                 kind: DependencyKind::Normal,
                 features: Vec::new(),
@@ -173,18 +183,14 @@ impl PackageProvider for FerroPhaseProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         match id.as_str() {
-            STD_PACKAGE_NAME => load_embedded_package(
-                STD_PACKAGE_NAME,
-                embedded_std::root_dir(),
-                embedded_std::module_paths(),
-                embedded_std::read,
-            ),
-            LIBC_PACKAGE_NAME => load_embedded_package(
-                LIBC_PACKAGE_NAME,
-                embedded_libc::root_dir(),
-                embedded_libc::module_paths(),
-                embedded_libc::read,
-            ),
+            CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME | LIBC_PACKAGE_NAME => {
+                load_embedded_package(
+                    id.as_str(),
+                    embedded_std::package_root(id.as_str()),
+                    embedded_std::package_paths(id.as_str()),
+                    embedded_std::read,
+                )
+            }
             _ => Err(ProviderError::PackageNotFound(id.clone())),
         }
     }
@@ -288,4 +294,58 @@ fn relative_to_module_segments(package_name: &str, relative: &str) -> Vec<String
         segments.push(part.to_string());
     }
     segments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_rust_style_package_graph() {
+        let provider = FerroPhaseProvider;
+        let packages = provider
+            .list_packages()
+            .expect("embedded provider should list packages");
+        assert_eq!(
+            packages,
+            vec![
+                PackageId::new("core"),
+                PackageId::new("alloc"),
+                PackageId::new("libc"),
+                PackageId::new("std"),
+            ]
+        );
+
+        let dependencies = |package: &str| {
+            provider
+                .load_package_metadata(&PackageId::new(package))
+                .expect("embedded package metadata should load")
+                .metadata
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.package.as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(dependencies("core"), Vec::<String>::new());
+        assert_eq!(dependencies("alloc"), vec!["core", "libc"]);
+        assert_eq!(dependencies("libc"), vec!["core"]);
+        assert_eq!(dependencies("std"), vec!["core", "alloc", "libc"]);
+    }
+
+    #[test]
+    fn package_sources_have_package_qualified_roots() {
+        let provider = FerroPhaseProvider;
+        for package in ["core", "alloc", "libc", "std"] {
+            let source = provider
+                .load_package_source(&PackageId::new(package))
+                .expect("embedded package source should load");
+            assert!(
+                source
+                    .module_paths
+                    .iter()
+                    .all(|path| path.segments.first().is_some_and(|segment| segment == package)),
+                "all {package} modules should be rooted at {package}"
+            );
+        }
+    }
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let std_root = manifest_dir.join("src/std");
+    let std_root = manifest_dir.join("std");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("out dir"));
     let output = out_dir.join("embedded_std.rs");
 
@@ -25,7 +25,18 @@ fn main() {
     for (relative, _) in &files {
         generated.push_str(&format!("    {relative:?},\n"));
     }
-    generated.push_str("];\n");
+    generated.push_str("];\n\n");
+
+    for package in ["core", "alloc", "libc", "std"] {
+        generated.push_str(&format!("pub const {}_PATHS: &[&str] = &[\n", package.to_uppercase()));
+        for (relative, _) in &files {
+            let prefix = format!("{package}/");
+            if let Some(package_relative) = relative.strip_prefix(&prefix) {
+                generated.push_str(&format!("    {package_relative:?},\n"));
+            }
+        }
+        generated.push_str("];\n");
+    }
 
     fs::write(output, generated).expect("write embedded std");
 }

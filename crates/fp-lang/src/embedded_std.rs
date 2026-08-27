@@ -10,8 +10,12 @@ pub fn root_dir() -> PathBuf {
     PathBuf::from(VIRTUAL_ROOT)
 }
 
+pub fn package_root(package: &str) -> PathBuf {
+    root_dir().join(package)
+}
+
 pub fn root_module_path() -> PathBuf {
-    root_dir().join("mod.fp")
+    package_root("std").join("mod.fp")
 }
 
 pub fn is_embedded_path(path: &Path) -> bool {
@@ -32,6 +36,16 @@ pub fn read(path: &Path) -> Option<&'static str> {
 /// e.g. `["mod.fp", "meta/mod.fp", "intrinsics/mod.fp", ...]`
 pub fn module_paths() -> &'static [&'static str] {
     generated::PATHS
+}
+
+pub fn package_paths(package: &str) -> &'static [&'static str] {
+    match package {
+        "core" => generated::CORE_PATHS,
+        "alloc" => generated::ALLOC_PATHS,
+        "libc" => generated::LIBC_PATHS,
+        "std" => generated::STD_PATHS,
+        _ => &[],
+    }
 }
 
 fn normalize_relative_path(path: &Path) -> Option<String> {
@@ -55,7 +69,7 @@ mod tests {
 
     #[test]
     fn embedded_std_exposes_root_module() {
-        let path = root_module_path();
+        let path = package_root("std").join("mod.fp");
         let source = read(&path).expect("embedded std root module should exist");
         assert!(source.contains("pub mod collections;"));
         assert!(source.contains("pub mod prelude;"));
@@ -63,7 +77,7 @@ mod tests {
 
     #[test]
     fn embedded_std_exposes_prelude_module() {
-        let path = root_dir().join("prelude/mod.fp");
+        let path = package_root("std").join("prelude/mod.fp");
         let source = read(&path).expect("embedded std prelude module should exist");
         assert!(source.contains("pub use ::std::option::Option;"));
         assert!(source.contains("pub use ::std::result::Result;"));
