@@ -27,6 +27,10 @@ common_struct! {
     pub struct ItemDeclStatic {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
+        #[serde(default)]
+        pub mutable: bool,
+        #[serde(default)]
+        pub is_host: bool,
         pub name: Ident,
         pub ty: Ty,
     }

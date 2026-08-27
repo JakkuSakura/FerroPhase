@@ -2442,7 +2442,8 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(decl.name.name.clone()),
                     ty,
                     body,
-                    mutable: false, is_host: false,
+                    mutable: decl.mutable,
+                    is_host: decl.is_host,
                 };
                 (hir::ItemKind::Const(konst), hir::Visibility::Public)
             }

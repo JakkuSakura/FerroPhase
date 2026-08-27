@@ -226,6 +226,10 @@ impl AstToHirLowerer {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_static.name.name, def_id, &def_static.visibility);
                 }
+                ItemKind::DeclStatic(decl) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
+                }
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(

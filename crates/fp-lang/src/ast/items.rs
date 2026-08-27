@@ -105,6 +105,9 @@ pub(crate) fn parse_script_tokens(
 }
 
 fn parse_item_or_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
+    if matches!(input.first().map(|token| &token.kind), Some(TokenKind::Keyword(Keyword::Extern))) {
+        return parse_item_winnow(input, file);
+    }
     let mut probe = *input;
     if let Ok(item) = parse_item_winnow(&mut probe, file) {
         *input = probe;
@@ -1542,6 +1545,12 @@ fn parse_extern_item(
     if peek_keyword(*input, Keyword::Fn) {
         return parse_extern_fn_item(input, file, visibility, attrs, abi);
     }
+    if peek_keyword(*input, Keyword::Static) {
+        if !abi.is_named("host") {
+            return Err(ErrMode::Backtrack(ContextError::new()));
+        }
+        return parse_extern_static_decl(input, true);
+    }
     if peek_symbol(input) == Some("{") {
         let items = parse_extern_block_items(input, file)?;
         let item = items
@@ -1579,6 +1588,7 @@ fn parse_extern_fn_item(
     } else {
         None
     };
+    let is_host = abi.is_named("host");
     let sig = FunctionSignature {
         name: Some(name.clone()),
         receiver: None,
@@ -1596,6 +1606,9 @@ fn parse_extern_fn_item(
             name,
             sig,
         })));
+    }
+    if is_host {
+        return Err(ErrMode::Cut(ContextError::new()));
     }
     let body = parse_function_block(input, file)?;
     Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
@@ -1655,7 +1668,7 @@ pub(super) fn parse_extern_block_items(
         // an ordinary `static`, whose value lives in *this* module) — the
         // linker resolves it, not this compiler.
         if peek_keyword(*input, Keyword::Static) {
-            items.push(parse_extern_static_decl(input)?);
+            items.push(parse_extern_static_decl(input, abi.is_named("host"))?);
             continue;
         }
         // `type Name;` — an "extern type" (unstable `extern_types`,
@@ -1704,15 +1717,17 @@ pub(super) fn parse_prefixed_unsafe_extern_block_items(
     parse_unsafe_extern_block_items(input, file)
 }
 
-fn parse_extern_static_decl(input: &mut &[Token]) -> ModalResult<Item> {
+fn parse_extern_static_decl(input: &mut &[Token], is_host: bool) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Static)?;
-    let _mutable = skip_keyword(input, Keyword::Mut).is_ok();
+    let mutable = skip_keyword(input, Keyword::Mut).is_ok();
     let name = ident_like(input)?;
     skip_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
     skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DeclStatic(ItemDeclStatic {
         ty_annotation: None,
+        mutable,
+        is_host,
         name,
         ty,
     })))

@@ -639,11 +639,20 @@ impl PrettyPrintable for ast::Item {
                 ctx.write_line(line)
             }
             ast::ItemKind::DeclStatic(decl) => {
-                let mut line = format!(
-                    "declare static {}: {}",
-                    decl.name,
-                    render_ty_brief(&decl.ty)
-                );
+                let mut line = if decl.is_host {
+                    format!(
+                        "extern \"host\" static {}{}: {}",
+                        if decl.mutable { "mut " } else { "" },
+                        decl.name,
+                        render_ty_brief(&decl.ty)
+                    )
+                } else {
+                    format!(
+                        "declare static {}: {}",
+                        decl.name,
+                        render_ty_brief(&decl.ty)
+                    )
+                };
                 if let Some(annotation) = decl.ty_annotation.as_ref() {
                     line.push_str(" (annotation ");
                     line.push_str(&render_ty_brief(annotation));
