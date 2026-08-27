@@ -148,6 +148,9 @@ pub(super) fn ty_contains_quote(ty: &ast::Ty) -> bool {
                     .is_some_and(|ty| ty_contains_quote(ty.as_ref()))
         }
         ast::Ty::TypeBinaryOp(op) => ty_contains_quote(&op.lhs) || ty_contains_quote(&op.rhs),
+        ast::Ty::Projection(projection) => {
+            ty_contains_quote(&projection.self_ty) || ty_contains_quote(&projection.trait_ty)
+        }
         ast::Ty::TypeBounds(bounds) => bounds
             .bounds
             .iter()
@@ -198,6 +201,10 @@ pub(super) fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         ast::Ty::Function(func) => type_function_contains_type_type(func),
         ast::Ty::TypeBinaryOp(op) => {
             ty_contains_type_type(&op.lhs) || ty_contains_type_type(&op.rhs)
+        }
+        ast::Ty::Projection(projection) => {
+            ty_contains_type_type(&projection.self_ty)
+                || ty_contains_type_type(&projection.trait_ty)
         }
         ast::Ty::TypeBounds(bounds) => bounds
             .bounds

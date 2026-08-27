@@ -1,23 +1,11 @@
 use super::*;
 use fp_core::ast::ImplTraits;
 use fp_core::ast::TypeNothing;
+use fp_core::ast::TypeProjection;
 use fp_core::ast::TypeType;
 use fp_core::ast::TypeWildcard;
 
-/// A UFCS-disambiguated qualified path in *type* position (`<R::Residual
-/// as Residual<Box<R::Output>>>::TryType`, real `alloc::boxed`'s own
-/// `Box::try_map`) — same simplification `parse_qualified_path_expr`
-/// (the expression-position sibling of this) already makes: the `as
-/// Trait` disambiguator is parsed and dropped. The disambiguated type
-/// is nearly always itself a plain (possibly multi-segment, possibly
-/// generic) named path (`R::Residual`, `T`, ...) — when it is, this
-/// appends the trailing `::segment`s directly onto that same path
-/// rather than trying to model a real, separate "projection of an
-/// associated type through this specific path" type. When it isn't
-/// (e.g. `<[T; N] as ..>::Assoc`), there is no flat path to extend, so
-/// the trailing segments are simply dropped and the base type stands in
-/// for the whole thing — a rarer case, and only a type-display/
-/// diagnostics degradation, not a parse failure.
+/// A UFCS-disambiguated qualified path in type position.
 fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     let mut probe = *input;
     // A nested qualified path (real `core::future::future`'s own
@@ -27,10 +15,12 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if !try_eat_symbol(&mut probe, "<") {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    let ty = parse_type_expr(&mut probe)?;
-    if skip_keyword(&mut probe, Keyword::As).is_ok() {
-        let _trait_ty = parse_type_expr(&mut probe)?;
-    }
+    let mut ty = parse_type_expr(&mut probe)?;
+    let trait_ty = if skip_keyword(&mut probe, Keyword::As).is_ok() {
+        Some(parse_type_expr(&mut probe)?)
+    } else {
+        None
+    };
     skip_symbol(&mut probe, ">")?;
     let mut extra_segments = Vec::new();
     loop {
@@ -44,6 +34,17 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let args = parse_optional_type_args(&mut seg_probe)?;
         probe = seg_probe;
         extra_segments.push(ParameterPathSegment::new(next, args));
+    }
+    if let Some(trait_ty) = trait_ty {
+        let Some(first) = extra_segments.first() else {
+            return Err(ErrMode::Backtrack(ContextError::new()));
+        };
+        ty = Ty::Projection(Box::new(TypeProjection {
+            self_ty: Box::new(ty),
+            trait_ty: Box::new(trait_ty),
+            assoc: first.ident.clone(),
+        }));
+        extra_segments.remove(0);
     }
     *input = probe;
     if extra_segments.is_empty() {

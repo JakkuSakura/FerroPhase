@@ -627,11 +627,19 @@ pub struct TypeBinaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TypeProjection {
+    pub self_ty: Box<TypeExpr>,
+    pub trait_path: Path,
+    pub assoc: Symbol,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeExprKind {
     Primitive(TypePrimitive),
     Path(Path),
     Structural(TypeStructural),
     TypeBinaryOp(TypeBinaryOp),
+    Projection(TypeProjection),
     Tuple(Vec<Box<TypeExpr>>),
     Array(Box<TypeExpr>, Option<Box<Expr>>),
     Slice(Box<TypeExpr>),
@@ -1395,6 +1403,10 @@ impl TypeExprKind {
         match self {
             TypeExprKind::Primitive(_) => Span::null(),
             TypeExprKind::Path(path) => path.span(),
+            TypeExprKind::Projection(projection) => Span::union([
+                projection.self_ty.span(),
+                projection.trait_path.span(),
+            ]),
             TypeExprKind::Structural(structural) => structural.span(),
             TypeExprKind::TypeBinaryOp(op) => op.span(),
             TypeExprKind::Tuple(types) => Span::union(types.iter().map(|ty| ty.span())),

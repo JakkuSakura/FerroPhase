@@ -2802,6 +2802,22 @@ impl AstToHirLowerer {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::Projection(projection) => {
+                let self_ty = Box::new(self.transform_type_to_hir(&projection.self_ty)?);
+                let trait_ty = self.transform_type_to_hir(&projection.trait_ty)?;
+                let hir::TypeExprKind::Path(trait_path) = trait_ty.kind else {
+                    return Ok(self.error_type_expr(ty.span()));
+                };
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Projection(hir::TypeProjection {
+                        self_ty,
+                        trait_path,
+                        assoc: projection.assoc.name.clone().into(),
+                    }),
+                    self.normalize_span(ty.span()),
+                ))
+            }
             ast::Ty::Value(type_value) => {
                 let expr = match type_value.value.as_ref() {
                     ast::Value::Int(_) => {

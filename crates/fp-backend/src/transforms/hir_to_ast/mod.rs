@@ -1094,6 +1094,13 @@ impl<'a> HirToAstLifter<'a> {
                     None => Ty::path(self.lift_path(path)),
                 },
             },
+            hir::TypeExprKind::Projection(projection) => Ty::Projection(Box::new(
+                ast::TypeProjection {
+                    self_ty: Box::new(self.lift_type(&projection.self_ty)?),
+                    trait_ty: Box::new(Ty::path(self.lift_path(&projection.trait_path))),
+                    assoc: Ident::new(projection.assoc.as_str()),
+                },
+            )),
             hir::TypeExprKind::Tuple(items) => Ty::Tuple(TypeTuple {
                 types: items.iter().map(|ty| self.lift_type(ty)).collect::<Result<Vec<_>>>()?,
             }),

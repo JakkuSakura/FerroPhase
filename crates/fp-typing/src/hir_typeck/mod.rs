@@ -2345,6 +2345,44 @@ impl HirTypeChecker {
             let ty = match &expr.kind {
                 hir::TypeExprKind::Primitive(primitive) => primitive_ty(*primitive),
                 hir::TypeExprKind::Path(path) => self.path_ty(path).await?,
+                hir::TypeExprKind::Projection(projection) => {
+                    let owner_ty = self.check_type_expr(&projection.self_ty).await?;
+                    let Some(hir::Res::Def(trait_def_id)) = &projection.trait_path.res else {
+                        return Ok(self.error_ty("qualified projection trait is unresolved"));
+                    };
+                    let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
+                        return Ok(self.error_ty("qualified projection trait was not found"));
+                    };
+                    let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                        return Ok(self.error_ty("qualified projection target is not a trait"));
+                    };
+                    let mut seen = HashSet::new();
+                    let Some(assoc_type) =
+                        self.trait_assoc_type(trait_def, &projection.assoc, &mut seen)
+                    else {
+                        return Ok(self.error_ty(format!(
+                            "trait does not declare associated type `{}`",
+                            projection.assoc
+                        )));
+                    };
+                    let name = hir::Symbol::new(format!(
+                        "<{} as {}>::{}",
+                        owner_ty, trait_def_id, projection.assoc
+                    ));
+                    let projection_ty = Ty {
+                        kind: TyKind::Param(ty::ParamTy {
+                            index: u32::MAX,
+                            name: name.clone(),
+                        }),
+                    };
+                    if !assoc_type.bounds.is_empty() {
+                        self.generic_param_bounds
+                            .entry(name)
+                            .or_default()
+                            .extend(assoc_type.bounds);
+                    }
+                    projection_ty
+                }
                 hir::TypeExprKind::Tuple(items) => {
                     let mut checked = Vec::with_capacity(items.len());
                     for item in items {
@@ -4148,8 +4186,52 @@ impl HirTypeChecker {
                         continue;
                     };
                     if trait_item.name == *method_name {
-                        let mut scope = self.with_self_type(param_ty.clone());
-                        return Ok(Some(scope.function_signature(function).await?));
+                        let mut scope = self
+                            .with_generics(&trait_def.generics)
+                            .with_self_type(param_ty.clone());
+                        let signature = scope.function_signature(function).await?;
+                        let mut substitutions = HashMap::new();
+                        let arguments = path
+                            .segments
+                            .last()
+                            .and_then(|segment| segment.args.as_ref())
+                            .into_iter()
+                            .flat_map(|args| &args.args)
+                            .filter_map(|arg| match arg {
+                                hir::GenericArg::Type(ty) => Some(ty.as_ref()),
+                                hir::GenericArg::Const(_) => None,
+                            });
+                        for (parameter, argument) in trait_def
+                            .generics
+                            .params
+                            .iter()
+                            .filter(|parameter| {
+                                matches!(parameter.kind, hir::GenericParamKind::Type { .. })
+                            })
+                            .zip(arguments)
+                        {
+                            substitutions.insert(
+                                ty::ParamTy {
+                                    index: parameter.def_id.index,
+                                    name: parameter.name.clone(),
+                                },
+                                scope.check_type_expr(argument).await?,
+                            );
+                        }
+                        let TyKind::FnPtr(signature) = signature.kind else {
+                            return Ok(None);
+                        };
+                        return Ok(Some(Ty {
+                            kind: TyKind::FnPtr(ty::PolyFnSig {
+                                binder: ty::Binder {
+                                    value: scope.substitute_param_map_fn_sig(
+                                        &signature.binder.value,
+                                        &substitutions,
+                                    ),
+                                    bound_vars: signature.binder.bound_vars,
+                                },
+                            }),
+                        }));
                     }
                 }
                 for supertrait in &trait_def.supertraits {
@@ -5021,6 +5103,14 @@ impl HirTypeChecker {
             let mut scope = self.with_generics(&def.generics);
             let payload_result = scope.check_type_expr(payload).await;
             let payload = payload_result?;
+            for (name, bounds) in &scope.generic_param_bounds {
+                if name.as_str().starts_with('<') {
+                    self.generic_param_bounds
+                        .entry(name.clone())
+                        .or_default()
+                        .extend(bounds.clone());
+                }
+            }
             let payload = scope.substitute_params(payload, scrutinee_args, &def.generics.params);
             drop(scope);
             let payloads = match payload.kind {

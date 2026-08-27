@@ -757,6 +757,12 @@ fn ty_suffix(ty: Option<&ast::Ty>, ctx: &PrettyCtx<'_>) -> String {
 
 fn render_ty_brief(ty: &ast::Ty) -> String {
     match ty {
+        ast::Ty::Projection(projection) => format!(
+            "<{} as {}>::{}",
+            render_ty_brief(&projection.self_ty),
+            render_ty_brief(&projection.trait_ty),
+            projection.assoc
+        ),
         ast::Ty::Primitive(primitive) => match primitive {
             ast::TypePrimitive::Int(int_ty) => match int_ty {
                 ast::TypeInt::I128 => "i128".into(),

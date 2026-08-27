@@ -113,6 +113,14 @@ common_struct! {
         pub rhs: BType,
     }
 }
+common_struct! {
+    /// A trait-qualified associated type such as `<T as Trait>::Item`.
+    pub struct TypeProjection {
+        pub self_ty: BType,
+        pub trait_ty: BType,
+        pub assoc: Ident,
+    }
+}
 common_enum! {
     /// TypeValue is a solid type value
     pub enum Ty {
@@ -146,6 +154,7 @@ common_enum! {
         ConstBlock(ExprConstBlock),
         Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
+        Projection(Box<TypeProjection>),
         InferVar(TypeInferVar),
         Wildcard(TypeWildcard),
         /// A refinement/subtype type: `{binder : base // predicate}` (Lean 4's
@@ -290,6 +299,7 @@ impl Ty {
             Ty::ConstBlock(block) => block.span(),
             Ty::Quote(ty) => ty.span(),
             Ty::TypeBinaryOp(op) => op.span(),
+            Ty::Projection(projection) => projection.self_ty.span(),
             Ty::Refinement(ty) => ty.span(),
             Ty::Literal(ty) => ty.span(),
             _ => Span::null(),

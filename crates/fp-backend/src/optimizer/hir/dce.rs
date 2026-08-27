@@ -247,6 +247,10 @@ fn stmt_has_unresolved_paths(stmt: &hir::Stmt) -> bool {
 fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
     match &ty.kind {
         hir::TypeExprKind::Path(path) => path_has_unresolved_segments(path),
+        hir::TypeExprKind::Projection(projection) => {
+            type_has_unresolved_paths(&projection.self_ty)
+                || path_has_unresolved_segments(&projection.trait_path)
+        }
         hir::TypeExprKind::Structural(structural) => structural
             .fields
             .iter()
@@ -524,6 +528,10 @@ fn collect_type_refs(
 ) {
     match &ty.kind {
         hir::TypeExprKind::Path(path) => collect_path_refs(path, tail_map, work),
+        hir::TypeExprKind::Projection(projection) => {
+            collect_type_refs(&projection.self_ty, tail_map, work);
+            collect_path_refs(&projection.trait_path, tail_map, work);
+        }
         hir::TypeExprKind::Structural(structural) => {
             for field in &structural.fields {
                 collect_type_refs(&field.ty, tail_map, work);
