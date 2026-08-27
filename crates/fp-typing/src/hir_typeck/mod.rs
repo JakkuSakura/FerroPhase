@@ -2224,9 +2224,18 @@ impl HirTypeChecker {
                                 &ty,
                                 &resolved_init,
                             );
+                            let mut compatibility_substitutions = HashMap::new();
+                            let unifies = scope
+                                .unify_call_types_probe(
+                                    &ty,
+                                    &resolved_init,
+                                    &mut compatibility_substitutions,
+                                )
+                                .is_ok();
                             if !pointer_coercion
                                 && !array_slice_coercion
                                 && !coerce_unsized
+                                && !unifies
                                 && !Self::ty_matches_with_infer_holes(&ty, &resolved_init)
                             {
                                 let binding = match &local.pat.kind {
