@@ -210,6 +210,42 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
 }
 
 #[test]
+fn canonical_type_path_uses_foreign_owner_def_path() {
+    let dependency_id = hir::PackageId::new("core");
+    let def_id = hir::DefId::new(dependency_id.clone(), 23099);
+    let mut dependency = hir::HirPackage::new(dependency_id);
+    dependency.def_paths.insert(
+        def_id.clone(),
+        hir::DefPath::new(vec![
+            hir::Symbol::new("core"),
+            hir::Symbol::new("option"),
+            hir::Symbol::new("Option"),
+        ]),
+    );
+
+    let mut program = hir::HirProgram::new();
+    program.add_package(std::rc::Rc::new(dependency));
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(program),
+        hir::PackageId::new("alloc"),
+    );
+    generator.module_path = QualifiedPath::new(vec!["alloc".to_string(), "vec".to_string()]);
+
+    let path = hir::Path {
+        segments: vec![hir::PathSegment {
+            name: hir::Symbol::new("Option"),
+            args: None,
+        }],
+        res: Some(hir::Res::Def(def_id)),
+    };
+
+    assert_eq!(
+        generator.canonical_type_path(&path).unwrap().segments,
+        vec!["core", "option", "Option"]
+    );
+}
+
+#[test]
 fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
     let frontend = fp_lang::FerroFrontend::new();
     let parsed = frontend.parse_expr("println!(\"hello\")")?;

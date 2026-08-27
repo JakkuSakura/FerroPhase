@@ -739,6 +739,20 @@ impl AstToHirLowerer {
             }
         };
 
+        // An impl may be declared in this package while its self type is
+        // owned by a dependency (`alloc::vec` implements traits for
+        // `core::option::Option`, for example). The local reverse index only
+        // contains definitions predeclared by this lowerer; route foreign
+        // identities through the owning package's canonical path instead of
+        // treating them as unresolved and repeatedly retrying/skipping them.
+        if self_def_id.package_id != self.package.id {
+            if let Some(path) = self.hir_program.def_path(self_def_id.clone()) {
+                return Ok(fp_core::ast::path::QualifiedPath::new(
+                    path.to_segments(),
+                ));
+            }
+        }
+
         // During predeclaration, impl generic parameters are entered into a
         // temporary lexical type scope so `impl<T> Trait for T` can resolve
         // its self path. They are not nominal workspace definitions and
