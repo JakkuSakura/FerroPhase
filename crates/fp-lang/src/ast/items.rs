@@ -105,13 +105,33 @@ pub(crate) fn parse_script_tokens(
 }
 
 fn parse_item_or_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
-    if matches!(input.first().map(|token| &token.kind), Some(TokenKind::Keyword(Keyword::Extern))) {
+    if matches!(
+        input,
+        [pub_token, open, in_token, close, ..]
+            if pub_token.kind == TokenKind::Keyword(Keyword::Pub)
+                && open.kind == TokenKind::Symbol
+                && open.lexeme == "("
+                && in_token.kind == TokenKind::Keyword(Keyword::In)
+                && close.kind == TokenKind::Symbol
+                && close.lexeme == ")"
+    ) {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+    if matches!(
+        input.first().map(|token| &token.kind),
+        Some(TokenKind::Keyword(Keyword::Extern))
+    ) {
         return parse_item_winnow(input, file);
     }
     let mut probe = *input;
-    if let Ok(item) = parse_item_winnow(&mut probe, file) {
-        *input = probe;
-        return Ok(item);
+    match parse_item_winnow(&mut probe, file) {
+        Ok(item) => {
+            *input = probe;
+            return Ok(item);
+        }
+        Err(ErrMode::Cut(error)) => return Err(ErrMode::Cut(error)),
+        Err(ErrMode::Backtrack(_)) => {}
+        Err(ErrMode::Incomplete(error)) => return Err(ErrMode::Incomplete(error)),
     }
 
     let expr = parse_expr_winnow(input, file)?;
@@ -1999,7 +2019,14 @@ fn parse_visibility(input: &mut &[Token]) -> ModalResult<Visibility> {
     } else if skip_keyword(&mut probe, Keyword::Super).is_ok() {
         Visibility::Restricted(single_segment_path(fp_core::ast::ItemImportTree::SuperMod))
     } else if skip_keyword(&mut probe, Keyword::In).is_ok() {
-        Visibility::Restricted(parse_use_path(&mut probe)?)
+        if peek_symbol(probe) == Some(")") {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        let path = parse_use_path(&mut probe)?;
+        if path.segments.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        Visibility::Restricted(path)
     } else {
         return Err(ErrMode::Cut(ContextError::new()));
     };

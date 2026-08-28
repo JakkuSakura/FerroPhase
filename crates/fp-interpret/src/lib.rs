@@ -1,13 +1,13 @@
 mod ffi;
-mod host_globals;
 mod host_functions;
+mod host_globals;
 mod integer;
 mod interpreter;
 mod render;
 mod vm;
-pub use interpreter::LirInterpreter;
-pub use host_globals::{HostGlobal, HostGlobalDescriptor, HostGlobalError, HostGlobalRegistry};
 pub use host_functions::{HostFunction, HostFunctionError, HostFunctionRegistry};
+pub use host_globals::{HostGlobal, HostGlobalDescriptor, HostGlobalError, HostGlobalRegistry};
+pub use interpreter::LirInterpreter;
 pub(crate) use interpreter::TypedValue;
 
 use std::collections::HashMap;
@@ -20,10 +20,10 @@ use fp_core::ast::{
     ValueTuple,
 };
 use fp_core::lir::{
-    BasicBlockId, ComptimeOp, LirBasicBlock, LirBlob, LirConstant,
-    LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
-    LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
-    LirLocal, LirTerminator, LirType, LirValue, LirValueKind, Name, RegisterId,
+    BasicBlockId, ComptimeOp, LirBasicBlock, LirBlob, LirConstant, LirConstantAggregate,
+    LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
+    LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirTerminator,
+    LirType, LirValue, LirValueKind, Name, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 

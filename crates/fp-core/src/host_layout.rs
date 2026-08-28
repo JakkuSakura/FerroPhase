@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::lir::{layout::StructLayout, LirDataLayout, LirDataLayoutError, LirType};
+use crate::lir::{LirDataLayout, LirDataLayoutError, LirType, layout::StructLayout};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostFieldDescriptor {
@@ -21,7 +21,11 @@ impl HostLayoutDescriptor {
         fields: &'static [HostFieldDescriptor],
         packed: bool,
     ) -> Self {
-        Self { name, fields, packed }
+        Self {
+            name,
+            fields,
+            packed,
+        }
     }
 
     pub fn lir_type(&self) -> LirType {
@@ -49,11 +53,15 @@ pub struct HostLayoutRegistry {
 }
 
 impl HostLayoutRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn register<T: HostLayout>(&mut self) -> &HostLayoutDescriptor {
         let descriptor = T::DESCRIPTOR.clone();
-        self.descriptors.entry(descriptor.name).or_insert(descriptor)
+        self.descriptors
+            .entry(descriptor.name)
+            .or_insert(descriptor)
     }
 
     pub fn get(&self, name: &str) -> Option<&HostLayoutDescriptor> {

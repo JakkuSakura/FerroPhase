@@ -22,14 +22,12 @@ fn lir_types_compatible(expected: &LirType, actual: &LirType) -> bool {
                     .all(|(expected, actual)| lir_types_compatible(expected, actual))
         }
         (LirType::Ptr(expected), LirType::Ptr(actual)) => lir_types_compatible(expected, actual),
-        (
-            LirType::Array(expected, expected_len),
-            LirType::Array(actual, actual_len),
-        ) => expected_len == actual_len && lir_types_compatible(expected, actual),
-        (
-            LirType::Vector(expected, expected_len),
-            LirType::Vector(actual, actual_len),
-        ) => expected_len == actual_len && lir_types_compatible(expected, actual),
+        (LirType::Array(expected, expected_len), LirType::Array(actual, actual_len)) => {
+            expected_len == actual_len && lir_types_compatible(expected, actual)
+        }
+        (LirType::Vector(expected, expected_len), LirType::Vector(actual, actual_len)) => {
+            expected_len == actual_len && lir_types_compatible(expected, actual)
+        }
         (
             LirType::Function {
                 return_type: expected_return,
@@ -141,15 +139,21 @@ impl LirInterpreter {
         }
     }
 
-    pub fn set_host_globals(&mut self, registry: HostGlobalRegistry) { self.host_globals = registry; }
+    pub fn set_host_globals(&mut self, registry: HostGlobalRegistry) {
+        self.host_globals = registry;
+    }
 
-    pub fn host_globals(&self) -> &HostGlobalRegistry { &self.host_globals }
+    pub fn host_globals(&self) -> &HostGlobalRegistry {
+        &self.host_globals
+    }
 
     pub fn set_host_functions(&mut self, registry: HostFunctionRegistry) {
         self.host_functions = registry;
     }
 
-    pub fn host_functions(&self) -> &HostFunctionRegistry { &self.host_functions }
+    pub fn host_functions(&self) -> &HostFunctionRegistry {
+        &self.host_functions
+    }
 
     /// Loads every package's own LIR from `program` — the one place
     /// globals get materialized into interpreter memory (`global_values`)
@@ -163,25 +167,42 @@ impl LirInterpreter {
             self.populate_globals_batch(&blobs)?;
             for blob in &blobs {
                 for global in &blob.globals {
-                    if !matches!(global.linkage, fp_core::lir::Linkage::External | fp_core::lir::Linkage::AvailableExternally) { continue; }
-                    let host = self.host_globals.get(global.name.as_str()).ok_or_else(|| VmError::Runtime(format!("unresolved external host global {}", global.name)))?;
-                    if !lir_types_compatible(&host.descriptor.ty, &global.ty) { return Err(VmError::TypeMismatch { expected: format!("host global {} has {:?}", global.name, global.ty), found: format!("{:?}", host.descriptor.ty) }); }
-                    let address = if let Some(address) = self.global_values.get(global.name.as_str()) {
-                        *address
-                    } else {
-                        let address = self.state.mem.heap_alloc(
-                            self.data_layout.size_of(&global.ty)
-                                .map_err(|error| VmError::Runtime(error.to_string()))?,
-                            global.alignment.unwrap_or(
+                    if !matches!(
+                        global.linkage,
+                        fp_core::lir::Linkage::External
+                            | fp_core::lir::Linkage::AvailableExternally
+                    ) {
+                        continue;
+                    }
+                    let host = self.host_globals.get(global.name.as_str()).ok_or_else(|| {
+                        VmError::Runtime(format!("unresolved external host global {}", global.name))
+                    })?;
+                    if !lir_types_compatible(&host.descriptor.ty, &global.ty) {
+                        return Err(VmError::TypeMismatch {
+                            expected: format!("host global {} has {:?}", global.name, global.ty),
+                            found: format!("{:?}", host.descriptor.ty),
+                        });
+                    }
+                    let address =
+                        if let Some(address) = self.global_values.get(global.name.as_str()) {
+                            *address
+                        } else {
+                            let address = self.state.mem.heap_alloc(
                                 self.data_layout
-                                    .align_of(&global.ty)
+                                    .size_of(&global.ty)
                                     .map_err(|error| VmError::Runtime(error.to_string()))?,
-                            ),
-                        )?;
-                        self.global_values.insert(global.name.to_string(), address);
-                        address
-                    };
-                    let size = self.data_layout.size_of(&global.ty)
+                                global.alignment.unwrap_or(
+                                    self.data_layout
+                                        .align_of(&global.ty)
+                                        .map_err(|error| VmError::Runtime(error.to_string()))?,
+                                ),
+                            )?;
+                            self.global_values.insert(global.name.to_string(), address);
+                            address
+                        };
+                    let size = self
+                        .data_layout
+                        .size_of(&global.ty)
                         .map_err(|error| VmError::Runtime(error.to_string()))?;
                     let bytes = unsafe {
                         std::slice::from_raw_parts(host.address() as *const u8, size as usize)
@@ -396,23 +417,25 @@ impl LirInterpreter {
         self.state.pop_frame();
         self.state.regs.gpr = saved_registers;
         self.register_values = saved_register_values;
-        self.sync_host_globals() ?;
+        self.sync_host_globals()?;
         result
     }
 
     fn sync_host_globals(&mut self) -> LirResult<()> {
         for (name, host) in self.host_globals.iter() {
-            if !host.descriptor.mutable { continue; }
-            let Some(address) = self.global_values.get(name).copied() else { continue; };
-            let size = self.data_layout.size_of(&host.descriptor.ty)
+            if !host.descriptor.mutable {
+                continue;
+            }
+            let Some(address) = self.global_values.get(name).copied() else {
+                continue;
+            };
+            let size = self
+                .data_layout
+                .size_of(&host.descriptor.ty)
                 .map_err(|error| VmError::Runtime(error.to_string()))?;
             let bytes = self.state.mem.load_bytes(address, size)?;
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    host.address(),
-                    bytes.len(),
-                );
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), host.address(), bytes.len());
             }
         }
         Ok(())

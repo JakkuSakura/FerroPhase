@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use fp_core::lir::LirType;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostGlobalDescriptor {
@@ -15,7 +15,9 @@ pub struct HostGlobal {
 }
 
 impl HostGlobal {
-    pub fn address(&self) -> *mut u8 { self.address as *mut u8 }
+    pub fn address(&self) -> *mut u8 {
+        self.address as *mut u8
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +45,9 @@ pub struct HostGlobalRegistry {
 }
 
 impl HostGlobalRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn register(
         &mut self,
@@ -53,13 +57,31 @@ impl HostGlobalRegistry {
         mutable: bool,
     ) -> Result<(), HostGlobalError> {
         let name = name.into();
-        if name.is_empty() { return Err(HostGlobalError::EmptyName); }
-        if self.globals.contains_key(&name) { return Err(HostGlobalError::Duplicate(name)); }
-        if address.is_null() { return Err(HostGlobalError::InvalidAddress { name }); }
-        self.globals.insert(name.clone(), HostGlobal { descriptor: HostGlobalDescriptor { name, ty, mutable }, address: address as usize });
+        if name.is_empty() {
+            return Err(HostGlobalError::EmptyName);
+        }
+        if self.globals.contains_key(&name) {
+            return Err(HostGlobalError::Duplicate(name));
+        }
+        if address.is_null() {
+            return Err(HostGlobalError::InvalidAddress { name });
+        }
+        self.globals.insert(
+            name.clone(),
+            HostGlobal {
+                descriptor: HostGlobalDescriptor { name, ty, mutable },
+                address: address as usize,
+            },
+        );
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Option<&HostGlobal> { self.globals.get(name) }
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &HostGlobal)> { self.globals.iter().map(|(name, global)| (name.as_str(), global)) }
+    pub fn get(&self, name: &str) -> Option<&HostGlobal> {
+        self.globals.get(name)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &HostGlobal)> {
+        self.globals
+            .iter()
+            .map(|(name, global)| (name.as_str(), global))
+    }
 }

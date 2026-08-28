@@ -9,6 +9,9 @@ pub struct HostFunctionDescriptor {
 
 impl HostFunctionDescriptor {
     pub fn new(name: impl Into<String>, signature: LirFunctionSignature) -> Self {
-        Self { name: name.into(), signature }
+        Self {
+            name: name.into(),
+            signature,
+        }
     }
 }

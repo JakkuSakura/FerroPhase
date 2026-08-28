@@ -66,9 +66,8 @@ fn parses_extern_host_fn_decl() {
 
 #[test]
 fn rejects_extern_host_fn_definition() {
-    let result = FerroPhaseParser::new().parse_items_ast(
-        "extern \"host\" fn add(a: i64, b: i64) -> i64 { a + b }",
-    );
+    let result = FerroPhaseParser::new()
+        .parse_items_ast("extern \"host\" fn add(a: i64, b: i64) -> i64 { a + b }");
     assert!(result.is_err(), "host functions must be declaration-only");
 }
 

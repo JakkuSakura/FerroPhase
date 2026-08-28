@@ -98,7 +98,9 @@ impl FfiRuntime {
         args: &[u64],
     ) -> FfiResult<Option<u64>> {
         if address.is_null() {
-            return Err(FfiError::Message(format!("ffi call '{name}' has a null address")));
+            return Err(FfiError::Message(format!(
+                "ffi call '{name}' has a null address"
+            )));
         }
 
         let ret = match sig.ret {

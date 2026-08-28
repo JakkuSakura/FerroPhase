@@ -264,7 +264,9 @@ fn calls_libc_function_through_extern_c_declaration() {
 
 #[test]
 fn calls_registered_host_function_pointer() {
-    extern "C" fn host_answer() -> i64 { 42 }
+    extern "C" fn host_answer() -> i64 {
+        42
+    }
 
     let host = LirFunction {
         def_id: None,
@@ -317,7 +319,12 @@ fn calls_registered_host_function_pointer() {
         .unwrap();
     let mut interpreter = LirInterpreter::new();
     interpreter.set_host_functions(registry);
-    assert_eq!(interpreter.run_main(&make_with_functions_and_globals(vec![main, host], vec![])).unwrap(), Value::int(42));
+    assert_eq!(
+        interpreter
+            .run_main(&make_with_functions_and_globals(vec![main, host], vec![]))
+            .unwrap(),
+        Value::int(42)
+    );
 }
 
 #[cfg(unix)]
