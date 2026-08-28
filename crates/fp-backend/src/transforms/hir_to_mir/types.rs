@@ -438,6 +438,11 @@ impl HirToMirLowerer {
     pub(super) fn eval_type_length(&self, expr: &hir::Expr) -> Option<u64> {
         match &expr.kind {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
+            hir::ExprKind::Cast(inner, _) => self.eval_type_length(inner),
+            hir::ExprKind::Block(block) if block.stmts.is_empty() => block
+                .expr
+                .as_deref()
+                .and_then(|inner| self.eval_type_length(inner)),
             hir::ExprKind::Path(path) => {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
                     self.mir_package

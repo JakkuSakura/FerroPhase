@@ -4894,6 +4894,11 @@ impl<'a> BodyBuilder<'a> {
     pub(super) fn evaluate_array_length(&mut self, expr: &hir::Expr) -> Option<u64> {
         match &expr.kind {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
+            hir::ExprKind::Cast(inner, _) => self.evaluate_array_length(inner),
+            hir::ExprKind::Block(block) if block.stmts.is_empty() => block
+                .expr
+                .as_deref()
+                .and_then(|inner| self.evaluate_array_length(inner)),
             hir::ExprKind::Path(path) => {
                 if let Some(hir::Res::Def(ref def_id)) = path.res {
                     if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {

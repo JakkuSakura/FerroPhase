@@ -2,7 +2,7 @@
 //! Benchmark-style run for the 8-queens solver.
 
 fn solve(
-    row: i64,
+    row: usize,
     cols: &mut [i64; 8],
     diag1: &mut [i64; 15],
     diag2: &mut [i64; 15],
@@ -13,20 +13,20 @@ fn solve(
     }
 
     let mut count = 0;
-    for col in 0..8 {
+    for col in 0usize..8 {
         let col_i: i64 = col as i64;
-        let d1: usize = (row + col_i) as usize;
-        let d2: usize = (row - col_i + 7) as usize;
+        let d1: usize = row + col;
+        let d2: usize = row + 7 - col;
         if cols[col] == 0 && diag1[d1] == 0 && diag2[d2] == 0 {
             cols[col] = 1;
             diag1[d1] = 1;
             diag2[d2] = 1;
-            positions[row as usize] = col_i;
-            count += solve(row + 1, cols, diag1, diag2, positions);
+            positions[row] = col_i;
+            count += solve(row + 1usize, cols, diag1, diag2, positions);
             cols[col] = 0;
             diag1[d1] = 0;
             diag2[d2] = 0;
-            positions[row as usize] = -1;
+            positions[row] = -1;
         }
     }
     count
@@ -37,7 +37,7 @@ fn run_solver() -> i64 {
     let mut diag1: [i64; 15] = [0; 15];
     let mut diag2: [i64; 15] = [0; 15];
     let mut positions: [i64; 8] = [-1, -1, -1, -1, -1, -1, -1, -1];
-    solve(0, &mut cols, &mut diag1, &mut diag2, &mut positions)
+    solve(0usize, &mut cols, &mut diag1, &mut diag2, &mut positions)
 }
 
 #[bench]

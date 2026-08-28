@@ -301,6 +301,7 @@ pub(super) fn emit_extract_value(
     }
     let src_offset = match aggregate {
         AsmValue::Register(id) => agg_offset(layout, *id)?,
+        AsmValue::Local(id) => local_offset(layout, *id)?,
         _ => return Err(Error::from("unsupported ExtractValue aggregate source")),
     };
     let (field_offset, _field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;

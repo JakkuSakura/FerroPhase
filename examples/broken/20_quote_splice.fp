@@ -1,7 +1,7 @@
 #!/usr/bin/env fp interpret
 //! Quote, splice, and emit: staged code generation with runtime output.
 
-fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
+fn apply_ops(const ops: [i64], mut x: i64, limit: i64) -> i64 {
     const {
         for (i, op) in ops.iter().enumerate() {
             // Mix emit! and splice(quote<expr>) to generate different statements.

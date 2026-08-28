@@ -11,19 +11,19 @@ fn solve(
     found_first: &mut bool,
 ) -> i64 {
     if row == 8 {
-        if !*found_first {
-            for r in 0..8 {
+        if *found_first == false {
+            for r in 0usize..8 {
                 first_solution[r] = positions[r];
             }
         }
-        if !*found_first {
+        if *found_first == false {
             *found_first = true;
         }
         return 1;
     }
 
-    let mut count = 0;
-    for col in 0..8 {
+    let mut count: i64 = 0;
+    for col in 0usize..8 {
         let d1 = row + col;
         let d2 = row + 7 - col;
         if cols[col] == 0 && diag1[d1] == 0 && diag2[d2] == 0 {
@@ -51,8 +51,8 @@ fn solve(
 
 fn print_board(positions: &[i64; 8]) {
     println!("First solution:");
-    for r in 0..8 {
-        for c in 0..8 {
+    for r in 0usize..8 {
+        for c in 0usize..8 {
             if positions[r] == c as i64 {
                 print!("Q ");
             } else {

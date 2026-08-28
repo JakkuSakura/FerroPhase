@@ -661,9 +661,10 @@ mod tests {
                 std_provider_for(language)
                     .list_packages()
                     .unwrap()
-                .is_empty()
+                    .is_empty()
             );
         }
+    }
 
     #[test]
     fn cargo_workspace_root_honors_explicit_package_workspace() {
