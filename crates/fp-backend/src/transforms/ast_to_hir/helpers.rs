@@ -2,7 +2,7 @@ use super::*;
 use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
 impl AstToHirLowerer {
-    fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
+    pub(super) fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
         let hir::Res::Def(def_id) = base.res.as_ref()? else {
             return None;
         };
@@ -92,7 +92,29 @@ impl AstToHirLowerer {
                 self.make_path_segment(segment, args)
             })
             .collect();
-        let mut res = self.lookup_global_res(&resolved_name.path, scope);
+        // A resolved bare name still needs the ordinary lexical/module/
+        // implicit-prelude lookup tiers. `lookup_global_res` is deliberately
+        // a qualified-path lookup: its root node has no entry for the
+        // reserved implicit prelude, so using it for `String`/`Vec`/`Arc`
+        // leaves `res` empty even when the published HIR prelude metadata is
+        // correct. This is the same distinction rustc makes between a
+        // single identifier resolved in a scope and a qualified path walked
+        // through module namespaces.
+        let mut res = if resolved_name.path.segments.len() == 1 {
+            match scope {
+                PathResolutionScope::Value => {
+                    self.resolve_value_symbol(&resolved_name.path.segments[0])
+                }
+                PathResolutionScope::Type => {
+                    self.resolve_type_symbol(&resolved_name.path.segments[0])
+                }
+                PathResolutionScope::Trait => {
+                    self.resolve_trait_symbol(&resolved_name.path.segments[0])
+                }
+            }
+        } else {
+            self.lookup_global_res(&resolved_name.path, scope)
+        };
         if res.is_none() && self.package.module_tree.module_exists(&resolved_name.path) {
             res = Some(hir::Res::Module(resolved_name.path.segments.clone()));
         }
@@ -100,6 +122,41 @@ impl AstToHirLowerer {
             hir::Path { segments, res },
             scope,
         )))
+    }
+
+    /// Resolve the expression node that owns a type reference before
+    /// inspecting any expression wrapper around it.  Type syntax can be
+    /// represented as `Ty::Expr(Value::Expr(..))`; the frontend's resolver
+    /// records the namespace result on the owning expression node, and
+    /// dropping that node in favour of the nested expression loses the
+    /// result before HIR construction.  This is the AST-to-HIR equivalent of
+    /// rustc carrying the resolved `Res` on the path node rather than
+    /// reconstructing it from the spelling later.
+    pub(super) fn resolved_type_path(
+        &mut self,
+        expr: &ast::Expr,
+    ) -> Result<Option<hir::Path>> {
+        let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() else {
+            return Ok(None);
+        };
+        if resolved_name.namespace != ResolvedNameNamespace::Type {
+            return Ok(None);
+        }
+        let name = match expr.kind() {
+            ast::ExprKind::Name(name) => name.clone(),
+            // `Value::Expr` is a type wrapper, not a new source path. Build a
+            // name from the resolver's path so the owning node's namespace
+            // and canonical identity remain authoritative.
+            _ => ast::Name::path(ast::Path::plain(
+                resolved_name
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| ast::Ident::new(segment.clone()))
+                    .collect(),
+            )),
+        };
+        self.resolved_name_to_hir_path(&resolved_name, &name, PathResolutionScope::Type)
     }
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
@@ -552,6 +609,40 @@ impl AstToHirLowerer {
                 segments,
                 res: Some(hir::Res::SelfTy),
             });
+        }
+
+        // Rustc represents a concrete `Type::associated_item` expression as
+        // a type-relative qualified path: name resolution resolves only the
+        // type (or trait/generic parameter) head, while type checking selects
+        // the applicable impl item. Do this before any full-path value lookup
+        // below, because impl members are also published for import and
+        // metadata purposes and a flat `Type::item` lookup would otherwise
+        // select one arbitrary generic impl. Enum variants are the one
+        // exception: their variant namespace is resolved immediately and the
+        // variant `DefId` is needed by constructor typing.
+        if scope == PathResolutionScope::Value
+            && segments.len() > 1
+            && path_prefix == PathPrefix::Plain
+        {
+            if let Some(base_res @ (hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy)) =
+                self.resolve_type_symbol(segments[0].name.as_str())
+            {
+                let mut type_relative = hir::Path {
+                    segments,
+                    res: Some(base_res),
+                };
+                if let Some(res) = self.lookup_enum_variant(
+                    &type_relative,
+                    &type_relative
+                        .segments
+                        .last()
+                        .map(|segment| segment.name.as_str().to_owned())
+                        .unwrap_or_default(),
+                ) {
+                    type_relative.res = Some(res);
+                }
+                return Ok(type_relative);
+            }
         }
 
         // A plain path rooted at a lexical type parameter is rustc's
@@ -1086,13 +1177,13 @@ impl AstToHirLowerer {
                 // `T::ASSOC` is a type-relative path. Resolve its base in
                 // the type namespace, as rustc does for a qualified path,
                 // even when the surrounding expression is in value scope.
+                // This applies to associated functions as well as constants:
+                // `Vec::from` must resolve `Vec` as a type, never as a value
+                // constructor or a same-named lexical binding. Keep a value
+                // lookup only as the module-qualified constant fallback below.
                 let type_base = self.ast_expr_to_hir_path(
                     &select.obj,
-                    if matches!(select.select, ast::ExprSelectType::Const) {
-                        PathResolutionScope::Type
-                    } else {
-                        scope
-                    },
+                    PathResolutionScope::Type,
                 )?;
                 let value_base = if matches!(select.select, ast::ExprSelectType::Const) {
                     Some(self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?)
@@ -1109,7 +1200,12 @@ impl AstToHirLowerer {
                     }
                     _ => type_base,
                 };
-                let seg = self.make_path_segment(&select.field.name, None);
+                let member_args = if select.generic_args.is_empty() {
+                    None
+                } else {
+                    Some(self.convert_generic_args(&select.generic_args)?)
+                };
+                let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
                 if matches!(
                     select.select,

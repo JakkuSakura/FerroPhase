@@ -442,62 +442,6 @@ fn primitive_shape_name(prim: &TypePrimitive) -> Option<String> {
     }
 }
 
-/// Recover the nominal definition for a self-type path whose resolver did not
-/// attach `Res::Def` but whose spelling still identifies a nominal item.
-///
-/// This is deliberately an ambiguity-preserving lookup.  A path such as
-/// `Vec<&str>` is lowered by the frontend as an unresolved path because the
-/// generic `Ty::Vec` shortcut constructs the HIR path directly.  Rustc would
-/// already have resolved that path to `AdtDef` before building its impl index.
-/// The package index has the equivalent information in `def_map` and
-/// `def_paths`, so recover the `DefId` here rather than putting a nominal type
-/// into a structural shape bucket.  If more than one definition can match,
-/// there is no sound fast-reject key to choose and the caller must retain the
-/// diagnostic instead of guessing.
-fn unresolved_nominal_def_id(package: &HirPackage, path: &Path) -> Option<DefId> {
-    let names: Vec<&str> = path
-        .segments
-        .iter()
-        .map(|segment| segment.name.as_str())
-        .collect();
-    let last = names.last().copied()?;
-    let mut candidates = HashSet::new();
-
-    for (def_id, item) in &package.def_map {
-        if !matches!(item.kind, ItemKind::Struct(_) | ItemKind::Enum(_)) {
-            continue;
-        }
-        let Some(def_path) = package.def_paths.get(def_id) else {
-            if names.len() == 1 {
-                let item_name = match &item.kind {
-                    ItemKind::Struct(def) => def.name.as_str(),
-                    ItemKind::Enum(def) => def.name.as_str(),
-                    _ => unreachable!(),
-                };
-                if item_name == last {
-                    candidates.insert(def_id.clone());
-                }
-            }
-            continue;
-        };
-        let def_names: Vec<&str> = def_path
-            .segments
-            .iter()
-            .map(|segment| segment.as_str())
-            .collect();
-        let matches_path = if names.len() == 1 {
-            def_names.last().copied() == Some(last)
-        } else {
-            def_names.ends_with(&names)
-        };
-        if matches_path {
-            candidates.insert(def_id.clone());
-        }
-    }
-
-    (candidates.len() == 1).then(|| candidates.into_iter().next().unwrap())
-}
-
 impl HirPackage {
     /// `id` is a required parameter, not filled in after the fact — a
     /// caller that builds a fresh `HirPackage` and forgets to copy its real
@@ -588,6 +532,12 @@ impl HirPackage {
                     self.member_to_owning_item
                         .insert(impl_member.def_id.clone(), item.def_id.clone());
                 }
+                // Nominal identity is established by name resolution before
+                // indexing, exactly as in rustc's `DefId`-keyed
+                // `SimplifiedType` table.  Do not reconstruct an identity
+                // from path spelling here: a re-export or a same-named item
+                // in another package can otherwise produce an index key that
+                // differs from the `Res::Def` consumed by type checking.
                 let resolved_did = match &impl_item.self_ty.kind {
                     TypeExprKind::Path(path) => match &path.res {
                         Some(Res::Def(did))
@@ -599,7 +549,7 @@ impl HirPackage {
                         {
                             Some(did.clone())
                         }
-                        _ => unresolved_nominal_def_id(self, path),
+                        _ => None,
                     },
                     _ => None,
                 };

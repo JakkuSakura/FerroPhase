@@ -187,6 +187,51 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
 }
 
 #[test]
+fn transform_type_uses_owner_resolved_name_before_expr_wrapper() -> Result<()> {
+    let inner = ast::Expr::name(ast::Name::from_ident(ident("String")));
+    let wrapped = ast::Expr::new(ast::ExprKind::Value(
+        ast::Value::Expr(Box::new(inner)),
+    ));
+    let resolved_def = hir::DefId::new(hir::PackageId::new("consumer"), 7);
+    let mut resolved_names = ResolvedNameTable::new();
+    resolved_names.insert(
+        wrapped.id(),
+        ResolvedName {
+            namespace: ResolvedNameNamespace::Type,
+            path: QualifiedPath::new(vec!["String".to_string()]),
+        },
+    );
+
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("consumer"),
+    )
+    .with_resolved_names(resolved_names);
+    generator
+        .package
+        .module_tree
+        .bind(
+            generator.package.module_tree.root(),
+            hir::Namespace::Type,
+            "String",
+            hir::SymbolEntry {
+                res: hir::Res::Def(resolved_def.clone()),
+                export: hir::SymbolExport::Public,
+                path: None,
+            },
+        );
+
+    let lowered = generator.transform_type_to_hir(&ast::Ty::Expr(Box::new(wrapped)))?;
+    let hir::TypeExprKind::Path(path) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "expected wrapped type to lower as a path".to_string(),
+        ));
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(resolved_def)));
+    Ok(())
+}
+
+#[test]
 fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
     // Resolving a bare name against the *current* module's own qualified
     // entries (module_path + name) is intentional (lets a module's own

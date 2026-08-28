@@ -206,8 +206,11 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
             ty::FloatTy::F128 => "f128",
         }],
         TyKind::Slice(_) => vec!["[]", "str"],
-        // Array method lookup also considers the built-in slice view.
-        TyKind::Array(_, _) => vec!["[;N]", "[]", "str"],
+        // An array reaches slice methods through the explicit built-in
+        // array-to-slice adjustment in the method lookup chain. Keep the
+        // index faithful to the receiver's actual simplified type so an
+        // array impl is considered before the adjusted slice receiver.
+        TyKind::Array(_, _) => vec!["[;N]"],
         TyKind::Tuple(elements) if elements.is_empty() => vec!["()"],
         TyKind::Tuple(_) => vec!["(,)"],
         TyKind::Ref(_, _, ty::Mutability::Not) => vec!["&"],
@@ -236,13 +239,13 @@ pub(super) fn shape_and_blanket_candidates<'a>(
     receiver_kind: &TyKind,
 ) -> Box<dyn Iterator<Item = hir::Item> + 'a> {
     if matches!(receiver_kind, TyKind::Infer(_)) {
-        // An inference variable has no dispatch shape yet. Keep the
-        // obligation open and let the structural receiver matcher reject
-        // incompatible impls once the surrounding expression constrains it.
+        // An inference variable has no rustc `SimplifiedType` yet. Keep the
+        // obligation open; selecting candidates by scanning every impl would
+        // be a fallback index with no sound fast-reject key and could commit
+        // to a method before inference has established the receiver type.
         return Box::new(
             program
-                .all_items()
-                .filter(|item| matches!(item.kind, hir::ItemKind::Impl(_))),
+                .blanket_impls(),
         );
     }
     Box::new(

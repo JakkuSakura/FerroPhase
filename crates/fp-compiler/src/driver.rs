@@ -945,9 +945,11 @@ impl CompilerDriver {
                 .map(|diagnostic| diagnostic.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
-            return Err(fp_core::error::Error::diagnostic(
-                fp_core::diagnostics::Diagnostic::error(combined),
-            ));
+            if self.pipeline != PipelineMode::Transpile {
+                return Err(fp_core::error::Error::diagnostic(
+                    fp_core::diagnostics::Diagnostic::error(combined),
+                ));
+            }
         }
         Ok(())
     }

@@ -44,8 +44,16 @@ impl KotlinBackend {
         if let Some(scan) = self.scan.get() {
             return Ok(scan);
         }
-        let workspace_packages: HashSet<String> =
-            workspace.workspace_packages().into_iter().collect();
+        // The provider may describe the entire Cargo workspace, while this
+        // compile can intentionally select one member. Scan only packages
+        // that the driver actually loaded and type-checked; asking for every
+        // provider member would make a focused `--package` compile fail on
+        // unrelated packages.
+        let workspace_packages: HashSet<String> = workspace
+            .crates()
+            .keys()
+            .map(|package_id| package_id.as_str().to_owned())
+            .collect();
         let sources: Vec<AstPackage> = workspace_packages
             .iter()
             .map(|name| {

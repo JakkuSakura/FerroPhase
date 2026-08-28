@@ -355,7 +355,11 @@ pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
         .all_packages()
         .flat_map(|package| package.borrow().diagnostics.get_diagnostics())
         .collect();
-    emit_typing_diagnostics(&diagnostics)
+    let result = emit_typing_diagnostics(&diagnostics);
+    if driver.pipeline == PipelineMode::Transpile {
+        return Ok(());
+    }
+    result
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {

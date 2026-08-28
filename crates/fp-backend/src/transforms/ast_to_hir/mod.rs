@@ -372,27 +372,18 @@ impl AstToHirLowerer {
     }
 
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
-        let mut exports = self
-            .package
+        self.package
             .module_tree
-            .all_bindings(hir::Namespace::Value)
-            .chain(self.package.module_tree.all_bindings(hir::Namespace::Type))
-            .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
-            .map(|(path, entry)| (path.to_key(), entry.res.clone()))
-            .collect::<HashMap<_, _>>();
-        // The implicit prelude is stored in a reserved ModuleTree node, not
-        // under a real path. Publish it using the same canonical path rustc
-        // exposes from a crate's `prelude::v1` module so downstream packages
-        // can reconstruct their own bare-name prelude during AST->HIR.
-        let crate_root = hir::HirProgram::external_crate_name(&self.package.id);
-        for namespace in [hir::Namespace::Value, hir::Namespace::Type] {
-            for (name, entry) in self.package.module_tree.prelude_bindings(namespace) {
-                exports
-                    .entry(format!("{crate_root}::prelude::v1::{name}"))
-                    .or_insert_with(|| entry.res.clone());
-            }
-        }
-        exports
+            .public_bindings()
+            .into_iter()
+            .map(|(path, _namespace, entry)| {
+                let key = hir::HirProgram::canonical_external_path(
+                    &self.package.id,
+                    &path.to_key(),
+                );
+                (key, entry.res)
+            })
+            .collect()
     }
 
     /// `type_aliases` (unlike the module tree's value/type bindings) has no
@@ -3078,6 +3069,18 @@ impl AstToHirLowerer {
                 self.normalize_span(ty.span()),
             )),
             ast::Ty::Expr(expr) => {
+                // The resolver result belongs to this expression node even
+                // when the type is wrapped as `Value::Expr`.  Consult it
+                // before unwrapping the value; otherwise the nested path
+                // construction below can produce an unresolved HIR path for
+                // a resolved bare type such as `String`.
+                if let Some(path) = self.resolved_type_path(expr)? {
+                    return Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Path(path),
+                        self.normalize_span(ty.span()),
+                    ));
+                }
                 // `_` in type position (`Vec<_>`, a turbofish arg, ...) —
                 // real inference-placeholder syntax, not a real path to
                 // resolve. Reaches here as a bare `Name::Ident("_")`

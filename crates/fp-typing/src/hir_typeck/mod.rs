@@ -18,6 +18,23 @@ mod intrinsics;
 mod literals;
 mod type_shapes;
 use type_shapes::*;
+// TODO: do not publish here. just make the input inside Rc
+/// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
+/// runs against, by cloning `dependency_program` (a cheap `Rc`-map clone,
+/// not a deep one — see `hir::HirProgram`'s own `packages` field) and adding
+/// `current_package` (still in progress, not yet published) into it last,
+/// via `HirProgram::add_package`.
+pub fn build_typing_program(
+    current_package: hir::HirPackage,
+    dependency_program: Option<Rc<hir::HirProgram>>,
+) -> Rc<hir::HirProgram> {
+    let mut program = dependency_program.as_deref().cloned().unwrap_or_default();
+    // The current package is still owned by this construction call. Publish
+    // it through the same snapshot boundary as the compiler state so its
+    // derived nominal/impl indexes are complete before type checking starts.
+    program.publish_package(current_package);
+    Rc::new(program)
+}
 
 /// One `HirTypeChecker` instance plays one of two roles, distinguished by
 /// `root`:
@@ -56,9 +73,9 @@ use type_shapes::*;
 #[derive(Clone)]
 pub struct HirTypeChecker {
     /// The whole compiled workspace's HIR, as of when this package's type
-    /// checking started: every already-installed dependency package, plus
-    /// this package's own HIR, installed under its own `PackageId` before
-    /// construction. Both
+    /// checking started: every already-published dependency package, plus
+    /// this package's own (still in-progress, not yet published) HIR,
+    /// inserted under its own `PackageId` (see `build_typing_program`). Both
     /// `HirId` and `DefId` already carry their owning `PackageId` (see
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
     /// or cross-package alike — routes through this one `HirProgram` via
@@ -66,9 +83,9 @@ pub struct HirTypeChecker {
     program: Rc<hir::HirProgram>,
     /// Which entry in `program` is the package actually being checked —
     /// needed for iterating just this package's own items (the initial
-    /// per-item spawn loop) and for snapshotting the package's HIR into a
-    /// `ComptimeRequest.current`.
-    current_package: Rc<RefCell<hir::HirPackage>>,
+    /// per-item spawn loop) and for snapshotting the package's own,
+    /// not-yet-published HIR into a `ComptimeRequest.current`.
+    current_package: hir::PackageId,
     /// Answers requests made by HIR while checking compile-time constants —
     /// see `ComptimeResolver`'s doc comment. `None` when no resolver was
     /// supplied at construction; calling `request_comptime` in that case is
@@ -162,17 +179,21 @@ impl HirTypeChecker {
         }
     }
 
-    /// Wraps the already-installed workspace and current package in one
-    /// `Rc<RefCell<_>>` root handle, spawned against by every item's task.
+    /// Builds the unified `program: Rc<hir::HirProgram>` (via
+    /// `build_typing_program`) and wraps the whole package-level state in
+    /// one `Rc<RefCell<_>>` root handle, spawned against by every item's
+    /// task (see `spawn_item_task`).
     pub fn new(
-        program: Rc<hir::HirProgram>,
-        current_package: Rc<RefCell<hir::HirPackage>>,
+        current_package: hir::HirPackage,
+        dependency_program: Option<Rc<hir::HirProgram>>,
         comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<RefCell<Self>> {
+        let package_id = current_package.id.clone();
+        let program = build_typing_program(current_package, dependency_program);
         Rc::new(RefCell::new(Self {
             program,
-            current_package,
+            current_package: package_id,
             comptime_resolver,
             executor,
             root: None,
@@ -368,7 +389,7 @@ impl HirTypeChecker {
                     if !seen.insert(trait_id.clone()) {
                         continue;
                     }
-                    let Some(item) = child.program.item(trait_id) else {
+                    let Some(item) = child.program.item(trait_id).cloned() else {
                         continue;
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -425,8 +446,12 @@ impl HirTypeChecker {
     /// never a deep copy of the package's own data; `HirProgram::package`
     /// itself only hands out a plain `&HirPackage`, not the `Rc` needed
     /// here, so this reads the underlying `packages` map directly).
-    pub fn package(&self) -> std::cell::Ref<'_, hir::HirPackage> {
-        self.current_package.borrow()
+    pub fn package(&self) -> Rc<hir::HirPackage> {
+        self.program
+            .packages
+            .get(&self.current_package)
+            .cloned()
+            .expect("current_package is always inserted into program at construction")
     }
 
     /// The whole workspace `HirProgram`, for cross-package lookups that
@@ -436,7 +461,7 @@ impl HirTypeChecker {
     }
 
     /// The whole workspace `HirProgram` this package is being checked
-    /// against (every already-installed dependency, plus this package's
+    /// against (every already-published dependency, plus this package's
     /// own still-in-progress HIR) — handed to `CompilerState` for the
     /// duration of this package's typecheck so a mid-typecheck
     /// `ComptimeRequest` can resolve its own package by id.
@@ -450,14 +475,14 @@ impl HirTypeChecker {
     /// `CompilerState::in_progress_hir_program`), since the request itself
     /// no longer carries the package's own `Rc` directly.
     fn current_package(&self) -> hir::PackageId {
-        self.current_package.borrow().id.clone()
+        self.current_package.clone()
     }
 
     /// See `current_package`; kept as a distinctly-named `pub` accessor
     /// since external crates (`fp-compiler`) shouldn't need to know that
     /// the field itself is also called `current_package`.
     pub fn current_package_id(&self) -> hir::PackageId {
-        self.current_package.borrow().id.clone()
+        self.current_package.clone()
     }
 
     /// Request a compile-time value — awaits `ComptimeResolver` directly, so
@@ -530,77 +555,6 @@ impl HirTypeChecker {
         Ty::error()
     }
 
-    /// Converts a comptime type value into the canonical result for the
-    /// requesting const block. Generated structs keep that block's real
-    /// definition identity, so aliases only consume a completed HIR result.
-    fn type_from_comptime_value(
-        &self,
-        value: fp_core::ast::Value,
-        def_id: &hir::DefId,
-    ) -> Result<Ty> {
-        let fp_core::ast::Value::Type(value_ty) = value else {
-            return Err(Error::from(format!(
-                "comptime type expression `{def_id}` returned a value instead of a type: {value:?}"
-            )));
-        };
-        let fp_core::ast::Ty::Struct(struct_ty) = value_ty else {
-            return ast_value_ty_to_hir_ty(&value_ty).ok_or_else(|| {
-                Error::from(format!(
-                    "comptime type expression `{def_id}` produced an unsupported type value `{value_ty:?}`"
-                ))
-            });
-        };
-        let fields: Vec<(hir::Symbol, Ty)> = struct_ty
-            .fields
-            .iter()
-            .map(|field| {
-                ast_value_ty_to_hir_ty(&field.value)
-                    .map(|ty| (hir::Symbol::new(field.name.name.clone()), ty))
-                    .ok_or_else(|| {
-                        Error::from(format!(
-                            "field `{}` in comptime type `{def_id}` has unsupported type `{}`",
-                            field.name.name, field.value
-                        ))
-                    })
-            })
-            .collect::<Result<_>>()?;
-        self.program_rc()
-            .insert_local_struct_fields(def_id.clone(), fields.clone());
-        let variant = ty::VariantDef {
-            def_id: def_id.clone(),
-            ctor_def_id: None,
-            ident: hir::Symbol::new(struct_ty.name.name.clone()),
-            discr: ty::VariantDiscr::Relative(0),
-            fields: fields
-                .iter()
-                .map(|(name, _)| ty::FieldDef {
-                    did: def_id.clone(),
-                    ident: name.clone(),
-                    vis: ty::TyVisibility::Public,
-                })
-                .collect(),
-            ctor_kind: ty::CtorKind::Fn,
-            is_recovered: false,
-        };
-        Ok(Ty {
-            kind: TyKind::Adt(
-                AdtDef {
-                    did: def_id.clone(),
-                    variants: vec![variant],
-                    flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
-                    repr: ReprOptions {
-                        int: None,
-                        align: None,
-                        pack: None,
-                        flags: ReprFlags::empty(),
-                        field_shuffle_seed: 0,
-                    },
-                },
-                Vec::new(),
-            ),
-        })
-    }
-
     /// Like `record_error`, but specifically for `typecheck_item`'s own
     /// catch — an item's `check_item` returned a hard `Err` and its check
     /// aborted outright, leaving a real gap in the package's typed results
@@ -628,8 +582,8 @@ impl HirTypeChecker {
     /// (an `Rc` clone, not a deep copy — see `package`) *is* the whole
     /// snapshot; there's no separate side table to read back alongside it,
     /// and no need to ever copy the package's own data out of it.
-    pub fn finish(&self) -> Rc<RefCell<hir::HirPackage>> {
-        self.current_package.clone()
+    pub fn finish(&self) -> Rc<hir::HirPackage> {
+        self.package()
     }
 
     /// Entrypoint for type-checking a single item by `DefId`, directly —
@@ -692,20 +646,13 @@ impl HirTypeChecker {
         checker: &Rc<RefCell<Self>>,
         def_id: hir::DefId,
         request: crate::ComptimeRequest,
-    ) -> TaskHandle<std::result::Result<Option<hir::Value>, String>> {
+    ) -> TaskHandle<Option<hir::Value>> {
         let cache_key = format!("comptime:{def_id:?}");
         let checker = checker.clone();
         let executor = checker.borrow().executor.clone();
         executor.get_or_spawn(cache_key, move || {
-            Box::pin(async move {
-                checker
-                    .borrow()
-                    .request_comptime(request)
-                    .await
-                    .map(Some)
-                    .map_err(|error| error.to_string())
-            })
-                as Pin<Box<dyn Future<Output = std::result::Result<Option<hir::Value>, String>>>>
+            Box::pin(async move { checker.borrow().request_comptime(request).await.ok() })
+                as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
         })
     }
 }
@@ -799,9 +746,6 @@ impl HirTypeChecker {
                     for field in &def.fields {
                         scope.check_type_expr(&field.ty).await?;
                     }
-                }
-                hir::ItemKind::TypeAlias(alias) => {
-                    self.check_type_expr(&alias.target).await?;
                 }
                 hir::ItemKind::Enum(def) => {
                     let mut scope = self.with_generics(&def.generics);
@@ -1274,92 +1218,6 @@ impl HirTypeChecker {
                         }
                         arg_types.push(actual);
                     }
-                    // A type-relative associated function is resolved only
-                    // after its arguments have been checked.  The resolver
-                    // gives us the base type (`TypeBuilder`), while rustc's
-                    // type checker selects the member (`new`) from the
-                    // applicable impl and records that member's identity.
-                    // Do the same here instead of letting MIR reconstruct a
-                    // `Type::method` name from strings.
-                    if let hir::ExprKind::Path(path) = &callee.kind {
-                        if path.segments.len() > 1 {
-                            if let Some(hir::Res::Def(base_def_id)) = path.res.as_ref() {
-                                // Some type-relative paths are already
-                                // resolved to the associated member itself.
-                                // Keep that identity instead of treating it
-                                // as a nominal base and losing the selected
-                                // method before MIR lowering.
-                                if self
-                                    .program_rc()
-                                    .member_owner(base_def_id.clone())
-                                    .is_some()
-                                {
-                                    self.package().record_method_resolution(
-                                        expr.hir_id.clone(),
-                                        base_def_id.clone(),
-                                    );
-                                    self.package().record_method_resolution(
-                                        callee.hir_id.clone(),
-                                        base_def_id.clone(),
-                                    );
-                                }
-                                let is_type_base = self
-                                    .program_rc()
-                                    .item(base_def_id.clone())
-                                    .is_some_and(|item| {
-                                        matches!(
-                                            &item.kind,
-                                            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
-                                        )
-                                    });
-                                if is_type_base {
-                                    let method = &path.segments.last().unwrap().name;
-                                    match self
-                                        .associated_method_output_for_def(
-                                            base_def_id,
-                                            method,
-                                            &arg_types,
-                                        )
-                                        .await
-                                    {
-                                        Ok((method_def_id, generic_args, _)) => {
-                                            let package = self.package();
-                                            package.record_method_resolution(
-                                                expr.hir_id.clone(),
-                                                method_def_id.clone(),
-                                            );
-                                            package.record_method_resolution(
-                                                callee.hir_id.clone(),
-                                                method_def_id.clone(),
-                                            );
-                                            if let Some(args) = generic_args {
-                                                let resolution = GenericCallResolution {
-                                                    def_id: method_def_id.clone(),
-                                                    args,
-                                                };
-                                                package.record_generic_method_arg(
-                                                    expr.hir_id.clone(),
-                                                    resolution.clone(),
-                                                );
-                                                package.record_generic_method_arg(
-                                                    callee.hir_id.clone(),
-                                                    resolution,
-                                                );
-                                            }
-                                        }
-                                        Err(error) => {
-                                            callee_ty = self.error_ty_with_span(
-                                                format!(
-                                                    "associated function `{method}` could not be resolved for type `{base_def_id}`: {error}",
-                                                ),
-                                                expr.span,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     // Trait-qualified UFCS syntax (`Add::add(lhs, rhs)`,
                     // `Ord::max(a, b)`) — generated en masse by std's
                     // `forward_ref_binop!`/`forward_ref_unop!` macros
@@ -1817,17 +1675,8 @@ impl HirTypeChecker {
                     }
                 }
                 hir::ExprKind::Cast(value, target) => {
-                    let target_ty = if matches!(target.kind, hir::TypeExprKind::Infer) {
-                        self.expected_expr_type.clone().unwrap_or_else(|| Ty {
-                            kind: TyKind::Infer(ty::InferTy::FreshTy(target.hir_id.local_id())),
-                        })
-                    } else {
-                        self.check_type_expr(target).await?
-                    };
-                    self.with_expected_expr_type(target_ty.clone())
-                        .check_expr(value)
-                        .await?;
-                    target_ty
+                    self.check_expr(value).await?;
+                    self.check_type_expr(target).await?
                 }
                 hir::ExprKind::Struct(path, fields) => {
                     let ty = match self.enum_variant_ty(path).await? {
@@ -1868,10 +1717,7 @@ impl HirTypeChecker {
                         let value_ty = value_ty?;
                         self.unify_call_types(&field_ty, &value_ty, &mut substitutions)?;
                     }
-                    let resolved = self.substitute_param_map(&ty, &substitutions);
-                    self.package()
-                        .record_expr_type(expr.hir_id.clone(), resolved.clone());
-                    resolved
+                    self.substitute_param_map(&ty, &substitutions)
                 }
                 hir::ExprKind::If(condition, then_expr, else_expr) => {
                     let condition = self.check_expr(condition).await?;
@@ -2017,18 +1863,8 @@ impl HirTypeChecker {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        if let Err(error) = HirTypeChecker::spawn_comptime_task(
-                            &self.root_handle(),
-                            def_id,
-                            request,
-                        )
-                        .await
-                        {
-                            self.record_error_with_span(
-                                format!("comptime evaluation failed: {error}"),
-                                expr.span,
-                            );
-                        }
+                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                            .await;
                     }
                     body_ty
                 }
@@ -2635,7 +2471,7 @@ impl HirTypeChecker {
                     let Some(hir::Res::Def(trait_def_id)) = &projection.trait_path.res else {
                         return Ok(self.error_ty("qualified projection trait is unresolved"));
                     };
-                    let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
+                    let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
                         return Ok(self.error_ty("qualified projection trait was not found"));
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -2774,13 +2610,6 @@ impl HirTypeChecker {
                     let def_id = def_id.clone();
                     let hir_id = expr.hir_id.clone();
                     let body_ty = self.check_expr(body).await?;
-                    // The comptime resolver needs the block's checked result
-                    // type to emit its synthetic entry before it can execute
-                    // the block. Publish it before awaiting the request;
-                    // this is the same ordering used by expression-position
-                    // const blocks below.
-                    self.package()
-                        .record_type_expr_type(hir_id.clone(), body_ty.clone());
                     // A `const { .. }` block whose value still depends on
                     // an uninstantiated generic parameter of the enclosing
                     // (still-generic) function/impl can't be evaluated yet
@@ -2796,28 +2625,22 @@ impl HirTypeChecker {
                     // lower the block's body as ordinary code instead),
                     // correct for a value that isn't const-critical outside
                     // a monomorphized instantiation.
-                    let resolved_ty = if !ty_contains_param(&body_ty) {
+                    if !ty_contains_param(&body_ty) {
                         let request = crate::ComptimeRequest {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        let value = HirTypeChecker::spawn_comptime_task(
-                            &self.root_handle(),
-                            def_id.clone(),
-                            request,
-                        )
-                        .await
-                        .map_err(Error::from)?
-                        .ok_or_else(|| Error::from("comptime evaluation returned no value"))?;
-                        self.type_from_comptime_value(value, &def_id)?
-                    } else {
-                        body_ty
-                    };
+                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                            .await
+                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                    }
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    resolved_ty
+                    self.package()
+                        .record_type_expr_type(hir_id, body_ty.clone());
+                    body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
                 hir::TypeExprKind::Structural(_) => {
@@ -2895,12 +2718,6 @@ impl HirTypeChecker {
     }
 
     async fn path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
-        if path.segments.len() == 1 {
-            let name = path.segments[0].name.as_str();
-            if let Some(primitive) = primitive_path_ty(name) {
-                return Ok(primitive);
-            }
-        }
         // `ast_to_hir` tags a non-nominal self-type shape (`&T`, `[T]`,
         // `fn(..) -> ..`, ...) with `Res::Builtin` instead of a `DefId`
         // (mirrors rustc's `SimplifiedType` fast-reject bucketing — see
@@ -2951,6 +2768,73 @@ impl HirTypeChecker {
                 )));
             }
             _ => {}
+        }
+        if let Some(hir::Res::Def(ref def_id)) = path.res {
+            // A local `type X = const { .. };` (`ast_to_hir`'s
+            // `comptime_type_alias_rhs` lowering) binds `X` to the const
+            // block's own `DefId` (scope-local only, not a real `def_map`
+            // item — see that lowering site's doc comment). Its shape is
+            // whatever the tagged expression comptime-evaluated to, already
+            // resolved by the time any later statement's `path_ty` call
+            // runs (the expression-position `ConstBlock` arm checks it
+            // eagerly, in-sequence). A real item's `Res::Def` never has a
+            // `const_block_values` entry, so this only fires for the
+            // comptime-local case; everything else falls through to the
+            // ordinary `def_map`-based resolution below.
+            if let Some(value) = self.package().const_block_value(def_id.clone()) {
+                return Ok(match value {
+                    fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
+                        let fields: Vec<(hir::Symbol, Ty)> = struct_ty
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                let field_ty = ast_value_ty_to_hir_ty(&field.value)
+                                    .unwrap_or_else(|| self.error_ty(format!(
+                                        "field `{}`'s comptime-constructed type is not supported here",
+                                        field.name.name
+                                    )));
+                                (hir::Symbol::new(field.name.name.clone()), field_ty)
+                            })
+                            .collect();
+                        self.program_rc()
+                            .insert_local_struct_fields(def_id.clone(), fields.clone());
+                        let variant = ty::VariantDef {
+                            def_id: def_id.clone(),
+                            ctor_def_id: None,
+                            ident: hir::Symbol::new(struct_ty.name.name.clone()),
+                            discr: ty::VariantDiscr::Relative(0),
+                            fields: fields
+                                .iter()
+                                .map(|(name, _)| ty::FieldDef {
+                                    did: def_id.clone(),
+                                    ident: name.clone(),
+                                    vis: ty::TyVisibility::Public,
+                                })
+                                .collect(),
+                            ctor_kind: ty::CtorKind::Fn,
+                            is_recovered: false,
+                        };
+                        Ty {
+                            kind: TyKind::Adt(
+                                AdtDef {
+                                    did: def_id.clone(),
+                                    variants: vec![variant],
+                                    flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
+                                    repr: ReprOptions {
+                                        int: None,
+                                        align: None,
+                                        pack: None,
+                                        flags: ReprFlags::empty(),
+                                        field_shuffle_seed: 0,
+                                    },
+                                },
+                                Vec::new(),
+                            ),
+                        }
+                    }
+                    _ => self.error_ty(format!("local `{def_id:?}` is not a type")),
+                });
+            }
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
             let Some(self_type) = self.self_type.clone() else {
@@ -3005,31 +2889,6 @@ impl HirTypeChecker {
             Some(hir::Res::Def(ref def_id)) => Some(def_id),
             _ => None,
         }) else {
-            // Treat `void` as unit type (C compatibility) — a genuine,
-            // narrow, intentional modeling choice: C's `void` has no Rust
-            // equivalent type at all, unlike every other unresolved path
-            // below, which is a real resolution failure that must surface
-            // rather than be silently laundered into `()`.
-            if path.segments.len() == 1 && path.segments[0].name.as_str() == "void" {
-                return Ok(hir::Ty {
-                    kind: hir::ty::TyKind::Tuple(vec![]),
-                });
-            }
-            // `create_null_type` (`ast_to_hir::mod.rs`) deliberately builds
-            // this exact shape — an unresolved `Res::None` path literally
-            // named `null` — for the never type (`!`)/`ast::Ty::Nothing`,
-            // matching how `hir_to_mir::lower_path_type`'s own "null" case
-            // already treats it (a raw byte pointer, `*const i8`). Not a
-            // laundering fallback: it's the same internal synthetic-type
-            // convention already used downstream, just missing here too.
-            if path.segments.len() == 1 && path.segments[0].name.as_str() == "null" {
-                return Ok(Ty {
-                    kind: TyKind::RawPtr(ty::TypeAndMut {
-                        ty: Box::new(Ty::int(ty::IntTy::I8)),
-                        mutbl: ty::Mutability::Not,
-                    }),
-                });
-            }
             // `<usize as Add>::Output`-style UFCS paths lower to a flat
             // `usize::Output` (`parse_qualified_path_type` in fp-lang
             // intentionally drops the `as Trait` disambiguator — its own
@@ -3042,102 +2901,15 @@ impl HirTypeChecker {
             // uses for `.method()` calls, just for an associated type
             // instead of a method.
             //
-            // `X::Residual::TryType` (the `?`-operator/`try_trait_v2`
-            // desugaring's own idiom throughout real vendored std) is a
-            // 3-segment *chained* projection: `X::Residual` is itself an
-            // associated-type projection (on `Try`), and `::TryType` then
-            // projects again on *that* result (via `Residual<O>`) — this
-            // whole UFCS branch only ever resolves a single flat
-            // `Base::AssocName` hop (segments[0]/segments.last()), so a
-            // chain like this always fell straight through to "unresolved
-            // type path" (the middle segment silently dropped). Handled
-            // as a hardcoded special case rather than a general chained-
-            // projection resolver: `Residual<O>::TryType` is *defined* by
-            // real Rust's own trait law to always round-trip back to the
-            // original `Try`-implementing type itself (see `Residual`'s
-            // own doc comment: "`<Result<Infallible, E> as Residual<T>>::
-            // TryType = Result<T, E>`" — i.e. `X::Residual::TryType ==
-            // X` for any `X`, unconditionally), so this is a safe,
-            // exact answer, not an approximation.
-            if let [base, mid, tail] = path.segments.as_slice() {
-                if mid.name.as_str() == "Residual" && tail.name.as_str() == "TryType" {
-                    // `path.res` is already known `None` here (that's why
-                    // this whole branch is reached at all), so `base`
-                    // itself is, in every real case this chain actually
-                    // appears in real vendored std, a still-generic type
-                    // parameter with no separate `Res` of its own to
-                    // check — approximate it the same nominal-placeholder
-                    // way `assoc_type_from_generic_param_bounds` already
-                    // does for an unresolved bound projection elsewhere:
-                    // the exact identity doesn't matter for unification
-                    // purposes here, only that every reference to `base`
-                    // by this same name checks to the same placeholder.
-                    return Ok(Ty {
-                        kind: TyKind::Param(ty::ParamTy {
-                            index: u32::MAX,
-                            name: base.name.clone(),
-                        }),
-                    });
-                }
-            }
             if path.segments.len() >= 2 {
-                let base_ty = match primitive_path_ty(path.segments[0].name.as_str()) {
-                    Some(ty) => Some(ty),
-                    // The same flattening also drops the `as Trait` from
-                    // e.g. `<Wrapping<u8> as Add>::Output` — unlike a
-                    // primitive, the base here is a real struct, still
-                    // named by its own first segment, just with the
-                    // struct's own generic args carried on that segment
-                    // (see `parse_qualified_path_type`'s `Name::
-                    // ParameterPath` arm) instead of on the trait.
-                    None => {
-                        let args = match &path.segments[0].args {
-                            Some(generic_args) => {
-                                let mut checked = Vec::with_capacity(generic_args.args.len());
-                                for arg in &generic_args.args {
-                                    let arg = match arg {
-                                        hir::GenericArg::Type(ty) => {
-                                            GenericArg::Type(self.check_type_expr(ty).await?)
-                                        }
-                                        hir::GenericArg::Const(expr) => {
-                                            GenericArg::Const(self.const_arg_kind(expr))
-                                        }
-                                    };
-                                    checked.push(arg);
-                                }
-                                checked
-                            }
-                            None => Vec::new(),
-                        };
-                        self.well_known_struct_ty(path.segments[0].name.as_str(), args)
-                    }
-                };
-                if let Some(base_ty) = base_ty {
-                    let assoc_name = path.segments.last().unwrap().name.clone();
-                    if let Some(ty) = self.assoc_type_for_self(&base_ty, &assoc_name).await? {
-                        return Ok(ty);
-                    }
-                }
-                // `<bool as Not>::Output` flattens the same way to `bool::
-                // Output`, but `bool` also happens to name a *real* module
-                // at the crate root (`core::bool`, a handful of small
-                // bool-related helpers) — `ast_to_hir`'s absolute-crate-
-                // root-module resolution (used generally so a bare
-                // top-level module name resolves without an explicit
-                // `use`) doesn't know this position means the primitive,
-                // not the module, so it further expands the already-
-                // flattened path to `core::bool::Output` before this ever
-                // reaches type-checking. Retry treating the *middle*
-                // segment as the primitive base in exactly that 3-segment
-                // shape, rather than teaching `ast_to_hir` to special-case
-                // one primitive's own unlucky name collision.
-                if let [_first, middle, last] = path.segments.as_slice() {
-                    if let Some(base_ty) = primitive_path_ty(middle.name.as_str()) {
-                        if let Some(ty) = self.assoc_type_for_self(&base_ty, &last.name).await? {
-                            return Ok(ty);
-                        }
-                    }
-                }
+                // A nominal base must have been resolved by AST->HIR.  Do
+                // not recover an ADT from the first segment's spelling: that
+                // name-only lookup can choose a different package/re-export
+                // than the resolver's `Res::Def`, producing a `TyKind::Adt`
+                // whose `DefId` cannot reach the impl index.  This is the
+                // same resolver/typeck boundary rustc uses for a qualified
+                // path: type checking consumes the resolved definition; it
+                // does not invent one from text.
                 // `T::AssocName` where `T` still names an in-scope generic
                 // parameter (real closures' `F::Output` for `F: FnOnce()
                 // -> R`, or `I::Item` for `I: Iterator<Item = U>`) — no
@@ -3170,43 +2942,22 @@ impl HirTypeChecker {
         if let Some(generic) = self.generic_ty(def_id.clone()) {
             return Ok(generic);
         }
-        // Alias expansion is an identity lookup into completed type results.
-        // The alias does not distinguish a const block from any other target.
-        if let Some(target_hir_id) = self.program_rc().type_alias_target_hir_id(def_id.clone()) {
-            return self
-                .program_rc()
-                .package_rc(target_hir_id.package_id())
-                .and_then(|package| package.borrow().type_expr_type(target_hir_id))
-                .ok_or_else(|| {
-                    Error::from(format!(
-                        "type alias `{def_id}` was used before its target was resolved"
-                    ))
-                });
+        // A transparent type alias (`type __darwin_useconds_t =
+        // __uint32_t;`) — HIR has no first-class item for one (see
+        // `hir::HirPackage::type_alias_targets`'s doc comment), so its
+        // `DefId` has no `def_map` entry to look up; expand it in place by
+        // checking its already-lowered target type expression instead.
+        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()).cloned() {
+            return self.check_type_expr(&target).await;
         }
-        let Some(item) = self.program_rc().item(def_id.clone()) else {
-            // No `hir::Item`/`def_path` at all for this `DefId` — real
-            // vendored std's dominant case is a trait's own *associated
-            // type declaration* (`trait Iterator { type Item; }`)
-            // referenced directly by its declaring `DefId` (e.g. from
-            // within the trait's own default method bodies/signatures,
-            // where there's no concrete impl yet to substitute the
-            // projection through) — HIR has no first-class item for an
-            // associated-type declaration itself, only for the *trait*
-            // that owns it. Approximate the same way a bare trait
-            // reference does just above: a nominal `Param` placeholder
-            // keyed by the name actually referenced, so every use of it
-            // unifies consistently instead of hard-erroring.
-            let name = path
-                .segments
-                .last()
-                .map(|segment| segment.name.clone())
-                .unwrap_or_else(|| hir::Symbol::new("_"));
-            return Ok(Ty {
-                kind: TyKind::Param(ty::ParamTy {
-                    index: u32::MAX,
-                    name,
-                }),
-            });
+        let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
+            // A resolved definition without a published HIR item is a
+            // broken identity boundary. Returning a name-keyed parameter
+            // here would hide the publication error and lose the `DefId`
+            // required by nominal type and impl lookup.
+            return Ok(self.error_ty(format!(
+                "resolved type definition `{def_id}` is missing from the HIR program"
+            )));
         };
         let (flags, variants) = match &item.kind {
             hir::ItemKind::Struct(_) => (AdtFlags::IS_STRUCT, Vec::new()),
@@ -3242,24 +2993,16 @@ impl HirTypeChecker {
             // std trait like `Error` is referenced this way — the
             // dominant real-corpus case).
             hir::ItemKind::Trait(_) => {
-                let name = path
-                    .segments
-                    .last()
-                    .map(|segment| segment.name.clone())
-                    .unwrap_or_else(|| hir::Symbol::new("dyn"));
-                return Ok(Ty {
-                    kind: TyKind::Param(ty::ParamTy {
-                        index: u32::MAX,
-                        name,
-                    }),
-                });
+                return Ok(self.error_ty(format!(
+                    "trait definition `{def_id}` is not a concrete type"
+                )));
             }
             _ => return Ok(self.error_ty(format!("definition `{def_id}` is not a type"))),
         };
         let args = match path
             .segments
-            .iter()
-            .find_map(|segment| segment.args.as_ref())
+            .last()
+            .and_then(|segment| segment.args.as_ref())
         {
             Some(args) => {
                 let mut checked = Vec::with_capacity(args.args.len());
@@ -3668,13 +3411,6 @@ impl HirTypeChecker {
             let _ = local;
             return Ok(self.error_ty(format!("local `{local}` has no inferred type")));
         }
-        if let Some(hir::Res::Def(def_id)) = &path.res {
-            if let Some(fp_core::ast::Value::Type(_)) =
-                self.package().const_block_value(def_id.clone())
-            {
-                return Ok(Ty { kind: TyKind::Type });
-            }
-        }
         // A fully- or partially-qualified trait-method value path
         // (`core::fmt::Display::fmt`/`fmt::Debug::fmt`, real vendored
         // std's own idiom for calling a trait method explicitly rather
@@ -3878,7 +3614,7 @@ impl HirTypeChecker {
                 }
             }
         }
-        let Some(item) = self.program_rc().item(def_id.clone()) else {
+        let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
             // `program` is an owned `Rc` clone (cheap — it's the same
             // `Rc<HirProgram>` `self.program` already is), not a borrow
             // of `self` — so `item`/`impl_item` below can stay borrowed
@@ -3889,23 +3625,21 @@ impl HirTypeChecker {
             // borrow of `self` that was never actually necessary.
             let program = self.program_rc();
             let owner_id = program
-                .package_rc(&self.current_package())
-                .and_then(|package| package.borrow().member_owner(def_id.clone()));
+                .package(&self.current_package())
+                .and_then(|package| package.member_owner(def_id.clone()));
             let found = owner_id
                 .and_then(|owner_id| program.item(owner_id))
                 .and_then(|item| {
-                    let hir::ItemKind::Impl(impl_item) = item.kind else {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
                         return None;
                     };
-                    let member_kind = impl_item
+                    let impl_member = impl_item
                         .items
                         .iter()
-                        .find(|member| member.def_id == *def_id)?
-                        .kind
-                        .clone();
-                    Some((impl_item, member_kind))
+                        .find(|member| member.def_id == *def_id)?;
+                    Some((impl_item, &impl_member.kind))
                 });
-            if let Some((impl_item, hir::ImplItemKind::Method(function))) = &found {
+            if let Some((impl_item, hir::ImplItemKind::Method(function))) = found {
                 let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
@@ -3913,7 +3647,7 @@ impl HirTypeChecker {
                     .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
                     .await?;
                 let mut scope = scope.with_assoc_types(assoc_types);
-                return scope.function_signature(&function).await;
+                return scope.function_signature(function).await;
             }
             // An impl's own associated const (`impl char { pub const MIN:
             // char = '\0'; }`) — its *declared* type annotation is all a
@@ -3933,7 +3667,7 @@ impl HirTypeChecker {
             // not a real cycle in the *types* (a const's declared type
             // never needs another item's body), only in this
             // coarser-than-necessary task granularity.
-            if let Some((impl_item, hir::ImplItemKind::AssocConst(constant))) = &found {
+            if let Some((impl_item, hir::ImplItemKind::AssocConst(constant))) = found {
                 let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
@@ -3951,11 +3685,14 @@ impl HirTypeChecker {
             // a whole-impl wait.
             let cross_package_member = self
                 .program_rc()
-                .package_rc(&def_id.package_id)
+                .package(&def_id.package_id)
                 .and_then(|package| {
-                    let package = package.borrow();
-                    let impl_def_id = package.impl_method_item_index.get(&def_id)?;
-                    package.def_map.get(impl_def_id).cloned()
+                    // Methods and associated constants are both impl
+                    // members. The method-only index drops constants before
+                    // this point, which makes a resolved `Type::CONST` lose
+                    // its owner as soon as it crosses a crate boundary.
+                    let impl_def_id = package.member_to_owning_item.get(def_id)?;
+                    package.def_map.get(impl_def_id)
                 })
                 .and_then(|item| {
                     let hir::ItemKind::Impl(impl_item) = &item.kind else {
@@ -3997,7 +3734,7 @@ impl HirTypeChecker {
             let matched_enum_item = self
                 .program_rc()
                 .member_owner(def_id.clone())
-                .and_then(|owner_id| self.program_rc().item(owner_id))
+                .and_then(|owner_id| self.program_rc().item(owner_id).cloned())
                 .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)));
             if let Some(enum_item) = matched_enum_item {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
@@ -4053,13 +3790,6 @@ impl HirTypeChecker {
             });
         };
         match &item.kind {
-            // A type alias name in value position denotes a type value (the
-            // value consumed by `type(X)`, `TypeBuilder::from`, and the
-            // reflection intrinsics). Its target is checked separately when
-            // the alias is declared; returning the target here would make
-            // `type(Alias)` receive the represented struct rather than a
-            // value of the language's `type` meta-type.
-            hir::ItemKind::TypeAlias(_) => Ok(Ty { kind: TyKind::Type }),
             // Host statics are externally initialized globals. Their HIR
             // body is only a typed placeholder, so resolving the value must
             // use the declaration directly rather than checking that body.
@@ -4133,7 +3863,7 @@ impl HirTypeChecker {
                 // annotations remain hard errors from `check_type_expr`.
                 self.check_type_expr(&constant.ty).await
             }
-            hir::ItemKind::Function(function) => self.function_signature(&function).await,
+            hir::ItemKind::Function(function) => self.function_signature(function).await,
             _ => Ok(self.error_ty("resolved path is not a value")),
         }
     }
@@ -4390,7 +4120,7 @@ impl HirTypeChecker {
             let Some(hir::Res::Def(trait_def_id)) = &path.res else {
                 continue;
             };
-            let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
+            let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
                 continue;
             };
             let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -4464,7 +4194,7 @@ impl HirTypeChecker {
             if !seen.insert(trait_id.clone()) {
                 continue;
             }
-            let Some(trait_item) = program.item(trait_id.clone()) else {
+            let Some(trait_item) = program.item(trait_id.clone()).cloned() else {
                 continue;
             };
             let hir::ItemKind::Trait(trait_def) = &trait_item.kind else {
@@ -4595,7 +4325,7 @@ impl HirTypeChecker {
                 if !seen.insert(current_id.clone()) {
                     continue;
                 }
-                let Some(item) = self.program_rc().item(current_id) else {
+                let Some(item) = self.program_rc().item(current_id).cloned() else {
                     continue;
                 };
                 let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -4746,7 +4476,7 @@ impl HirTypeChecker {
             _ => None,
         };
         let program = self.program_rc();
-        let candidates: Box<dyn Iterator<Item = hir::Item> + '_> = match receiver_def {
+        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match receiver_def {
             Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
             None => Box::new(shape_and_blanket_candidates(&program, &target_ty.kind)),
         };
@@ -4831,7 +4561,11 @@ impl HirTypeChecker {
                 return Ok(result);
             }
             if let TyKind::Ref(_, inner, _) = &current.kind {
+                let from = current.clone();
                 current = (**inner).clone();
+                if let Some(receiver) = current_actuals.first_mut() {
+                    Self::adjust_autoderef_receiver(receiver, &from, &current);
+                }
                 continue;
             }
             if let TyKind::Array(inner, _) = &current.kind {
@@ -4857,54 +4591,80 @@ impl HirTypeChecker {
         Err(Error::from(format!("method `{method}` was not found")))
     }
 
-    /// Resolve `Type::item` after the resolver has established the nominal
-    /// type's `DefId`.  This is the type-relative equivalent of
-    /// `method_output`: unlike receiver-method lookup, it must not invent a
-    /// runtime receiver (`TypeBuilder` has type `type`, not the `TypeBuilder`
-    /// ADT).  The impl member selected here is the identity later consumed
-    /// by MIR, matching rustc's associated-item lookup through a `QPath`.
-    async fn associated_method_output_for_def(
-        &mut self,
-        type_def_id: &hir::DefId,
-        method: &hir::Symbol,
-        actuals: &[Ty],
-    ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
-        let receiver_ty = self
-            .path_ty(&hir::Path {
-                segments: vec![hir::PathSegment {
-                    name: hir::Symbol::new("_"),
-                    args: None,
-                }],
-                res: Some(hir::Res::Def(type_def_id.clone())),
-            })
-            .await?;
-        self.method_output_at(&receiver_ty, method, actuals, None)
-            .await?
-            .ok_or_else(|| {
-                Error::from(format!(
-                    "associated item `{method}` is not defined for type `{type_def_id}`"
-                ))
-            })
-    }
-
     /// Apply the autoderef step used for method lookup to the receiver
     /// argument as well. Rustc performs autoderef before the eventual
     /// autoref for `&self`/`&mut self`; keeping `&mut Vec<T>` here after
     /// lookup has advanced from `Vec<T>` to `[T]` makes a valid call look
     /// like a reference to the wrong receiver type during instantiation.
     fn adjust_autoderef_receiver(receiver: &mut Ty, from: &Ty, target: &Ty) {
-        let replacement = match &receiver.kind {
-            TyKind::Ref(region, inner, mutability)
-                if Self::ty_shapes_compatible(&inner.kind, &from.kind) =>
-            {
-                Ty {
-                    kind: TyKind::Ref(region.clone(), Box::new(target.clone()), *mutability),
+        if *receiver == *from {
+            *receiver = target.clone();
+        }
+    }
+
+    /// Tests one rustc method-lookup receiver step. The outer lookup loop has
+    /// already performed autoderef, so a value receiver must not match a
+    /// reference candidate by silently stripping its reference. The only
+    /// reference/value crossing here is autoref into the candidate's declared
+    /// `self` type; mutable references may satisfy a shared-reference
+    /// candidate, but not the reverse.
+    fn method_receiver_matches(
+        scope: &HirTypeChecker,
+        candidate: &Ty,
+        receiver: &Ty,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+    ) -> bool {
+        match (&candidate.kind, &receiver.kind) {
+            (
+                TyKind::Ref(_, candidate_inner, candidate_mutability),
+                TyKind::Ref(_, receiver_inner, receiver_mutability),
+            ) => {
+                let mut trial = substitutions.clone();
+                if (*candidate_mutability == ty::Mutability::Not
+                    || *candidate_mutability == *receiver_mutability)
+                    && Self::ty_shapes_compatible(&candidate_inner.kind, &receiver_inner.kind)
+                    && scope
+                        .unify_call_types_probe(candidate_inner, receiver_inner, &mut trial)
+                        .is_ok()
+                {
+                    *substitutions = trial;
+                    return true;
+                }
+                if matches!(candidate_inner.kind, TyKind::Ref(_, _, _)) {
+                    let mut trial = substitutions.clone();
+                    if Self::method_receiver_matches(
+                        scope,
+                        candidate_inner,
+                        receiver,
+                        &mut trial,
+                    ) {
+                        *substitutions = trial;
+                        return true;
+                    }
+                }
+                false
+            }
+            (TyKind::Ref(_, candidate_inner, _), _) => {
+                let mut trial = substitutions.clone();
+                if Self::ty_shapes_compatible(&candidate_inner.kind, &receiver.kind)
+                    && scope
+                        .unify_call_types_probe(candidate_inner, receiver, &mut trial)
+                        .is_ok()
+                {
+                    *substitutions = trial;
+                    true
+                } else {
+                    false
                 }
             }
-            kind if Self::ty_shapes_compatible(kind, &from.kind) => target.clone(),
-            _ => return,
-        };
-        *receiver = replacement;
+            (_, TyKind::Ref(_, _, _)) => false,
+            _ => {
+                Self::ty_shapes_compatible(&candidate.kind, &receiver.kind)
+                    && scope
+                        .unify_call_types_probe(candidate, receiver, substitutions)
+                        .is_ok()
+            }
+        }
     }
 
     async fn method_output_at(
@@ -4914,10 +4674,6 @@ impl HirTypeChecker {
         actuals: &[Ty],
         explicit_generic_args: Option<&[Ty]>,
     ) -> Result<Option<(hir::DefId, Option<Vec<Ty>>, Ty)>> {
-        let receiver_ty = match &receiver_ty.kind {
-            TyKind::Ref(_, inner, _) => inner.as_ref(),
-            _ => receiver_ty,
-        };
         // A still-generic receiver (`self: T`, e.g. a default trait
         // method's own body calling `self.other_method()`) has no impl to
         // search — by far the most common non-ADT receiver shape in a
@@ -4965,7 +4721,7 @@ impl HirTypeChecker {
                     if !seen.insert(current_id.clone()) {
                         continue;
                     }
-                    let Some(item) = self.program_rc().item(current_id) else {
+                    let Some(item) = self.program_rc().item(current_id).cloned() else {
                         continue;
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -5041,7 +4797,7 @@ impl HirTypeChecker {
                         },
                         _ => None,
                     })
-                    .and_then(|item| match item.kind {
+                    .and_then(|item| match &item.kind {
                         hir::ItemKind::Trait(trait_def) => Some(trait_def),
                         _ => None,
                     })
@@ -5061,10 +4817,7 @@ impl HirTypeChecker {
             }
             let mut scope = self.with_generics(&impl_item.generics);
             let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
-            let self_ty = match &checked_self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => &checked_self_ty,
-            };
+            let self_ty = &checked_self_ty;
             // Candidate selection follows one structural rule for every
             // receiver shape.  The indexed candidate list has already
             // limited ADT candidates to the receiver's definition (plus
@@ -5075,10 +4828,12 @@ impl HirTypeChecker {
             // receiver substitution and rejects incompatible repeated
             // parameters without emitting diagnostics.
             let mut receiver_substitutions = HashMap::new();
-            let matches_receiver = Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
-                && scope
-                    .unify_call_types_probe(self_ty, receiver_ty, &mut receiver_substitutions)
-                    .is_ok();
+            let matches_receiver = Self::method_receiver_matches(
+                &scope,
+                self_ty,
+                receiver_ty,
+                &mut receiver_substitutions,
+            );
             if !matches_receiver {
                 continue;
             }
@@ -5280,7 +5035,7 @@ impl HirTypeChecker {
             _ => return None,
         };
         let program = self.program_rc();
-        let candidates: Vec<hir::Item> = program.impls_for_adt(receiver_def).collect();
+        let candidates: Vec<hir::Item> = program.impls_for_adt(receiver_def).cloned().collect();
         for item in &candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
@@ -5298,10 +5053,7 @@ impl HirTypeChecker {
             let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty).await else {
                 continue;
             };
-            let self_ty = match &checked_self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => &checked_self_ty,
-            };
+            let self_ty = &checked_self_ty;
             let mut substitutions = HashMap::new();
             if scope
                 .unify_call_types_probe(self_ty, receiver_ty, &mut substitutions)
@@ -5515,7 +5267,7 @@ impl HirTypeChecker {
             };
             return Ok(field_ty.clone());
         }
-        let Some(item) = self.program_rc().item(adt.did.clone()) else {
+        let Some(item) = self.program_rc().item(adt.did.clone()).cloned() else {
             return Ok(self.error_ty("struct definition was not found"));
         };
         let hir::ItemKind::Struct(def) = item.kind else {
@@ -5613,7 +5365,7 @@ impl HirTypeChecker {
         if matches!(
             self.program_rc()
                 .item(adt.did.clone())
-                .map(|item| item.kind),
+                .map(|item| &item.kind),
             Some(hir::ItemKind::Struct(_))
         ) {
             Ok(Some(payload))
@@ -5641,11 +5393,10 @@ impl HirTypeChecker {
         // `hir::HirPackage::add_item`), so this never scans package items to
         // find the owning enum.
         self.program
-            .package_rc(&variant_id.package_id)
+            .package(&variant_id.package_id)
             .and_then(|package| {
-                let package = package.borrow();
                 let enum_def_id = package.enum_variant_item_index.get(&variant_id)?;
-                package.def_map.get(enum_def_id).cloned()
+                package.def_map.get(enum_def_id)
             })
             .and_then(|item| {
                 let hir::ItemKind::Enum(def) = &item.kind else {
@@ -5847,7 +5598,6 @@ impl HirTypeChecker {
             // keyword's own surface annotation (`TypeExprKind::Type`).
             IntrinsicKind::CreateStruct
             | IntrinsicKind::AddField
-            | IntrinsicKind::CloneStruct
             | IntrinsicKind::BuildType
             | IntrinsicKind::PrimitiveType => Ty { kind: TyKind::Type },
             IntrinsicKind::FsWriteString
@@ -5863,9 +5613,9 @@ impl HirTypeChecker {
             | IntrinsicKind::Sleep
             | IntrinsicKind::Yield
             | IntrinsicKind::CompileWarning => self.unit_ty(),
-            // `compile_error!` diverges just like `panic!`; marker bodies
-            // can therefore satisfy any declared return type.
-            IntrinsicKind::CompileError => Ty::never(),
+            IntrinsicKind::CompileError => {
+                self.error_ty("compile_error intrinsic requested an error")
+            }
             _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", kind)),
         })
     }
@@ -6009,7 +5759,7 @@ impl HirTypeChecker {
                         if trait_id == principal.def_id {
                             break true;
                         }
-                        if let Some(item) = program.item(trait_id) {
+                        if let Some(item) = program.item(trait_id).cloned() {
                             if let hir::ItemKind::Trait(trait_def) = &item.kind {
                                 for supertrait in &trait_def.supertraits {
                                     if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
@@ -6025,6 +5775,7 @@ impl HirTypeChecker {
                     let candidates: Vec<_> = program
                         .impls_for_adt(actual_adt.did.clone())
                         .chain(program.blanket_impls())
+                        .cloned()
                         .collect();
                     let mut found = false;
                     for item in candidates {

@@ -11,30 +11,46 @@ impl HirTypeChecker {
         let Some(actual_receiver) = actuals.first() else {
             return actuals.to_vec();
         };
-        if !matches!(expected_receiver.kind, TyKind::Ref(_, _, _)) {
-            let mut adjusted = actuals.to_vec();
-            let mut receiver = actual_receiver.clone();
-            while let TyKind::Ref(_, inner, _) = &receiver.kind {
-                receiver = (**inner).clone();
-            }
-            adjusted[0] = receiver;
-            return adjusted;
-        }
-        let TyKind::Ref(_, _, mutability) = &expected_receiver.kind else {
-            return actuals.to_vec();
-        };
-        if matches!(actual_receiver.kind, TyKind::Ref(_, _, _)) {
-            return actuals.to_vec();
-        }
         let mut adjusted = actuals.to_vec();
-        adjusted[0] = Ty {
+        adjusted[0] = self.adjust_method_receiver(expected_receiver, actual_receiver);
+        adjusted
+    }
+
+    /// Applies the receiver adjustment represented by a method's declared
+    /// `self` input. Autoderef has already happened in the method candidate
+    /// loop; this is the final autoref step rustc performs after selecting a
+    /// candidate. A shared borrow may be taken from a mutable borrow, while a
+    /// nested reference requires another borrow rather than silently erasing
+    /// the existing one.
+    fn adjust_method_receiver(&self, expected: &Ty, actual: &Ty) -> Ty {
+        let TyKind::Ref(_, expected_inner, expected_mutability) = &expected.kind else {
+            return actual.clone();
+        };
+        if let TyKind::Ref(_, actual_inner, actual_mutability) = &actual.kind {
+            let same_pointee = Self::ty_shapes_compatible(&expected_inner.kind, &actual_inner.kind);
+            let compatible_mutability = *expected_mutability == ty::Mutability::Not
+                || *expected_mutability == *actual_mutability;
+            if same_pointee && compatible_mutability {
+                return actual.clone();
+            }
+        }
+        if matches!(expected_inner.kind, TyKind::Ref(_, _, _)) {
+            let adjusted_inner = self.adjust_method_receiver(expected_inner, actual);
+            return Ty {
+                kind: TyKind::Ref(
+                    ty::Region::ReErased,
+                    Box::new(adjusted_inner),
+                    *expected_mutability,
+                ),
+            };
+        }
+        Ty {
             kind: TyKind::Ref(
                 ty::Region::ReErased,
-                Box::new(actual_receiver.clone()),
-                *mutability,
+                Box::new(actual.clone()),
+                *expected_mutability,
             ),
-        };
-        adjusted
+        }
     }
 
     pub(super) fn instantiate_call(
@@ -404,7 +420,7 @@ impl HirTypeChecker {
             }
             (TyKind::Ref(_, a, _), b) => Self::ty_shapes_compatible(&a.kind, b),
             (a, TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(a, &b.kind),
-            (TyKind::Slice(_), TyKind::Slice(_) | TyKind::Array(_, _)) => true,
+            (TyKind::Slice(_), TyKind::Slice(_)) => true,
             (TyKind::Array(_, _), TyKind::Array(_, _)) => true,
             (TyKind::Tuple(a), TyKind::Tuple(b)) => a.len() == b.len(),
             (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) => {
@@ -1140,6 +1156,16 @@ impl HirTypeChecker {
             if let Some(signature) = self.method_declared_signature_at(&current, method).await? {
                 return Ok(Some(signature));
             }
+            if let TyKind::Ref(_, inner, _) = &current.kind {
+                current = (**inner).clone();
+                continue;
+            }
+            if let TyKind::Array(inner, _) = &current.kind {
+                current = Ty {
+                    kind: TyKind::Slice(inner.clone()),
+                };
+                continue;
+            }
             match self.deref_target(&current).await {
                 Some(target) => current = target,
                 None => break,
@@ -1167,14 +1193,12 @@ impl HirTypeChecker {
         // unresolved even when the selected receiver is `Cap<u8>`.
         let mut substitutions = HashMap::new();
         if let Some(impl_self_ty) = scope.self_type.as_ref() {
-            let impl_self_ty = match &impl_self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => impl_self_ty,
-            };
-            if scope
-                .unify_call_types_probe(impl_self_ty, receiver_ty, &mut substitutions)
-                .is_err()
-            {
+            if !HirTypeChecker::method_receiver_matches(
+                scope,
+                impl_self_ty,
+                receiver_ty,
+                &mut substitutions,
+            ) {
                 return Ok(None);
             }
         }
@@ -1206,12 +1230,7 @@ impl HirTypeChecker {
         // declared `&self`/`&mut self` receiver. Keep this adjustment local
         // to the method receiver position; ordinary call-type unification
         // must not dereference arbitrary reference/value pairs.
-        let (self_input_probe, receiver_probe) = match (&self_input.kind, &receiver_ty.kind) {
-            (TyKind::Ref(_, inner, _), kind) if !matches!(kind, TyKind::Ref(_, _, _)) => {
-                (&**inner, receiver_ty)
-            }
-            _ => (self_input.as_ref(), receiver_ty),
-        };
+        let (self_input_probe, receiver_probe) = (self_input.as_ref(), receiver_ty);
         // `Self`'s position, substituted from the *actual*
         // receiver — everything else in the signature stays
         // in terms of the method's own generics for now.
@@ -1220,10 +1239,12 @@ impl HirTypeChecker {
         // moves on when this returns `None` — a rejected candidate here is
         // never a real type error, so this must not permanently record one
         // (see `unify_call_types_probe`'s own doc comment).
-        if scope
-            .unify_call_types_probe(self_input_probe, receiver_probe, &mut substitutions)
-            .is_err()
-        {
+        if !HirTypeChecker::method_receiver_matches(
+            scope,
+            self_input_probe,
+            receiver_probe,
+            &mut substitutions,
+        ) {
             return Ok(None);
         }
         let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
@@ -1242,10 +1263,6 @@ impl HirTypeChecker {
         receiver_ty: &Ty,
         method: &hir::Symbol,
     ) -> Result<Option<Ty>> {
-        let receiver_ty = match &receiver_ty.kind {
-            TyKind::Ref(_, inner, _) => inner.as_ref(),
-            _ => receiver_ty,
-        };
         // A still-generic receiver (`self: T` inside a default trait
         // method body) has no impl to search at all — `T` is abstract,
         // not a concrete type any impl's self-type could ever unify
@@ -1278,10 +1295,6 @@ impl HirTypeChecker {
         // `program` is cloned out first so the borrow doesn't outlive the
         // `&mut self` calls below.
         let program = self.program_rc();
-        let receiver_def = match &receiver_ty.kind {
-            TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
-            _ => None,
-        };
         let candidates = method_candidates(&program, &receiver_ty.kind);
         let expected_output = self.expected_expr_type.clone();
         for item in candidates {
@@ -1327,35 +1340,32 @@ impl HirTypeChecker {
             }
             let mut scope = self.with_generics(&impl_item.generics);
             let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
-            let self_ty = match &checked_self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => &checked_self_ty,
-            };
-            let matches_receiver = match (receiver_def.clone(), &receiver_ty.kind, &self_ty.kind) {
-                (
-                    Some(receiver_def),
-                    TyKind::Adt(_, receiver_args),
-                    TyKind::Adt(impl_receiver, impl_args),
-                ) => {
-                    impl_receiver.did == receiver_def
-                        && scope.generic_args_compatible(impl_args, receiver_args)
-                }
-                (None, TyKind::Adt(_, _), _) => false,
-                (None, _, _) => {
-                    Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
-                        && scope
-                            .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
-                            .is_ok()
-                }
-                (Some(_), _, _) => false,
-            };
-            if !matches_receiver {
+            let mut receiver_substitutions = HashMap::new();
+            if !Self::method_receiver_matches(
+                &scope,
+                &checked_self_ty,
+                receiver_ty,
+                &mut receiver_substitutions,
+            ) {
                 continue;
             }
-            let mut scope = scope.with_self_type(checked_self_ty.clone());
+            scope.infer_fn_bound_outputs(&impl_item.generics, &mut receiver_substitutions);
+            let checked_self_ty =
+                scope.substitute_param_map(&checked_self_ty, &receiver_substitutions);
+            let impl_self_ty = checked_self_ty.clone();
+            let mut scope = scope.with_self_type(checked_self_ty);
             let assoc_types = scope
                 .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
                 .await?;
+            let assoc_types = assoc_types
+                .into_iter()
+                .map(|(name, ty)| {
+                    (
+                        name,
+                        scope.substitute_param_map(&ty, &receiver_substitutions),
+                    )
+                })
+                .collect();
             let mut scope = scope.with_assoc_types(assoc_types);
             for impl_item in &impl_item.items {
                 match &impl_item.kind {
@@ -1388,12 +1398,12 @@ impl HirTypeChecker {
                         // candidate matching into the declaration type.
                         let mut substitutions = HashMap::new();
                         if scope
-                            .unify_call_types_probe(self_ty, receiver_ty, &mut substitutions)
+                            .unify_call_types_probe(&impl_self_ty, receiver_ty, &mut substitutions)
                             .is_err()
                         {
                             continue;
                         }
-                        let mut scope = scope.with_self_type(checked_self_ty.clone());
+                        let mut scope = scope.with_self_type(impl_self_ty.clone());
                         let ty = scope.check_type_expr(&constant.ty).await?;
                         let ty = scope.substitute_param_map(&ty, &substitutions);
                         if expected_output.as_ref().is_none_or(|expected| {

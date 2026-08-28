@@ -430,12 +430,28 @@ impl AstToHirLowerer {
             // `std`: `alloc_crate::vec` must follow the local alias, while a
             // bare `alloc::vec` may still enter through the extern prelude.
             if current.segments.is_empty() {
-                let local = self.module_path.with_segment(segment.clone()).to_key();
+                // A bundled sysroot package has a real crate-root segment in
+                // its HIR tree (`std::prelude`, `alloc::vec`, ...), whereas
+                // an ordinary provider package is crate-relative. Resolve a
+                // plain import from the current module against that owning
+                // root exactly once; otherwise `use prelude::rust_2024::*`
+                // in std is searched as an unrooted `prelude` path and the
+                // crate's own nominal re-exports never enter its prelude.
+                let local_base = if self.module_path.is_empty() {
+                    fp_core::ast::path::QualifiedPath::new(self.package_crate_root())
+                } else {
+                    self.module_path.clone()
+                };
+                let local = local_base.with_segment(segment.clone()).to_key();
                 let local_alias = self
                     .lookup_symbol(&local, hir::Namespace::Value)
                     .or_else(|| self.lookup_symbol(&local, hir::Namespace::Type));
                 if let Some(hir::Res::Module(real_path)) = local_alias {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
+                    continue;
+                }
+                if self.package.module_tree.module_exists(&local_base.with_segment(segment.clone())) {
+                    current = local_base.with_segment(segment.clone());
                     continue;
                 }
                 // A bare type from the implicit prelude can own the next

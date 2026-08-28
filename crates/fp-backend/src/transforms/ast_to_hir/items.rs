@@ -362,6 +362,61 @@ impl AstToHirLowerer {
         self.unimplemented_type_def_ids.contains(&def_id)
     }
 
+    /// Attach the resolver result to an impl header's nominal self path before
+    /// the HIR package builds its dispatch indices.  Impl headers are lowered
+    /// after imports and the implicit prelude have been installed, but a
+    /// path assembled by an AST type helper can still arrive without `Res`.
+    /// Keeping that path unresolved makes a real nominal impl look like an
+    /// unknown structural shape to the indexer.  Resolve the path through the
+    /// same type namespace used by ordinary type expressions, selecting the
+    /// owning package from an extern-prelude root when present.
+    fn resolve_impl_self_type(&self, mut self_ty: hir::TypeExpr) -> hir::TypeExpr {
+        let hir::TypeExprKind::Path(path) = &mut self_ty.kind else {
+            return self_ty;
+        };
+        if path.segments.is_empty()
+            || matches!(
+                path.res.as_ref(),
+                Some(
+                    hir::Res::Def(_)
+                        | hir::Res::Builtin(_)
+                        | hir::Res::SelfTy
+                )
+            )
+        {
+            return self_ty;
+        }
+
+        let names = path
+            .segments
+            .iter()
+            .map(|segment| segment.name.as_str().to_owned())
+            .collect::<Vec<_>>();
+        let qualified = fp_core::ast::path::QualifiedPath::new(names.clone());
+        let resolved = if names.len() == 1 {
+            self.resolve_type_symbol(&names[0])
+        } else {
+            self.hir_program
+                    .resolve_external_path(&qualified, hir::Namespace::Type)
+                .or_else(|| self.lookup_symbol(&qualified.to_key(), hir::Namespace::Type))
+                .or_else(|| {
+                    let prefix = self
+                        .module_path
+                        .join(&names[..names.len() - 1]);
+                    let module = self.package.module_tree.module_id(&prefix)?;
+                    self.package.module_tree.lookup_res(
+                        module,
+                        hir::Namespace::Type,
+                        names.last()?,
+                    ).cloned()
+                })
+        };
+        if let Some(resolved) = resolved {
+            path.res = Some(resolved);
+        }
+        self_ty
+    }
+
     pub(super) fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::Impl> {
         self.push_type_scope();
         self.current_type_scope()
@@ -379,7 +434,51 @@ impl AstToHirLowerer {
             // Register impl generics in the current type scope.
             let generics = self.transform_generics(&impl_block.generics_params);
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
-            let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
+            let lowered_self_ty = self.transform_type_to_hir(&self_ty_ast)?;
+            let self_ty = self.resolve_impl_self_type(lowered_self_ty);
+            // Publish associated members from the completed impl header as
+            // soon as the header has a resolved self type. This is needed for
+            // impls whose source header was deferred until imports were
+            // installed: their members still have stable DefIds, but the
+            // earlier predeclaration pass could not publish a canonical
+            // `Type::member` path for them. Rustc's item tables retain these
+            // identities independently of the order in which the body is
+            // lowered.
+            if let hir::TypeExprKind::Path(self_path) = &self_ty.kind {
+                if let Ok(mut member_path) = self.canonical_type_path(self_path) {
+                    // Snapshot the members before allocating IDs. The ID
+                    // allocator mutably borrows the lowerer, so keeping an
+                    // iterator borrowed from `impl_block` across that call
+                    // creates an avoidable borrow conflict.
+                    let members = impl_block
+                        .items
+                        .iter()
+                        .filter_map(|member| match member.kind() {
+                            ast::ItemKind::DefFunction(function) => Some((
+                                function.name.name.clone(),
+                                function.visibility.clone(),
+                                member.clone(),
+                            )),
+                            ast::ItemKind::DefConst(constant) => Some((
+                                constant.name.name.clone(),
+                                constant.visibility.clone(),
+                                member.clone(),
+                            )),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    for (name, visibility, member) in members {
+                        member_path.segments.push(name);
+                        let member_def_id = self.def_id_for_item(&member);
+                        self.record_value_path(
+                            &member_path,
+                            hir::Res::Def(member_def_id),
+                            &visibility,
+                        );
+                        member_path.segments.pop();
+                    }
+                }
+            }
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),

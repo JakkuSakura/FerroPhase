@@ -325,6 +325,34 @@ impl ModuleTree {
             .map(|(name, entry)| (name.as_str(), entry))
     }
 
+    /// Returns the defining crate's public resolver entries, including the
+    /// reserved implicit-prelude node.  Namespace and `SymbolEntry` are part
+    /// of the result because neither can be reconstructed reliably from a
+    /// `Res` or from the item stored behind its `DefId` (re-exports and enum
+    /// constructors are the important cases).  This is the crate-metadata
+    /// boundary used when another package imports a definition.
+    pub fn public_bindings(&self) -> Vec<(QualifiedPath, Namespace, SymbolEntry)> {
+        let mut bindings = Vec::new();
+        for namespace in [Namespace::Type, Namespace::Value] {
+            bindings.extend(
+                self.all_bindings(namespace)
+                    .filter(|(_, entry)| matches!(entry.export, SymbolExport::Public))
+                    .map(|(path, entry)| (path, namespace, entry.clone())),
+            );
+            bindings.extend(
+                self.prelude_bindings(namespace)
+                    .filter(|(_, entry)| matches!(entry.export, SymbolExport::Public))
+                    .filter_map(|(_, entry)| {
+                        entry
+                            .path
+                            .clone()
+                            .map(|path| (path, namespace, entry.clone()))
+                    }),
+            );
+        }
+        bindings
+    }
+
     /// Every binding directly at `module` (not descendants) in namespace
     /// `ns` — lets a glob-import (`use some::module::*;`) expansion list a
     /// module's own value/type members with one `HashMap` iteration,
