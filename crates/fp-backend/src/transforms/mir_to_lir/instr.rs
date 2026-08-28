@@ -303,9 +303,15 @@ impl MirToLirLowerer {
                 {
                     return Ok(lir_program);
                 }
-                lir_program
-                    .functions
-                    .push(self.transform_function_with_bodies(mir_func, bodies)?);
+                let function_name = mir_func.name.clone();
+                let lowered = self
+                    .transform_function_with_bodies(mir_func, bodies)
+                    .map_err(|error| {
+                        fp_core::error::Error::from(format!(
+                            "while lowering MIR function `{function_name}`: {error}"
+                        ))
+                    })?;
+                lir_program.functions.push(lowered);
             }
             mir::ItemKind::Static(mir_static) => {
                 lir_program.globals.push(self.transform_static(mir_static)?);
@@ -2145,8 +2151,12 @@ impl MirToLirLowerer {
                         } else {
                             let alloca_id = self.next_id();
                             let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                            let size = self
+                                .data_layout
+                                .size_of(&lir_ty)
+                                .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
                             let size_value = lir::LirValue::constant(
-                                self.integer_constant(&lir::LirType::I32, 1)?,
+                                self.unsigned_constant(&lir::LirType::I64, size)?,
                             );
                             let alignment = self.alignment_for_lir_type(&lir_ty);
                             instructions.push(lir::LirInstruction {
@@ -2190,8 +2200,12 @@ impl MirToLirLowerer {
                         } else {
                             let alloca_id = self.next_id();
                             let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                            let size = self
+                                .data_layout
+                                .size_of(&lir_ty)
+                                .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
                             let size_value = lir::LirValue::constant(
-                                self.integer_constant(&lir::LirType::I32, 1)?,
+                                self.unsigned_constant(&lir::LirType::I64, size)?,
                             );
                             let alignment = self.alignment_for_lir_type(&lir_ty);
                             instructions.push(lir::LirInstruction {
@@ -2678,9 +2692,13 @@ impl MirToLirLowerer {
 
             let alloca_id = self.next_id();
             let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+            let size = self
+                .data_layout
+                .size_of(&lir_ty)
+                .expect("local LIR type must have a layout");
             let size_value = lir::LirValue::constant(
-                self.integer_constant(&lir::LirType::I32, 1)
-                    .expect("one must fit i32"),
+                self.unsigned_constant(&lir::LirType::I64, size)
+                    .expect("local size must fit i64"),
             );
             self.entry_allocas.push(lir::LirInstruction {
                 id: alloca_id,
@@ -3927,6 +3945,20 @@ impl MirToLirLowerer {
             {
                 return Ok(lir::LirConstant::null(target_ty.clone()));
             }
+            // Generic raw-pointer nulls can be materialized with a concrete
+            // byte-pointer type while the surrounding aggregate expects the
+            // monomorphized pointee type. Both are the same null ABI value;
+            // normalize the pointer-shaped integer constant to the expected
+            // pointer type before aggregate construction.
+            if matches!((&constant.ty, target_ty), (lir::LirType::Ptr(_), lir::LirType::Ptr(_)))
+                && matches!(
+                    constant.kind,
+                    lir::LirConstantKind::Null
+                        | lir::LirConstantKind::Data(lir::LirConstantData::Integer(_))
+                )
+            {
+                return Ok(lir::LirConstant::null(target_ty.clone()));
+            }
             // A zero-sized-type value (e.g. `()`, the payload of a
             // `Result<(), E>::Ok`) is represented, generically, as the
             // empty-field placeholder constant minted by
@@ -3959,8 +3991,8 @@ impl MirToLirLowerer {
                 }
             }
             return Err(fp_core::error::Error::from(format!(
-                "typed constant mismatch: {:?} versus {:?}",
-                constant.ty, target_ty
+                "typed constant mismatch: {:?} ({:?}) versus {:?}",
+                constant.ty, constant.kind, target_ty
             )));
         }
         Ok(constant)
@@ -4245,8 +4277,13 @@ impl MirToLirLowerer {
                         storage.ptr_value.clone()
                     } else {
                         let pointer_type = lir::LirType::Ptr(Box::new(ty.clone()));
-                        let size_value =
-                            lir::LirValue::constant(self.integer_constant(&lir::LirType::I32, 1)?);
+                        let size = self
+                            .data_layout
+                            .size_of(ty)
+                            .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
+                        let size_value = lir::LirValue::constant(
+                            self.unsigned_constant(&lir::LirType::I64, size)?,
+                        );
                         let alloca_id = self.next_id();
                         block.instructions.push(lir::LirInstruction {
                             id: alloca_id,

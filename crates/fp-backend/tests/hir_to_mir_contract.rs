@@ -649,6 +649,8 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
     };
     let konst = hir::Const {
         name: hir::Symbol::new("VALUE"),
+        mutable: false,
+        is_host: false,
         ty: primitive_type(TypePrimitive::Int(TypeInt::I32)),
         body: const_body,
     };

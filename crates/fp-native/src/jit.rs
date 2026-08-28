@@ -202,6 +202,20 @@ impl JitEngine {
         Ok(module)
     }
 
+    /// Compile a program while resolving its external calls against function
+    /// pointers registered by the embedding host.
+    pub fn compile_host_with_symbols(
+        &mut self,
+        program: &LirBlob,
+        symbols: &[(&str, *const c_void)],
+    ) -> Result<JitModule> {
+        validate_host_program(program)?;
+        let plan = crate::emit::emit_plan(program, self.format, self.arch)?;
+        let mut module = self.compile_plan_with_symbols(&plan, symbols)?;
+        module.signatures = collect_signatures(program);
+        Ok(module)
+    }
+
     fn apply_relocations(
         &self,
         plan: &EmitPlan,
@@ -829,6 +843,18 @@ mod tests {
         let func: unsafe extern "C" fn() -> i64 = unsafe { std::mem::transmute(main) };
         let value = unsafe { func() };
         assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn jit_compile_host_with_registered_symbol_works() {
+        let program = external_call_program();
+        let mut engine = JitEngine::new(None).expect("jit engine");
+        let module = engine
+            .compile_host_with_symbols(&program, &[("jit_test_add1", jit_test_add1 as *const c_void)])
+            .expect("jit compile host program");
+        let main = module.symbol_ptr("main").expect("main ptr");
+        let func: unsafe extern "C" fn() -> i64 = unsafe { std::mem::transmute(main) };
+        assert_eq!(unsafe { func() }, 42);
     }
 }
 

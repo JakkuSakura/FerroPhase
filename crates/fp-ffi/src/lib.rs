@@ -86,15 +86,29 @@ impl FfiRuntime {
         }
 
         let fn_ptr = self.resolve_symbol(name)?;
+        self.call_address(fn_ptr, name, sig, args)
+    }
+
+    /// Call a function pointer supplied by the embedding host.
+    pub fn call_address(
+        &mut self,
+        address: *const c_void,
+        name: &str,
+        sig: &FfiSignature,
+        args: &[u64],
+    ) -> FfiResult<Option<u64>> {
+        if address.is_null() {
+            return Err(FfiError::Message(format!("ffi call '{name}' has a null address")));
+        }
 
         let ret = match sig.ret {
             FfiType::Void => {
-                unsafe { call_void(fn_ptr, args)? };
+                unsafe { call_void(address, args)? };
                 None
             }
-            FfiType::I64 => Some(unsafe { call_i64(fn_ptr, args)? } as u64),
-            FfiType::U64 => Some(unsafe { call_u64(fn_ptr, args)? }),
-            FfiType::Ptr => Some(unsafe { call_ptr(fn_ptr, args)? } as u64),
+            FfiType::I64 => Some(unsafe { call_i64(address, args)? } as u64),
+            FfiType::U64 => Some(unsafe { call_u64(address, args)? }),
+            FfiType::Ptr => Some(unsafe { call_ptr(address, args)? } as u64),
         };
         Ok(ret)
     }

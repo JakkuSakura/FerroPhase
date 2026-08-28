@@ -363,36 +363,11 @@ impl CompilerDriver {
         module_path: &QualifiedPath,
         function_name: &str,
     ) -> Result<(), CompilerDriverError> {
-        let lir_path = self.select_entrypoint(package_id, module_path, function_name)?;
-        let entrypoint_def_id =
-            self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
-        let value = Self::evaluate_comptime_lir(&self.state, &entrypoint_def_id)?;
-        // Mirrors `compile_package`'s dependency-loading branch (see its
-        // identical three-call sequence): `evaluate_comptime_lir` computes
-        // the entrypoint's real value, but that alone never reaches the
-        // executable blob — the block's owning item (e.g. a `const X =
-        // const { .. };`) was already lowered to an `ExecutableConst`
-        // *before* its value was known, not a `LirGlobal`. Recording the
-        // answer directly onto the HIR package's own (interior-mutable)
-        // `const_block_values` here — via the same `Rc<HirPackage>`
-        // already published in `hir_program`, not a clone of it — is what
-        // lets a later relowering fold the const item for real, materializing
-        // the missing global. Without this, the const item's global is
-        // simply absent, and running it fails at runtime with "missing
-        // global" — never a compile-time error, since nothing upstream of
-        // execution ever notices the gap.
-        let package = self
-            .state
-            .borrow()
-            .workspace
-            .compiled_package(package_id)
-            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let hir_package_id = package.borrow().hir_package_id.clone();
-        self.state
-            .borrow()
-            .hir_package_rc(hir_package_id)?
-            .record_const_block_value(entrypoint_def_id, value);
-        let _ = lir_path;
+        // Selecting an executable entrypoint must only build and register
+        // its runtime LIR. Executing it here as a compile-time function is
+        // incorrect: `main` may perform I/O or call `extern "host"` symbols,
+        // whose registrations belong to the eventual runtime embedding.
+        self.select_entrypoint(package_id, module_path, function_name)?;
         Ok(())
     }
 

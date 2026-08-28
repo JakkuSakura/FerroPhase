@@ -53,6 +53,26 @@ fn parses_extern_c_fn_decl() {
 }
 
 #[test]
+fn parses_extern_host_fn_decl() {
+    let item = parse_single_item("extern \"host\" fn add(a: i64, b: i64) -> i64;");
+    match item.kind() {
+        ItemKind::DeclFunction(decl) => {
+            assert_eq!(decl.name.as_str(), "add");
+            assert_eq!(decl.sig.abi, Abi::Named("host".to_string()));
+        }
+        other => panic!("expected extern host fn decl, got {:?}", other),
+    }
+}
+
+#[test]
+fn rejects_extern_host_fn_definition() {
+    let result = FerroPhaseParser::new().parse_items_ast(
+        "extern \"host\" fn add(a: i64, b: i64) -> i64 { a + b }",
+    );
+    assert!(result.is_err(), "host functions must be declaration-only");
+}
+
+#[test]
 fn parses_extern_c_fn_def() {
     let item = parse_single_item("extern \"C\" fn add(a: i32, b: i32) -> i32 { a + b }");
     match item.kind() {

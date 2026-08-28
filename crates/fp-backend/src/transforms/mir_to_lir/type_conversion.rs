@@ -118,7 +118,16 @@ impl MirToLirLowerer {
                 }
             }
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
-                lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
+                // A raw pointer's pointee is ABI-irrelevant. Generic null
+                // pointer constants can retain the source-level `T` after
+                // monomorphization, so do not require that phantom type to
+                // have a concrete LIR representation.
+                let pointee = if self.contains_unresolved_param(inner) {
+                    lir::LirType::I8
+                } else {
+                    self.lir_type_from_ty(inner)
+                };
+                lir::LirType::Ptr(Box::new(pointee))
             }
             // An opaque enum-payload-slot placeholder (`HirToMirLowerer::
             // opaque_ty`, minted for a slot where variants disagree on the

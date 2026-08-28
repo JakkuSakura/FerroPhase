@@ -1,5 +1,59 @@
 use super::*;
 
+fn lir_types_compatible(expected: &LirType, actual: &LirType) -> bool {
+    match (expected, actual) {
+        (
+            LirType::Struct {
+                fields: expected_fields,
+                packed: expected_packed,
+                ..
+            },
+            LirType::Struct {
+                fields: actual_fields,
+                packed: actual_packed,
+                ..
+            },
+        ) => {
+            expected_packed == actual_packed
+                && expected_fields.len() == actual_fields.len()
+                && expected_fields
+                    .iter()
+                    .zip(actual_fields)
+                    .all(|(expected, actual)| lir_types_compatible(expected, actual))
+        }
+        (LirType::Ptr(expected), LirType::Ptr(actual)) => lir_types_compatible(expected, actual),
+        (
+            LirType::Array(expected, expected_len),
+            LirType::Array(actual, actual_len),
+        ) => expected_len == actual_len && lir_types_compatible(expected, actual),
+        (
+            LirType::Vector(expected, expected_len),
+            LirType::Vector(actual, actual_len),
+        ) => expected_len == actual_len && lir_types_compatible(expected, actual),
+        (
+            LirType::Function {
+                return_type: expected_return,
+                param_types: expected_params,
+                is_variadic: expected_variadic,
+            },
+            LirType::Function {
+                return_type: actual_return,
+                param_types: actual_params,
+                is_variadic: actual_variadic,
+            },
+        ) => {
+            expected_variadic == actual_variadic
+                && expected_params.len() == actual_params.len()
+                && lir_types_compatible(expected_return, actual_return)
+                && expected_params
+                    .iter()
+                    .zip(actual_params)
+                    .all(|(expected, actual)| lir_types_compatible(expected, actual))
+        }
+        _ => expected == actual,
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct TypedValue {
     pub(super) ty: LirType,
@@ -29,6 +83,7 @@ pub struct LirInterpreter {
     /// separately maintained lookup cache.
     program: Option<Rc<fp_core::lir::LirProgram>>,
     host_globals: HostGlobalRegistry,
+    host_functions: HostFunctionRegistry,
 }
 
 fn json_to_runtime_value(value: serde_json::Value) -> LirResult<Value> {
@@ -82,12 +137,19 @@ impl LirInterpreter {
             last_predecessor: None,
             program: None,
             host_globals: HostGlobalRegistry::new(),
+            host_functions: HostFunctionRegistry::new(),
         }
     }
 
     pub fn set_host_globals(&mut self, registry: HostGlobalRegistry) { self.host_globals = registry; }
 
     pub fn host_globals(&self) -> &HostGlobalRegistry { &self.host_globals }
+
+    pub fn set_host_functions(&mut self, registry: HostFunctionRegistry) {
+        self.host_functions = registry;
+    }
+
+    pub fn host_functions(&self) -> &HostFunctionRegistry { &self.host_functions }
 
     /// Loads every package's own LIR from `program` — the one place
     /// globals get materialized into interpreter memory (`global_values`)
@@ -103,9 +165,22 @@ impl LirInterpreter {
                 for global in &blob.globals {
                     if !matches!(global.linkage, fp_core::lir::Linkage::External | fp_core::lir::Linkage::AvailableExternally) { continue; }
                     let host = self.host_globals.get(global.name.as_str()).ok_or_else(|| VmError::Runtime(format!("unresolved external host global {}", global.name)))?;
-                    if host.descriptor.ty != global.ty { return Err(VmError::TypeMismatch { expected: format!("host global {} has {:?}", global.name, global.ty), found: format!("{:?}", host.descriptor.ty) }); }
-                    let address = self.state.mem.heap_alloc(self.data_layout.size_of(&global.ty).map_err(|error| VmError::Runtime(error.to_string()))?, global.alignment.unwrap_or(self.data_layout.align_of(&global.ty).map_err(|error| VmError::Runtime(error.to_string()))?))?;
-                    self.global_values.insert(global.name.to_string(), address);
+                    if !lir_types_compatible(&host.descriptor.ty, &global.ty) { return Err(VmError::TypeMismatch { expected: format!("host global {} has {:?}", global.name, global.ty), found: format!("{:?}", host.descriptor.ty) }); }
+                    let address = if let Some(address) = self.global_values.get(global.name.as_str()) {
+                        *address
+                    } else {
+                        let address = self.state.mem.heap_alloc(
+                            self.data_layout.size_of(&global.ty)
+                                .map_err(|error| VmError::Runtime(error.to_string()))?,
+                            global.alignment.unwrap_or(
+                                self.data_layout
+                                    .align_of(&global.ty)
+                                    .map_err(|error| VmError::Runtime(error.to_string()))?,
+                            ),
+                        )?;
+                        self.global_values.insert(global.name.to_string(), address);
+                        address
+                    };
                     let size = self.data_layout.size_of(&global.ty)
                         .map_err(|error| VmError::Runtime(error.to_string()))?;
                     let bytes = unsafe {
@@ -933,11 +1008,6 @@ impl LirInterpreter {
         for program in programs {
             self.data_layout = program.data_layout.clone();
             for global in &program.globals {
-                if matches!(global.linkage, fp_core::lir::Linkage::External | fp_core::lir::Linkage::AvailableExternally)
-                    && self.host_globals.get(global.name.as_str()).is_some()
-                {
-                    continue;
-                }
                 if self.global_values.contains_key(global.name.as_str()) {
                     continue;
                 }
@@ -1023,8 +1093,16 @@ impl LirInterpreter {
         // Collect C signatures from extern function declarations.
         for program in programs {
             for func in &program.functions {
-                if func.is_declaration && func.calling_convention == CallingConvention::C {
+                if func.is_declaration {
                     let sig = lir_sig_to_ffi(&func.signature);
+                    if let Some(host) = self.host_functions.get(func.name.as_str()) {
+                        if host.descriptor.signature != func.signature {
+                            return Err(VmError::Runtime(format!(
+                                "host function '{}' signature does not match its declaration",
+                                func.name
+                            )));
+                        }
+                    }
                     self.extern_sigs.insert(func.name.to_string(), sig);
                 }
             }
@@ -2053,6 +2131,22 @@ impl LirInterpreter {
             .iter()
             .map(|arg| self.resolve_operand(arg))
             .collect::<LirResult<Vec<_>>>()?;
+        if let Some(host) = self.host_functions.get(name) {
+            let sig = lir_sig_to_ffi(&host.descriptor.signature);
+            let address = host.address();
+            let (raws, _cstrings) = self.prepare_ffi_args(&typed_args, &sig)?;
+            let ffi = self
+                .ffi
+                .as_mut()
+                .ok_or_else(|| VmError::Runtime("FFI runtime is unavailable".into()))?;
+            let raw_result = ffi
+                .call_address(address, name, &sig, &raws)
+                .map_err(|error| VmError::Runtime(format!("ffi call '{name}' failed: {error}")))?
+                .ok_or_else(|| VmError::Runtime(format!("ffi call '{name}' returned no value")))?;
+            let ty = result_ty
+                .ok_or_else(|| VmError::Runtime(format!("call '{name}' has no result type")))?;
+            return self.write_typed_result(dst, ty, self.decode_storage_value(raw_result, ty)?);
+        }
         if let Some(sig) = self.extern_sigs.get(name).cloned() {
             let (raws, _cstrings) = self.prepare_ffi_args(&typed_args, &sig)?;
             let ffi = self

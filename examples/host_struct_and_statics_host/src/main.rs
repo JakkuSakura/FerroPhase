@@ -12,7 +12,7 @@ use fp_core::lir::LirDataLayout;
 use fp_interpret::LirInterpreter;
 use fp_lang::provider::{FerroPhaseProvider, single_file_provider};
 
-use host_struct_and_statics_host::{host_globals, host_layouts, HOST_POINT};
+use host_struct_and_statics_host::{host_functions, host_globals, host_layouts, HOST_POINT};
 
 const PROGRAM: &str = include_str!("../host_struct_and_statics_host.fp");
 
@@ -45,21 +45,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &QualifiedPath::new(vec![package_id.as_str().to_owned()]),
         "main",
     ))?;
-    executor.run(session.driver().evaluate_package_comptime_constants(&package_id))?;
 
     let mut interpreter = LirInterpreter::new();
     interpreter.set_host_globals(host_globals()?);
+    interpreter.set_host_functions(host_functions()?);
     interpreter
         .load_program(session.driver().state.borrow().lir_program_rc())
         .map_err(|error| error.to_string())?;
-    let blob = session
-        .driver()
-        .state
-        .borrow()
-        .lir_program()
-        .merged_blob_for_package(&package_id)?;
+    let main_def_id = session.driver().resolve_entrypoint_def_id(
+        &package_id,
+        &QualifiedPath::new(vec![package_id.as_str().to_owned()]),
+        "main",
+    )?;
     let ferro_result = interpreter
-        .run_main(&blob)
+        .run_entrypoint(&package_id, &main_def_id)
         .map_err(|error| error.to_string())?;
 
     println!("Ferro result: {ferro_result:?}");

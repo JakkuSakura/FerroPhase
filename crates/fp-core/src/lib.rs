@@ -15,6 +15,7 @@ pub mod executor;
 pub mod frontend;
 pub mod hir;
 pub mod host_layout;
+pub mod host_function;
 pub mod intrinsics;
 pub mod lang;
 pub mod lir;
@@ -36,6 +37,7 @@ pub use tracing;
 pub use frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 pub use fp_host_layout_derive::{Host, HostLayout};
 pub use host_layout::{HostFieldDescriptor, HostLayout, HostLayoutDescriptor, HostLayoutRegistry};
+pub use host_function::HostFunctionDescriptor;
 
 // Alias for error types
 pub type Error = crate::error::Error;

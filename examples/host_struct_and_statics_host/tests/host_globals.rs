@@ -14,8 +14,8 @@ fn host_global_example_compiles_natively_without_recursing() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("phase: compiled"),
-        "example did not reach the native compilation phase",
+        String::from_utf8_lossy(&output.stdout).contains("host add = 42"),
+        "example did not execute the registered host function",
     );
 }
 
@@ -28,7 +28,7 @@ fn host_global_is_read_into_cross_language_output() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).expect("example output is UTF-8"),
-        "host point = (3, 4)\n",
+        "host point = (3, 4)\n\nhost add = 42\n\nFerro result: Unit(ValueUnit)\nHost Point: (3, 4)\n",
     );
 }
 

@@ -45,8 +45,15 @@ impl MirToLirLowerer {
             let alignment = self.alignment_for_lir_type(&alloca_elem_ty);
             if alignment > 0 {
                 let pointer_type = lir::LirType::Ptr(Box::new(alloca_elem_ty.clone()));
+                let element_size = self
+                    .data_layout
+                    .size_of(&alloca_elem_ty)
+                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
+                let size = element_size
+                    .checked_mul(alloca_count as u64)
+                    .ok_or_else(|| fp_core::error::Error::from("local allocation size overflow"))?;
                 let size_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I32, alloca_count)?,
+                    self.unsigned_constant(&lir::LirType::I64, size)?,
                 );
                 let alloca_id = self.next_id();
                 self.queued_instructions.push(lir::LirInstruction {
@@ -426,9 +433,12 @@ impl MirToLirLowerer {
             PlaceAccess::Value { value, ty, lir_ty } => {
                 let alignment = self.alignment_for_lir_type(&lir_ty).max(1);
                 let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                let size = self
+                    .data_layout
+                    .size_of(&lir_ty)
+                    .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
                 let size_value = lir::LirValue::constant(
-                    self.integer_constant(&lir::LirType::I32, 1)
-                        .expect("one must fit i32"),
+                    self.unsigned_constant(&lir::LirType::I64, size)?,
                 );
                 let alloca_id = self.next_id();
                 self.queued_instructions.push(lir::LirInstruction {
@@ -686,9 +696,12 @@ impl MirToLirLowerer {
                 _ => {
                     let alignment = self.alignment_for_lir_type(&lir_ty).max(1);
                     let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                    let size = self
+                        .data_layout
+                        .size_of(&lir_ty)
+                        .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
                     let size_value = lir::LirValue::constant(
-                        self.integer_constant(&lir::LirType::I32, 1)
-                            .expect("one must fit i32"),
+                        self.unsigned_constant(&lir::LirType::I64, size)?,
                     );
                     let alloca_id = self.next_id();
                     self.queued_instructions.push(lir::LirInstruction {

@@ -56,6 +56,8 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
         visibility: hir::Visibility::Private,
         kind: hir::ItemKind::Const(hir::Const {
             name: "B".into(),
+            mutable: false,
+            is_host: false,
             ty: hir::TypeExpr {
                 hir_id: hid(11),
                 kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
@@ -80,6 +82,8 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
         visibility: hir::Visibility::Private,
         kind: hir::ItemKind::Const(hir::Const {
             name: "A".into(),
+            mutable: false,
+            is_host: false,
             ty: hir::TypeExpr {
                 hir_id: hid(21),
                 kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),

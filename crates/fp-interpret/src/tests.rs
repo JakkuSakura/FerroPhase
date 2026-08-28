@@ -262,6 +262,64 @@ fn calls_libc_function_through_extern_c_declaration() {
     assert_eq!(value.unwrap(), Value::int(i64::from(std::process::id())));
 }
 
+#[test]
+fn calls_registered_host_function_pointer() {
+    extern "C" fn host_answer() -> i64 { 42 }
+
+    let host = LirFunction {
+        def_id: None,
+        name: Name::new("host_answer"),
+        signature: sig(&[], LirType::I64),
+        basic_blocks: vec![],
+        locals: vec![],
+        stack_slots: vec![],
+        calling_convention: CallingConvention::C,
+        linkage: fp_core::lir::Linkage::External,
+        is_declaration: true,
+    };
+    let main = LirFunction {
+        def_id: None,
+        name: Name::new("main"),
+        signature: sig(&[], LirType::I64),
+        basic_blocks: vec![bb(
+            0,
+            vec![i(
+                0,
+                LirInstructionKind::Call {
+                    function: LirValue::function(
+                        LirFunctionRef::Name(Name::new("host_answer")),
+                        LirType::Function {
+                            return_type: Box::new(LirType::I64),
+                            param_types: vec![],
+                            is_variadic: false,
+                        },
+                    ),
+                    args: vec![],
+                    calling_convention: CallingConvention::C,
+                    tail_call: false,
+                },
+            )],
+            ret(reg(0)),
+        )],
+        locals: vec![],
+        stack_slots: vec![],
+        calling_convention: CallingConvention::C,
+        linkage: fp_core::lir::Linkage::Internal,
+        is_declaration: false,
+    };
+
+    let mut registry = HostFunctionRegistry::new();
+    registry
+        .register(
+            fp_core::HostFunctionDescriptor::new("host_answer", sig(&[], LirType::I64)),
+            host_answer as *const std::ffi::c_void,
+        )
+        .unwrap();
+    let mut interpreter = LirInterpreter::new();
+    interpreter.set_host_functions(registry);
+    assert_eq!(interpreter.run_main(&make_with_functions_and_globals(vec![main, host], vec![])).unwrap(), Value::int(42));
+}
+
 #[cfg(unix)]
 #[test]
 fn passes_interpreter_string_data_to_libc() {
