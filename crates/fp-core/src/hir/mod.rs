@@ -343,11 +343,21 @@ pub enum TraitItemKind {
     /// an abstract (`None`-bodied) method is a genuine error, not something
     /// to fall back on.
     Method(Function),
+    /// An associated constant declaration. A trait may provide a default
+    /// initializer, but an abstract associated constant has no body.
+    AssocConst(TraitAssocConst),
     /// A bare `type Item;` declaration — no bound type (that binding is
     /// always on the impl side, `ImplItemKind::AssocType`); this only
     /// records that the name exists so a trait method's signature can
     /// reference `Self::Item` and have somewhere to resolve it from.
     AssocType(TraitAssocType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitAssocConst {
+    pub name: Symbol,
+    pub ty: TypeExpr,
+    pub body: Option<Body>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1090,6 +1100,11 @@ impl TraitItemKind {
     pub fn span(&self) -> Span {
         match self {
             TraitItemKind::Method(func) => func.span(),
+            TraitItemKind::AssocConst(konst) => Span::union(
+                [konst.ty.span()]
+                    .into_iter()
+                    .chain(konst.body.as_ref().map(Body::span)),
+            ),
             TraitItemKind::AssocType(_) => Span::default(),
         }
     }
@@ -1405,10 +1420,9 @@ impl TypeExprKind {
         match self {
             TypeExprKind::Primitive(_) => Span::null(),
             TypeExprKind::Path(path) => path.span(),
-            TypeExprKind::Projection(projection) => Span::union([
-                projection.self_ty.span(),
-                projection.trait_path.span(),
-            ]),
+            TypeExprKind::Projection(projection) => {
+                Span::union([projection.self_ty.span(), projection.trait_path.span()])
+            }
             TypeExprKind::Structural(structural) => structural.span(),
             TypeExprKind::TypeBinaryOp(op) => op.span(),
             TypeExprKind::Tuple(types) => Span::union(types.iter().map(|ty| ty.span())),

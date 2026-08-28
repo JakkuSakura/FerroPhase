@@ -39,6 +39,11 @@ pub enum ImplBucketKey {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirPackage {
     pub id: PackageId,
+    /// Resolved direct dependencies visible from this crate's extern prelude.
+    /// This is the HIR equivalent of rustc's crate metadata edge: name
+    /// resolution must consult only crates reachable through this list, not
+    /// every package loaded in the compilation session.
+    pub dependencies: Vec<PackageId>,
     pub module_tree: resolve::ModuleTree,
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
@@ -62,13 +67,13 @@ pub struct HirPackage {
     /// (type, method) pair instead, or synthetic items).
     pub def_paths: HashMap<DefId, DefPath>,
     /// `DefId`s of items whose HIR form is a structural stand-in, not a
-    /// real lowering of the original source construct — currently, trait
-    /// declarations (HIR has no first-class trait item; `ast_to_hir`
-    /// fabricates a placeholder `Const` just so the definition has some
-    /// HIR shape to type-check as a value/type reference). Consumers that
-    /// reconstruct AST from HIR (`HirToAstLifter`) must skip these rather
-    /// than lift the placeholder itself, so backends that work from the
-    /// original source item (e.g. fp-kotlin modeling a trait as a real
+    /// real lowering of the original source construct — for example, a
+    /// trait declaration may also have a placeholder `Const` entry so the
+    /// definition has a HIR shape to type-check as a value/type reference,
+    /// while the real trait members live in `ItemKind::Trait`. Consumers
+    /// that reconstruct AST from HIR (`HirToAstLifter`) must skip these
+    /// rather than lift the placeholder itself, so backends that work from
+    /// the original source item (e.g. fp-kotlin modeling a trait as a real
     /// Kotlin interface) see it unmodified instead of overwritten.
     pub placeholder_defs: HashSet<DefId>,
     /// A definition's portable op, when its source declaration was tagged
@@ -437,6 +442,62 @@ fn primitive_shape_name(prim: &TypePrimitive) -> Option<String> {
     }
 }
 
+/// Recover the nominal definition for a self-type path whose resolver did not
+/// attach `Res::Def` but whose spelling still identifies a nominal item.
+///
+/// This is deliberately an ambiguity-preserving lookup.  A path such as
+/// `Vec<&str>` is lowered by the frontend as an unresolved path because the
+/// generic `Ty::Vec` shortcut constructs the HIR path directly.  Rustc would
+/// already have resolved that path to `AdtDef` before building its impl index.
+/// The package index has the equivalent information in `def_map` and
+/// `def_paths`, so recover the `DefId` here rather than putting a nominal type
+/// into a structural shape bucket.  If more than one definition can match,
+/// there is no sound fast-reject key to choose and the caller must retain the
+/// diagnostic instead of guessing.
+fn unresolved_nominal_def_id(package: &HirPackage, path: &Path) -> Option<DefId> {
+    let names: Vec<&str> = path
+        .segments
+        .iter()
+        .map(|segment| segment.name.as_str())
+        .collect();
+    let last = names.last().copied()?;
+    let mut candidates = HashSet::new();
+
+    for (def_id, item) in &package.def_map {
+        if !matches!(item.kind, ItemKind::Struct(_) | ItemKind::Enum(_)) {
+            continue;
+        }
+        let Some(def_path) = package.def_paths.get(def_id) else {
+            if names.len() == 1 {
+                let item_name = match &item.kind {
+                    ItemKind::Struct(def) => def.name.as_str(),
+                    ItemKind::Enum(def) => def.name.as_str(),
+                    _ => unreachable!(),
+                };
+                if item_name == last {
+                    candidates.insert(def_id.clone());
+                }
+            }
+            continue;
+        };
+        let def_names: Vec<&str> = def_path
+            .segments
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect();
+        let matches_path = if names.len() == 1 {
+            def_names.last().copied() == Some(last)
+        } else {
+            def_names.ends_with(&names)
+        };
+        if matches_path {
+            candidates.insert(def_id.clone());
+        }
+    }
+
+    (candidates.len() == 1).then(|| candidates.into_iter().next().unwrap())
+}
+
 impl HirPackage {
     /// `id` is a required parameter, not filled in after the fact — a
     /// caller that builds a fresh `HirPackage` and forgets to copy its real
@@ -448,6 +509,7 @@ impl HirPackage {
     pub fn new(id: PackageId) -> Self {
         Self {
             id,
+            dependencies: Vec::new(),
             module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),
             def_map: HashMap::new(),
@@ -537,7 +599,7 @@ impl HirPackage {
                         {
                             Some(did.clone())
                         }
-                        _ => None,
+                        _ => unresolved_nominal_def_id(self, path),
                     },
                     _ => None,
                 };

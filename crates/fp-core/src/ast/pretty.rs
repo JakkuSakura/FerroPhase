@@ -203,7 +203,10 @@ impl PrettyPrintable for ast::Expr {
                     Some(false) => "const",
                     None => "unspecified",
                 };
-                ctx.write_line(format!("reference (mutable: {}, raw: {}){}", mutability, reference.raw, suffix))?;
+                ctx.write_line(format!(
+                    "reference (mutable: {}, raw: {}){}",
+                    mutability, reference.raw, suffix
+                ))?;
                 ctx.with_indent(|ctx| reference.referee.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Dereference(deref) => {

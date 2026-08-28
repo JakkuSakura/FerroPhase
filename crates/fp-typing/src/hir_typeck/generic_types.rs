@@ -139,7 +139,7 @@ impl HirTypeChecker {
         Ok(Some((substitutions, output)))
     }
 
-    fn infer_fn_bound_outputs(
+    pub(super) fn infer_fn_bound_outputs(
         &self,
         generics: &hir::Generics,
         substitutions: &mut HashMap<ty::ParamTy, Ty>,
@@ -292,27 +292,91 @@ impl HirTypeChecker {
     /// `concrete` exactly.
     pub(super) fn ty_matches_with_infer_holes(annotation: &Ty, concrete: &Ty) -> bool {
         match (&annotation.kind, &concrete.kind) {
+            // rustc's error type is a recovery type: once an earlier
+            // resolution/type-checking error has produced it, later
+            // compatibility checks must accept it without manufacturing a
+            // second mismatch diagnostic. It is not an inference wildcard;
+            // it simply prevents error recovery from poisoning the enclosing
+            // expression.
+            (TyKind::Error(_), _) | (_, TyKind::Error(_)) => true,
             (TyKind::Infer(_), _) => true,
-            (TyKind::Ref(_, a, _), TyKind::Ref(_, c, _)) => Self::ty_matches_with_infer_holes(a, c),
+            (TyKind::Ref(_, a, am), TyKind::Ref(_, c, cm)) if am == cm => {
+                Self::ty_matches_with_infer_holes(a, c)
+            }
+            (TyKind::RawPtr(a), TyKind::RawPtr(c)) if a.mutbl == c.mutbl => {
+                Self::ty_matches_with_infer_holes(&a.ty, &c.ty)
+            }
             (TyKind::Tuple(a), TyKind::Tuple(c)) if a.len() == c.len() => a
                 .iter()
                 .zip(c)
                 .all(|(a, c)| Self::ty_matches_with_infer_holes(a, c)),
             (TyKind::Array(a, a_len), TyKind::Array(c, c_len)) => {
-                Self::ty_matches_with_infer_holes(a, c) && a_len == c_len
+                Self::ty_matches_with_infer_holes(a, c) && Self::consts_compatible(a_len, c_len)
             }
-            (TyKind::Slice(a), TyKind::Slice(c)) | (TyKind::Array(a, _), TyKind::Slice(c)) => {
-                Self::ty_matches_with_infer_holes(a, c)
-            }
+            (TyKind::Slice(a), TyKind::Slice(c)) => Self::ty_matches_with_infer_holes(a, c),
             (TyKind::Adt(a_def, a_args), TyKind::Adt(c_def, c_args))
                 if a_def.did == c_def.did && a_args.len() == c_args.len() =>
             {
-                a_args.iter().zip(c_args).all(|(a, c)| match (a, c) {
-                    (GenericArg::Type(a), GenericArg::Type(c)) => {
-                        Self::ty_matches_with_infer_holes(a, c)
-                    }
-                    _ => a == c,
-                })
+                a_args
+                    .iter()
+                    .zip(c_args)
+                    .all(|(a, c)| Self::generic_arg_matches_with_infer_holes(a, c))
+            }
+            (TyKind::FnDef(a_def, a_args), TyKind::FnDef(c_def, c_args))
+            | (TyKind::Closure(a_def, a_args), TyKind::Closure(c_def, c_args))
+            | (TyKind::Generator(a_def, a_args, _), TyKind::Generator(c_def, c_args, _))
+            | (TyKind::Opaque(a_def, a_args), TyKind::Opaque(c_def, c_args))
+                if a_def == c_def && a_args.len() == c_args.len() =>
+            {
+                a_args
+                    .iter()
+                    .zip(c_args)
+                    .all(|(a, c)| Self::generic_arg_matches_with_infer_holes(a, c))
+            }
+            (TyKind::Projection(a), TyKind::Projection(c))
+                if a.item_def_id == c.item_def_id && a.substs.len() == c.substs.len() =>
+            {
+                a.substs
+                    .iter()
+                    .zip(&c.substs)
+                    .all(|(a, c)| Self::generic_arg_matches_with_infer_holes(a, c))
+            }
+            (TyKind::Dynamic(a, _), TyKind::Dynamic(c, _)) => a == c,
+            _ => annotation == concrete,
+        }
+    }
+
+    fn generic_arg_matches_with_infer_holes(
+        annotation: &GenericArg,
+        concrete: &GenericArg,
+    ) -> bool {
+        match (annotation, concrete) {
+            (GenericArg::Type(annotation), GenericArg::Type(concrete)) => {
+                Self::ty_matches_with_infer_holes(annotation, concrete)
+            }
+            (GenericArg::Const(annotation), GenericArg::Const(concrete)) => {
+                Self::const_matches_with_infer_holes(annotation, concrete)
+            }
+            (GenericArg::Lifetime(_), GenericArg::Lifetime(_)) => true,
+            _ => annotation == concrete,
+        }
+    }
+
+    fn const_matches_with_infer_holes(
+        annotation: &ty::ConstKind,
+        concrete: &ty::ConstKind,
+    ) -> bool {
+        match (annotation, concrete) {
+            (ty::ConstKind::Infer(_), _) => true,
+            (ty::ConstKind::Unevaluated(annotation), ty::ConstKind::Unevaluated(concrete))
+                if annotation.def == concrete.def
+                    && annotation.substs.len() == concrete.substs.len() =>
+            {
+                annotation
+                    .substs
+                    .iter()
+                    .zip(&concrete.substs)
+                    .all(|(a, c)| Self::generic_arg_matches_with_infer_holes(a, c))
             }
             _ => annotation == concrete,
         }
@@ -407,6 +471,11 @@ impl HirTypeChecker {
         let expected = self.resolve_infer(expected);
         let actual = self.resolve_infer(actual);
         match (&expected.kind, &actual.kind) {
+            // Match rustc's `Ty::new_error` propagation. An error recovered
+            // from name/type resolution satisfies the surrounding relation,
+            // but must not bind inference variables or participate in
+            // structural matching as if it were a concrete type.
+            (TyKind::Error(_), _) | (_, TyKind::Error(_)) => Ok(()),
             (TyKind::Infer(var), _) => {
                 self.bind_infer(var.clone(), &actual);
                 Ok(())
@@ -457,7 +526,11 @@ impl HirTypeChecker {
                 }
                 Ok(())
             }
-            (TyKind::Ref(_, expected, _), TyKind::Ref(_, actual, _)) => {
+            (TyKind::Ref(_, expected, expected_mut), TyKind::Ref(_, actual, actual_mut))
+                if expected_mut == actual_mut
+                    || (*expected_mut == ty::Mutability::Not
+                        && *actual_mut == ty::Mutability::Mut) =>
+            {
                 self.unify_call_types_impl(expected, &actual, substitutions, record)
             }
             (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
@@ -509,9 +582,17 @@ impl HirTypeChecker {
                         self.unify_call_types_impl(expected, actual, substitutions, record)
                     })
             }
-            (TyKind::Array(expected, _), TyKind::Array(actual, _))
-            | (TyKind::Slice(expected), TyKind::Slice(actual))
-            | (TyKind::Array(expected, _), TyKind::Slice(actual))
+            (TyKind::Array(expected, expected_len), TyKind::Array(actual, actual_len)) => {
+                if !Self::consts_compatible(expected_len, actual_len) {
+                    return if record {
+                        self.require_same(&expected, &actual)
+                    } else {
+                        Err(Error::from("speculative array-length mismatch"))
+                    };
+                }
+                self.unify_call_types_impl(expected, actual, substitutions, record)
+            }
+            (TyKind::Slice(expected), TyKind::Slice(actual))
             | (TyKind::Slice(expected), TyKind::Array(actual, _)) => {
                 self.unify_call_types_impl(expected, actual, substitutions, record)
             }
@@ -519,39 +600,67 @@ impl HirTypeChecker {
                 if expected.did == actual.did && expected_args.len() == actual_args.len() =>
             {
                 for (expected, actual) in expected_args.iter().zip(actual_args) {
-                    if let (GenericArg::Type(expected), GenericArg::Type(actual)) =
-                        (expected, actual)
-                    {
-                        self.unify_call_types_impl(expected, actual, substitutions, record)?;
-                    }
+                    self.unify_generic_arg(expected, actual, substitutions, record)?;
                 }
                 Ok(())
             }
-            // C-string/FFI decay: a `&str`/string-literal argument may be
-            // passed where a raw pointer (`*const char`/`*mut char`, an
-            // `extern "C"` parameter) is expected — the same implicit
-            // decay C itself performs for string literals and `&str`'s
-            // byte-slice representation already matches a C string's byte
-            // layout at the FFI boundary.
-            (TyKind::RawPtr(_), TyKind::Slice(_)) => Ok(()),
-            // `void*`/any-object-pointer decay, same as C: a raw pointer of
-            // one pointee type may be passed where a raw pointer of another
-            // is expected (e.g. `*mut u8` into `memcpy`'s `*mut void`
-            // parameter) — this compiler has no real `void`/opaque-pointer
-            // distinction, just an ordinary `RawPtr(())`.
-            (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) => {
-                // Preserve generic pointee inference (`*const [T]` from
-                // `*const U`) before applying the opaque-pointer
-                // compatibility rule. Probe on a copy so a failed concrete
-                // pointee match cannot leak partial substitutions.
-                let mut trial = substitutions.clone();
-                if self
-                    .unify_call_types_impl(&expected.ty, &actual.ty, &mut trial, record)
-                    .is_ok()
-                {
-                    *substitutions = trial;
+            (TyKind::Projection(expected), TyKind::Projection(actual))
+                if expected.item_def_id == actual.item_def_id
+                    && expected.substs.len() == actual.substs.len() =>
+            {
+                for (expected, actual) in expected.substs.iter().zip(&actual.substs) {
+                    self.unify_generic_arg(expected, actual, substitutions, record)?;
                 }
                 Ok(())
+            }
+            (
+                TyKind::FnDef(expected_def, expected_args),
+                TyKind::FnDef(actual_def, actual_args),
+            )
+            | (
+                TyKind::Closure(expected_def, expected_args),
+                TyKind::Closure(actual_def, actual_args),
+            )
+            | (
+                TyKind::Generator(expected_def, expected_args, _),
+                TyKind::Generator(actual_def, actual_args, _),
+            )
+            | (
+                TyKind::Opaque(expected_def, expected_args),
+                TyKind::Opaque(actual_def, actual_args),
+            ) if expected_def == actual_def && expected_args.len() == actual_args.len() => {
+                for (expected, actual) in expected_args.iter().zip(actual_args) {
+                    self.unify_generic_arg(expected, actual, substitutions, record)?;
+                }
+                Ok(())
+            }
+            // Raw-pointer pointees must structurally unify. Equal
+            // mutability is required except for Rust's one-way
+            // `*mut T`-to-`*const T` argument coercion. Keeping the pointee
+            // probe transactional prevents a failed match from leaking
+            // substitutions.
+            (TyKind::RawPtr(expected), TyKind::RawPtr(actual))
+                if expected.mutbl == actual.mutbl
+                    || (expected.mutbl == ty::Mutability::Not
+                        && actual.mutbl == ty::Mutability::Mut) =>
+            {
+                let mut trial = substitutions.clone();
+                self.unify_call_types_impl(&expected.ty, &actual.ty, &mut trial, record)?;
+                *substitutions = trial;
+                Ok(())
+            }
+            (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) => {
+                let expected = Ty {
+                    kind: TyKind::RawPtr(expected.clone()),
+                };
+                let actual = Ty {
+                    kind: TyKind::RawPtr(actual.clone()),
+                };
+                if record {
+                    self.require_same(&expected, &actual)
+                } else {
+                    Err(Error::from("speculative raw-pointer mismatch"))
+                }
             }
             (TyKind::Ref(_, actual, _), TyKind::RawPtr(expected)) => {
                 // Local initializers call the unifier with the inferred
@@ -601,17 +710,162 @@ impl HirTypeChecker {
         impl_args
             .iter()
             .zip(receiver_args)
-            .all(|(impl_arg, receiver_arg)| match (impl_arg, receiver_arg) {
-                (GenericArg::Type(impl_ty), GenericArg::Type(receiver_ty)) => self
-                    .unify_call_types_probe(impl_ty, receiver_ty, &mut substitutions)
-                    .is_ok(),
-                (GenericArg::Const(impl_const), GenericArg::Const(receiver_const)) => {
-                    impl_const == receiver_const
-                        || matches!(impl_const, ty::ConstKind::Param(_))
-                        || matches!(receiver_const, ty::ConstKind::Param(_))
-                }
-                _ => false,
+            .all(|(impl_arg, receiver_arg)| {
+                self.unify_generic_arg(impl_arg, receiver_arg, &mut substitutions, false)
+                    .is_ok()
             })
+    }
+
+    fn unify_generic_arg(
+        &self,
+        expected: &GenericArg,
+        actual: &GenericArg,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+        record: bool,
+    ) -> Result<()> {
+        match (expected, actual) {
+            (GenericArg::Type(expected), GenericArg::Type(actual)) => {
+                // Array-to-slice is a coercion-site adjustment. It is valid
+                // for a function argument, but it cannot be applied inside a
+                // nominal generic argument (for example, `Vec<[T; 3]>` is
+                // not compatible with `Vec<[T]>`). The general call unifier
+                // intentionally models the former, so reject the latter
+                // before delegating to it.
+                if Self::contains_nested_array_to_slice_coercion(expected, actual) {
+                    return Err(Error::from("array-to-slice coercion in generic argument"));
+                }
+                self.unify_call_types_impl(expected, actual, substitutions, record)
+            }
+            (GenericArg::Const(expected), GenericArg::Const(actual))
+                if Self::consts_compatible(expected, actual) =>
+            {
+                Ok(())
+            }
+            // Regions constrain borrowing but are not part of the nominal
+            // identity of an instantiated ADT. This HIR checker erases
+            // regions, so requiring their syntax to be equal rejects valid
+            // instantiations that rustc accepts.
+            (GenericArg::Lifetime(_), GenericArg::Lifetime(_)) => Ok(()),
+            _ if expected == actual => Ok(()),
+            _ => Err(Error::from("generic argument mismatch")),
+        }
+    }
+
+    fn contains_nested_array_to_slice_coercion(expected: &Ty, actual: &Ty) -> bool {
+        match (&expected.kind, &actual.kind) {
+            (TyKind::Slice(_), TyKind::Array(_, _)) => true,
+            (TyKind::Ref(_, expected, _), TyKind::Ref(_, actual, _)) => {
+                Self::contains_nested_array_to_slice_coercion(expected, actual)
+            }
+            (TyKind::RawPtr(expected), TyKind::RawPtr(actual)) => {
+                Self::contains_nested_array_to_slice_coercion(&expected.ty, &actual.ty)
+            }
+            (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => {
+                expected.iter().zip(actual).any(|(expected, actual)| {
+                    Self::contains_nested_array_to_slice_coercion(expected, actual)
+                })
+            }
+            (TyKind::Array(expected, _), TyKind::Array(actual, _))
+            | (TyKind::Slice(expected), TyKind::Slice(actual)) => {
+                Self::contains_nested_array_to_slice_coercion(expected, actual)
+            }
+            (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
+                if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
+            {
+                expected
+                    .binder
+                    .value
+                    .inputs
+                    .iter()
+                    .zip(&actual.binder.value.inputs)
+                    .any(|(expected, actual)| {
+                        Self::contains_nested_array_to_slice_coercion(expected, actual)
+                    })
+                    || Self::contains_nested_array_to_slice_coercion(
+                        &expected.binder.value.output,
+                        &actual.binder.value.output,
+                    )
+            }
+            (TyKind::Adt(expected, expected_args), TyKind::Adt(actual, actual_args))
+                if expected.did == actual.did && expected_args.len() == actual_args.len() =>
+            {
+                expected_args
+                    .iter()
+                    .zip(actual_args)
+                    .any(|(expected, actual)| {
+                        Self::generic_arg_contains_array_slice_coercion(expected, actual)
+                    })
+            }
+            (TyKind::Projection(expected), TyKind::Projection(actual))
+                if expected.item_def_id == actual.item_def_id
+                    && expected.substs.len() == actual.substs.len() =>
+            {
+                expected
+                    .substs
+                    .iter()
+                    .zip(&actual.substs)
+                    .any(|(expected, actual)| {
+                        Self::generic_arg_contains_array_slice_coercion(expected, actual)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn generic_arg_contains_array_slice_coercion(
+        expected: &GenericArg,
+        actual: &GenericArg,
+    ) -> bool {
+        match (expected, actual) {
+            (GenericArg::Type(expected), GenericArg::Type(actual)) => {
+                Self::contains_nested_array_to_slice_coercion(expected, actual)
+            }
+            (GenericArg::Const(expected), GenericArg::Const(actual)) => {
+                let (ty::ConstKind::Unevaluated(expected), ty::ConstKind::Unevaluated(actual)) =
+                    (expected, actual)
+                else {
+                    return false;
+                };
+                expected
+                    .substs
+                    .iter()
+                    .zip(&actual.substs)
+                    .any(|(expected, actual)| {
+                        Self::generic_arg_contains_array_slice_coercion(expected, actual)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Const arguments participate in type identity structurally. A const
+    /// parameter or inference variable is an unresolved value, but a
+    /// parameter is not a wildcard that makes two distinct concrete values
+    /// equal. This mirrors rustc's const-argument relation without inventing
+    /// a second substitution table in the HIR checker.
+    fn consts_compatible(expected: &ty::ConstKind, actual: &ty::ConstKind) -> bool {
+        match (expected, actual) {
+            (ty::ConstKind::Infer(_), _) | (_, ty::ConstKind::Infer(_)) => true,
+            (ty::ConstKind::Unevaluated(expected), ty::ConstKind::Unevaluated(actual))
+                if expected.def == actual.def && expected.substs.len() == actual.substs.len() =>
+            {
+                expected
+                    .substs
+                    .iter()
+                    .zip(&actual.substs)
+                    .all(|(expected, actual)| match (expected, actual) {
+                        (GenericArg::Type(expected), GenericArg::Type(actual)) => {
+                            Self::ty_matches_with_infer_holes(expected, actual)
+                        }
+                        (GenericArg::Const(expected), GenericArg::Const(actual)) => {
+                            Self::consts_compatible(expected, actual)
+                        }
+                        (GenericArg::Lifetime(_), GenericArg::Lifetime(_)) => true,
+                        _ => expected == actual,
+                    })
+            }
+            _ => expected == actual,
+        }
     }
 
     /// Resolves a parameter through the substitution chain for the callers
@@ -727,7 +981,7 @@ impl HirTypeChecker {
             TyKind::Array(inner, length) => Ty {
                 kind: TyKind::Array(
                     Box::new(self.substitute_param_map_inner(inner, substitutions, seen)),
-                    length.clone(),
+                    self.substitute_const_kind(length, substitutions, seen),
                 ),
             },
             TyKind::Slice(inner) => Ty {
@@ -741,12 +995,7 @@ impl HirTypeChecker {
                 kind: TyKind::Adt(
                     def.clone(),
                     args.iter()
-                        .map(|arg| match arg {
-                            GenericArg::Type(ty) => GenericArg::Type(
-                                self.substitute_param_map_inner(ty, substitutions, seen),
-                            ),
-                            other => other.clone(),
-                        })
+                        .map(|arg| self.substitute_generic_arg(arg, substitutions, seen))
                         .collect(),
                 ),
             },
@@ -817,6 +1066,28 @@ impl HirTypeChecker {
             GenericArg::Type(ty) => {
                 GenericArg::Type(self.substitute_param_map_inner(ty, substitutions, seen))
             }
+            GenericArg::Const(constant) => {
+                GenericArg::Const(self.substitute_const_kind(constant, substitutions, seen))
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn substitute_const_kind(
+        &self,
+        constant: &ty::ConstKind,
+        substitutions: &HashMap<ty::ParamTy, Ty>,
+        seen: &mut HashSet<ty::ParamTy>,
+    ) -> ty::ConstKind {
+        match constant {
+            ty::ConstKind::Unevaluated(value) => ty::ConstKind::Unevaluated(ty::UnevaluatedConst {
+                def: value.def.clone(),
+                substs: value
+                    .substs
+                    .iter()
+                    .map(|arg| self.substitute_generic_arg(arg, substitutions, seen))
+                    .collect(),
+            }),
             other => other.clone(),
         }
     }
@@ -966,14 +1237,18 @@ impl HirTypeChecker {
         // identical underlying case, just reached through `.method()`
         // call syntax instead of an explicit type-relative path.
         if let TyKind::Param(param) = &receiver_ty.kind {
-            return self
+            // A bound lookup is authoritative when it finds the method, but
+            // a miss must fall through. Rust permits an associated function
+            // on a generic receiver to come from a blanket impl whose trait
+            // is not a bound on the receiver (the local `ConvertVec` impl in
+            // `slice::to_vec_in` is the motivating case).
+            if let Some(signature) = self
                 .generic_param_bound_method_signature(&param.name, method)
-                .await;
+                .await?
+            {
+                return Ok(Some(signature));
+            }
         }
-        let receiver_def = match &receiver_ty.kind {
-            TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
-            _ => None,
-        };
         // `hir::HirProgram::impls_for_adt` is the fast-reject path for an
         // ADT receiver (self-type also resolves to `TyKind::Adt` with the
         // same `did`); a concrete non-ADT receiver (primitive/tuple/
@@ -984,10 +1259,11 @@ impl HirTypeChecker {
         // `program` is cloned out first so the borrow doesn't outlive the
         // `&mut self` calls below.
         let program = self.program_rc();
-        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match &receiver_def {
-            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
-            None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
+        let receiver_def = match &receiver_ty.kind {
+            TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
+            _ => None,
         };
+        let candidates = method_candidates(&program, &receiver_ty.kind);
         let expected_output = self.expected_expr_type.clone();
         for item in candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {

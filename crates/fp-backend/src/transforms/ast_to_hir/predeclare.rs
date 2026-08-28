@@ -1,6 +1,21 @@
 use super::*;
 
 impl AstToHirLowerer {
+    fn bind_prelude_binding(
+        package: &mut hir::HirPackage,
+        prelude_module: hir::resolve::ModuleId,
+        name: &str,
+        namespace: hir::Namespace,
+        entry: hir::SymbolEntry,
+    ) {
+        package.module_tree.bind(
+            prelude_module,
+            namespace,
+            name,
+            entry,
+        );
+    }
+
     pub(super) fn prepare_lowering_state(&mut self) {
         self.type_scopes.clear();
         self.type_scopes.push(HashMap::new());
@@ -20,6 +35,36 @@ impl AstToHirLowerer {
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
         self.package.module_tree = hir::resolve::ModuleTree::new();
+        self.package.dependencies = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| {
+                workspace
+                    .crates()
+                    .iter()
+                    .find(|(_, package)| {
+                        package.borrow().hir_package_id == self.package_id
+                    })
+                    .map(|(_, package)| {
+                        let package = package.borrow();
+                        package
+                            .graph
+                            .package(&package.package_id)
+                            .map(|descriptor| {
+                                descriptor
+                                    .metadata
+                                    .dependencies
+                                    .iter()
+                                    .filter_map(|dependency| {
+                                        dependency.resolved_package_id.as_ref()
+                                    })
+                                    .map(|id| hir::PackageId::new(id.as_str()))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    })
+            })
+            .unwrap_or_default();
         self.pending_type_aliases.clear();
         self.pending_impls.clear();
         self.resolved_import_aliases.clear();
@@ -27,125 +72,82 @@ impl AstToHirLowerer {
     }
 
     pub(super) fn load_default_prelude_defs(&mut self) {
-        // Real std nests prelude re-exports one level deeper than a bare
-        // `"std::prelude::"` prefix — `std::prelude::v1::Some`/
-        // `std::prelude::rust_2021::Vec`, not `std::prelude::Some`
-        // directly (`std::prelude::mod.rs` is itself just `pub mod v1;
-        // pub mod rust_2015 { pub use v1::*; }` ...). The vendored real
-        // `std` additionally bundles three real crates (`core`/`alloc`/
-        // `std`) under one FerroPhase package, so a genuine key looks
-        // like `std::core::prelude::v1::Ok` or `std::std::prelude::v1::Ok`
-        // — a literal `"std::prelude::"` prefix check matches neither
-        // (the segment right after the leading `"std::"` is `"core"`/
-        // `"std"`, not `"prelude"`). Look for a `prelude` path *segment*
-        // anywhere instead of a fixed-depth prefix, and take the last
-        // segment as the prelude-visible bare name — otherwise every real
-        // prelude item (`Ok`, `Err`, `Some`, `None`, `Vec`, ...) is
-        // silently dropped, and any code using them unqualified fails to
-        // resolve at all.
-        fn prelude_bare_name(key: &str) -> Option<&str> {
-            if key.split("::").any(|segment| segment == "prelude") {
-                key.rsplit("::").next()
-            } else {
-                None
-            }
-        }
-        let type_aliases: Vec<_> = self
-            .package
-            .module_tree
-            .all_bindings(hir::Namespace::Type)
-            .filter_map(|(path, entry)| {
-                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
-            })
-            .collect();
-        let value_aliases: Vec<_> = self
-            .package
-            .module_tree
-            .all_bindings(hir::Namespace::Value)
-            .filter_map(|(path, entry)| {
-                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
-            })
-            .collect();
-        let prelude_module = self.package.module_tree.prelude();
-        for (name, res) in type_aliases {
-            self.package.module_tree.bind(
-                prelude_module,
-                hir::Namespace::Type,
-                &name,
-                hir::SymbolEntry {
-                    res,
-                    export: hir::SymbolExport::Public,
-                    path: None,
-                },
-            );
-        }
-        for (name, res) in value_aliases {
-            self.package.module_tree.bind(
-                prelude_module,
-                hir::Namespace::Value,
-                &name,
-                hir::SymbolEntry {
-                    res,
-                    export: hir::SymbolExport::Public,
-                    path: None,
-                },
-            );
-        }
-
         // This package's own module tree only ever holds *this* module's
-        // own (freshly `reset_file_context`-cleared) declarations — std's
-        // prelude re-exports live in a dependency package, compiled in its
-        // own, separate `AstToHirLowerer` invocation entirely. Its exported
-        // symbol table (`hir_exports`, the third element
-        // `hir_definitions()` returns) is where those actually surface;
-        // scan it the same way, merging in rather than overwriting what's
-        // already collected above.
-        for (_module_path, _hir_package, exports) in self.hir_program.hir_definitions() {
-            for (key, res) in &exports {
-                let Some(name) = prelude_bare_name(key) else {
-                    continue;
-                };
-                // A prelude export could be looked up in either
-                // namespace (`Option` as a type, `Some`/`None` as
-                // values) — record it in both; an entry that's never
-                // consulted in the "wrong" namespace is simply unused,
-                // not incorrect.
-                if self
-                    .package
-                    .module_tree
-                    .lookup(prelude_module, hir::Namespace::Value, name)
-                    .is_none()
-                {
-                    self.package.module_tree.bind(
-                        prelude_module,
-                        hir::Namespace::Value,
-                        name,
-                        hir::SymbolEntry {
-                            res: res.clone(),
-                            export: hir::SymbolExport::Public,
-                            path: None,
-                        },
-                    );
-                }
-                if self
-                    .package
-                    .module_tree
-                    .lookup(prelude_module, hir::Namespace::Type, name)
-                    .is_none()
-                {
-                    self.package.module_tree.bind(
-                        prelude_module,
-                        hir::Namespace::Type,
-                        name,
-                        hir::SymbolEntry {
-                            res: res.clone(),
-                            export: hir::SymbolExport::Public,
-                            path: None,
-                        },
-                    );
-                }
+        // own declarations. Prelude bindings are installed at the symbol
+        // registration boundary, where their real module path, namespace,
+        // visibility, and resolved `Res` are still available.
+        // rustc installs the prelude of the selected standard library crate
+        // through crate metadata. The HIR package records those resolved
+        // dependency edges, so unrelated packages loaded in the same session
+        // cannot leak bare names into this crate.
+        // The provider reports rustc's implicit `std` edge in ordinary
+        // Rust package metadata. Do not infer a prelude from whatever
+        // unrelated sysroot packages happen to be loaded: `libc`, for
+        // example, is not a Rust crate with a core prelude merely because
+        // core is present in the shared HIR program.
+        let selected_prelude = match self.package_id.as_str() {
+            // A sysroot crate has the same implicit prelude while its own
+            // source is being resolved. In particular, core and alloc have
+            // no dependency edge advertising their own prelude, and std must
+            // not accidentally select core merely because core is one of
+            // std's dependencies. The source crate's prelude is already in
+            // this lowerer's module tree; it is not published in the shared
+            // HIR program until transform_package returns.
+            "core" | "std" => Some(self.package_id.clone()),
+            _ => self
+                .package
+                .dependencies
+                .iter()
+                .find(|dependency| dependency.as_str() == "std")
+                .cloned()
+                .or_else(|| {
+                    self.package
+                        .dependencies
+                        .iter()
+                        .find(|dependency| dependency.as_str() == "core")
+                        .cloned()
+                }),
+        };
+        if let Some(dependency_id) = selected_prelude {
+            if dependency_id == self.package.id {
+                return;
             }
+            let Some(hir_package) = self.hir_program.package(&dependency_id) else {
+                return;
+            };
+            let prelude_module = self.package.module_tree.prelude();
+
+            // This is the HIR equivalent of rustc's crate metadata for the
+            // selected prelude. The reserved prelude node carries the
+            // namespace and resolved DefId of every binding, including
+            // re-exports and enum constructors. Consume it directly instead
+            // of reconstructing namespaces from flattened export keys or
+            // looking up the defining item, both of which lose information at
+            // the crate boundary.
+            for namespace in [hir::Namespace::Type, hir::Namespace::Value] {
+                let bindings = hir_package
+                    .module_tree
+                    .prelude_bindings(namespace)
+                    .map(|(name, entry)| (name.to_owned(), entry.clone()))
+                    .collect::<Vec<_>>();
+                for (name, entry) in bindings {
+                    if self
+                        .package
+                        .module_tree
+                        .lookup(prelude_module, namespace, &name)
+                        .is_none()
+                    {
+                        Self::bind_prelude_binding(
+                            &mut self.package,
+                            prelude_module,
+                            &name,
+                            namespace,
+                            entry,
+                        );
+                    }
+                }
         }
+    }
     }
     /// The current, real mechanism for merging every workspace dependency's
     /// own `def_map`/`def_paths`/`op_defs`/`intrinsic_defs` into this
@@ -158,19 +160,38 @@ impl AstToHirLowerer {
     /// this is the only mechanism that makes cross-package references work
     /// at all.
     pub(super) fn seed_workspace_definitions(&mut self, program: &mut hir::HirPackage) {
-        for (_module_path, hir_program, _exports) in self.hir_program.hir_definitions() {
-            // Deliberately *not* pushed into `program.items` — that would
-            // duplicate every dependency's struct/enum into this package's
-            // own output/lifted AST regardless of whether anything here
-            // actually references them. `def_map` (populated below) is the
-            // registry; `hir_to_mir::HirToMirLowerer::compute_adt_layout` looks
-            // up and lazily registers a foreign struct/enum from it only
-            // when something concrete actually needs one.
-            for item in &hir_program.items {
-                program.def_map.insert(item.def_id.clone(), item.clone());
+        fn normalize_external_path(
+            package_id: &hir::PackageId,
+            segments: Vec<String>,
+        ) -> Vec<String> {
+            hir::HirProgram::canonical_external_path(
+                package_id,
+                &segments.join("::"),
+            )
+            .split("::")
+            .map(str::to_owned)
+            .collect()
+        }
+
+        for hir_program in self.hir_program.packages.values() {
+            // Rust's extern-prelude spelling normalizes Cargo package names
+            // (`skln-core` is imported as `skln_core`). Keep published
+            // definition paths consistent with module-tree export keys and
+            // `HirProgram::find_export` without cloning the dependency's
+            // complete item map.
+            for (def_id, def_path) in &hir_program.def_paths {
+                let segments = def_path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.as_str().to_owned())
+                    .collect::<Vec<_>>();
+                let segments = normalize_external_path(&hir_program.id, segments);
+                let normalized = hir::DefPath::new(
+                    segments.into_iter().map(hir::Symbol::new).collect(),
+                );
+                program.def_paths.insert(def_id.clone(), normalized.clone());
+                self.package.def_paths.insert(def_id.clone(), normalized);
             }
-            program.def_map.extend(hir_program.def_map.clone());
-            program.def_paths.extend(hir_program.def_paths.clone());
             program.op_defs.extend(hir_program.op_defs.clone());
             program
                 .intrinsic_defs
@@ -178,12 +199,195 @@ impl AstToHirLowerer {
             program
                 .type_alias_targets
                 .extend(hir_program.type_alias_targets.clone());
-            // Cross-package exported value/type symbols (`_exports`) are
-            // *not* eagerly copied into this package's own module tree
-            // here — `resolve_type_symbol`/`resolve_value_symbol`/
-            // `lookup_global_res`/`item_exists` all fall back to
-            // `workspace.find_export` lazily on a local-lookup miss
-            // instead.
+        }
+        // Publish dependency exports into the same qualified module tree used
+        // by local resolution. This is the resolver-equivalent of rustc's
+        // extern prelude: a path such as `dep::module::PublicType` must be
+        // walkable segment by segment during import resolution, before any
+        // later direct export fallback is considered. Prefix exports that are
+        // stored relative to their package root, while preserving already
+        // canonical paths from providers that include that root.
+        for (_module_path, hir_package, exports) in self.hir_program.hir_definitions() {
+            // A module is part of the dependency's public namespace even if
+            // it has no exported child symbol. Preserve every real module
+            // path under the normalized extern-prelude crate root so paths
+            // such as `std::fmt` resolve through the same tree walk as local
+            // modules.
+            for module_path in hir_package
+                .module_tree
+                .all_paths()
+                .filter(|path| hir_package.module_tree.module_exists(path))
+            {
+                let segments = module_path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.to_owned())
+                    .collect::<Vec<_>>();
+                let segments = normalize_external_path(&hir_package.id, segments);
+                self.package
+                    .module_tree
+                    .ensure_module(&fp_core::ast::path::QualifiedPath::new(segments));
+            }
+            // Keep the namespace recorded by the dependency's module tree.
+            // Reconstructing it from the DefId is lossy: providers may export
+            // a definition without retaining a corresponding HIR item in the
+            // package index. That made type-only exports (notably String,
+            // Vec, and Arc) fall through to the value namespace.
+            let mut dependency_bindings = hir_package
+                .module_tree
+                .all_bindings(hir::Namespace::Value)
+                .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
+                .map(|(path, entry)| (path.to_key(), entry.res.clone(), Some(hir::Namespace::Value)))
+                .chain(
+                    hir_package
+                        .module_tree
+                        .all_bindings(hir::Namespace::Type)
+                        .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
+                        .map(|(path, entry)| {
+                            (path.to_key(), entry.res.clone(), Some(hir::Namespace::Type))
+                        }),
+                )
+                .collect::<Vec<_>>();
+            // Flattened exports also contain public enum variants and other
+            // entries which do not have a standalone item. Keep those as
+            // namespace-unknown records for the existing fallback below.
+            dependency_bindings.extend(
+                exports
+                    .into_iter()
+                    .map(|(key, res)| (key, res, None)),
+            );
+            // Transparent aliases have no HIR item and therefore may not have
+            // a module-tree binding of their own.  Their stable identity is
+            // the DefId plus the owning package's DefPath, which is the same
+            // information rustc keeps in its definition table.  Publish that
+            // type-namespace entry so an alias re-export such as
+            // `std::io::Result` remains resolvable after crossing packages.
+            dependency_bindings.extend(
+                hir_package
+                    .type_alias_targets
+                    .keys()
+                    .filter_map(|def_id| {
+                        hir_package.def_paths.get(def_id).map(|def_path| {
+                            (
+                                def_path.join("::"),
+                                hir::Res::Def(def_id.clone()),
+                                Some(hir::Namespace::Type),
+                            )
+                        })
+                    }),
+            );
+
+            for (key, res, namespace) in dependency_bindings {
+                let segments = key
+                    .split("::")
+                    .filter(|segment| !segment.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let segments = normalize_external_path(&hir_package.id, segments);
+                let Some(leaf) = segments.last().cloned() else {
+                    continue;
+                };
+                let res = match res {
+                    hir::Res::Module(module_path) => hir::Res::Module(
+                        normalize_external_path(&hir_package.id, module_path),
+                    ),
+                    res => res,
+                };
+                let path = fp_core::ast::path::QualifiedPath::new(segments.clone());
+                let prefix = fp_core::ast::path::QualifiedPath::new(
+                    path.segments[..path.segments.len() - 1].to_vec(),
+                );
+                let module = self.package.module_tree.ensure_module(&prefix);
+                if matches!(res, hir::Res::Module(_)) {
+                    self.package.module_tree.ensure_module(&path);
+                    // Preserve a public module re-export as a binding at its
+                    // parent. Import resolution follows this canonical
+                    // `Res::Module` target, as rustc does, instead of
+                    // treating only the textual path as a module.
+                    for namespace in [hir::Namespace::Type, hir::Namespace::Value] {
+                        if self
+                            .package
+                            .module_tree
+                            .lookup(module, namespace, &leaf)
+                            .is_none()
+                        {
+                            self.package.module_tree.bind(
+                                module,
+                                namespace,
+                                &leaf,
+                                hir::SymbolEntry {
+                                    res: res.clone(),
+                                    export: hir::SymbolExport::Public,
+                                    path: Some(path.clone()),
+                                },
+                            );
+                        }
+                    }
+                }
+                let (bind_type, bind_value) = match namespace {
+                    Some(hir::Namespace::Type) => (true, false),
+                    Some(hir::Namespace::Value) => (false, true),
+                    None => match &res {
+                    hir::Res::Def(def_id)
+                        if hir_package.type_alias_targets.contains_key(def_id)
+                            || self.hir_program.type_alias_target(def_id.clone()).is_some() =>
+                    {
+                        (true, false)
+                    }
+                    hir::Res::Def(def_id) => match self
+                        .hir_program
+                        .item(def_id.clone())
+                        .or_else(|| hir_package.item(def_id))
+                    {
+                        Some(item) => match &item.kind {
+                            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => (true, true),
+                            hir::ItemKind::Trait(_) => (true, false),
+                            _ => (false, true),
+                        },
+                        // Public enum variants and impl members are exported
+                        // without a top-level item of their own. They are
+                        // value-namespace entries by construction.
+                        None => (false, true),
+                    },
+                    hir::Res::Module(_) => (false, false),
+                    _ => (false, true),
+                    },
+                };
+                if bind_type && self
+                    .package
+                    .module_tree
+                    .lookup(module, hir::Namespace::Type, &leaf)
+                    .is_none()
+                {
+                    self.package.module_tree.bind(
+                        module,
+                        hir::Namespace::Type,
+                        &leaf,
+                        hir::SymbolEntry {
+                            res: res.clone(),
+                            export: hir::SymbolExport::Public,
+                            path: Some(path.clone()),
+                        },
+                    );
+                }
+                if bind_value && self
+                    .package
+                    .module_tree
+                    .lookup(module, hir::Namespace::Value, &leaf)
+                    .is_none()
+                {
+                    self.package.module_tree.bind(
+                        module,
+                        hir::Namespace::Value,
+                        &leaf,
+                        hir::SymbolEntry {
+                            res: res.clone(),
+                            export: hir::SymbolExport::Public,
+                            path: Some(path.clone()),
+                        },
+                    );
+                }
+            }
         }
         for path in self
             .workspace
@@ -377,6 +581,9 @@ impl AstToHirLowerer {
                         .insert(def_trait.name.name.clone(), def_trait.clone());
                     self.trait_def_modules
                         .insert(def_trait.name.name.clone(), self.module_path.clone());
+                    for trait_item in &def_trait.items {
+                        self.allocate_def_id_for_item(trait_item);
+                    }
                 }
                 ItemKind::DefType(def_type) => {
                     self.register_type_alias(&def_type.name.name, &def_type.value);

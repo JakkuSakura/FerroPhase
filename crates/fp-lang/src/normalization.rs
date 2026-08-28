@@ -1,10 +1,8 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
-    ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType, ExprStringTemplate,
-    ExprStruct, ExprUnOp,
-    FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
-    Path, StmtLet, Ty, Value,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType,
+    ExprStringTemplate, ExprStruct, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec,
+    FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -150,8 +148,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, span, kind) = expr.into_parts();
         let ExprKind::Macro(macro_expr) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
-            )));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
         };
 
         if let Some(name) = macro_expr.invocation.path.segments.last() {
@@ -161,7 +158,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     let replacement = Expr::value(Value::Type(ty));
                     return Ok(NormalizeOutcome::Normalized(replacement));
                 }
-                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                    id,
+                    span,
                     ExprKind::Macro(macro_expr),
                 )));
             }
@@ -180,14 +179,14 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let mut input = tokens.as_slice();
                 return match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
                     Ok(meta) => {
-                        let enabled = fp_core::cfg::cfg_meta_enabled(
-                            &meta,
-                            &fp_core::cfg::TargetEnv::host(),
-                        );
+                        let enabled =
+                            fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host());
                         let replacement = Expr::value(Value::bool(enabled));
                         Ok(NormalizeOutcome::Normalized(replacement))
                     }
-                    Err(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    Err(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        span,
                         ExprKind::Macro(macro_expr),
                     ))),
                 };
@@ -213,7 +212,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         let replacement = block;
                         Ok(NormalizeOutcome::Normalized(replacement))
                     }
-                    None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        span,
                         ExprKind::Macro(macro_expr),
                     ))),
                 };
@@ -230,7 +231,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "const_error" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 2 {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        span,
                         ExprKind::Macro(macro_expr),
                     )));
                 }
@@ -314,8 +317,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 } else {
                     let panic_expr = panic_call_from_args(iter.collect());
                     assert_compare_macro_with_panic(left, right, BinOpKind::Eq, panic_expr)
-                }
-                ;
+                };
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_ne" {
@@ -338,8 +340,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 } else {
                     let panic_expr = panic_call_from_args(iter.collect());
                     assert_compare_macro_with_panic(left, right, BinOpKind::Ne, panic_expr)
-                }
-                ;
+                };
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "matches" {
@@ -375,13 +376,13 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                                     }))),
                                 }));
                             }
-                            return Ok(NormalizeOutcome::Normalized(
-                                replacement,
-                            ));
+                            return Ok(NormalizeOutcome::Normalized(replacement));
                         }
                     }
                 }
-                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                    id,
+                    span,
                     ExprKind::Macro(macro_expr),
                 )));
             }
@@ -404,7 +405,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 // anywhere in a large vendored file — even inside a test
                 // module — used to poison everything).
                 let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        span,
                         ExprKind::Macro(macro_expr),
                     )));
                 };
@@ -463,7 +466,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 // &mut Formatter) -> fmt::Result` once both those types
                 // are mapped) needs no special handling either.
                 let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
-                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        span,
                         ExprKind::Macro(macro_expr),
                     )));
                 };
@@ -474,7 +479,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 }
                 let (mut template, skip) = build_print_template_from_args(&args[1..])?;
                 if macro_name == "writeln" {
-                    template.parts.push(FormatTemplatePart::Literal("\n".to_string()));
+                    template
+                        .parts
+                        .push(FormatTemplatePart::Literal("\n".to_string()));
                 }
                 let mut call_args = Vec::with_capacity(args.len());
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
@@ -490,11 +497,11 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ExprKind::Invoke(ExprInvoke {
                         span: span.unwrap_or_default(),
                         target: ExprInvokeTarget::Method(ExprSelect {
-                        span: span.unwrap_or_default(),
-                        obj: Box::new(args[0].clone()),
-                        field: Ident::new("append"),
-                        generic_args: Vec::new(),
-                        select: ExprSelectType::Method,
+                            span: span.unwrap_or_default(),
+                            obj: Box::new(args[0].clone()),
+                            field: Ident::new("append"),
+                            generic_args: Vec::new(),
+                            select: ExprSelectType::Method,
                         }),
                         args: vec![formatted],
                         kwargs: Vec::new(),
@@ -559,7 +566,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let invocation_tokens = &macro_expr.invocation.token_trees;
                 let file_id = macro_tokens_file_id(invocation_tokens);
                 for rule in &def.rules {
-                    let Some(bindings) = match_macro_rule(&rule.matcher, invocation_tokens, file_id)
+                    let Some(bindings) =
+                        match_macro_rule(&rule.matcher, invocation_tokens, file_id)
                     else {
                         continue;
                     };
@@ -567,15 +575,15 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     let flat = macro_token_trees_to_tokens(&substituted);
                     let wrapped = wrap_tokens_in_group(&flat, "{", "}", macro_expr.span());
                     if let Ok(replacement) = crate::ast::parse_expr_tokens(&wrapped, file_id) {
-                        return Ok(NormalizeOutcome::Normalized(
-                            replacement,
-                        ));
+                        return Ok(NormalizeOutcome::Normalized(replacement));
                     }
                 }
             }
         }
 
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            id,
+            span,
             ExprKind::Macro(macro_expr),
         )))
     }
@@ -583,33 +591,30 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, span, kind) = expr.into_parts();
         let ExprKind::Invoke(invoke) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
-            )));
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
         };
 
         // Keep the exact language-item registry as the source of truth for
         // operations exposed by loaded std modules. This also preserves the
         // call-specific argument shaping used by print and filesystem ops.
         if let Some(call) = fp_core::ast::intrinsic_call_from_invoke(&invoke) {
-            return self.normalize_call(Expr::from_parts(id, span,
-                ExprKind::IntrinsicCall(call),
-            ));
+            return self.normalize_call(Expr::from_parts(id, span, ExprKind::IntrinsicCall(call)));
         }
 
         let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id,
+                span,
                 ExprKind::Invoke(invoke),
             )));
         };
 
         // `resolve_lang_intrinsic` returns a genuine intrinsic kind.
         let kind = intrinsic_kind;
-        Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                kind,
-                invoke.args,
-                invoke.kwargs,
-            )),
+        Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+            id,
+            span,
+            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, invoke.args, invoke.kwargs)),
         )))
     }
 
@@ -634,10 +639,12 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     }
 }
 
-
 /// Apply the intrinsic normalizer to all expressions in AST items.
 /// Used in transpile mode to normalize Rust-specific patterns before serialization.
-pub fn normalize_items(items: &mut [fp_core::ast::Item], normalizer: &dyn IntrinsicNormalizer) -> Result<()> {
+pub fn normalize_items(
+    items: &mut [fp_core::ast::Item],
+    normalizer: &dyn IntrinsicNormalizer,
+) -> Result<()> {
     for item in items {
         normalize_item(item, normalizer)?;
     }
@@ -647,13 +654,27 @@ pub fn normalize_items(items: &mut [fp_core::ast::Item], normalizer: &dyn Intrin
 fn normalize_item(item: &mut fp_core::ast::Item, n: &dyn IntrinsicNormalizer) -> Result<()> {
     use fp_core::ast::ItemKind;
     match item.kind_mut() {
-        ItemKind::Module(m) => { for c in &mut m.items { normalize_item(c, n)?; } }
-        ItemKind::DefFunction(f) => {
-            for stmt in &mut f.body.stmts { normalize_stmt(stmt, n)?; }
+        ItemKind::Module(m) => {
+            for c in &mut m.items {
+                normalize_item(c, n)?;
+            }
         }
-        ItemKind::Impl(imp) => { for c in &mut imp.items { normalize_item(c, n)?; } }
-        ItemKind::Expr(expr) => { normalize_expr(expr, n)?; }
-        ItemKind::DefConst(c) => { normalize_expr(&mut c.value, n)?; }
+        ItemKind::DefFunction(f) => {
+            for stmt in &mut f.body.stmts {
+                normalize_stmt(stmt, n)?;
+            }
+        }
+        ItemKind::Impl(imp) => {
+            for c in &mut imp.items {
+                normalize_item(c, n)?;
+            }
+        }
+        ItemKind::Expr(expr) => {
+            normalize_expr(expr, n)?;
+        }
+        ItemKind::DefConst(c) => {
+            normalize_expr(&mut c.value, n)?;
+        }
         _ => {}
     }
     Ok(())
@@ -661,9 +682,17 @@ fn normalize_item(item: &mut fp_core::ast::Item, n: &dyn IntrinsicNormalizer) ->
 
 fn normalize_stmt(stmt: &mut BlockStmt, n: &dyn IntrinsicNormalizer) -> Result<()> {
     match stmt {
-        BlockStmt::Let(l) => { if let Some(init) = &mut l.init { normalize_expr(init, n)?; } }
-        BlockStmt::Expr(se) => { normalize_expr(&mut se.expr, n)?; }
-        BlockStmt::Item(item) => { normalize_item(item, n)?; }
+        BlockStmt::Let(l) => {
+            if let Some(init) = &mut l.init {
+                normalize_expr(init, n)?;
+            }
+        }
+        BlockStmt::Expr(se) => {
+            normalize_expr(&mut se.expr, n)?;
+        }
+        BlockStmt::Item(item) => {
+            normalize_item(item, n)?;
+        }
         _ => {}
     }
     Ok(())
@@ -672,35 +701,94 @@ fn normalize_stmt(stmt: &mut BlockStmt, n: &dyn IntrinsicNormalizer) -> Result<(
 fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
     // Walk children first
     match expr.kind_mut() {
-        ExprKind::Block(block) => { for s in &mut block.stmts { normalize_stmt(s, n)?; } }
+        ExprKind::Block(block) => {
+            for s in &mut block.stmts {
+                normalize_stmt(s, n)?;
+            }
+        }
         ExprKind::If(if_expr) => {
             normalize_expr(&mut if_expr.cond, n)?;
             normalize_expr(&mut if_expr.then, n)?;
-            if let Some(e) = &mut if_expr.elze { normalize_expr(e, n)?; }
+            if let Some(e) = &mut if_expr.elze {
+                normalize_expr(e, n)?;
+            }
         }
         ExprKind::Match(mt) => {
-            if let Some(s) = &mut mt.scrutinee { normalize_expr(s, n)?; }
-            for c in &mut mt.cases { normalize_expr(&mut c.body, n)?; }
+            if let Some(s) = &mut mt.scrutinee {
+                normalize_expr(s, n)?;
+            }
+            for c in &mut mt.cases {
+                normalize_expr(&mut c.body, n)?;
+            }
         }
-        ExprKind::While(wh) => { normalize_expr(&mut wh.cond, n)?; normalize_expr(&mut wh.body, n)?; }
-        ExprKind::For(fr) => { normalize_expr(&mut fr.iter, n)?; normalize_expr(&mut fr.body, n)?; }
-        ExprKind::Loop(lp) => { normalize_expr(&mut lp.body, n)?; }
-        ExprKind::BinOp(b) => { normalize_expr(&mut b.lhs, n)?; normalize_expr(&mut b.rhs, n)?; }
-        ExprKind::UnOp(u) => { normalize_expr(&mut u.val, n)?; }
-        ExprKind::Assign(a) => { normalize_expr(&mut a.target, n)?; normalize_expr(&mut a.value, n)?; }
-        ExprKind::Return(r) => { if let Some(v) = &mut r.value { normalize_expr(v, n)?; } }
-        ExprKind::Let(l) => { normalize_expr(&mut l.expr, n)?; }
-        ExprKind::Closure(cl) => { normalize_expr(&mut cl.body, n)?; }
-        ExprKind::Array(arr) => { for v in &mut arr.values { normalize_expr(v, n)?; } }
-        ExprKind::Struct(st) => { for f in &mut st.fields { if let Some(v) = &mut f.value { normalize_expr(v, n)?; } } }
-        ExprKind::Select(sel) => { normalize_expr(&mut sel.obj, n)?; }
-        ExprKind::Index(idx) => { normalize_expr(&mut idx.obj, n)?; normalize_expr(&mut idx.index, n)?; }
-        ExprKind::Paren(p) => { normalize_expr(&mut p.expr, n)?; }
-        ExprKind::Reference(r) => { normalize_expr(&mut r.referee, n)?; }
-        ExprKind::Dereference(d) => { normalize_expr(&mut d.referee, n)?; }
-        ExprKind::Cast(c) => { normalize_expr(&mut c.expr, n)?; }
+        ExprKind::While(wh) => {
+            normalize_expr(&mut wh.cond, n)?;
+            normalize_expr(&mut wh.body, n)?;
+        }
+        ExprKind::For(fr) => {
+            normalize_expr(&mut fr.iter, n)?;
+            normalize_expr(&mut fr.body, n)?;
+        }
+        ExprKind::Loop(lp) => {
+            normalize_expr(&mut lp.body, n)?;
+        }
+        ExprKind::BinOp(b) => {
+            normalize_expr(&mut b.lhs, n)?;
+            normalize_expr(&mut b.rhs, n)?;
+        }
+        ExprKind::UnOp(u) => {
+            normalize_expr(&mut u.val, n)?;
+        }
+        ExprKind::Assign(a) => {
+            normalize_expr(&mut a.target, n)?;
+            normalize_expr(&mut a.value, n)?;
+        }
+        ExprKind::Return(r) => {
+            if let Some(v) = &mut r.value {
+                normalize_expr(v, n)?;
+            }
+        }
+        ExprKind::Let(l) => {
+            normalize_expr(&mut l.expr, n)?;
+        }
+        ExprKind::Closure(cl) => {
+            normalize_expr(&mut cl.body, n)?;
+        }
+        ExprKind::Array(arr) => {
+            for v in &mut arr.values {
+                normalize_expr(v, n)?;
+            }
+        }
+        ExprKind::Struct(st) => {
+            for f in &mut st.fields {
+                if let Some(v) = &mut f.value {
+                    normalize_expr(v, n)?;
+                }
+            }
+        }
+        ExprKind::Select(sel) => {
+            normalize_expr(&mut sel.obj, n)?;
+        }
+        ExprKind::Index(idx) => {
+            normalize_expr(&mut idx.obj, n)?;
+            normalize_expr(&mut idx.index, n)?;
+        }
+        ExprKind::Paren(p) => {
+            normalize_expr(&mut p.expr, n)?;
+        }
+        ExprKind::Reference(r) => {
+            normalize_expr(&mut r.referee, n)?;
+        }
+        ExprKind::Dereference(d) => {
+            normalize_expr(&mut d.referee, n)?;
+        }
+        ExprKind::Cast(c) => {
+            normalize_expr(&mut c.expr, n)?;
+        }
         ExprKind::Invoke(inv) => {
-            for arg in &mut inv.args { normalize_expr(arg, n)?; }
+            for arg in &mut inv.args {
+                normalize_expr(arg, n)?;
+            }
             if let ExprInvokeTarget::Method(sel) = &mut inv.target {
                 normalize_expr(&mut sel.obj, n)?;
             }
@@ -919,9 +1007,7 @@ pub(crate) fn select_cfg_select_arm(token_trees: &[MacroTokenTree]) -> Option<Ve
             let flat = macro_token_trees_to_tokens(&predicate_tokens);
             let mut input = flat.as_slice();
             match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
-                Ok(meta) => {
-                    fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host())
-                }
+                Ok(meta) => fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host()),
                 Err(_) => false,
             }
         };
@@ -1374,7 +1460,13 @@ fn panic_call_with_message(message: &str) -> Expr {
 // Allow returning Ok(None) from normalize_match without extra type annotations
 struct NoneOutcome;
 impl From<NoneOutcome> for NormalizeOutcome<Expr> {
-    fn from(_: NoneOutcome) -> Self { NormalizeOutcome::Ignored(Expr::from_parts(0, None, ExprKind::Value(Box::new(Value::Null(Default::default()))))) }
+    fn from(_: NoneOutcome) -> Self {
+        NormalizeOutcome::Ignored(Expr::from_parts(
+            0,
+            None,
+            ExprKind::Value(Box::new(Value::Null(Default::default()))),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1416,7 +1508,14 @@ mod tests {
         let fp_core::ast::ItemKind::Impl(impl_item) = derived[0].kind() else {
             panic!("expected generated Clone impl");
         };
-        assert_eq!(impl_item.trait_ty.as_ref().and_then(Name::as_ident).map(Ident::as_str), Some("Clone"));
+        assert_eq!(
+            impl_item
+                .trait_ty
+                .as_ref()
+                .and_then(Name::as_ident)
+                .map(Ident::as_str),
+            Some("Clone")
+        );
         assert_eq!(impl_item.generics_params.len(), 1);
         assert!(matches!(
             impl_item.items.first().map(fp_core::ast::Item::kind),

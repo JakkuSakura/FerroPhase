@@ -1,7 +1,7 @@
 use fp_backend::transformations::{
     AstToHirLowerer, HirLoweringConfig, HirToMirLowerer, MirToLirLowerer,
 };
-use fp_core::ast::package::{DependencyDescriptor, DependencyKind, PackageId};
+use fp_core::ast::package::{DependencyDescriptor, PackageId};
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
@@ -64,6 +64,14 @@ pub struct CompilerDriver {
     pub state: Rc<RefCell<CompilerState>>,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::ast::package::AstPackage>>>,
+    /// The compiled `std` package is the source of Rust's implicit prelude.
+    /// Keep it on the driver because package-scoped `AstProgram`s deliberately
+    /// have independent prelude slots and are recreated during recursion.
+    prelude_package: Option<Rc<RefCell<fp_core::ast::package::AstPackage>>>,
+    /// Packages that completed the pipeline required of a compilation root.
+    /// A transpile dependency is deliberately absent until a later workspace
+    /// walk promotes it to a root.
+    completed_roots: HashSet<PackageId>,
     pub pipeline: PipelineMode,
 }
 
@@ -115,6 +123,8 @@ impl CompilerDriver {
             state,
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
+            prelude_package: None,
+            completed_roots: HashSet::new(),
             pipeline: PipelineMode::Native,
         }
     }
@@ -379,12 +389,46 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> {
+        self.compile_package_with_scope(package_id, true).await
+    }
+
+    /// Compiles a package with an explicit root/dependency scope. In transpile
+    /// mode dependencies need their HIR definitions and exports available to
+    /// resolve the root package, but they are not compilation roots: checking
+    /// and backend lowering every dependency would make the transpiler process
+    /// the entire sysroot. Native compilation preserves the historical
+    /// dependency behavior and still lowers dependencies fully.
+    async fn compile_package_with_scope(
+        &mut self,
+        package_id: &PackageId,
+        is_root: bool,
+    ) -> Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> {
         let parent_workspace = self.state.borrow().workspace.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_workspace.import_package(package_id.clone(), package.clone());
+            if self.pipeline == PipelineMode::Transpile && !is_root {
+                self.ensure_hir_for_resolution(&package)?;
+            }
+            if is_root
+                && self.pipeline == PipelineMode::Transpile
+                && !self.completed_roots.contains(package_id)
+            {
+                self.compile_items_to_lir_units(&package).await?;
+                self.completed_roots.insert(package_id.clone());
+            }
             return Ok(package);
         }
         if let Some(package) = parent_workspace.compiled_package(package_id) {
+            if self.pipeline == PipelineMode::Transpile && !is_root {
+                self.ensure_hir_for_resolution(&package)?;
+            }
+            if is_root
+                && self.pipeline == PipelineMode::Transpile
+                && !self.completed_roots.contains(package_id)
+            {
+                self.compile_items_to_lir_units(&package).await?;
+                self.completed_roots.insert(package_id.clone());
+            }
             return Ok(package);
         }
         if !self.building_packages.insert(package_id.clone()) {
@@ -454,16 +498,15 @@ impl CompilerDriver {
                 );
                 if !precompiled_lir_blobs.is_empty() {
                     Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_blobs)?;
+                    if self.pipeline == PipelineMode::Transpile && !is_root {
+                        self.ensure_hir_for_resolution(&package)?;
+                    }
+                } else if self.pipeline == PipelineMode::Transpile && !is_root {
+                    self.ensure_hir_for_resolution(&package)?;
                 } else if matches!(
                     self.pipeline,
                     PipelineMode::Native | PipelineMode::Transpile
                 ) {
-                    // `Transpile` needs HIR generation + typing too (it lifts the
-                    // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
-                    // attempts MIR/LIR lowering there so any comptime entries (e.g. `const
-                    // { .. }` blocks) get resolved and relowered the same way `Native` does,
-                    // below — every target needs the resolved value, not just the block's
-                    // type, so both pipeline modes handle a comptime failure identically.
                     self.compile_items_to_lir_units(&package).await?;
                 }
                 Ok(package)
@@ -478,6 +521,9 @@ impl CompilerDriver {
         let package = result?;
         self.compiled_packages
             .insert(package_id.clone(), package.clone());
+        if is_root || self.pipeline == PipelineMode::Native {
+            self.completed_roots.insert(package_id.clone());
+        }
         parent_workspace.import_package(package_id.clone(), package.clone());
         Ok(package)
     }
@@ -499,45 +545,43 @@ impl CompilerDriver {
                     dependency.package
                 ))
             })?;
-            let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
+            let dependency_package =
+                Box::pin(self.compile_package_with_scope(&dependency_id, false)).await?;
             if dependency_id.as_str() == "std" {
+                self.prelude_package = Some(dependency_package.clone());
                 self.state
                     .borrow()
                     .workspace
                     .install_prelude(dependency_package);
             }
         }
+        // `std` may have been discovered below an intermediate dependency.
+        // That dependency's package-scoped workspace is discarded when its
+        // recursive compilation returns, so install the retained prelude in
+        // the workspace that belongs to this package as well.
+        if let Some(prelude) = self.prelude_package.clone() {
+            self.state.borrow().workspace.install_prelude(prelude);
+        }
         Ok(())
     }
 
-    /// Compile every member of a workspace by walking them through the same
-    /// recursive, cached, cycle-safe dependency machinery `compile_package`
-    /// already uses for a package's own declared dependencies — `root_id` is
-    /// a caller-supplied bookkeeping identity only, never resolved through a
-    /// `PackageProvider`. An inter-member dependency (e.g. member B
-    /// path-depends on sibling A) is compiled exactly once regardless of
-    /// which member's turn surfaces it first, since both go through
-    /// `compile_package`'s own `compiled_packages` cache. Callers read back
-    /// each member's result via `AstProgram::package_source` rather
-    /// than from this call's return value.
+    /// Compile every workspace member as a root through the same recursive,
+    /// cached, cycle-safe dependency machinery `compile_package` already uses
+    /// for a package's declared dependencies. `root_id` is retained as a
+    /// caller-supplied bookkeeping identity and is never resolved through a
+    /// `PackageProvider`. Dependencies discovered while compiling a member
+    /// follow the transpile dependency policy, while every listed member is
+    /// promoted to a root and therefore fully checked and handed to the
+    /// backend. Callers read each result via `AstProgram::package_source`.
     pub async fn compile_workspace(
         &mut self,
-        root_id: &PackageId,
+        _root_id: &PackageId,
         members: &[PackageId],
     ) -> Result<(), CompilerDriverError> {
-        let dependencies: Vec<DependencyDescriptor> = members
-            .iter()
-            .map(|id| DependencyDescriptor {
-                package: id.as_str().to_string(),
-                resolved_package_id: Some(id.clone()),
-                constraint: None,
-                kind: DependencyKind::Normal,
-                features: Vec::new(),
-                optional: false,
-                target: Default::default(),
-            })
-            .collect();
-        self.compile_dependencies(root_id, &dependencies).await
+        for member in members {
+            self.compile_package_with_scope(member, true).await?;
+        }
+        Ok(())
     }
 
     /// Installs a pre-baked `LirBlob` (from a `PrecompiledLir` item) into
@@ -555,6 +599,81 @@ impl CompilerDriver {
                 .insert_lir_blob_for_package(package_id, blob.clone());
         }
         Ok(())
+    }
+
+    /// Lowers a package into HIR and publishes its exported definitions. This
+    /// is the dependency path for transpilation: name and type resolution can
+    /// inspect the package's real HIR, while the package itself is not made a
+    /// type-checking or backend root.
+    fn lower_package_hir(
+        &mut self,
+        package_source: &fp_core::ast::package::AstPackage,
+        hir_package_id: hir::PackageId,
+    ) -> Result<
+        (
+            hir::HirPackage,
+            std::collections::HashMap<String, hir::Res>,
+            std::collections::HashMap<String, fp_core::ast::Ty>,
+        ),
+        CompilerDriverError,
+    > {
+        let normalizer = self
+            .state
+            .borrow()
+            .workspace
+            .provider()
+            .intrinsic_normalizer();
+        let mut generator =
+            AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id)
+                .with_intrinsic_normalizer(normalizer)
+                .with_lowering_config(HirLoweringConfig {
+                    capabilities: self.state.borrow().backend_capabilities(),
+                })
+                .with_workspace(self.state.borrow().workspace.clone());
+        let hir_package = generator.transform_package(package_source)?;
+        Ok((
+            hir_package,
+            generator.exported_symbols(),
+            generator.exported_type_aliases(),
+        ))
+    }
+
+    fn lower_package_hir_for_resolution(
+        &mut self,
+        package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
+    ) -> Result<(), CompilerDriverError> {
+        let hir_package_id = package.borrow().hir_package_id.clone();
+        let package_source = package.borrow().clone();
+        let (mut hir_package, exports, type_aliases) =
+            self.lower_package_hir(&package_source, hir_package_id)?;
+        hir_package.hir_exports.extend(exports);
+        package.borrow_mut().type_alias_exports.extend(type_aliases);
+        self.state.borrow_mut().insert_hir(hir_package);
+        Ok(())
+    }
+
+    /// Ensure a transpile dependency has a published HIR package before a
+    /// consumer is lowered. A package can already be present in the AST
+    /// workspace when it was compiled through another scope, or it can have
+    /// taken the precompiled-LIR branch above; neither fact implies that its
+    /// public HIR exports are in the session-wide program. This is the
+    /// dependency equivalent of rustc's crate metadata loading: publish once,
+    /// then let every later lowerer resolve through the same program.
+    fn ensure_hir_for_resolution(
+        &mut self,
+        package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
+    ) -> Result<(), CompilerDriverError> {
+        let hir_package_id = package.borrow().hir_package_id.clone();
+        let existing = self
+            .state
+            .borrow()
+            .hir_program()
+            .package(&hir_package_id)
+            .map(|hir_package| (hir_package.module_tree.all_paths().count(), hir_package.hir_exports.len()));
+        if existing.is_some() {
+            return Ok(());
+        }
+        self.lower_package_hir_for_resolution(package)
     }
 
     /// Runs a whole package's HIR generation + typing, then per-`DefId`
@@ -578,42 +697,9 @@ impl CompilerDriver {
             .borrow()
             .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| {
-                (
-                    hir_package.const_values(),
-                    hir_package.const_block_values(),
-                )
-            });
-        // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`,
-        // real vendored std's `int_impl!`/`uint_impl!`, ...) are expanded by
-        // `AstToHirLowerer`'s own single-pass item walker
-        // (`ast_to_hir::expand_item_macros`), driven by the provider's own
-        // `intrinsic_normalizer()` — see `PackageProvider::
-        // intrinsic_normalizer`'s doc comment for why that choice lives on
-        // the already-resolved, already-per-language provider rather than a
-        // separate frontend dependency of this crate.
-        let normalizer = self
-            .state
-            .borrow()
-            .workspace
-            .provider()
-            .intrinsic_normalizer();
-        let mut generator =
-            AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id.clone())
-                .with_intrinsic_normalizer(normalizer)
-                .with_lowering_config(HirLoweringConfig {
-                    // The active `TargetBackend`'s own capabilities (see
-                    // `fp_core::backend::TargetBackend::capabilities`), set by
-                    // `fp-cli` before compiling via
-                    // `CompilerState::set_backend_capabilities` — defaults to
-                    // `NATIVE` (nothing first-class) for any caller that never
-                    // sets it, matching this field's prior behavior exactly.
-                    capabilities: self.state.borrow().backend_capabilities(),
-                })
-                .with_workspace(self.state.borrow().workspace.clone());
-        let hir_program = generator.transform_package(&package_source)?;
-        let package_exports = generator.exported_symbols();
-        let type_alias_exports = generator.exported_type_aliases();
+            .map(|hir_package| (hir_package.const_values(), hir_package.const_block_values()));
+        let (hir_program, package_exports, type_alias_exports) =
+            self.lower_package_hir(&package_source, hir_package_id.clone())?;
         package
             .borrow_mut()
             .type_alias_exports
@@ -724,17 +810,9 @@ impl CompilerDriver {
     }
 
     /// `compile_items_to_lir_units`'s `PipelineMode::Transpile` path: lifts
-    /// the just-typechecked HIR back to AST (what the Kotlin backend
-    /// actually reads), splices it onto the original untyped source items
-    /// by qualified-path identity, then does a best-effort HIR->MIR->LIR
-    /// lowering purely so any `const { .. }` blocks get validated later
-    /// through the real interpreter (`evaluate_comptime_lir`) instead of a
-    /// hand-rolled one. MIR lowering was built for the Native pipeline and
-    /// may not yet cover every construct real vendored std/workspace code
-    /// exercises — a failure here is reported and this package simply
-    /// produces no LIR (comptime validation is skipped for it), matching
-    /// this pipeline's prior behavior; the lifted AST above is already
-    /// complete regardless.
+    /// the validated HIR back to the typed AST view consumed by source
+    /// backends, then returns. Transpilation has no MIR/LIR phase; native
+    /// lowering and comptime execution belong exclusively to `Native`.
     async fn transpile_lift_and_validate(
         &mut self,
         current_package_id: PackageId,
@@ -890,9 +968,7 @@ impl CompilerDriver {
                 .diagnostics
                 .get_diagnostics()
                 .iter()
-                .filter(|diagnostic| {
-                    diagnostic.code.as_deref() == Some(fp_typing::context::ITEM_CHECK_FAILURE_CODE)
-                })
+                .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
                 .map(|diagnostic| diagnostic.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");

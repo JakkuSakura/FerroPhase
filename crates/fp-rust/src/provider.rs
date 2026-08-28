@@ -150,15 +150,7 @@ impl PackageProvider for RustPackageProvider {
                 .collect()
         };
         let mut metadata = PackageMetadata::default();
-        metadata.dependencies.push(DependencyDescriptor {
-            package: "std".to_string(),
-            resolved_package_id: Some(PackageId::new("std")),
-            constraint: None,
-            kind: DependencyKind::Normal,
-            features: Vec::new(),
-            optional: false,
-            target: Default::default(),
-        });
+        metadata.dependencies.extend(implicit_rust_dependencies());
         if let MemberRoot::Dir(dir) = member_root {
             metadata
                 .dependencies
@@ -185,7 +177,8 @@ impl PackageProvider for RustPackageProvider {
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         let member_root = self.resolve_root(id)?;
         let items = self.package_items(id, member_root)?;
-        Ok(package_source_from_items(id, &items))
+        let metadata = self.load_package_metadata(id)?.metadata.clone();
+        Ok(package_source_from_items(id, &items, metadata))
     }
 }
 
@@ -429,7 +422,11 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     QualifiedPath::new(parts)
 }
 
-fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackage {
+fn package_source_from_items(
+    id: &PackageId,
+    items: &[PackageItem],
+    metadata: PackageMetadata,
+) -> AstPackage {
     use std::collections::HashSet;
     let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
     let descriptors: Vec<ModuleDescriptor> = paths
@@ -451,7 +448,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
         version: None,
         manifest_path: VirtualPath::from_path(Path::new("Cargo.toml")),
         root: VirtualPath::from_path(Path::new(".")),
-        metadata: Default::default(),
+        metadata,
         modules: module_ids,
     };
     let mut graph = PackageGraph::new(vec![package]);
@@ -468,6 +465,24 @@ const ALLOC_PACKAGE_NAME: &str = "alloc";
 const STD_PACKAGE_NAME: &str = "std";
 const TEST_PACKAGE_NAME: &str = "test";
 const LIBC_PACKAGE_NAME: &str = "libc";
+
+/// Dependency rustc injects into an ordinary Rust crate's extern prelude.
+/// `alloc` and `core` are reached through `std`'s dependency graph; they are
+/// not direct dependencies of the consumer crate.
+fn implicit_rust_dependencies() -> Vec<DependencyDescriptor> {
+    [STD_PACKAGE_NAME]
+        .into_iter()
+        .map(|package| DependencyDescriptor {
+            package: package.to_string(),
+            resolved_package_id: Some(PackageId::new(package)),
+            constraint: None,
+            kind: DependencyKind::Normal,
+            features: Vec::new(),
+            optional: false,
+            target: Default::default(),
+        })
+        .collect()
+}
 
 /// Real Rust sysroots vendor `core`/`alloc`/`std` as three independent
 /// crates — `alloc` depends on `core`, `std` depends on `core`+`alloc`
@@ -1091,13 +1106,25 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     }
 
     let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
+    let mut metadata = PackageMetadata::default();
+    for dependency in RustStdProvider::dependencies_of(crate_name) {
+        metadata.dependencies.push(DependencyDescriptor {
+            package: dependency.to_string(),
+            resolved_package_id: Some(PackageId::new(dependency)),
+            constraint: None,
+            kind: DependencyKind::Normal,
+            features: Vec::new(),
+            optional: false,
+            target: Default::default(),
+        });
+    }
     let package = PackageDescriptor {
         id: package_id.clone(),
         name: crate_name.to_string(),
         version: None,
         manifest_path: VirtualPath::from_path(&root.join(crate_name).join("Cargo.toml")),
         root: VirtualPath::from_path(&root.join(crate_name)),
-        metadata: Default::default(),
+        metadata,
         modules: module_ids,
     };
     let mut graph = PackageGraph::new(vec![package]);
@@ -1228,6 +1255,49 @@ mod provider_tests {
                 .map(|dependency| dependency.resolved_package_id.as_ref().unwrap().as_str())
                 .collect();
             assert_eq!(actual, dependencies);
+        }
+    }
+
+    #[test]
+    fn rust_sysroot_source_starts_at_external_crate_root() {
+        let provider = RustStdProvider;
+        for crate_name in [CORE_PACKAGE_NAME, ALLOC_PACKAGE_NAME, STD_PACKAGE_NAME] {
+            let source = provider
+                .load_package_source(&PackageId::new(crate_name))
+                .unwrap();
+            assert!(
+                source
+                    .module_paths
+                    .iter()
+                    .all(|path| path.segments.first().map(String::as_str) == Some(crate_name)),
+                "{crate_name} module paths must start at the external crate root"
+            );
+            assert!(
+                source
+                    .module_paths
+                    .iter()
+                    .any(|path| path.segments == [crate_name.to_string()]),
+                "{crate_name} must publish its crate-root module"
+            );
+            assert!(
+                source.items.iter().all(|item| {
+                    item.module_path.segments.first().map(String::as_str) == Some(crate_name)
+                }),
+                "{crate_name} items must start at the external crate root"
+            );
+            let package = source
+                .graph
+                .packages()
+                .find(|package| package.id.as_str() == crate_name)
+                .expect("sysroot source graph package");
+            let dependencies: Vec<_> = package
+                .metadata
+                .dependencies
+                .iter()
+                .filter_map(|dependency| dependency.resolved_package_id.as_ref())
+                .map(PackageId::as_str)
+                .collect();
+            assert_eq!(dependencies, RustStdProvider::dependencies_of(crate_name));
         }
     }
 

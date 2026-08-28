@@ -100,8 +100,19 @@ impl AstToHirLowerer {
         let mut super_climbed = false;
         for seg in &path.segments {
             match seg {
-                ast::ItemImportTree::Root | ast::ItemImportTree::Crate => {
+                ast::ItemImportTree::Root => {
                     prefix.clear();
+                    super_climbed = false;
+                }
+                ast::ItemImportTree::Crate => {
+                    // `crate::` is the defining crate's root, not the
+                    // process-wide empty root used by `::`. Ordinary Cargo
+                    // packages are represented crate-relatively, while the
+                    // bundled sysroot packages retain their real crate root
+                    // (`core::`, `alloc::`, `std::`) in the module tree.
+                    // Derive the representation from that tree boundary so
+                    // the same import resolver handles both layouts.
+                    prefix = self.package_crate_root();
                     super_climbed = false;
                 }
                 ast::ItemImportTree::SelfMod => {
@@ -157,6 +168,17 @@ impl AstToHirLowerer {
             });
         }
         Ok(())
+    }
+
+    fn package_crate_root(&self) -> Vec<String> {
+        let package_root = fp_core::ast::path::QualifiedPath::new(vec![
+            hir::HirProgram::external_crate_name(&self.package_id),
+        ]);
+        if self.package.module_tree.module_exists(&package_root) {
+            package_root.segments
+        } else {
+            Vec::new()
+        }
     }
 
     /// Expand `use <prefix>::*;` into one `ImportBinding` per direct member
@@ -288,23 +310,8 @@ impl AstToHirLowerer {
         // fp-rust's provider). Trying each possible root is harmless for
         // ordinary packages, where they either coincide or a root simply
         // never resolves anything.
-        let mut roots = vec![fp_core::ast::path::QualifiedPath::new(Vec::new())];
-        if !self.module_path.is_empty() {
-            roots.push(self.module_path.clone());
-        }
-        let root_segs = self.module_path.segments.clone();
-        if !root_segs.is_empty() {
-            roots.push(fp_core::ast::path::QualifiedPath::new(
-                root_segs[..1].to_vec(),
-            ));
-        }
-        if root_segs.len() >= 2 {
-            roots.push(fp_core::ast::path::QualifiedPath::new(
-                root_segs[..2].to_vec(),
-            ));
-        }
-
-        for start in roots {
+        let start = fp_core::ast::path::QualifiedPath::new(Vec::new());
+        {
             // Phase 1, mirrors rustc's `resolve_import`/`maybe_resolve_path`
             // (`compiler/rustc_resolve/src/imports.rs`): walk every segment
             // except the last one at a time, looking each up in the
@@ -315,13 +322,29 @@ impl AstToHirLowerer {
             // rather than re-deriving one flat guessed string key from the
             // literal path text.
             let Some(module_path) = self.resolve_module_path_through_aliases(&start, prefix) else {
-                continue;
+                return false;
             };
             let candidate = module_path.with_segment(last.clone());
 
             // Whole-module import (`use std::json;`) — the last segment
-            // itself names a module, not an item within one.
-            if self.package.module_tree.module_exists(&candidate) {
+            // itself names a module, not an item within one. A namespace-only
+            // node can share the same path as a nominal item with associated
+            // members; resolve the item namespaces first so that node is not
+            // mistaken for a real module (the same final-segment precedence
+            // used by rustc's resolver).
+            let candidate_key = candidate.to_key();
+            let candidate_value = self.lookup_symbol(&candidate_key, hir::Namespace::Value);
+            let candidate_type = self.lookup_symbol(&candidate_key, hir::Namespace::Type);
+            let candidate_alias = self.type_aliases.get(&candidate_key).cloned();
+            let dependency_value = self.lookup_dependency_binding(&candidate, hir::Namespace::Value);
+            let dependency_type = self.lookup_dependency_binding(&candidate, hir::Namespace::Type);
+            if self.package.module_tree.module_exists(&candidate)
+                && candidate_value.is_none()
+                && candidate_type.is_none()
+                && dependency_value.is_none()
+                && dependency_type.is_none()
+                && candidate_alias.is_none()
+            {
                 let res = hir::Res::Module(candidate.segments.clone());
                 self.current_value_scope()
                     .insert(alias.clone(), res.clone());
@@ -345,8 +368,12 @@ impl AstToHirLowerer {
             // resolve the final identifier against the walked module's
             // own bindings.
             let key = candidate.to_key();
-            let value = self.lookup_symbol(&key, hir::Namespace::Value);
-            let ty = self.lookup_symbol(&key, hir::Namespace::Type);
+            let value = self
+                .lookup_symbol(&key, hir::Namespace::Value)
+                .or(dependency_value);
+            let ty = self
+                .lookup_symbol(&key, hir::Namespace::Type)
+                .or(dependency_type);
             // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
             // a separate table from the module tree's value/type bindings
             // (see `register_type_alias`) — an import/glob-re-export needs
@@ -355,7 +382,7 @@ impl AstToHirLowerer {
             // resolvable under the shorter path at all.
             let type_alias = self.type_aliases.get(&key).cloned();
             if value.is_none() && ty.is_none() && type_alias.is_none() {
-                continue;
+                return false;
             }
 
             if let Some(res) = value {
@@ -374,7 +401,6 @@ impl AstToHirLowerer {
             self.resolved_import_aliases.insert(resolved_key);
             return true;
         }
-        false
     }
 
     /// Walks `segments` one at a time starting from `start`, looking up
@@ -396,32 +422,139 @@ impl AstToHirLowerer {
     ) -> Option<fp_core::ast::path::QualifiedPath> {
         let mut current = start.clone();
         for segment in segments {
-            let candidate = current.with_segment(segment.clone());
-            if self.package.module_tree.module_exists(&candidate) {
-                current = candidate;
+            // An unqualified first segment is resolved in the current module
+            // before the extern prelude. This is the path rustc takes for an
+            // `extern crate alloc as alloc_crate;` binding declared inside
+            // `std`: `alloc_crate::vec` must follow the local alias, while a
+            // bare `alloc::vec` may still enter through the extern prelude.
+            if current.segments.is_empty() {
+                let local = self.module_path.with_segment(segment.clone()).to_key();
+                let local_alias = self
+                    .lookup_symbol(&local, hir::Namespace::Value)
+                    .or_else(|| self.lookup_symbol(&local, hir::Namespace::Type));
+                if let Some(hir::Res::Module(real_path)) = local_alias {
+                    current = fp_core::ast::path::QualifiedPath::new(real_path);
+                    continue;
+                }
+                // A bare type from the implicit prelude can own the next
+                // path segment (`Option::Some`, `Result::Ok`). Enter its
+                // published definition namespace through the canonical
+                // DefPath, just as rustc's resolver enters an enum's
+                // variant namespace after resolving the type name.
+                if let Some(hir::Res::Def(def_id)) =
+                    self.lookup_prelude_symbol(segment, hir::Namespace::Type)
+                {
+                    if let Some(def_path) = self.hir_program.def_path(def_id) {
+                        current = fp_core::ast::path::QualifiedPath::new(
+                            def_path
+                                .segments
+                                .iter()
+                                .map(|segment| segment.as_str().to_owned())
+                                .collect(),
+                        );
+                        continue;
+                    }
+                }
+            }
+            if current.segments.is_empty()
+                && self
+                    .hir_program
+                    .packages
+                    .values()
+                    .any(|package| hir::HirProgram::external_crate_name(&package.id) == *segment)
+            {
+                current.segments.push(segment.clone());
                 continue;
+            }
+            let candidate = current.with_segment(segment.clone());
+            if current.segments.len() == 1 && current.head() == candidate.head() {
+                if let Some(module) = self.hir_program.resolve_external_module_path(&candidate) {
+                    current = module;
+                    continue;
+                }
             }
             let key = candidate.to_key();
             let module_alias = self
                 .lookup_symbol(&key, hir::Namespace::Value)
-                .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type));
+                .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type))
+                .or_else(|| {
+                    self.lookup_dependency_binding(&candidate, hir::Namespace::Value)
+                })
+                .or_else(|| {
+                    self.lookup_dependency_binding(&candidate, hir::Namespace::Type)
+                });
             match module_alias {
                 Some(hir::Res::Module(real_path)) => {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
                 }
-                // Not a module alias — could still be a legitimate
-                // non-module path component (e.g. an enum type name in
-                // `result::Result::Ok`, where `Result` is a type, not a
-                // module, but its variants are still addressed through
-                // it). Rustc's resolver treats a type's own namespace as
-                // a valid intermediate hop for exactly this shape; here,
-                // simply keep walking literally — the final identifier
-                // lookup still gets a fair chance either way, and this
-                // never regresses a path that previously only worked via
-                // pure literal splicing.
-                _ => current = candidate,
+                // Intermediate path segments are resolved in the module
+                // namespace. A dependency can publish a type/value binding
+                // with the same spelling as a real module, so do not let
+                // that other namespace shadow the module child while walking
+                // toward the final identifier (`std::fmt::Formatter`, for
+                // example).
+                Some(_) if self.path_is_definition_namespace(&candidate) => {
+                    current = candidate;
+                }
+                Some(_) => return None,
+                None if self.path_is_definition_namespace(&candidate) => {
+                    current = candidate;
+                }
+                None => return None,
             }
         }
         Some(current)
+    }
+
+    /// Resolve one external-prelude segment from the package that owns it.
+    /// The consumer's copied tree is an optimization, but it cannot represent
+    /// every transparent alias: a `type` alias is recorded by DefId/DefPath,
+    /// and a public module re-export may point into another sysroot package.
+    /// rustc keeps both facts in the defining crate's resolver tables, so use
+    /// those authoritative package tables when the copied tree has no entry.
+    fn lookup_dependency_binding(
+        &self,
+        path: &fp_core::ast::path::QualifiedPath,
+        namespace: hir::Namespace,
+    ) -> Option<hir::Res> {
+        if let Some(entry) = self.hir_program.resolve_external_entry(path, namespace) {
+            if entry.export.can_access(&self.module_path.segments) {
+                return Some(entry.res.clone());
+            }
+        }
+        self.hir_program
+            .resolve_external_module_path(path)
+            .map(|_| hir::Res::Module(path.segments.clone()))
+    }
+
+    /// A type definition owns a child namespace for associated items. Enum
+    /// variants are the important case here, but using the item kind keeps
+    /// this aligned with rustc's definition namespace rather than encoding
+    /// individual constructor names in the resolver.
+    fn path_is_definition_namespace(
+        &self,
+        path: &fp_core::ast::path::QualifiedPath,
+    ) -> bool {
+        if self.package.module_tree.namespace_exists(path) {
+            return true;
+        }
+        let resolved = self
+            .lookup_dependency_binding(path, hir::Namespace::Type)
+            .or_else(|| self.lookup_dependency_binding(path, hir::Namespace::Value));
+        let Some(hir::Res::Def(def_id)) = resolved else {
+            return false;
+        };
+        self.package
+            .def_map
+            .get(&def_id)
+            .or_else(|| self.hir_program.item(def_id))
+            .is_some_and(|item| {
+                matches!(
+                    item.kind,
+                    hir::ItemKind::Struct(_)
+                        | hir::ItemKind::Enum(_)
+                        | hir::ItemKind::Trait(_)
+                )
+            })
     }
 }

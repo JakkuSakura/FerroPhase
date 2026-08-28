@@ -711,6 +711,32 @@ impl AstToHirLowerer {
                             }),
                         });
                     }
+                    ast::ItemKind::DefConst(const_item) => {
+                        let konst = self.transform_const_def(const_item)?;
+                        items.push(hir::TraitItem {
+                            def_id: self.def_id_for_item(item),
+                            hir_id: self.next_id(),
+                            name: const_item.name.name.clone().into(),
+                            kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {
+                                name: const_item.name.name.clone().into(),
+                                ty: konst.ty,
+                                body: Some(konst.body),
+                            }),
+                        });
+                    }
+                    ast::ItemKind::DeclConst(const_item) => {
+                        let ty = self.transform_type_to_hir(&const_item.ty)?;
+                        items.push(hir::TraitItem {
+                            def_id: self.def_id_for_item(item),
+                            hir_id: self.next_id(),
+                            name: const_item.name.name.clone().into(),
+                            kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {
+                                name: const_item.name.name.clone().into(),
+                                ty,
+                                body: None,
+                            }),
+                        });
+                    }
                     _ => {}
                 }
             }

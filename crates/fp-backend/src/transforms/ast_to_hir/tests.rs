@@ -225,10 +225,8 @@ fn canonical_type_path_uses_foreign_owner_def_path() {
 
     let mut program = hir::HirProgram::new();
     program.add_package(std::rc::Rc::new(dependency));
-    let mut generator = AstToHirLowerer::new(
-        std::rc::Rc::new(program),
-        hir::PackageId::new("alloc"),
-    );
+    let mut generator =
+        AstToHirLowerer::new(std::rc::Rc::new(program), hir::PackageId::new("alloc"));
     generator.module_path = QualifiedPath::new(vec!["alloc".to_string(), "vec".to_string()]);
 
     let path = hir::Path {
@@ -627,10 +625,16 @@ fn transform_range_value_to_standard_range_struct() -> Result<()> {
         std::rc::Rc::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
-    let range = range_expr(None, ast::ExprRangeLimit::Exclusive, Some(ast::Expr::ident(ident("end"))));
+    let range = range_expr(
+        None,
+        ast::ExprRangeLimit::Exclusive,
+        Some(ast::Expr::ident(ident("end"))),
+    );
     let lowered = generator.transform_expr_to_hir(&range)?;
     let hir::ExprKind::Struct(path, fields) = lowered.kind else {
-        return Err(crate::error::optimization_error("expected RangeTo struct literal"));
+        return Err(crate::error::optimization_error(
+            "expected RangeTo struct literal",
+        ));
     };
     assert_eq!(path.segments.last().unwrap().name.as_str(), "RangeTo");
     assert_eq!(fields.len(), 1);
@@ -837,6 +841,66 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
 }
 
 #[test]
+fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
+    let mut dependency = hir::HirPackage::new(hir::PackageId::new("std"));
+    let option = hir::DefId::new(dependency.id.clone(), 1);
+    let vec = hir::DefId::new(dependency.id.clone(), 2);
+    let string = hir::DefId::new(dependency.id.clone(), 3);
+    let prelude = dependency.module_tree.prelude();
+    for (name, def_id) in [("Option", option.clone()), ("Vec", vec.clone()), ("String", string.clone())] {
+        dependency.module_tree.bind(
+            prelude,
+            hir::Namespace::Type,
+            name,
+            hir::SymbolEntry {
+                res: hir::Res::Def(def_id),
+                export: hir::SymbolExport::Public,
+                path: None,
+            },
+        );
+    }
+
+    let mut program = hir::HirProgram::new();
+    program.add_package(std::rc::Rc::new(dependency));
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(program),
+        hir::PackageId::new("consumer"),
+    );
+    generator
+        .package
+        .dependencies
+        .push(hir::PackageId::new("std"));
+    generator.load_default_prelude_defs();
+
+    let prelude = generator.package.module_tree.prelude();
+    assert_eq!(
+        generator
+            .package
+            .module_tree
+            .lookup(prelude, hir::Namespace::Type, "Option")
+            .map(|entry| &entry.res),
+        Some(&hir::Res::Def(option))
+    );
+    assert_eq!(
+        generator
+            .package
+            .module_tree
+            .lookup(prelude, hir::Namespace::Type, "Vec")
+            .map(|entry| &entry.res),
+        Some(&hir::Res::Def(vec))
+    );
+    assert_eq!(
+        generator
+            .package
+            .module_tree
+            .lookup(prelude, hir::Namespace::Type, "String")
+            .map(|entry| &entry.res),
+        Some(&hir::Res::Def(string))
+    );
+    Ok(())
+}
+
+#[test]
 fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()> {
     let frontend = fp_lang::FerroFrontend::new();
     let parsed = frontend.parse_file(
@@ -850,7 +914,10 @@ fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()>
     );
     generator.transform_package(&package)?;
     let binding = generator.tree_lookup_raw("map::NodeRef", hir::Namespace::Type);
-    assert!(matches!(binding.map(|entry| &entry.res), Some(hir::Res::Def(_))));
+    assert!(matches!(
+        binding.map(|entry| &entry.res),
+        Some(hir::Res::Def(_))
+    ));
     Ok(())
 }
 
@@ -1036,18 +1103,25 @@ fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Impl(impl_item) => impl_item.items.iter().find_map(|item| match &item.kind {
-                hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "clear" => {
-                    Some(function)
-                }
-                _ => None,
-            }),
+            hir::ItemKind::Impl(impl_item) => {
+                impl_item.items.iter().find_map(|item| match &item.kind {
+                    hir::ImplItemKind::Method(function)
+                        if function.sig.name.as_str() == "clear" =>
+                    {
+                        Some(function)
+                    }
+                    _ => None,
+                })
+            }
             _ => None,
         })
         .expect("lowered clear method");
 
     assert_eq!(method.sig.inputs.len(), 1);
-    assert!(matches!(method.sig.inputs[0].ty.kind, hir::TypeExprKind::Ref(_)));
+    assert!(matches!(
+        method.sig.inputs[0].ty.kind,
+        hir::TypeExprKind::Ref(_)
+    ));
     Ok(())
 }
 
@@ -1055,7 +1129,9 @@ fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
 fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let items = parser
-        .parse_items_ast("struct Box<T> { value: T } struct S; impl S { fn take(self: Box<Self>) {} }")
+        .parse_items_ast(
+            "struct Box<T> { value: T } struct S; impl S { fn take(self: Box<Self>) {} }",
+        )
         .expect("parse explicit boxed receiver");
     let package = package_from_items(items)?;
     let mut generator = AstToHirLowerer::new(
@@ -1067,10 +1143,12 @@ fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Impl(impl_item) => impl_item.items.iter().find_map(|item| match &item.kind {
-                hir::ImplItemKind::Method(function) => function.sig.inputs.first(),
-                _ => None,
-            }),
+            hir::ItemKind::Impl(impl_item) => {
+                impl_item.items.iter().find_map(|item| match &item.kind {
+                    hir::ImplItemKind::Method(function) => function.sig.inputs.first(),
+                    _ => None,
+                })
+            }
             _ => None,
         })
         .expect("lowered receiver");
@@ -1079,7 +1157,17 @@ fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
     };
 
     assert_eq!(path.segments.last().unwrap().name.as_str(), "Box");
-    assert_eq!(path.segments.last().unwrap().args.as_ref().unwrap().args.len(), 1);
+    assert_eq!(
+        path.segments
+            .last()
+            .unwrap()
+            .args
+            .as_ref()
+            .unwrap()
+            .args
+            .len(),
+        1
+    );
     Ok(())
 }
 
@@ -1149,7 +1237,446 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
     };
 
     assert_eq!(bounds.len(), 3);
-    assert!(bounds.iter().all(|bound| matches!(bound.res, Some(hir::Res::Def(_)))));
+    assert!(
+        bounds
+            .iter()
+            .all(|bound| matches!(bound.res, Some(hir::Res::Def(_))))
+    );
+    Ok(())
+}
+
+#[test]
+fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let mut nominal = parser
+        .parse_items_ast("pub struct Error {}")
+        .expect("parse nominal Error");
+    let mut trait_item = parser
+        .parse_items_ast("pub trait Error {}")
+        .expect("parse trait Error");
+    let mut nominal_import = parser
+        .parse_items_ast("pub use crate::nominal::Error;")
+        .expect("parse nominal Error import");
+    let mut trait_import = parser
+        .parse_items_ast("pub use crate::error_trait::Error;")
+        .expect("parse trait Error import");
+    let mut holder = parser
+        .parse_items_ast("pub struct Holder { value: dyn Error }")
+        .expect("parse Holder");
+
+    let items = vec![
+        (vec!["nominal".to_string()], nominal.remove(0)),
+        (vec!["error_trait".to_string()], trait_item.remove(0)),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            nominal_import.remove(0),
+        ),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            trait_import.remove(0),
+        ),
+        (vec!["consumer".to_string()], holder.remove(0)),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let holder = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    let hir::TypeExprKind::Dynamic(bounds) = &holder.fields[0].ty.kind else {
+        panic!("expected dynamic field type");
+    };
+    assert_eq!(bounds.len(), 1);
+    let hir::Res::Def(trait_def_id) = bounds[0].res.clone().expect("resolved trait bound") else {
+        panic!("expected trait definition");
+    };
+    assert!(program.placeholder_defs.contains(&trait_def_id));
+    Ok(())
+}
+
+#[test]
+fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast("pub trait Error {}")?;
+    let dependency_package = package_from_items_with_paths(
+        dependency_items
+            .into_iter()
+            .map(|item| (vec!["prelude".to_string(), "v1".to_string()], item))
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("dependency"),
+    );
+    let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let error_id = dependency
+        .items
+        .iter()
+        .find_map(|item| match item.kind {
+            hir::ItemKind::Trait(_) => Some(item.def_id.clone()),
+            _ => None,
+        })
+        .expect("dependency trait");
+    dependency.hir_exports.insert(
+        "dependency::prelude::v1::Error".to_string(),
+        hir::Res::Def(error_id.clone()),
+    );
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser.parse_items_ast("pub struct Holder { value: dyn Error }")?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    let hir::TypeExprKind::Dynamic(bounds) = &holder.fields[0].ty.kind else {
+        panic!("expected dynamic field type");
+    };
+    let hir::Res::Def(error_id) = bounds[0].res.clone().expect("resolved foreign trait") else {
+        panic!("expected foreign trait definition");
+    };
+    assert_eq!(error_id.package_id, hir::PackageId::new("dependency"));
+    assert!(consumer_lowerer.is_trait_definition(&error_id));
+    Ok(())
+}
+
+#[test]
+fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast("pub struct PublicType;")?;
+    let dependency_package = package_from_items_with_paths(
+        dependency_items
+            .into_iter()
+            .map(|item| (vec!["api".to_string()], item))
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("dependency"),
+    );
+    let dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let dependency_exports = dependency_lowerer.exported_symbols();
+    let mut dependency = dependency;
+    dependency.hir_exports = dependency_exports;
+    let public_type_id = dependency
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "PublicType" => {
+                Some(item.def_id.clone())
+            }
+            _ => None,
+        })
+        .expect("dependency type");
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser
+        .parse_items_ast("pub struct Holder { value: dependency::api::PublicType }")?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("consumer type");
+    let hir::TypeExprKind::Path(path) = &holder.fields[0].ty.kind else {
+        panic!("expected qualified dependency type path");
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(public_type_id.clone())));
+    assert_eq!(path.segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>(),
+        vec!["dependency", "api", "PublicType"]);
+    assert_eq!(consumer.def_paths.get(&public_type_id).unwrap().to_segments(),
+        vec!["dependency", "api", "PublicType"]);
+    Ok(())
+}
+
+#[test]
+fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast("pub struct Formatter; pub struct Result;")?;
+    let dependency_package = package_from_items_with_paths(
+        dependency_items
+            .into_iter()
+            .map(|item| (vec!["std".to_string(), "std".to_string(), "fmt".to_string()], item))
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("std"),
+    );
+    let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    dependency.hir_exports = dependency_lowerer.exported_symbols();
+
+    let formatter_id = dependency
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Formatter" => {
+                Some(item.def_id.clone())
+            }
+            _ => None,
+        })
+        .expect("bundled std Formatter");
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+
+    let consumer_items = parser.parse_items_ast(
+        "pub struct Holder { formatter: std::fmt::Formatter, result: std::fmt::Result }",
+    )?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("consumer Holder");
+    let hir::TypeExprKind::Path(formatter_path) = &holder.fields[0].ty.kind else {
+        panic!("expected Formatter path");
+    };
+    assert_eq!(formatter_path.res, Some(hir::Res::Def(formatter_id)));
+    assert_eq!(
+        formatter_path
+            .segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["std", "fmt", "Formatter"]
+    );
+    Ok(())
+}
+
+#[test]
+fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let alloc_items = parser.parse_items_ast("pub struct Arc<T>(T);")?;
+    let alloc_package = package_from_items(alloc_items)?;
+    let mut alloc_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("alloc"),
+    );
+    let alloc = alloc_lowerer.transform_package(&alloc_package)?;
+    let arc_id = alloc
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Arc" => {
+                Some(item.def_id.clone())
+            }
+            _ => None,
+        })
+        .expect("alloc::sync::Arc definition");
+
+    let mut std = hir::HirPackage::new(hir::PackageId::new("std"));
+    std.hir_exports.insert(
+        "std::sync::Arc".to_string(),
+        hir::Res::Def(arc_id.clone()),
+    );
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(alloc));
+    workspace.add_package(std::rc::Rc::new(std));
+
+    let consumer_items = parser.parse_items_ast("pub struct Holder { value: std::sync::Arc<u8> }")?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    assert!(!matches!(holder.fields[0].ty.kind, hir::TypeExprKind::Error));
+    Ok(())
+}
+
+#[test]
+fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
+    let dependency_package = package_from_items_with_paths(
+        dependency_items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let module = if index == 0 { "error" } else { "types" };
+                (vec![module.to_string()], item)
+            })
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("skln-core"),
+    );
+    let dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let dependency_exports = dependency_lowerer.exported_symbols();
+    assert!(dependency_exports.contains_key("error::CoreError"));
+    assert!(dependency_exports.contains_key("types::ChangesResult"));
+    let mut dependency = dependency;
+    dependency.hir_exports = dependency_exports;
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser.parse_items_ast(
+        "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
+    )?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    for field in &holder.fields {
+        assert!(
+            !matches!(field.ty.kind, hir::TypeExprKind::Error),
+            "dependency export remained unresolved for {}",
+            field.name
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast(
+        "pub mod error { pub struct CoreError; } pub mod types { pub struct ChangesResult; pub struct RefNode; } pub use error::CoreError;",
+    )?;
+    let dependency_package = package_from_items(dependency_items)?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("skln-core"),
+    );
+    let dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let dependency_exports = dependency_lowerer.exported_symbols();
+    assert!(dependency_exports.contains_key("CoreError"));
+    assert!(dependency_exports.contains_key("error::CoreError"));
+    assert!(dependency_exports.contains_key("types::ChangesResult"));
+    assert!(dependency_exports.contains_key("types::RefNode"));
+    let mut dependency = dependency;
+    dependency.hir_exports = dependency_exports;
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser.parse_items_ast(
+        "pub struct Holder { error: skln_core::CoreError, result: skln_core::types::ChangesResult, node: skln_core::types::RefNode }",
+    )?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("lowered Holder");
+    assert!(holder.fields.iter().all(|field| {
+        !matches!(field.ty.kind, hir::TypeExprKind::Error)
+    }));
+    Ok(())
+}
+
+#[test]
+fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
+    let dependency_package = package_from_items_with_paths(
+        dependency_items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let module = if index == 0 { "error" } else { "types" };
+                (vec!["skln-core".to_string(), module.to_string()], item)
+            })
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("skln-core"),
+    );
+    let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    dependency.hir_exports = dependency_lowerer.exported_symbols();
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser.parse_items_ast(
+        "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
+    )?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("consumer Holder");
+    let expected = ["CoreError", "ChangesResult"];
+    for (field, name) in holder.fields.iter().zip(expected) {
+        let hir::TypeExprKind::Path(path) = &field.ty.kind else {
+            panic!("expected dependency path for {name}");
+        };
+        assert!(matches!(
+            path.res.as_ref(),
+            Some(hir::Res::Def(def_id))
+                if def_id.package_id == hir::PackageId::new("skln-core")
+        ));
+    }
     Ok(())
 }
 
@@ -1157,9 +1684,7 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
 fn indexes_function_local_trait_impl_by_local_type() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let items = parser
-        .parse_items_ast(
-            "trait Marker {} fn make() { struct Local; impl Marker for Local {} }",
-        )
+        .parse_items_ast("trait Marker {} fn make() { struct Local; impl Marker for Local {} }")
         .expect("parse function-local trait impl");
     let package = package_from_items(items)?;
     let mut generator = AstToHirLowerer::new(
@@ -1171,14 +1696,15 @@ fn indexes_function_local_trait_impl_by_local_type() -> Result<()> {
         .def_map
         .values()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Struct(def) if def.name.as_str() == "Local" => {
-                Some(item.def_id.clone())
-            }
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Local" => Some(item.def_id.clone()),
             _ => None,
         })
         .expect("materialized local struct");
 
-    assert_eq!(package.impls_by_self_did.get(&local_id).map(Vec::len), Some(1));
+    assert_eq!(
+        package.impls_by_self_did.get(&local_id).map(Vec::len),
+        Some(1)
+    );
     Ok(())
 }
 
@@ -1204,23 +1730,39 @@ fn resolves_local_struct_constructor_inside_impl_method() -> Result<()> {
             _ => None,
         })
         .expect("materialized local struct");
-    let method = package.items.iter().find_map(|item| match &item.kind {
-        hir::ItemKind::Impl(impl_def) => impl_def.items.iter().find_map(|item| match &item.kind {
-            hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "from" => {
-                Some(function)
+    let method = package
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Impl(impl_def) => {
+                impl_def.items.iter().find_map(|item| match &item.kind {
+                    hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "from" => {
+                        Some(function)
+                    }
+                    _ => None,
+                })
             }
             _ => None,
-        }),
-        _ => None,
-    }).expect("lowered impl method");
+        })
+        .expect("lowered impl method");
     let body = method.body.as_ref().expect("method body");
-    let local = body.stmts.iter().find_map(|stmt| {
-        let hir::StmtKind::Local(local) = &stmt.kind else { return None };
-        let init = local.init.as_ref()?;
-        let hir::ExprKind::Call(callee, _) = &init.kind else { return None };
-        let hir::ExprKind::Path(path) = &callee.kind else { return None };
-        (path.res == Some(hir::Res::Def(string_error.clone()))).then_some(local)
-    }).expect("local constructor call");
+    let local = body
+        .stmts
+        .iter()
+        .find_map(|stmt| {
+            let hir::StmtKind::Local(local) = &stmt.kind else {
+                return None;
+            };
+            let init = local.init.as_ref()?;
+            let hir::ExprKind::Call(callee, _) = &init.kind else {
+                return None;
+            };
+            let hir::ExprKind::Path(path) = &callee.kind else {
+                return None;
+            };
+            (path.res == Some(hir::Res::Def(string_error.clone()))).then_some(local)
+        })
+        .expect("local constructor call");
     assert!(local.init.is_some());
     Ok(())
 }
@@ -1255,10 +1797,13 @@ fn transform_type_relative_call_without_a_method_receiver() -> Result<()> {
         .and_then(|body| body.stmts.first())
         .expect("make call statement");
 
-    assert!(matches!(call.kind, hir::StmtKind::Semi(hir::Expr {
-        kind: hir::ExprKind::Call(_, _),
-        ..
-    })));
+    assert!(matches!(
+        call.kind,
+        hir::StmtKind::Semi(hir::Expr {
+            kind: hir::ExprKind::Call(_, _),
+            ..
+        })
+    ));
     Ok(())
 }
 
@@ -1392,7 +1937,10 @@ fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
         .and_then(|body| body.expr.as_deref())
         .expect("read body expression");
     let hir::ExprKind::Path(path) = &body_expr.kind else {
-        panic!("expected associated constant path, got {:?}", body_expr.kind);
+        panic!(
+            "expected associated constant path, got {:?}",
+            body_expr.kind
+        );
     };
     assert_eq!(
         path.segments
@@ -1406,6 +1954,197 @@ fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
         Some(hir::Res::Def(generic_def_id)),
         "type-relative associated constants resolve their base type in AST→HIR"
     );
+    Ok(())
+}
+
+#[test]
+fn transform_trait_associated_consts_preserves_declaration_and_default() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast("trait Layout { const ABSTRACT: bool; const DEFAULTED: bool = true; }")?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let trait_def = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Trait(trait_def) => Some(trait_def),
+            _ => None,
+        })
+        .expect("lowered trait");
+    let consts = trait_def
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::TraitItemKind::AssocConst(konst) => Some(konst),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(consts.len(), 2);
+    assert_eq!(consts[0].name.as_str(), "ABSTRACT");
+    assert!(consts[0].body.is_none());
+    assert_eq!(consts[1].name.as_str(), "DEFAULTED");
+    assert!(consts[1].body.is_some());
+    assert!(matches!(
+        consts[1].ty.kind,
+        hir::TypeExprKind::Path(_) | hir::TypeExprKind::Primitive(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast("trait Layout { const ABSTRACT: bool; const DEFAULTED: bool = true; }")?;
+    let package = package_from_items(items)?;
+    let ast_trait = package
+        .items
+        .iter()
+        .find_map(|item| match item.item.kind() {
+            ast::ItemKind::DefTrait(trait_def) => Some((item.item.id(), trait_def)),
+            _ => None,
+        })
+        .expect("trait in AST package");
+
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+    let trait_def = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Trait(trait_def) => Some((item, trait_def)),
+            _ => None,
+        })
+        .expect("lowered trait");
+
+    let expected_trait_def_id = generator
+        .preassigned_def_ids
+        .get(&ast_trait.0)
+        .expect("predeclared trait DefId");
+    assert_eq!(&trait_def.0.def_id, expected_trait_def_id);
+
+    let expected_member_ids = ast_trait
+        .1
+        .items
+        .iter()
+        .filter_map(|item| match item.kind() {
+            ast::ItemKind::DeclConst(const_item) => Some((&const_item.name, item.id())),
+            ast::ItemKind::DefConst(const_item) => Some((&const_item.name, item.id())),
+            _ => None,
+        })
+        .map(|(name, item_id)| {
+            (
+                name.name.as_str(),
+                generator
+                    .preassigned_def_ids
+                    .get(&item_id)
+                    .expect("predeclared associated-const DefId"),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let consts = trait_def
+        .1
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::TraitItemKind::AssocConst(konst) => Some((item, konst)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(consts.len(), expected_member_ids.len());
+    assert_eq!(
+        consts
+            .iter()
+            .map(|(item, _)| item.name.as_str())
+            .collect::<Vec<_>>(),
+        expected_member_ids
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+    );
+
+    let owner = hir::OwnerId(trait_def.0.def_id.clone());
+    for ((item, konst), (_, expected_def_id)) in consts.iter().zip(expected_member_ids.iter()) {
+        assert_eq!(&item.def_id, *expected_def_id);
+        assert_eq!(item.hir_id.owner, owner);
+        assert_eq!(konst.ty.hir_id.owner, owner);
+        if let Some(body) = &konst.body {
+            assert_eq!(body.hir_id.owner, owner);
+            assert_eq!(body.value.hir_id.owner, owner);
+            assert!(matches!(body.value.kind, hir::ExprKind::Literal(_)));
+        }
+    }
+
+    assert!(consts[0].1.body.is_none());
+    assert!(consts[1].1.body.is_some());
+    Ok(())
+}
+
+#[test]
+fn transform_trait_associated_const_default_is_seeded_across_packages() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items =
+        parser.parse_items_ast("pub trait Layout { const DEFAULTED: bool = true; }")?;
+    let dependency_package = package_from_items(dependency_items)?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("dependency"),
+    );
+    let dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let (trait_def_id, dependency_trait) = dependency
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Trait(trait_def) => Some((item.def_id.clone(), trait_def)),
+            _ => None,
+        })
+        .expect("dependency trait");
+    let default_const_id = dependency_trait
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::TraitItemKind::AssocConst(constant) if item.name.as_str() == "DEFAULTED" =>
+                constant.body.as_ref().map(|_| item.def_id.clone()),
+            _ => None,
+        })
+        .expect("dependency trait associated constant");
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser
+        .parse_items_ast("use dependency::Layout; fn read<T: Layout>() -> bool { T::DEFAULTED }")?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let seeded_trait = consumer
+        .def_map
+        .get(&trait_def_id)
+        .and_then(|item| match &item.kind {
+            hir::ItemKind::Trait(trait_def) => Some(trait_def),
+            _ => None,
+        })
+        .expect("dependency trait seeded into consumer package");
+    let seeded_const = seeded_trait
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::TraitItemKind::AssocConst(constant) if item.def_id == default_const_id => {
+                Some(constant)
+            }
+            _ => None,
+        })
+        .expect("seeded trait associated constant");
+    assert!(seeded_const.body.is_some());
     Ok(())
 }
 
@@ -1439,9 +2178,58 @@ fn transform_associated_const_uses_type_namespace_for_base() -> Result<()> {
         .and_then(|body| body.expr.as_deref())
         .expect("read body expression");
     let hir::ExprKind::Path(path) = &body_expr.kind else {
-        panic!("expected associated constant path, got {:?}", body_expr.kind);
+        panic!(
+            "expected associated constant path, got {:?}",
+            body_expr.kind
+        );
     };
     assert_eq!(path.res, Some(hir::Res::Def(generic_def_id)));
+    Ok(())
+}
+
+#[test]
+fn transform_generic_associated_type_path_keeps_qpath_base() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "trait Iterator { type Item; } \
+         fn item<I: Iterator>() -> I::Item; \
+         fn alias<A: Iterator>() -> A::Item; \
+         fn nested<I: Iterator>() -> I::Item::IntoIter;",
+    )?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = generator.transform_package(&package)?;
+
+    for (name, expected_segments) in [
+        ("item", vec!["I", "Item"]),
+        ("alias", vec!["A", "Item"]),
+        ("nested", vec!["I", "Item", "IntoIter"]),
+    ] {
+        let function = program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Function(function) if function.sig.name.as_str() == name => {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .expect("lowered function");
+        let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
+            panic!("expected associated type path for {name}");
+        };
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            expected_segments
+        );
+        assert_eq!(path.res, None);
+    }
     Ok(())
 }
 
@@ -2545,6 +3333,54 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
          Marker;` expansion — got unresolved path {ret_path:?}"
     );
 
+    Ok(())
+}
+
+/// Macro definitions have module scope independent of the provider's
+/// flattened file order. An invocation from an earlier PackageItem must see
+/// a definition discovered in a later PackageItem, just as rustc's resolver
+/// does after building the macro scope.
+#[test]
+fn transform_package_expands_macro_invocation_before_definition() -> Result<()> {
+    let parser = fp_lang::ast::FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let invocation = parser
+        .parse_items_ast("make_alias! { c_int }")
+        .map_err(|e| crate::error::optimization_error(format!("{e:?}")))?
+        .into_iter()
+        .next()
+        .expect("macro invocation");
+    let definitions = parser
+        .parse_items_ast(
+            r#"
+            macro_rules! make_alias {
+                ($name:ident) => { pub type $name = i64; }
+            }
+            "#,
+        )
+        .map_err(|e| crate::error::optimization_error(format!("{e:?}")))?;
+
+    let package = package_from_items_with_paths(
+        vec![(vec!["use_site".to_string()], invocation)]
+            .into_iter()
+            .chain(
+                definitions
+                    .into_iter()
+                    .map(|item| (vec!["definition_site".to_string()], item)),
+            )
+            .collect(),
+    )?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    )
+    .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
+    let program = generator.transform_package(&package)?;
+
+    assert!(
+        !program.type_alias_targets.is_empty(),
+        "macro definition from a later flattened item must expand the earlier invocation"
+    );
     Ok(())
 }
 

@@ -345,7 +345,12 @@ fn write_impl_assoc_type(
     )
 }
 
-fn write_trait(item: &Item, tr: &Trait, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+fn write_trait(
+    item: &Item,
+    tr: &Trait,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
     let vis = fmt_visibility(&item.visibility);
     let generics = fmt_generics(&tr.generics, ctx);
     let span_suffix = if ctx.options.show_spans {
@@ -358,7 +363,10 @@ fn write_trait(item: &Item, tr: &Trait, f: &mut Formatter<'_>, ctx: &mut PrettyC
         for (idx, trait_item) in tr.items.iter().enumerate() {
             match &trait_item.kind {
                 TraitItemKind::Method(func) => write_impl_method(func, f, ctx)?,
-                TraitItemKind::AssocType(assoc) => ctx.writeln(f, format!("type {};", assoc.name))?,
+                TraitItemKind::AssocConst(konst) => write_trait_assoc_const(konst, f, ctx)?,
+                TraitItemKind::AssocType(assoc) => {
+                    ctx.writeln(f, format!("type {};", assoc.name))?
+                }
             }
             if idx + 1 < tr.items.len() {
                 ctx.writeln(f, "")?;
@@ -367,6 +375,26 @@ fn write_trait(item: &Item, tr: &Trait, f: &mut Formatter<'_>, ctx: &mut PrettyC
         Ok(())
     })?;
     ctx.writeln(f, "}")
+}
+
+fn write_trait_assoc_const(
+    konst: &crate::hir::TraitAssocConst,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let ty = if ctx.options.show_types {
+        format!(": {}", fmt_type_expr(&konst.ty, ctx))
+    } else {
+        String::new()
+    };
+
+    match &konst.body {
+        Some(body) => {
+            ctx.writeln(f, format!("const {}{} =", konst.name, ty))?;
+            ctx.with_indent(|ctx| write_const_expr(body, f, ctx))
+        }
+        None => ctx.writeln(f, format!("const {}{};", konst.name, ty)),
+    }
 }
 
 fn write_block(block: &Block, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
@@ -960,7 +988,11 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             format!("[{}; {}]", fmt_type_expr(elem, ctx), len_str)
         }
         TypeExprKind::Slice(elem) => format!("[{}]", fmt_type_expr(elem, ctx)),
-        TypeExprKind::Ptr { inner, mutable } => format!("*{}{}", if *mutable { "mut " } else { "const " }, fmt_type_expr(inner, ctx)),
+        TypeExprKind::Ptr { inner, mutable } => format!(
+            "*{}{}",
+            if *mutable { "mut " } else { "const " },
+            fmt_type_expr(inner, ctx)
+        ),
         TypeExprKind::Ref(inner) => format!("&{}", fmt_type_expr(inner, ctx)),
         TypeExprKind::FnPtr(fn_ptr) => {
             let inputs = fn_ptr
@@ -980,7 +1012,9 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
                 .collect::<Vec<_>>()
                 .join(" + ")
         ),
-        TypeExprKind::ConstBlock(_, body) => format!("const {{ {} }}", format_expr_inline(body, ctx)),
+        TypeExprKind::ConstBlock(_, body) => {
+            format!("const {{ {} }}", format_expr_inline(body, ctx))
+        }
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),

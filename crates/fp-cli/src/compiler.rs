@@ -81,8 +81,13 @@ pub fn find_manifest_package(
     language: &str,
 ) -> Result<Option<(Arc<dyn PackageProvider>, PackageId, PathBuf)>> {
     let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
-    let Some(root) = fp_lang::project::find_manifest(&input_abs) else {
+    let Some(manifest_root) = fp_lang::project::find_manifest(&input_abs) else {
         return Ok(None);
+    };
+    let root = if language == languages::RUST || language == "rs" {
+        cargo_workspace_root(&manifest_root)
+    } else {
+        manifest_root
     };
     let provider =
         crate::languages::package_provider_registry::provider_for_language(language, &root)
@@ -121,6 +126,43 @@ pub fn find_manifest_package(
         return Ok(None);
     };
     Ok(Some((provider, package_id, package_root_abs)))
+}
+
+/// Resolve the Cargo workspace root for a package manifest. Cargo first uses
+/// an explicit `[package].workspace` path when present; otherwise it searches
+/// ancestors for the nearest manifest containing `[workspace]`. A standalone
+/// package with neither declaration remains rooted at its own manifest.
+fn cargo_workspace_root(package_root: &Path) -> PathBuf {
+    let manifest_path = package_root.join("Cargo.toml");
+    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(manifest) = toml::from_str::<toml::Table>(&content) {
+            if let Some(workspace) = manifest
+                .get("package")
+                .and_then(|package| package.get("workspace"))
+                .and_then(toml::Value::as_str)
+            {
+                let explicit_root = package_root.join(workspace);
+                if explicit_root.join("Cargo.toml").is_file() {
+                    return explicit_root.canonicalize().unwrap_or(explicit_root);
+                }
+            }
+        }
+    }
+
+    let mut current = package_root.to_path_buf();
+    loop {
+        let manifest_path = current.join("Cargo.toml");
+        if let Ok(content) = std::fs::read_to_string(manifest_path) {
+            if let Ok(manifest) = toml::from_str::<toml::Table>(&content) {
+                if manifest.get("workspace").is_some() {
+                    return current;
+                }
+            }
+        }
+        if !current.pop() {
+            return package_root.to_path_buf();
+        }
+    }
 }
 
 /// Computes the `PackageItem::module_path` tag a package's own provider would tag
@@ -607,7 +649,10 @@ impl CompilerIdentity {
 
 #[cfg(test)]
 mod tests {
-    use super::std_provider_for;
+    use super::{cargo_workspace_root, resolve_source_package, std_provider_for};
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
 
     #[test]
     fn languages_without_ferrophase_std_use_empty_provider() {
@@ -616,8 +661,96 @@ mod tests {
                 std_provider_for(language)
                     .list_packages()
                     .unwrap()
-                    .is_empty()
+                .is_empty()
             );
         }
+
+    #[test]
+    fn cargo_workspace_root_honors_explicit_package_workspace() {
+        let temp = tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let package = workspace.join("crates/member");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"member\"\nworkspace = \"../..\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            cargo_workspace_root(&package),
+            workspace.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn cargo_workspace_root_infers_nearest_workspace_manifest() {
+        let temp = tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let package = workspace.join("crates/member");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\"]\n",
+        )
+        .unwrap();
+        fs::write(package.join("Cargo.toml"), "[package]\nname = \"member\"\n").unwrap();
+
+        assert_eq!(cargo_workspace_root(&package), workspace);
+    }
+
+    #[test]
+    fn cargo_workspace_root_keeps_standalone_package_root() {
+        let temp = tempdir().unwrap();
+        let package = temp.path().join("package");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"package\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(cargo_workspace_root(&package), package);
+    }
+
+    #[test]
+    fn resolve_source_package_selects_member_from_workspace_provider() {
+        let temp = tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let member = workspace.join("crates/member");
+        let sibling = workspace.join("crates/sibling");
+        fs::create_dir_all(member.join("src")).unwrap();
+        fs::create_dir_all(sibling.join("src")).unwrap();
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\", \"crates/sibling\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"selected-member\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            sibling.join("Cargo.toml"),
+            "[package]\nname = \"sibling\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let input = member.join("src/lib.rs");
+        fs::write(&input, "pub fn selected() {}\n").unwrap();
+
+        let (provider, package_id, module_path) =
+            resolve_source_package(Path::new(&input), "rust", "cli").unwrap();
+
+        assert_eq!(package_id.as_str(), "selected-member");
+        assert!(module_path.segments.is_empty());
+        let packages = provider.list_packages().unwrap();
+        assert!(packages.iter().any(|id| id.as_str() == "selected-member"));
+        assert!(packages.iter().any(|id| id.as_str() == "sibling"));
     }
 }

@@ -70,6 +70,9 @@ pub struct AstToHirLowerer {
     /// type binding in the package (potentially thousands once vendored
     /// std is loaded) with a `format!` allocation per candidate.
     global_type_defs_by_def_id: HashMap<hir::DefId, Vec<String>>,
+    /// Memoized results for the ambiguous bare-type export query. The HIR
+    /// program is immutable during one lowering pass, while this query is
+    /// reached repeatedly for generic arguments in bundled std.
     preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
@@ -207,13 +210,14 @@ struct StructuralFieldSpec {
 enum PathResolutionScope {
     Value,
     Type,
+    Trait,
 }
 
 impl PathResolutionScope {
     fn namespace(self) -> hir::Namespace {
         match self {
             PathResolutionScope::Value => hir::Namespace::Value,
-            PathResolutionScope::Type => hir::Namespace::Type,
+            PathResolutionScope::Type | PathResolutionScope::Trait => hir::Namespace::Type,
         }
     }
 }
@@ -368,13 +372,26 @@ impl AstToHirLowerer {
     }
 
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
-        let exports = self.package
+        let mut exports = self
+            .package
             .module_tree
             .all_bindings(hir::Namespace::Value)
             .chain(self.package.module_tree.all_bindings(hir::Namespace::Type))
             .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
             .map(|(path, entry)| (path.to_key(), entry.res.clone()))
             .collect::<HashMap<_, _>>();
+        // The implicit prelude is stored in a reserved ModuleTree node, not
+        // under a real path. Publish it using the same canonical path rustc
+        // exposes from a crate's `prelude::v1` module so downstream packages
+        // can reconstruct their own bare-name prelude during AST->HIR.
+        let crate_root = hir::HirProgram::external_crate_name(&self.package.id);
+        for namespace in [hir::Namespace::Value, hir::Namespace::Type] {
+            for (name, entry) in self.package.module_tree.prelude_bindings(namespace) {
+                exports
+                    .entry(format!("{crate_root}::prelude::v1::{name}"))
+                    .or_insert_with(|| entry.res.clone());
+            }
+        }
         exports
     }
 
@@ -521,7 +538,16 @@ impl AstToHirLowerer {
         };
         let prefix = fp_core::ast::path::QualifiedPath::new(segments);
         let module_id = self.package.module_tree.ensure_namespace(&prefix);
-        self.package.module_tree.bind(module_id, ns, &leaf, entry);
+        self.package
+            .module_tree
+            .bind(module_id, ns, &leaf, entry.clone());
+        self.package
+            .module_tree
+            // Keep the complete path here. The reserved prelude node is
+            // populated from the `prelude::<edition>::<name>` suffix, so
+            // passing only `prefix` would discard the leaf and leave crate
+            // metadata with an empty implicit prelude.
+            .bind_implicit_prelude(&prefix, &leaf, ns, entry);
     }
 
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
@@ -668,7 +694,13 @@ impl AstToHirLowerer {
         for segment in &path.segments {
             match segment {
                 ast::ItemImportTree::Crate => {
-                    scope = self.module_path.segments.first().cloned().into_iter().collect();
+                    scope = self
+                        .module_path
+                        .segments
+                        .first()
+                        .cloned()
+                        .into_iter()
+                        .collect();
                     started = true;
                 }
                 ast::ItemImportTree::Root => {
@@ -752,9 +784,7 @@ impl AstToHirLowerer {
         // treating them as unresolved and repeatedly retrying/skipping them.
         if self_def_id.package_id != self.package.id {
             if let Some(path) = self.hir_program.def_path(self_def_id.clone()) {
-                return Ok(fp_core::ast::path::QualifiedPath::new(
-                    path.to_segments(),
-                ));
+                return Ok(fp_core::ast::path::QualifiedPath::new(path.to_segments()));
             }
         }
 
@@ -764,10 +794,16 @@ impl AstToHirLowerer {
         // therefore have no entry in `global_type_defs_by_def_id`; preserve
         // the lexical path as the canonical blanket-impl key instead.
         if self.type_scopes.iter().rev().any(|scope| {
-            scope.values().any(|res| matches!(res, hir::Res::Def(id) if id == self_def_id))
+            scope
+                .values()
+                .any(|res| matches!(res, hir::Res::Def(id) if id == self_def_id))
         }) {
             return Ok(fp_core::ast::path::QualifiedPath::new(
-                self_path.segments.iter().map(|segment| segment.name.as_str().to_owned()).collect(),
+                self_path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.name.as_str().to_owned())
+                    .collect(),
             ));
         }
 
@@ -914,6 +950,13 @@ impl AstToHirLowerer {
         })
     }
 
+    fn lookup_prelude_symbol(&self, name: &str, ns: hir::Namespace) -> Option<hir::Res> {
+        self.package
+            .module_tree
+            .prelude_bindings(ns)
+            .find_map(|(bound_name, entry)| (bound_name == name).then(|| entry.res.clone()))
+    }
+
     /// Lexical scope only (generic parameters, locals pushed by
     /// `push_type_scope`/`push_value_scope`) — distinct from the
     /// module/prelude/global tiers `resolve_type_symbol`/`resolve_value_symbol`
@@ -958,100 +1001,47 @@ impl AstToHirLowerer {
         }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.lookup_symbol(&qualified, hir::Namespace::Type)
-            .or_else(|| {
-                self.package
-                    .module_tree
-                    .lookup_res(
-                        self.package.module_tree.prelude(),
-                        hir::Namespace::Type,
-                        name,
-                    )
-                    .cloned()
-            })
+            .or_else(|| self.lookup_prelude_symbol(name, hir::Namespace::Type))
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Type))
-            // Cross-package export (e.g. `libc::char`), looked up lazily
-            // against the workspace on a local-lookup miss — see
-            // `lookup_global_res`'s identical fallback.
-            .or_else(|| self.hir_program.find_export(&qualified))
-            .or_else(|| self.hir_program.find_export(name))
-            // Bare name, defining package unknown (e.g. `Option` really
-            // lives at `core::option::Option` in real std) — fall back
-            // to a suffix scan across every package's exports.
-            .or_else(|| self.resolve_ambiguous_type_export_by_name(name))
-    }
-
-    /// The disambiguating counterpart of `HirProgram::find_export_by_name`
-    /// for the type namespace: real vendored std reaches this tier for
-    /// `Result` with FOUR same-last-segment candidates in scope — the real
-    /// `enum Result<T, E>` (`core::result::Result`) plus three transparent
-    /// type aliases (`fmt::Result`, `io::Result`, `thread::Result`) that
-    /// just narrow its error type for their own module's convenience.
-    /// `find_export_by_name`'s plain "first `HashMap` hit wins" has no way
-    /// to prefer the real enum over an alias, so whichever export a given
-    /// package's `hir_exports` iteration order happens to surface first
-    /// silently wins — every value actually typed as an alias then
-    /// degrades to `{error}` wherever the real two-parameter enum was
-    /// needed instead, which is the majority of std. Fixed here, once,
-    /// where type-namespace resolution actually happens, rather than by
-    /// teaching `HirProgram` itself an ambiguity-resolution policy that
-    /// would apply (likely wrongly) to every other caller too.
-    fn resolve_ambiguous_type_export_by_name(&self, name: &str) -> Option<hir::Res> {
-        let hir_program = &self.hir_program;
-        let mut candidates: Vec<(String, hir::Res)> = hir_program
-            .hir_definitions()
-            .into_iter()
-            .flat_map(|(_module_path, _package, exports)| exports.into_iter())
-            .filter(|(key, _)| key.rsplit("::").next().unwrap_or(key.as_str()) == name)
-            .collect();
-        candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
-        candidates.into_iter().min_by_key(|(_, res)| {
-            let hir::Res::Def(def_id) = res else {
-                // Non-`Def` resolutions (a module, a local, ...) have no
-                // alias/depth to compare — treat as maximally preferred
-                // among themselves via stable key order alone.
-                return (0usize, 0usize, 0usize);
-            };
-            // A trait (real std has both `core::error::Error` the trait and
-            // `fmt::Error`/`io::Error` distinct structs sharing the bare
-            // name `Error`) ranks behind a real nominal type — a bare type
-            // reference almost always means the concrete type, not the
-            // trait (a trait bound/object position spells it `dyn Error`/
-            // a generic bound instead, resolved separately). HIR has no
-            // first-class trait item — a trait's own `DefId` is a
-            // placeholder `Const`, never a real Struct/Enum, so
-            // `placeholder_defs`/`is_placeholder_def` is the same signal,
-            // checked against this in-progress package first (a trait
-            // declared in *this* package is placeholder-tagged there, not
-            // in `hir_program`, which only ever holds already-published
-            // dependencies).
-            let is_trait = self.package.placeholder_defs.contains(def_id)
-                || self
-                    .hir_program
-                    .is_placeholder_def(def_id.clone());
-            // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
-            // ranks behind a real nominal declaration (`enum Result`).
-            let is_alias = self.package.type_alias_targets.contains_key(def_id)
-                || self
-                    .hir_program
-                    .type_alias_target(def_id.clone())
-                    .is_some();
-            let depth = self
-                .package
-                .def_paths
-                .get(def_id)
-                .or_else(|| {
-                    self.hir_program
-                        .def_path(def_id.clone())
-                })
-                .map(|path| path.segments.len())
-                .unwrap_or(usize::MAX);
-            (is_trait as usize, is_alias as usize, depth)
-        }).map(|(_, res)| res)
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
         self.resolve_lexical_type_symbol(name)
             .or_else(|| self.resolve_global_type_symbol(name))
+    }
+
+    /// Trait bounds use the type namespace, but an ambiguous bare bound must
+    /// select a trait declaration rather than a nominal type with the same
+    /// name. Keep this context-sensitive choice in AST->HIR resolution.
+    fn is_trait_definition(&self, def_id: &hir::DefId) -> bool {
+        self.package
+            .def_map
+            .get(def_id)
+            .or_else(|| self.hir_program.item(def_id.clone()))
+            .is_some_and(|item| matches!(item.kind, hir::ItemKind::Trait(_)))
+    }
+
+    fn resolve_trait_symbol(&self, name: &str) -> Option<hir::Res> {
+        let is_trait = |res: Option<hir::Res>| match res {
+            Some(hir::Res::Def(def_id)) if self.is_trait_definition(&def_id) => {
+                Some(hir::Res::Def(def_id))
+            }
+            _ => None,
+        };
+
+        // Trait bounds use the same lexical/module/prelude scopes as ordinary
+        // type paths. The expected trait namespace affects the interpretation
+        // of an already-resolved binding; it does not authorize a workspace
+        // suffix search for an arbitrary declaration with the same name.
+        is_trait(self.resolve_lexical_type_symbol(name))
+            .or_else(|| {
+                let qualified = self.module_path.with_segment(name.to_string()).to_key();
+                is_trait(self.lookup_symbol(&qualified, hir::Namespace::Type))
+            })
+            .or_else(|| {
+                is_trait(self.lookup_prelude_symbol(name, hir::Namespace::Type))
+            })
+            .or_else(|| is_trait(self.lookup_symbol(name, hir::Namespace::Type)))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -1071,9 +1061,8 @@ impl AstToHirLowerer {
         if let Some(op) = self.package.op_defs.get(&def_id).cloned() {
             return Some(op);
         }
-        let hir_program = &self.hir_program;
-        for (_module_path, hir_program, _exports) in hir_program.hir_definitions() {
-            if let Some(op) = hir_program.op_defs.get(&def_id).cloned() {
+        for package in self.hir_program.packages.values() {
+            if let Some(op) = package.op_defs.get(&def_id).cloned() {
                 return Some(op);
             }
         }
@@ -1102,20 +1091,8 @@ impl AstToHirLowerer {
         }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.lookup_symbol(&qualified, hir::Namespace::Value)
-            .or_else(|| {
-                self.package
-                    .module_tree
-                    .lookup_res(
-                        self.package.module_tree.prelude(),
-                        hir::Namespace::Value,
-                        name,
-                    )
-                    .cloned()
-            })
+            .or_else(|| self.lookup_prelude_symbol(name, hir::Namespace::Value))
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
-            .or_else(|| self.hir_program.find_export(&qualified))
-            .or_else(|| self.hir_program.find_export(name))
-            .or_else(|| self.hir_program.find_export_by_name(name))
     }
 
     fn push_value_scope(&mut self) {
@@ -1467,7 +1444,9 @@ impl AstToHirLowerer {
                 .insert(item.def_id.clone(), item.clone());
             program.items.push(item);
         }
-        program.items.extend(std::mem::take(&mut self.local_dispatch_items));
+        program
+            .items
+            .extend(std::mem::take(&mut self.local_dispatch_items));
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
@@ -1478,6 +1457,16 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
+        // Crate metadata must travel with the published HIR snapshot. The
+        // consumer lowerer uses this edge set to select the implicit prelude;
+        // deriving it again from a transient package workspace makes the
+        // result depend on recursive-scope lifetime.
+        program.dependencies = self.package.dependencies.clone();
+        // Dependency resolution walks the returned HIR package's module tree
+        // segment by segment for imports. The lowerer records bindings in its
+        // package-owned tree while transforming, so publish that completed
+        // tree alongside the other HIR indexes before returning the package.
+        program.module_tree = self.package.module_tree.clone();
         // Every item above was appended straight to `program.items`, not
         // through `add_item`, so the derived impl-candidate indices
         // (`impls_by_self_did`/`impls_by_shape`/`blanket_impls`) are
@@ -1503,8 +1492,8 @@ impl AstToHirLowerer {
                     let u_def_id = this.next_def_id();
                     let method_def_id = this.next_def_id();
 
-                    let generic_param = |this: &mut Self, name: &str, def_id: hir::DefId| {
-                        hir::GenericParam {
+                    let generic_param =
+                        |this: &mut Self, name: &str, def_id: hir::DefId| hir::GenericParam {
                             hir_id: this.next_id(),
                             def_id,
                             name: hir::Symbol::new(name),
@@ -1512,8 +1501,7 @@ impl AstToHirLowerer {
                             bounds: Vec::new(),
                             explicit_bindings: Vec::new(),
                             projection_bounds: Vec::new(),
-                        }
-                    };
+                        };
                     let type_param = |this: &mut Self, name: &str, def_id: hir::DefId| {
                         hir::TypeExpr::new(
                             this.next_id(),
@@ -2139,7 +2127,10 @@ impl AstToHirLowerer {
                 let hir_item = hir_item?;
                 self.program_def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
-                if matches!(hir_item.kind, hir::ItemKind::Trait(_) | hir::ItemKind::Impl(_)) {
+                if matches!(
+                    hir_item.kind,
+                    hir::ItemKind::Trait(_) | hir::ItemKind::Impl(_)
+                ) {
                     self.local_dispatch_items.push(hir_item.clone());
                 }
                 if let Some(ident) = item.as_ref().get_ident() {
@@ -2776,7 +2767,7 @@ impl AstToHirLowerer {
                     .bounds
                     .iter()
                     .filter_map(|bound| {
-                        self.ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                        self.ast_expr_to_hir_path(bound, PathResolutionScope::Trait)
                             .ok()
                     })
                     .collect::<Vec<_>>();
@@ -2833,10 +2824,20 @@ impl AstToHirLowerer {
                 let args = hir::GenericArgs {
                     args: vec![hir::GenericArg::Type(elem)],
                 };
-                let path = hir::Path {
-                    segments: vec![self.make_path_segment("Vec", Some(args))],
-                    res: None,
-                };
+                // `Vec<T>` is a nominal ADT type, even though the parser has
+                // a dedicated AST variant for its surface spelling. Resolve
+                // the nominal head through the ordinary type namespace before
+                // attaching the argument. Leaving `res` empty makes an impl
+                // such as `impl<T> Trait for Vec<T>` indistinguishable from
+                // an unresolved path to the HIR impl index, so it cannot be
+                // placed in rustc's ADT dispatch bucket.
+                let mut path = self.name_to_hir_path_with_scope(
+                    &Name::Ident(ast::Ident::new("Vec")),
+                    PathResolutionScope::Type,
+                )?;
+                if let Some(last) = path.segments.last_mut() {
+                    last.args = Some(args);
+                }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
@@ -3144,7 +3145,7 @@ impl AstToHirLowerer {
                             ));
                         }
                     }
-                    if let Ok(path) = self.ast_expr_to_hir_path(bound, PathResolutionScope::Type) {
+                    if let Ok(path) = self.ast_expr_to_hir_path(bound, PathResolutionScope::Trait) {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Path(path),

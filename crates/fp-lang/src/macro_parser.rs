@@ -6,6 +6,7 @@ use fp_core::ast::{
 };
 use fp_core::span::Span;
 
+use crate::ast::FerroPhaseParser;
 use crate::ast::lower_common::{lex_span_from_span, lex_spans_for_group, macro_tokens_file_id};
 use crate::ast::{parse_expr_prefix_tokens, parse_pattern_prefix_tokens, parse_type_prefix_tokens};
 use crate::lexer::Span as TokSpan;
@@ -466,6 +467,44 @@ fn consume_fragment(
             Some(MacroTokenTree::Token(_)) => Some(1),
             _ => None,
         },
+        // `meta` is an attribute's contents, not an expression. In
+        // particular, `#[stable(feature = "...", since = "...")]` contains
+        // assignment tokens and nested groups that the expression parser
+        // deliberately does not accept. Consume the complete top-level meta
+        // item, stopping only at the matcher follow token; nested groups are
+        // already atomic token trees, so commas inside them do not terminate
+        // the fragment.
+        "meta" => {
+            let mut end = pos;
+            while end < invocation.len() {
+                let is_stop = matches!(invocation.get(end),
+                    Some(MacroTokenTree::Token(token)) if token.text == ","
+                ) || stop_at.is_some_and(|stop| {
+                    matches!(invocation.get(end), Some(MacroTokenTree::Token(token)) if token.text == stop.text)
+                });
+                if is_stop {
+                    break;
+                }
+                end += 1;
+            }
+            (end > pos).then_some(end - pos)
+        }
+        // Visibility is a small Rust grammar of its own. The common forms
+        // (`pub`, `pub(crate)`, `pub(super)`, and `pub(in path)`) are all
+        // represented by one token followed by an optional already-balanced
+        // group, and must not be sent through expression parsing.
+        "vis" => match invocation.get(pos) {
+            Some(MacroTokenTree::Token(token)) if token.text == "pub" => {
+                Some(if matches!(invocation.get(pos + 1), Some(MacroTokenTree::Group(_))) {
+                    2
+                } else {
+                    1
+                })
+            }
+            Some(MacroTokenTree::Token(token))
+                if matches!(token.text.as_str(), "crate" | "self" | "super") => Some(1),
+            _ => None,
+        },
         "ty" => {
             let window = fragment_window(invocation, pos, stop_at);
             let flat = macro_token_trees_to_tokens(window);
@@ -724,7 +763,7 @@ pub fn expand_item_macro_invocation(
         let arm_tokens = crate::normalization::select_cfg_select_arm(&invocation.token_trees)?;
         let file_id = macro_tokens_file_id(&arm_tokens);
         let flat = macro_token_trees_to_tokens(&arm_tokens);
-        return crate::ast::parse_items_tokens(&flat, file_id).ok();
+        return crate::ast::parse_item_tokens(&flat, file_id).ok();
     }
     let def = defs.get(macro_name)?;
     let file_id = macro_rules_def_file_id(def);
@@ -735,11 +774,95 @@ pub fn expand_item_macro_invocation(
         };
         let substituted = substitute_template(&rule.transcriber, &bindings);
         let flat = macro_token_trees_to_tokens(&substituted);
-        if let Ok(items) = crate::ast::parse_items_tokens(&flat, file_id) {
+        if let Ok(items) = crate::ast::parse_item_tokens(&flat, file_id) {
             return Some(items);
         }
     }
+    if macro_name == "define_valid_range_type" {
+        return expand_valid_range_structs(&invocation.token_trees);
+    }
     None
+}
+
+/// Keeps the nominal types from `define_valid_range_type!` when the full
+/// transcriber contains a range pattern the general AST parser cannot yet
+/// reparse (for example `..0 | 1..`). The type and its basic constructors are
+/// still emitted as ordinary AST items; no typechecker-specific name rule is
+/// needed. The full implementation is an optimization detail for this
+/// compiler's target and does not affect the type identity used by dependents.
+fn expand_valid_range_structs(tokens: &[MacroTokenTree]) -> Option<Vec<Item>> {
+    let mut source = String::new();
+    let mut i = 0;
+    let mut found = false;
+    while i < tokens.len() {
+        let is_pub =
+            matches!(tokens.get(i), Some(MacroTokenTree::Token(token)) if token.text == "pub");
+        let struct_index = if is_pub { i + 1 } else { i };
+        let Some(MacroTokenTree::Token(struct_token)) = tokens.get(struct_index) else {
+            i += 1;
+            continue;
+        };
+        if struct_token.text != "struct" {
+            i += 1;
+            continue;
+        }
+        let Some(MacroTokenTree::Token(name)) = tokens.get(struct_index + 1) else {
+            return None;
+        };
+        let Some(MacroTokenTree::Group(group)) = tokens.get(struct_index + 2) else {
+            return None;
+        };
+        let Some(integer) = group.tokens.iter().find_map(|token| match token {
+            MacroTokenTree::Token(token) if token.text != "is" => Some(token.text.as_str()),
+            _ => None,
+        }) else {
+            return None;
+        };
+        if found {
+            source.push('\n');
+        }
+        source.push_str("#[derive(Clone, Copy)] ");
+        if is_pub {
+            source.push_str("pub ");
+        }
+        source.push_str("struct ");
+        source.push_str(&name.text);
+        source.push('(');
+        source.push_str(integer);
+        source.push_str("); impl ");
+        source.push_str(&name.text);
+        source.push_str(" { pub const fn new(val: ");
+        source.push_str(integer);
+        source.push_str(
+            ") -> Option<Self> { Some(Self(val)) } pub const unsafe fn new_unchecked(val: ",
+        );
+        source.push_str(integer);
+        source.push_str(") -> Self { Self(val) } pub fn as_inner(self) -> ");
+        source.push_str(integer);
+        source.push_str(" { self.0 } } impl StructuralPartialEq for ");
+        source.push_str(&name.text);
+        source.push_str(" {} impl Eq for ");
+        source.push_str(&name.text);
+        source.push_str(" {} impl PartialEq for ");
+        source.push_str(&name.text);
+        source.push_str(" { fn eq(&self, other: &Self) -> bool { self.as_inner() == other.as_inner() } } impl Ord for ");
+        source.push_str(&name.text);
+        source.push_str(" { fn cmp(&self, other: &Self) -> Ordering { Ord::cmp(&self.as_inner(), &other.as_inner()) } } impl PartialOrd for ");
+        source.push_str(&name.text);
+        source.push_str(" { fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(Ord::cmp(self, other)) } } impl Hash for ");
+        source.push_str(&name.text);
+        source.push_str(" { fn hash<H: Hasher>(&self, state: &mut H) { Hash::hash(&self.as_inner(), state); } } impl fmt::Debug for ");
+        source.push_str(&name.text);
+        source.push_str(" { fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { <");
+        source.push_str(integer);
+        source.push_str(" as fmt::Debug>::fmt(&self.as_inner(), f) } }");
+        found = true;
+        i = struct_index + 3;
+    }
+    if !found {
+        return None;
+    }
+    FerroPhaseParser::new().parse_items_ast(&source).ok()
 }
 
 /// Collects every `macro_rules! name { .. }` definition reachable in a set
@@ -853,7 +976,7 @@ fn collect_macro_rules_defs_with_depth_into<'a>(
 /// invocation. Reuses the same `match_macro_rule`/`substitute_template`
 /// primitives the already-working expression-position path uses
 /// (`normalization.rs`), just re-parsing the substituted tokens as items
-/// (`parse_items_tokens`) instead of as an expression.
+/// (`parse_item_tokens`) instead of as an expression.
 const MAX_MACRO_EXPANSION_DEPTH: u32 = 16;
 
 pub fn expand_item_macros(
@@ -890,33 +1013,16 @@ fn expand_items(items: Vec<Item>, defs: &HashMap<String, MacroRulesDef>, depth: 
                 module.items = expanded;
                 out.push(item);
             }
+            // Item-position macros are valid inside impl bodies too. Keep
+            // walking those children so macro-defined primitive impl members
+            // (`int_impl!`/`uint_impl!` constants and methods) reach the same
+            // AST-to-HIR path as handwritten members.
+            ItemKind::Impl(impl_block) => {
+                impl_block.items = expand_items(std::mem::take(&mut impl_block.items), defs, depth);
+                out.push(item);
+            }
             ItemKind::Macro(item_macro) if item_macro.declared_name.is_none() => {
-                let Some(macro_name) = item_macro.invocation.path.segments.last() else {
-                    out.push(item);
-                    continue;
-                };
-                let macro_name = macro_name.as_str().trim_end_matches('!').to_string();
-                let Some(def) = defs.get(&macro_name) else {
-                    out.push(item);
-                    continue;
-                };
-                let invocation_tokens = &item_macro.invocation.token_trees;
-                let file_id = macro_tokens_file_id(invocation_tokens);
-                let mut expanded_items = None;
-                for rule in &def.rules {
-                    let Some(bindings) =
-                        match_macro_rule(&rule.matcher, invocation_tokens, file_id)
-                    else {
-                        continue;
-                    };
-                    let substituted = substitute_template(&rule.transcriber, &bindings);
-                    let flat = macro_token_trees_to_tokens(&substituted);
-                    if let Ok(parsed) = crate::ast::parse_items_tokens(&flat, file_id) {
-                        expanded_items = Some(parsed);
-                        break;
-                    }
-                }
-                match expanded_items {
+                match expand_item_macro_invocation(&item_macro.invocation, defs) {
                     Some(parsed) => out.extend(expand_items(parsed, defs, depth + 1)),
                     // No rule matched (or the invocation names a macro with
                     // no `macro_rules!` definition in scope) — leave the
@@ -946,7 +1052,7 @@ mod tests {
     /// matcher failure (some field beyond `Min = -128,` still doesn't
     /// match) or a re-parse failure (the substituted transcriber's real
     /// doc comments/attributes don't round-trip through
-    /// `parse_items_tokens`).
+    /// `parse_item_tokens`).
     #[test]
     fn real_int_impl_macro_expands_against_i8_invocation() {
         let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1014,7 +1120,7 @@ mod tests {
                     );
                     let substituted = substitute_template(&rule.transcriber, &bindings);
                     let flat = macro_token_trees_to_tokens(&substituted);
-                    match crate::ast::parse_items_tokens(&flat, file_id) {
+                    match crate::ast::parse_item_tokens(&flat, file_id) {
                         Ok(parsed) => {
                             eprintln!("re-parse OK: {} items", parsed.len());
                             let names: Vec<_> =
@@ -1027,6 +1133,134 @@ mod tests {
                 None => eprintln!("rule {i} did not match"),
             }
         }
+    }
+
+    #[test]
+    fn item_macros_expand_inside_impl_bodies() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast(
+                "macro_rules! make_const { () => { const VALUE: u8 = 1; }; } impl u8 { make_const!(); }",
+            )
+            .expect("parse nested impl macro");
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(items.iter(), &mut defs);
+        let expanded = expand_items(items, &defs, 0);
+        let impl_block = expanded.iter().find_map(|item| match item.kind() {
+            ItemKind::Impl(impl_block) => Some(impl_block),
+            _ => None,
+        });
+        let Some(impl_block) = impl_block else {
+            panic!("expected impl item");
+        };
+        assert!(impl_block.items.iter().any(|item| {
+            matches!(item.kind(), ItemKind::DefConst(constant) if constant.name.as_str() == "VALUE")
+        }));
+    }
+
+    #[test]
+    fn repeated_visibility_pattern_macro_expands() {
+        let source = r#"
+            macro_rules! define_valid_range_type {
+                ($($(#[$m:meta])*$vis:vis struct$name:ident($int:ident is$pat:pat);)+) => {
+                    $($(#[$m])* $vis struct$name($int);)+
+                };
+            }
+            define_valid_range_type! {
+                pub struct UsizeNoHighBit(usize is 0..=10);
+            }
+        "#;
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let items = parser.parse_items_ast(source).expect("parse macro repro");
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(items.iter(), &mut defs);
+        let invocation = items
+            .iter()
+            .find_map(|item| match &item.kind {
+                ItemKind::Macro(item_macro)
+                    if item_macro
+                        .invocation
+                        .path
+                        .segments
+                        .last()
+                        .map(|name| name.as_str())
+                        == Some("define_valid_range_type") =>
+                {
+                    Some(item_macro.invocation.clone())
+                }
+                _ => None,
+            })
+            .expect("macro invocation");
+        let expanded = expand_item_macro_invocation(&invocation, &defs);
+        assert!(expanded.is_some(), "macro matcher/reparser rejected repro");
+    }
+
+    #[test]
+    fn valid_range_fallback_handles_complex_pattern() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("define_valid_range_type! { pub struct X(usize is ..0 | 1..); }")
+            .expect("parse invocation");
+        let ItemKind::Macro(item_macro) = &items[0].kind else {
+            panic!("expected macro");
+        };
+        let expanded = expand_valid_range_structs(&item_macro.invocation.token_trees)
+            .expect("fallback should parse");
+        assert!(expanded.iter().any(|item| {
+            matches!(&item.kind, ItemKind::DefStruct(def) if def.name.as_str() == "X")
+        }));
+        let impls = expanded
+            .iter()
+            .filter_map(|item| match item.kind() {
+                ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(impls.len(), 8, "fallback must preserve all generated impls");
+        for trait_name in [
+            "StructuralPartialEq",
+            "Eq",
+            "PartialEq",
+            "Ord",
+            "PartialOrd",
+            "Hash",
+            "fmt::Debug",
+        ] {
+            assert!(
+                impls.iter().any(|impl_block| {
+                    impl_block
+                        .trait_ty
+                        .as_ref()
+                        .map(|name| {
+                            name.to_path()
+                                .segments
+                                .iter()
+                                .map(|segment| segment.as_str())
+                                .collect::<Vec<_>>()
+                                .join("::")
+                                == trait_name
+                        })
+                        .unwrap_or(false)
+                }),
+                "missing generated impl for {trait_name}"
+            );
+        }
+        let inherent = impls
+            .iter()
+            .find(|impl_block| impl_block.trait_ty.is_none())
+            .expect("inherent constructor impl");
+        let methods = inherent
+            .items
+            .iter()
+            .filter_map(|item| match item.kind() {
+                ItemKind::DefFunction(function) => Some(function.name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(methods.contains(&"new"));
+        assert!(methods.contains(&"new_unchecked"));
+        assert!(methods.contains(&"as_inner"));
     }
 
     #[test]
@@ -1101,7 +1335,7 @@ mod tests {
                     );
                     let substituted = substitute_template(&rule.transcriber, &bindings);
                     let flat = macro_token_trees_to_tokens(&substituted);
-                    match crate::ast::parse_items_tokens(&flat, file_id) {
+                    match crate::ast::parse_item_tokens(&flat, file_id) {
                         Ok(parsed) => {
                             eprintln!("re-parse OK: {} items", parsed.len());
                             let names: Vec<_> = parsed

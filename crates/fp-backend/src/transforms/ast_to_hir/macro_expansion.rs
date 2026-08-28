@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_ITEM_MACRO_EXPANSION_DEPTH: usize = 16;
+
 impl AstToHirLowerer {
     pub(super) fn expand_item_macros(
         &mut self,
@@ -11,6 +13,22 @@ impl AstToHirLowerer {
             let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
                 return items;
             };
+            // Package providers flatten source files into PackageItems. That
+            // ordering is not necessarily the lexical order of a module, so
+            // discovering macro definitions during the expansion walk can
+            // visit an invocation before its definition. Rust's resolver
+            // builds the macro scope before resolving the items that use it;
+            // seed the same scope up front while retaining the normalizer's
+            // depth policy for same-named definitions.
+            for package_item in &items {
+                self.collect_item_macro_defs(
+                    &package_item.item,
+                    normalizer,
+                    &mut defs,
+                    &mut depths,
+                    package_item.module_path.segments.len(),
+                );
+            }
             items
                 .into_iter()
                 .flat_map(|package_item| {
@@ -22,6 +40,7 @@ impl AstToHirLowerer {
                         &mut defs,
                         &mut depths,
                         depth,
+                        0,
                     )
                     .into_iter()
                     .map(move |item| fp_core::ast::package::PackageItem {
@@ -38,6 +57,49 @@ impl AstToHirLowerer {
         expanded
     }
 
+    fn collect_item_macro_defs(
+        &self,
+        item: &ast::Item,
+        normalizer: &dyn IntrinsicNormalizer,
+        defs: &mut HashMap<String, fp_core::ast::MacroRulesDef>,
+        depths: &mut HashMap<String, usize>,
+        depth: usize,
+    ) {
+        match item.kind() {
+            ItemKind::Macro(item_macro) if item_macro.declared_name.is_some() => {
+                let name = item_macro
+                    .declared_name
+                    .as_ref()
+                    .expect("declared_name.is_some() checked above")
+                    .as_str()
+                    .to_string();
+                let keep = match depths.get(&name) {
+                    Some(&existing_depth) => {
+                        normalizer.prefer_macro_rules_def(existing_depth, depth)
+                    }
+                    None => true,
+                };
+                if keep {
+                    let def =
+                        normalizer.parse_macro_rules_def(&name, &item_macro.invocation.token_trees);
+                    defs.insert(name.clone(), def);
+                    depths.insert(name, depth);
+                }
+            }
+            ItemKind::Module(module) => {
+                for child in &module.items {
+                    self.collect_item_macro_defs(child, normalizer, defs, depths, depth + 1);
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                for child in &impl_block.items {
+                    self.collect_item_macro_defs(child, normalizer, defs, depths, depth);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn expand_item_macros_in_item(
         &self,
         item: ast::Item,
@@ -45,7 +107,11 @@ impl AstToHirLowerer {
         defs: &mut HashMap<String, fp_core::ast::MacroRulesDef>,
         depths: &mut HashMap<String, usize>,
         depth: usize,
+        expansion_depth: usize,
     ) -> Vec<ast::Item> {
+        if expansion_depth > MAX_ITEM_MACRO_EXPANSION_DEPTH {
+            return vec![item];
+        }
         match item.kind {
             ItemKind::DefStruct(_) => {
                 let mut derived = normalizer.expand_derive(&item);
@@ -86,6 +152,7 @@ impl AstToHirLowerer {
                                 defs,
                                 depths,
                                 depth,
+                                expansion_depth + 1,
                             )
                         })
                         .collect(),
@@ -97,7 +164,14 @@ impl AstToHirLowerer {
                     .items
                     .into_iter()
                     .flat_map(|inner| {
-                        self.expand_item_macros_in_item(inner, normalizer, defs, depths, depth + 1)
+                        self.expand_item_macros_in_item(
+                            inner,
+                            normalizer,
+                            defs,
+                            depths,
+                            depth + 1,
+                            expansion_depth,
+                        )
                     })
                     .collect();
                 vec![ast::Item::from(ItemKind::Module(module))]
@@ -107,7 +181,14 @@ impl AstToHirLowerer {
                     .items
                     .into_iter()
                     .flat_map(|inner| {
-                        self.expand_item_macros_in_item(inner, normalizer, defs, depths, depth)
+                        self.expand_item_macros_in_item(
+                            inner,
+                            normalizer,
+                            defs,
+                            depths,
+                            depth,
+                            expansion_depth,
+                        )
                     })
                     .collect();
                 vec![ast::Item::from(ItemKind::Impl(impl_block))]

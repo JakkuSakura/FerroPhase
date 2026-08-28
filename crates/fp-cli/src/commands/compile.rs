@@ -275,9 +275,19 @@ async fn run_named_target(
             })?;
         let provider = provider_for_language(&lang, input)
             .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
-        let packages = provider
+        let discovered_packages = provider
             .list_packages()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
+        let packages = if lang == crate::languages::RUST || lang == "rs" {
+            select_rust_directory_roots(
+                input,
+                provider.as_ref(),
+                discovered_packages,
+                args.package.as_deref(),
+            )?
+        } else {
+            discovered_packages
+        };
         (provider, packages, lang)
     } else {
         let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
@@ -375,6 +385,76 @@ async fn run_named_target(
         exec,
     )
     .await
+}
+
+/// Select the package requested by a Rust directory input without changing
+/// the provider's discovery root. The provider may need the Cargo workspace
+/// root to resolve path dependencies, while this command should emit only the
+/// member containing the requested directory. An explicit workspace-root
+/// input retains the historical whole-workspace behavior.
+fn select_rust_directory_roots(
+    input: &Path,
+    provider: &dyn fp_core::ast::package::provider::PackageProvider,
+    packages: Vec<PackageId>,
+    requested_package: Option<&str>,
+) -> Result<Vec<PackageId>> {
+    if let Some(requested_package) = requested_package {
+        let package = packages
+            .iter()
+            .find(|package| package.as_str() == requested_package)
+            .cloned()
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "unknown workspace package `{requested_package}`; available packages: {}",
+                    packages
+                        .iter()
+                        .map(PackageId::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+        return Ok(vec![package]);
+    }
+
+    let manifest = input.join("Cargo.toml");
+    if cargo_manifest_declares_workspace(&manifest) {
+        return Ok(packages);
+    }
+
+    let input = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let mut selected: Option<(usize, PackageId)> = None;
+    for package_id in packages {
+        let metadata = provider
+            .load_package_metadata(&package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        let package_root = metadata.root.to_path_buf();
+        let package_root = package_root.canonicalize().unwrap_or(package_root);
+        if input.starts_with(&package_root) {
+            let depth = package_root.components().count();
+            if selected
+                .as_ref()
+                .is_none_or(|(selected_depth, _)| depth > *selected_depth)
+            {
+                selected = Some((depth, package_id));
+            }
+        }
+    }
+
+    selected
+        .map(|(_, package_id)| vec![package_id])
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "directory {} is not contained by a Cargo package",
+                input.display()
+            ))
+        })
+}
+
+fn cargo_manifest_declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|content| toml::from_str::<toml::Table>(&content).ok())
+        .is_some_and(|manifest| manifest.get("workspace").is_some())
 }
 
 /// Shared tail of every named-target compile: typechecks every package in

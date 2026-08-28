@@ -2,6 +2,49 @@ use super::*;
 use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
 impl AstToHirLowerer {
+    fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
+        let hir::Res::Def(def_id) = base.res.as_ref()? else {
+            return None;
+        };
+        let item = self
+            .package
+            .def_map
+            .get(def_id)
+            .or_else(|| self.hir_program.item(def_id.clone()))?;
+        let hir::ItemKind::Enum(enum_def) = &item.kind else {
+            return None;
+        };
+        enum_def
+            .variants
+            .iter()
+            .find(|variant| variant.name.as_str() == name)
+            .map(|variant| hir::Res::Def(variant.def_id.clone()))
+    }
+
+    /// Preserve the HIR shape used for rustc's `QPath::TypeRelative` when a
+    /// projection is rooted at a lexical type parameter. This HIR has no
+    /// separate `QPath` node, so the parameter remains in the first segment,
+    /// all projection segments remain in order, and `res` stays unresolved for
+    /// type checking to resolve structurally from the parameter's bounds.
+    fn preserve_lexical_projection_path(
+        &self,
+        path: hir::Path,
+        scope: PathResolutionScope,
+    ) -> hir::Path {
+        let rooted_at_type_param = path.segments.first().is_some_and(|segment| {
+            self.resolve_lexical_type_symbol(segment.name.as_str())
+                .is_some()
+        });
+        if scope == PathResolutionScope::Type && path.segments.len() > 1 && rooted_at_type_param {
+            hir::Path {
+                segments: path.segments,
+                res: None,
+            }
+        } else {
+            path
+        }
+    }
+
     fn resolved_name_to_hir_path(
         &mut self,
         resolved_name: &ResolvedName,
@@ -52,7 +95,10 @@ impl AstToHirLowerer {
         if res.is_none() && self.package.module_tree.module_exists(&resolved_name.path) {
             res = Some(hir::Res::Module(resolved_name.path.segments.clone()));
         }
-        Ok(Some(hir::Path { segments, res }))
+        Ok(Some(self.preserve_lexical_projection_path(
+            hir::Path { segments, res },
+            scope,
+        )))
     }
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
@@ -211,6 +257,23 @@ impl AstToHirLowerer {
             if self.tree_lookup_raw(&key, scope.namespace()).is_some() {
                 return true;
             }
+            // Dependency trees participate only after the extern-prelude has
+            // identified the first segment as a crate root. Rustc does not
+            // consult every dependency when probing an ordinary lexical path;
+            // doing so would change shadowing and module-relative lookup.
+            let is_extern_crate_root = candidate
+                .segments
+                .first()
+                .is_some_and(|root| {
+                    self.hir_program.packages.values().any(|package| {
+                        hir::HirProgram::external_crate_name(&package.id) == root.as_str()
+                    })
+                });
+            if is_extern_crate_root
+                && self.lookup_dependency_module_tree(candidate, scope).is_some()
+            {
+                return true;
+            }
             // Cross-package export (e.g. `libc::macos::getenv`), looked
             // up lazily against the workspace on a local-lookup miss —
             // see `lookup_global_res`'s identical fallback.
@@ -219,6 +282,7 @@ impl AstToHirLowerer {
         let scope_contains = |name: &str| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
             PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
+            PathResolutionScope::Trait => self.resolve_trait_symbol(name).is_some(),
         };
         let module_exists = |p: &QualifiedPath| self.package.module_tree.module_exists(p);
 
@@ -279,13 +343,12 @@ impl AstToHirLowerer {
                 } else {
                     self.module_path.clone()
                 };
-                // `root_modules`/`extern_prelude`: every top-level module
-                // name, plus the vendored real Rust std's own bundled
-                // sub-crates (`core`/`alloc`/`std`) — a bare first segment
-                // matching either is a legitimate absolute reference, not
-                // just a local sibling.
+                // `root_modules` is the resolver's extern-prelude/module
+                // source of truth. Dependency roots (including Cargo names
+                // normalized to Rust identifiers such as `skln_core`) are
+                // seeded into this tree before lowering; do not maintain a
+                // second hardcoded list for bundled standard-library roots.
                 let root_modules = self.cached_root_modules();
-                let extern_prelude = ["std", "core", "alloc"];
 
                 if parsed.segments.len() == 1 {
                     if scope_contains(first) {
@@ -302,7 +365,7 @@ impl AstToHirLowerer {
                             return Some(local);
                         }
                     }
-                    if root_modules.contains(first) || extern_prelude.contains(&first.as_str()) {
+                    if root_modules.contains(first) {
                         return Some(QualifiedPath::new(parsed.segments.clone()));
                     }
                     return None;
@@ -328,7 +391,7 @@ impl AstToHirLowerer {
                     }
                 }
 
-                if root_modules.contains(first) || extern_prelude.contains(&first.as_str()) {
+                if root_modules.contains(first) {
                     return Some(QualifiedPath::new(parsed.segments.clone()));
                 }
                 None
@@ -416,6 +479,7 @@ impl AstToHirLowerer {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
                     PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                    PathResolutionScope::Trait => self.resolve_trait_symbol(&segment.name),
                 });
             } else if path_prefix == PathPrefix::SelfMod {
                 // `self::` is an explicit module path — unlike a bare
@@ -426,11 +490,13 @@ impl AstToHirLowerer {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_global_value_symbol(&segment.name),
                     PathResolutionScope::Type => self.resolve_global_type_symbol(&segment.name),
+                    PathResolutionScope::Trait => self.resolve_trait_symbol(&segment.name),
                 });
             } else if matches!(path_prefix, PathPrefix::Super(_)) {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
                     PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                    PathResolutionScope::Trait => self.resolve_trait_symbol(&segment.name),
                 });
             }
         }
@@ -449,7 +515,9 @@ impl AstToHirLowerer {
             let is_lexical = segments.last().is_some_and(|segment| {
                 match scope {
                     PathResolutionScope::Value => self.resolve_lexical_value_symbol(&segment.name),
-                    PathResolutionScope::Type => self.resolve_lexical_type_symbol(&segment.name),
+                    PathResolutionScope::Type | PathResolutionScope::Trait => {
+                        self.resolve_lexical_type_symbol(&segment.name)
+                    }
                 }
                 .is_some()
             });
@@ -484,6 +552,31 @@ impl AstToHirLowerer {
                 segments,
                 res: Some(hir::Res::SelfTy),
             });
+        }
+
+        // A plain path rooted at a lexical type parameter is rustc's
+        // resolved QPath form for an associated-type projection such as
+        // `I::Item` (and for chained projections such as
+        // `I::Item::IntoIter`). The head remains in segment 0 and the
+        // remaining segments are deliberately retained for later
+        // associated-item resolution. This HIR has no separate QPath node;
+        // leaving `res` empty is the representation consumed by `path_ty`'s
+        // structural projection lookup. Marking the whole path with the
+        // head's `Res::Def` would make `path_ty` return the generic parameter
+        // immediately and discard the projection tail.
+        if segments.len() > 1 && path_prefix == PathPrefix::Plain {
+            if self
+                .resolve_lexical_type_symbol(&segments[0].name)
+                .is_some()
+            {
+                return Ok(self.preserve_lexical_projection_path(
+                    hir::Path {
+                        segments,
+                        res: None,
+                    },
+                    scope,
+                ));
+            }
         }
 
         // `char::EscapeUnicode` (and `EscapeDefault`/`EscapeDebug`) — real
@@ -550,6 +643,7 @@ impl AstToHirLowerer {
             if let Some(hir::Res::Module(module_path)) = match scope {
                 PathResolutionScope::Value => self.resolve_value_symbol(&segments[0].name),
                 PathResolutionScope::Type => self.resolve_type_symbol(&segments[0].name),
+                PathResolutionScope::Trait => self.resolve_trait_symbol(&segments[0].name),
             } {
                 let mut aliased = module_path;
                 aliased.extend(
@@ -703,11 +797,8 @@ impl AstToHirLowerer {
                         // scanning those when the local map has nothing.
                         if type_paths.is_empty() {
                             {
-                                for (_module_path, hir_program, _exports) in
-                                    self.hir_program.hir_definitions()
-                                {
-                                    if let Some(def_path) = hir_program.def_paths.get(&type_def_id)
-                                    {
+                                for package in self.hir_program.packages.values() {
+                                    if let Some(def_path) = package.def_paths.get(&type_def_id) {
                                         type_paths.push(def_path.join("::"));
                                     }
                                 }
@@ -845,6 +936,7 @@ impl AstToHirLowerer {
                     let alias = match scope {
                         PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
                         PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
+                        PathResolutionScope::Trait => self.resolve_trait_symbol(&first.name),
                     };
                     if let Some(hir::Res::Module(module_path)) = alias {
                         let mut canonical = module_path;
@@ -999,10 +1091,7 @@ impl AstToHirLowerer {
                     },
                 )?;
                 let value_base = if matches!(select.select, ast::ExprSelectType::Const) {
-                    Some(self.ast_expr_to_hir_path(
-                        &select.obj,
-                        PathResolutionScope::Value,
-                    )?)
+                    Some(self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?)
                 } else {
                     None
                 };
@@ -1018,7 +1107,18 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, None);
                 base.segments.push(seg);
-                Ok(base)
+                if matches!(
+                    select.select,
+                    ast::ExprSelectType::Const | ast::ExprSelectType::Function
+                )
+                    && !matches!(base.res, Some(hir::Res::Module(_)))
+                {
+                    if let Some(res) = self.lookup_enum_variant(&base, &select.field.name) {
+                        base.res = Some(res);
+                    }
+                }
+
+                Ok(self.preserve_lexical_projection_path(base, scope))
             }
             ast::ExprKind::Invoke(invoke) => {
                 let mut base = match &invoke.target {
@@ -1041,23 +1141,102 @@ impl AstToHirLowerer {
                     // reusing its own already-resolved path when it has
                     // one; only genuinely non-path-shaped types (a tuple,
                     // a slice, `dyn Trait`, ...) still fall through.
-                    ast::ExprInvokeTarget::Type(ty) => {
-                        let type_expr = self.transform_type_to_hir(ty)?;
-                        match type_expr.kind {
-                            hir::TypeExprKind::Path(path) => path,
+                    ast::ExprInvokeTarget::Type(ty) => match ty {
+                        // A type target is already the path head of this
+                        // invoke. Resolve that head directly so lowering its
+                        // generic arguments cannot re-enter this same
+                        // `ExprInvokeTarget::Type` through `transform_type_to_hir`.
+                        ast::Ty::Struct(struct_ty) => self.name_to_hir_path_with_scope(
+                            &Name::Ident(struct_ty.name.clone()),
+                            PathResolutionScope::Type,
+                        )?,
+                        ast::Ty::Expr(type_expr) => match type_expr.kind() {
+                            ast::ExprKind::Name(name) => self.name_to_hir_path_with_scope(
+                                name,
+                                PathResolutionScope::Type,
+                            )?,
+                            ast::ExprKind::Value(value) => match value.as_ref() {
+                                ast::Value::Type(inner) => match inner {
+                                    ast::Ty::Struct(struct_ty) => self
+                                        .name_to_hir_path_with_scope(
+                                            &Name::Ident(struct_ty.name.clone()),
+                                            PathResolutionScope::Type,
+                                        )?,
+                                    ast::Ty::Expr(inner_expr) => match inner_expr.kind() {
+                                        ast::ExprKind::Name(name) => self
+                                            .name_to_hir_path_with_scope(
+                                                name,
+                                                PathResolutionScope::Type,
+                                            )?,
+                                        _ => {
+                                            self.add_error(
+                                                Diagnostic::error(
+                                                    "expected a path-like type target".to_string(),
+                                                )
+                                                .with_source_context(DIAGNOSTIC_CONTEXT)
+                                                .with_span(expr.span()),
+                                            );
+                                            hir::Path {
+                                                segments: vec![
+                                                    self.make_path_segment("__fp_error", None),
+                                                ],
+                                                res: None,
+                                            }
+                                        }
+                                    },
+                                    _ => {
+                                        self.add_error(
+                                            Diagnostic::error(
+                                                "expected a path-like type target".to_string(),
+                                            )
+                                                .with_source_context(DIAGNOSTIC_CONTEXT)
+                                                .with_span(expr.span()),
+                                        );
+                                        hir::Path {
+                                            segments: vec![
+                                                self.make_path_segment("__fp_error", None),
+                                            ],
+                                            res: None,
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    self.add_error(
+                                        Diagnostic::error(
+                                            "expected a path-like type target".to_string(),
+                                        )
+                                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                                            .with_span(expr.span()),
+                                    );
+                                    hir::Path {
+                                        segments: vec![self.make_path_segment("__fp_error", None)],
+                                        res: None,
+                                    }
+                                }
+                            },
                             _ => {
                                 self.add_error(
-                                    Diagnostic::error(format!(
-                                        "expected path-like expression for type path, found type target {:?}",
-                                        ty
-                                    ))
-                                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                                    .with_span(expr.span()),
+                                    Diagnostic::error(
+                                        "expected a path-like type target".to_string(),
+                                    )
+                                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                                        .with_span(expr.span()),
                                 );
                                 hir::Path {
                                     segments: vec![self.make_path_segment("__fp_error", None)],
                                     res: None,
                                 }
+                            }
+                        },
+                        _ => {
+                            self.add_error(
+                                Diagnostic::error("expected a path-like type target".to_string())
+                                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                                    .with_span(expr.span()),
+                            );
+                            hir::Path {
+                                segments: vec![self.make_path_segment("__fp_error", None)],
+                                res: None,
                             }
                         }
                     }

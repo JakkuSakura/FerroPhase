@@ -32,6 +32,37 @@ pub(crate) fn parse_items_tokens(
     Ok(items)
 }
 
+/// Parse tokens produced in an item position.
+///
+/// This intentionally does not use `parse_item_or_expr_winnow`: macro
+/// expansion must preserve Rust's item grammar boundary.  Falling through to
+/// expression parsing here can turn a failed `fn` item into an expression and
+/// hide the actual parse error from the caller.
+pub(crate) fn parse_item_tokens(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<Vec<Item>, DirectParseError> {
+    let mut input = tokens;
+    let mut items = Vec::new();
+    while !input.is_empty() {
+        if looks_like_extern_block(input) {
+            let parsed =
+                parse_extern_block_items(&mut input, file).map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
+            continue;
+        }
+        if starts_unsafe_extern_block(input) {
+            let parsed = parse_prefixed_unsafe_extern_block_items(&mut input, file)
+                .map_err(|err| map_err(err, input))?;
+            items.extend(parsed);
+            continue;
+        }
+        let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        items.push(item);
+    }
+    Ok(items)
+}
+
 pub(crate) fn parse_file_tokens(
     tokens: &[Token],
     file: FileId,

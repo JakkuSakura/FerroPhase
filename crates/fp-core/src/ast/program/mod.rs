@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// just HIR, and growing one `begin_package`/`import_package` call at a
 /// time as compilation proceeds).
 pub struct AstProgram {
-    crates: RefCell<HashMap<PackageId, Rc<RefCell<AstPackage>>>>,
+    crates: Rc<RefCell<HashMap<PackageId, Rc<RefCell<AstPackage>>>>>,
     /// The single package provider for this workspace, required at
     /// construction and never changed afterward. Callers that need to
     /// combine several concrete providers (e.g. a language's std/libc
@@ -33,7 +33,7 @@ pub struct AstProgram {
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
     current_package: Option<PackageId>,
-    prelude: RefCell<Option<Rc<RefCell<AstPackage>>>>,
+    prelude: Rc<RefCell<Option<Rc<RefCell<AstPackage>>>>>,
     /// Reverse index from a package's *HIR* id (the `package_id` embedded
     /// in every `hir::DefId` minted while lowering it) back to its
     /// `AstPackage` — lets a HIR-level, `DefId`-keyed lookup
@@ -41,7 +41,7 @@ pub struct AstProgram {
     /// possibly own that `DefId` (an inherent impl's items are always
     /// minted in the same package as the impl itself) instead of searching
     /// every loaded package.
-    hir_packages: RefCell<HashMap<HirPackageId, Rc<RefCell<AstPackage>>>>,
+    hir_packages: Rc<RefCell<HashMap<HirPackageId, Rc<RefCell<AstPackage>>>>>,
     /// Memoized, name-sorted snapshot of `crates`'s values — the package
     /// set only ever changes via `begin_package`/`import_package` (both
     /// invalidate this), so `sorted_packages` doesn't need to rebuild a
@@ -49,18 +49,18 @@ pub struct AstProgram {
     /// (`find_struct`/`find_enum`/`find_function_sig`, `method_sigs`,
     /// `module_paths`, ...) — this runs once per unqualified
     /// identifier/path reference across every compiled file.
-    sorted_packages_cache: RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>,
+    sorted_packages_cache: Rc<RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>>,
 }
 
 impl AstProgram {
     pub fn new(provider: Arc<dyn PackageProvider>) -> Self {
         Self {
-            crates: RefCell::new(HashMap::new()),
+            crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
             current_package: None,
-            prelude: RefCell::new(None),
-            hir_packages: RefCell::new(HashMap::new()),
-            sorted_packages_cache: RefCell::new(None),
+            prelude: Rc::new(RefCell::new(None)),
+            hir_packages: Rc::new(RefCell::new(HashMap::new())),
+            sorted_packages_cache: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -80,16 +80,20 @@ impl AstProgram {
         packages
     }
 
-    /// Create an isolated package workspace. Provider registrations are
-    /// shared, while compiled package entries are imported explicitly.
+    /// Create a package-focused workspace view. Provider registrations and
+    /// already compiled package entries are shared by value (the packages
+    /// themselves remain behind their existing `Rc`s), while lookups see the
+    /// package currently being lowered. A dependency must remain visible when
+    /// recursive compilation changes the active package; starting with an
+    /// empty registry would make visibility depend on recursion order.
     pub fn for_package(&self, package_id: PackageId) -> Self {
         Self {
-            crates: RefCell::new(HashMap::new()),
+            crates: self.crates.clone(),
             providers: self.providers.clone(),
             current_package: Some(package_id),
-            prelude: RefCell::new(None),
-            hir_packages: RefCell::new(HashMap::new()),
-            sorted_packages_cache: RefCell::new(None),
+            prelude: self.prelude.clone(),
+            hir_packages: self.hir_packages.clone(),
+            sorted_packages_cache: self.sorted_packages_cache.clone(),
         }
     }
 
@@ -351,4 +355,111 @@ impl AstProgram {
     // main-function-rename step it also used to do now happens at the call
     // site (`fp-cli`'s `run_compile_pipeline`), which has both the merged
     // `LirProgram` and the HIR data needed to resolve `main`'s `DefId`.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::package::graph::PackageGraph;
+    use crate::ast::package::provider::EmptyProvider;
+
+    #[test]
+    fn package_workspace_inherits_installed_prelude() {
+        let workspace = AstProgram::new(Arc::new(EmptyProvider));
+        let parent = workspace.for_package(PackageId::new("parent"));
+        let prelude = Rc::new(RefCell::new(AstPackage::new(
+            PackageId::new("std"),
+            "std",
+            PackageGraph::new(Vec::new()),
+        )));
+        parent.install_prelude(prelude.clone());
+
+        let child = parent.for_package(PackageId::new("child"));
+
+        let inherited = child
+            .prelude_package()
+            .expect("package workspace should retain the installed prelude");
+        assert!(Rc::ptr_eq(&inherited, &prelude));
+    }
+
+    #[test]
+    fn package_workspace_observes_prelude_installed_after_creation() {
+        let workspace = AstProgram::new(Arc::new(EmptyProvider));
+        let parent = workspace.for_package(PackageId::new("parent"));
+        let child = parent.for_package(PackageId::new("child"));
+        let prelude = Rc::new(RefCell::new(AstPackage::new(
+            PackageId::new("std"),
+            "std",
+            PackageGraph::new(Vec::new()),
+        )));
+
+        parent.install_prelude(prelude.clone());
+
+        assert!(Rc::ptr_eq(
+            &child
+                .prelude_package()
+                .expect("package workspace should observe later prelude installs"),
+            &prelude
+        ));
+    }
+
+    #[test]
+    fn package_workspace_inherits_compiled_dependencies() {
+        let workspace = AstProgram::new(Arc::new(EmptyProvider));
+        let parent = workspace.for_package(PackageId::new("parent"));
+        let dependency = parent.begin_package(
+            PackageId::new("dependency"),
+            AstPackage::new(
+                PackageId::new("dependency"),
+                "dependency",
+                PackageGraph::new(Vec::new()),
+            ),
+            crate::lir::LirDataLayout::x86_64(),
+        );
+
+        let child = parent.for_package(PackageId::new("child"));
+        let inherited = child
+            .compiled_package(&PackageId::new("dependency"))
+            .expect("package workspace should retain compiled dependencies");
+        assert!(Rc::ptr_eq(&inherited, &dependency));
+        assert!(
+            child
+                .compiled_package_for_def(crate::hir::DefId::new(
+                    dependency.borrow().hir_package_id.clone(),
+                    0,
+                ))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn package_workspace_observes_dependencies_published_after_creation() {
+        let workspace = AstProgram::new(Arc::new(EmptyProvider));
+        let parent = workspace.for_package(PackageId::new("parent"));
+        let child = parent.for_package(PackageId::new("child"));
+        let dependency = parent.begin_package(
+            PackageId::new("dependency"),
+            AstPackage::new(
+                PackageId::new("dependency"),
+                "dependency",
+                PackageGraph::new(Vec::new()),
+            ),
+            crate::lir::LirDataLayout::x86_64(),
+        );
+
+        assert!(Rc::ptr_eq(
+            &child
+                .compiled_package(&PackageId::new("dependency"))
+                .expect("package workspace should observe later package publication"),
+            &dependency
+        ));
+        assert!(
+            child
+                .compiled_package_for_def(crate::hir::DefId::new(
+                    dependency.borrow().hir_package_id.clone(),
+                    0,
+                ))
+                .is_some()
+        );
+    }
 }

@@ -29,11 +29,31 @@ pub(super) fn ty_contains_param(ty: &Ty) -> bool {
         TyKind::Ref(_, inner, _) => ty_contains_param(inner),
         TyKind::RawPtr(value) => ty_contains_param(&value.ty),
         TyKind::Slice(inner) => ty_contains_param(inner),
-        TyKind::Array(inner, _) => ty_contains_param(inner),
+        TyKind::Array(inner, length) => ty_contains_param(inner) || const_contains_param(length),
         TyKind::Tuple(tys) => tys.iter().any(|ty| ty_contains_param(ty)),
         TyKind::Adt(_, args) => args.iter().any(|arg| match arg {
             GenericArg::Type(ty) => ty_contains_param(ty),
-            _ => false,
+            GenericArg::Const(constant) => const_contains_param(constant),
+            GenericArg::Lifetime(_) => false,
+        }),
+        TyKind::FnDef(_, args)
+        | TyKind::Closure(_, args)
+        | TyKind::Generator(_, args, _)
+        | TyKind::Opaque(_, args) => args.iter().any(generic_arg_contains_param),
+        TyKind::GeneratorWitness(tys) => tys.iter().any(|ty| ty_contains_param(ty)),
+        TyKind::Projection(projection) => projection.substs.iter().any(generic_arg_contains_param),
+        TyKind::Dynamic(predicates, _) => predicates.iter().any(|predicate| match predicate {
+            ty::ExistentialPredicate::Trait(trait_ref) => {
+                trait_ref.substs.iter().any(generic_arg_contains_param)
+            }
+            ty::ExistentialPredicate::Projection(projection) => {
+                projection.substs.iter().any(generic_arg_contains_param)
+                    || match &projection.term {
+                        ty::Term::Ty(ty) => ty_contains_param(ty),
+                        ty::Term::Const(_) => false,
+                    }
+            }
+            ty::ExistentialPredicate::AutoTrait(_) => false,
         }),
         TyKind::FnPtr(signature) => {
             signature
@@ -48,21 +68,80 @@ pub(super) fn ty_contains_param(ty: &Ty) -> bool {
     }
 }
 
+fn generic_arg_contains_param(arg: &GenericArg) -> bool {
+    match arg {
+        GenericArg::Type(ty) => ty_contains_param(ty),
+        GenericArg::Const(_) | GenericArg::Lifetime(_) => false,
+    }
+}
+
+fn const_contains_param(constant: &ty::ConstKind) -> bool {
+    match constant {
+        ty::ConstKind::Param(_) => true,
+        ty::ConstKind::Unevaluated(value) => value.substs.iter().any(generic_arg_contains_param),
+        _ => false,
+    }
+}
+
 pub(super) fn ty_contains_error(ty: &Ty) -> bool {
     match &ty.kind {
         TyKind::Error(_) => true,
         TyKind::Ref(_, inner, _) => ty_contains_error(inner),
         TyKind::RawPtr(value) => ty_contains_error(&value.ty),
-        TyKind::Slice(inner) | TyKind::Array(inner, _) => ty_contains_error(inner),
+        TyKind::Slice(inner) => ty_contains_error(inner),
+        TyKind::Array(inner, length) => ty_contains_error(inner) || const_contains_error(length),
         TyKind::Tuple(tys) => tys.iter().any(|ty| ty_contains_error(ty)),
         TyKind::Adt(_, args) => args.iter().any(|arg| match arg {
             GenericArg::Type(ty) => ty_contains_error(ty),
-            GenericArg::Const(_) | GenericArg::Lifetime(_) => false,
+            GenericArg::Const(constant) => const_contains_error(constant),
+            GenericArg::Lifetime(_) => false,
+        }),
+        TyKind::FnDef(_, args)
+        | TyKind::Closure(_, args)
+        | TyKind::Generator(_, args, _)
+        | TyKind::Opaque(_, args) => args.iter().any(generic_arg_contains_error),
+        TyKind::GeneratorWitness(tys) => tys.iter().any(|ty| ty_contains_error(ty)),
+        TyKind::Projection(projection) => projection.substs.iter().any(generic_arg_contains_error),
+        TyKind::Dynamic(predicates, _) => predicates.iter().any(|predicate| match predicate {
+            ty::ExistentialPredicate::Trait(trait_ref) => {
+                trait_ref.substs.iter().any(generic_arg_contains_error)
+            }
+            ty::ExistentialPredicate::Projection(projection) => {
+                projection.substs.iter().any(generic_arg_contains_error)
+                    || match &projection.term {
+                        ty::Term::Ty(ty) => ty_contains_error(ty),
+                        ty::Term::Const(constant) => {
+                            matches!(constant, ty::ConstKind::Error(_))
+                        }
+                    }
+            }
+            ty::ExistentialPredicate::AutoTrait(_) => false,
         }),
         TyKind::FnPtr(signature) => {
-            signature.binder.value.inputs.iter().any(|ty| ty_contains_error(ty))
+            signature
+                .binder
+                .value
+                .inputs
+                .iter()
+                .any(|ty| ty_contains_error(ty))
                 || ty_contains_error(&signature.binder.value.output)
         }
+        _ => false,
+    }
+}
+
+fn generic_arg_contains_error(arg: &GenericArg) -> bool {
+    match arg {
+        GenericArg::Type(ty) => ty_contains_error(ty),
+        GenericArg::Const(constant) => matches!(constant, ty::ConstKind::Error(_)),
+        GenericArg::Lifetime(_) => false,
+    }
+}
+
+fn const_contains_error(constant: &ty::ConstKind) -> bool {
+    match constant {
+        ty::ConstKind::Error(_) => true,
+        ty::ConstKind::Unevaluated(value) => value.substs.iter().any(generic_arg_contains_error),
         _ => false,
     }
 }
@@ -127,7 +206,8 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
             ty::FloatTy::F128 => "f128",
         }],
         TyKind::Slice(_) => vec!["[]", "str"],
-        TyKind::Array(_, _) => vec!["[;N]"],
+        // Array method lookup also considers the built-in slice view.
+        TyKind::Array(_, _) => vec!["[;N]", "[]", "str"],
         TyKind::Tuple(elements) if elements.is_empty() => vec!["()"],
         TyKind::Tuple(_) => vec!["(,)"],
         TyKind::Ref(_, _, ty::Mutability::Not) => vec!["&"],
@@ -154,12 +234,45 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
 pub(super) fn shape_and_blanket_candidates<'a>(
     program: &'a hir::HirProgram,
     receiver_kind: &TyKind,
-) -> impl Iterator<Item = &'a hir::Item> {
-    ty_shape_keys(receiver_kind)
-        .into_iter()
-        .flatten()
-        .flat_map(move |key| program.impls_for_shape(key))
-        .chain(program.blanket_impls())
+) -> Box<dyn Iterator<Item = &'a hir::Item> + 'a> {
+    if matches!(receiver_kind, TyKind::Infer(_)) {
+        // An inference variable has no dispatch shape yet. Keep the
+        // obligation open and let the structural receiver matcher reject
+        // incompatible impls once the surrounding expression constrains it.
+        return Box::new(
+            program
+                .all_items()
+                .filter(|item| matches!(item.kind, hir::ItemKind::Impl(_))),
+        );
+    }
+    Box::new(
+        ty_shape_keys(receiver_kind)
+            .into_iter()
+            .flatten()
+            .flat_map(move |key| program.impls_for_shape(key))
+            .chain(program.blanket_impls()),
+    )
+}
+
+/// Returns the complete indexed method candidate set for a checked receiver.
+///
+/// Rustc's method lookup starts with the receiver's simplified-type bucket and
+/// then adds blanket impls.  Keeping that operation in one helper is
+/// important because the signature-probing pass and the final call-resolution
+/// pass must see the same candidate set; otherwise a method can be found only
+/// after its arguments have already been checked.
+pub(super) fn method_candidates<'a>(
+    program: &'a hir::HirProgram,
+    receiver_kind: &TyKind,
+) -> Box<dyn Iterator<Item = &'a hir::Item> + 'a> {
+    match receiver_kind {
+        TyKind::Adt(receiver, _) => Box::new(
+            program
+                .impls_for_adt(receiver.did.clone())
+                .chain(program.blanket_impls()),
+        ),
+        _ => shape_and_blanket_candidates(program, receiver_kind),
+    }
 }
 
 pub(super) fn primitive_path_ty(name: &str) -> Option<Ty> {

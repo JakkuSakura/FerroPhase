@@ -275,9 +275,7 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
                 .any(|input| type_has_unresolved_paths(input))
                 || type_has_unresolved_paths(&function.output)
         }
-        hir::TypeExprKind::Dynamic(bounds) => {
-            bounds.iter().any(path_has_unresolved_segments)
-        }
+        hir::TypeExprKind::Dynamic(bounds) => bounds.iter().any(path_has_unresolved_segments),
         hir::TypeExprKind::ConstBlock(_, body) => expr_has_unresolved_paths(body),
         hir::TypeExprKind::Refinement {
             base, predicate, ..

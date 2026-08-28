@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::PathPrefix;
+use fp_core::ast::path::{PathPrefix, QualifiedPath};
 use fp_core::intrinsics::CallKind;
 use fp_core::query::lower_fp_expr_to_query;
 
@@ -9,6 +9,149 @@ mod literal_values;
 use literal_values::*;
 
 impl AstToHirLowerer {
+    /// Resolve an enum variant through a type alias in value position.
+    ///
+    /// Rust keeps the alias and the nominal enum as distinct definitions, but
+    /// `Alias::Variant` is resolved against the enum's variant namespace. The
+    /// HIR value table stores the variant under the nominal enum path, so the
+    /// resolver has to follow the alias target before doing the final member
+    /// lookup. This is especially important for `ascii::Char`, which is a
+    /// public alias of `ascii_char::AsciiChar`.
+    fn enum_variant_through_type_path(
+        &self,
+        type_path: &fp_core::ast::path::QualifiedPath,
+        variant_name: &str,
+    ) -> Option<hir::Res> {
+        // A bare nominal prefix is resolved relative to the current module
+        // by the ordinary type-name resolver. `lookup_global_res` consumes a
+        // fully qualified path, so asking it about `DiffRange` alone would
+        // skip that lexical/module-relative tier and lose `DiffRange::Commit`.
+        // Resolve the prefix through the same namespace-aware path first,
+        // then use the published item identity to inspect its variants.
+        let type_res = if type_path.segments.len() == 1 {
+            self.resolve_type_symbol(type_path.segments[0].as_str())
+                .or_else(|| self.lookup_global_res(type_path, PathResolutionScope::Type))
+        } else {
+            self.lookup_global_res(type_path, PathResolutionScope::Type)
+        }?;
+        let mut def_id = match type_res {
+            hir::Res::Def(def_id) => def_id,
+            _ => return None,
+        };
+
+        for _ in 0..32 {
+            let item = self
+                .package
+                .def_map
+                .get(&def_id)
+                .or_else(|| self.hir_program.item(def_id.clone()))?;
+            match &item.kind {
+                hir::ItemKind::Enum(enum_def) => {
+                    return enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name.as_str() == variant_name)
+                        .map(|variant| hir::Res::Def(variant.def_id.clone()));
+                }
+                hir::ItemKind::Struct(_) => return None,
+                _ => {
+                    let target = self
+                        .package
+                        .type_alias_targets
+                        .get(&def_id)
+                        .or_else(|| self.hir_program.type_alias_target(def_id.clone()))?;
+                    let hir::TypeExprKind::Path(path) = &target.kind else {
+                        return None;
+                    };
+                    def_id = match &path.res {
+                        Some(hir::Res::Def(target_def_id)) => target_def_id.clone(),
+                        _ => self
+                            .lookup_global_res(
+                                &QualifiedPath::new(
+                                    path.segments
+                                        .iter()
+                                        .map(|segment| segment.name.as_str().to_string())
+                                        .collect(),
+                                ),
+                                PathResolutionScope::Type,
+                            )
+                            .and_then(|res| match res {
+                                hir::Res::Def(target_def_id) => Some(target_def_id),
+                                _ => None,
+                            })?,
+                    };
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve an external path from the dependency package that owns it.
+    /// The consumer's module tree contains copied bindings for normal imports,
+    /// but the dependency tree is authoritative for an extern-prelude root
+    /// and for paths whose canonical spelling was published by the provider
+    /// (`alloc::vec::Vec`, for example). This preserves the dependency's
+    /// namespace and `Res` instead of reconstructing either from a name.
+    pub(super) fn lookup_dependency_module_tree(
+        &self,
+        path: &QualifiedPath,
+        scope: PathResolutionScope,
+    ) -> Option<hir::Res> {
+        let leaf = path.segments.last()?.as_str();
+        let prefix = QualifiedPath::new(
+            path.segments[..path.segments.len() - 1]
+                .iter()
+                .cloned()
+                .collect(),
+        );
+        let namespace = scope.namespace();
+        let mut packages: Vec<_> = self.hir_program.packages.values().collect();
+        packages.sort_by(|left, right| left.id.cmp(&right.id));
+
+        for package in packages {
+            let external_root = hir::HirProgram::external_crate_name(&package.id);
+
+            // Follow public module re-exports before consulting physical
+            // module paths. Bundled sysroot crates publish paths such as
+            // `std::fmt` as aliases to `alloc::fmt`; rustc resolves the
+            // alias first and then performs the final lookup in its target
+            // module. A suffix scan alone cannot see that relationship.
+            // Resolve against actual module nodes rather than trying a list
+            // of package-relative spellings. A bundled dependency can expose
+            // an extern-prelude root below its package root (for example, a
+            // requested `alloc::vec` is stored as `std::alloc::vec`). The
+            // suffix relation is structural and keeps the final binding
+            // lookup in the requested namespace.
+            let mut module_paths = vec![prefix.clone()];
+            if prefix.segments.first().map(String::as_str)
+                != Some(external_root.as_str())
+            {
+                let mut rooted = vec![external_root.clone()];
+                rooted.extend(prefix.segments.iter().cloned());
+                module_paths.push(QualifiedPath::new(rooted));
+            }
+            if prefix.segments.first().map(String::as_str)
+                == Some(external_root.as_str())
+            {
+                let mut bundled = vec![external_root.clone(), external_root.clone()];
+                bundled.extend(prefix.segments.iter().skip(1).cloned());
+                module_paths.push(QualifiedPath::new(bundled));
+            }
+
+            for module_path in module_paths {
+                let Some(module) = package.module_tree.module_id(&module_path) else {
+                    continue;
+                };
+                if let Some(entry) = package.module_tree.lookup(module, namespace, leaf) {
+                    if entry.export.can_access(&self.module_path.segments) {
+                        return Some(entry.res.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Records a diagnostic for an AST construct that can't be lowered to
     /// HIR (an unhandled shape, an unnormalized macro, etc.) and returns an
     /// empty-block placeholder in its place — lets HIR generation for the
@@ -956,6 +1099,19 @@ impl AstToHirLowerer {
             };
             let seg = self.make_path_segment(&select.field.name, None);
             path.segments.push(seg);
+            // Resolve the completed path after appending the selected item.
+            // The base (`ascii::Char`) may be a re-exported type alias; its
+            // variant namespace belongs to the nominal enum (`AsciiChar`),
+            // so resolving only the base leaves `Char::Null` without a Res.
+            let full_path = QualifiedPath::new(
+                path.segments
+                    .iter()
+                    .map(|segment| segment.name.as_str().to_string())
+                    .collect(),
+            );
+            path.res = self
+                .lookup_global_res(&full_path, PathResolutionScope::Value)
+                .or(path.res);
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -1980,6 +2136,26 @@ impl AstToHirLowerer {
             return None;
         }
         let key = path.to_key();
+
+        // A variant is looked up in the namespace of the nominal enum behind
+        // a transparent type alias (`ascii::Char::Null`, for example), not
+        // as a child of the alias's module-tree binding. Keep this before the
+        // ordinary value lookup so the alias remains transparent without
+        // creating duplicate declarations or typechecker exceptions.
+        if scope == PathResolutionScope::Value && path.segments.len() > 1 {
+            let prefix = QualifiedPath::new(
+                path.segments[..path.segments.len() - 1]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            );
+            if let Some(res) =
+                self.enum_variant_through_type_path(&prefix, path.segments.last()?.as_str())
+            {
+                return Some(res);
+            }
+        }
+
         let local = self.lookup_symbol(&key, scope.namespace());
         // A cross-package export (e.g. `libc::macos::getenv`) is looked up
         // lazily against the workspace on a local-lookup miss, instead of
@@ -1987,12 +2163,6 @@ impl AstToHirLowerer {
         // front (see `seed_workspace_definitions`).
         local
             .or_else(|| self.hir_program.find_export(&key))
-            // The caller's own module-path prefix never matches the
-            // defining package's real qualified key (e.g. this
-            // package's `Option::Some` vs. std's
-            // `core::option::Option::Some`) — fall back to a suffix
-            // match across every package's exports.
-            .or_else(|| self.hir_program.find_export_by_suffix(&key))
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {
                     self.lookup_symbol(&key, hir::Namespace::Type)

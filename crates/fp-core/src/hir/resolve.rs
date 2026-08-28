@@ -196,8 +196,53 @@ impl ModuleTree {
             .is_some_and(|id| self.nodes[id.0 as usize].is_module)
     }
 
+    /// Returns whether a path has a tree node, including a definition
+    /// namespace such as `Option` or `Result`. Definition namespaces are not
+    /// modules for import visibility purposes, but they are valid path
+    /// containers for associated items and enum variants.
+    pub fn namespace_exists(&self, path: &QualifiedPath) -> bool {
+        self.by_path.contains_key(path)
+    }
+
     pub fn module_id(&self, path: &QualifiedPath) -> Option<ModuleId> {
         self.by_path.get(path).copied()
+    }
+
+    /// Looks up a binding through an external crate root. Bundled sysroot
+    /// packages keep their crate root in the tree (`std::fmt`), while an
+    /// ordinary package tree is crate-relative (`fmt`). The package's root
+    /// node is the representation boundary, so select that representation
+    /// once and then perform the normal tree lookup.
+    pub fn lookup_crate_path(
+        &self,
+        crate_name: &str,
+        path: &QualifiedPath,
+        ns: Namespace,
+    ) -> Option<&SymbolEntry> {
+        let rooted = self.module_exists(&QualifiedPath::new(vec![crate_name.to_string()]));
+        let internal = if rooted {
+            path.clone()
+        } else {
+            QualifiedPath::new(path.segments.iter().skip(1).cloned().collect())
+        };
+        let leaf = internal.segments.last()?;
+        let prefix = QualifiedPath::new(
+            internal.segments[..internal.segments.len() - 1].to_vec(),
+        );
+        let module = self.module_id(&prefix)?;
+        self.lookup(module, ns, leaf)
+    }
+
+    /// Resolves an external crate path as a module using the same root
+    /// representation rule as `lookup_crate_path`.
+    pub fn module_exists_crate_path(&self, crate_name: &str, path: &QualifiedPath) -> bool {
+        let rooted = self.module_exists(&QualifiedPath::new(vec![crate_name.to_string()]));
+        let internal = if rooted {
+            path.clone()
+        } else {
+            QualifiedPath::new(path.segments.iter().skip(1).cloned().collect())
+        };
+        self.module_exists(&internal)
     }
 
     /// Every registered module path, at any depth — for callers that
@@ -216,6 +261,29 @@ impl ModuleTree {
 
     pub fn bind(&mut self, module: ModuleId, ns: Namespace, name: &str, entry: SymbolEntry) {
         self.nodes[module.0 as usize].bindings[ns as usize].insert(name.to_string(), entry);
+    }
+
+    /// Records a public binding from a crate's language prelude in the
+    /// reserved prelude namespace as well as its real module. The caller
+    /// supplies the destination module and leaf separately, preserving the
+    /// actual binding shape after import resolution. The module is a language
+    /// prelude when its final two segments are `prelude::<edition>`; this
+    /// covers `v1` and edition-specific preludes such as `rust_2024` without
+    /// making the reserved node depend on a particular crate-root depth.
+    pub fn bind_implicit_prelude(
+        &mut self,
+        module_path: &QualifiedPath,
+        name: &str,
+        ns: Namespace,
+        entry: SymbolEntry,
+    ) {
+        if module_path.segments.len() < 2
+            || module_path.segments[module_path.segments.len() - 2] != "prelude"
+            || !matches!(entry.export, SymbolExport::Public)
+        {
+            return;
+        }
+        self.bind(self.prelude(), ns, name, entry);
     }
 
     pub fn lookup(&self, module: ModuleId, ns: Namespace, name: &str) -> Option<&SymbolEntry> {
@@ -243,6 +311,18 @@ impl ModuleTree {
                 .iter()
                 .map(move |(name, entry)| (path.with_segment(name.clone()), entry))
         })
+    }
+
+    /// Bindings installed by AST->HIR as the package's implicit prelude.
+    /// These live in a reserved node rather than `by_path`, so callers that
+    /// publish a package's public namespace must include them explicitly.
+    pub fn prelude_bindings(
+        &self,
+        ns: Namespace,
+    ) -> impl Iterator<Item = (&str, &SymbolEntry)> {
+        self.nodes[self.prelude().0 as usize].bindings[ns as usize]
+            .iter()
+            .map(|(name, entry)| (name.as_str(), entry))
     }
 
     /// Every binding directly at `module` (not descendants) in namespace

@@ -322,9 +322,7 @@ impl HirToMirLowerer {
             return ty;
         }
         match &ty_expr.kind {
-            hir::TypeExprKind::Projection(projection) => {
-                self.lower_type_expr(&projection.self_ty)
-            }
+            hir::TypeExprKind::Projection(projection) => self.lower_type_expr(&projection.self_ty),
             hir::TypeExprKind::Primitive(primitive) => {
                 self.lower_primitive_type(primitive, ty_expr.span)
             }

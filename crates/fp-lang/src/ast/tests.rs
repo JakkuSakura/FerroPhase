@@ -2,8 +2,7 @@ use super::*;
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
     AttrMeta, AttrStyle, BlockStmt, ExprInvokeTarget, ExprKind, ItemKind, MacroDelimiter, Name,
-    PatternKind,
-    QuoteItemKind, Value,
+    PatternKind, QuoteItemKind, Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ops::BinOpKind;
@@ -55,7 +54,9 @@ fn parse_expr_ast_parses_basic_binary_ops() {
 #[test]
 fn parse_expr_ast_preserves_underscored_numeric_suffix() {
     let parser = FerroPhaseParser::new();
-    let expr = parser.parse_expr_ast("1_usize").expect("parse usize literal");
+    let expr = parser
+        .parse_expr_ast("1_usize")
+        .expect("parse usize literal");
     let ty = fp_core::ast::resolved_expr_type(expr.id()).expect("numeric suffix type");
     let fp_core::ast::Ty::Expr(path_expr) = ty else {
         panic!("expected usize expression type");

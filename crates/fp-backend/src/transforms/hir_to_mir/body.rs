@@ -183,7 +183,12 @@ impl<'a> BodyBuilder<'a> {
         matches!(expr.kind, hir::ExprKind::Literal(hir::Lit::Null))
     }
 
-    pub(super) fn update_null_tracking(&mut self, place: mir::Place, ty: Option<&Ty>, expr: &hir::Expr) {
+    pub(super) fn update_null_tracking(
+        &mut self,
+        place: mir::Place,
+        ty: Option<&Ty>,
+        expr: &hir::Expr,
+    ) {
         if !place.projection.is_empty() {
             return;
         }
@@ -396,7 +401,10 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn struct_def_from_ty_by_name(lowering: &HirToMirLowerer, ty: &Ty) -> Option<hir::DefId> {
+    pub(super) fn struct_def_from_ty_by_name(
+        lowering: &HirToMirLowerer,
+        ty: &Ty,
+    ) -> Option<hir::DefId> {
         lowering
             .mir_package
             .borrow()
@@ -2033,8 +2041,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = generic_def_id {
-            if let Some(function) = self.lowering.generic_function_def(&def_id)
-            {
+            if let Some(function) = self.lowering.generic_function_def(&def_id) {
                 let is_result_ctor = matches!(callee_tail, Some("Ok" | "Err"));
                 if explicit_args.is_empty() {
                     if let Some(inferred) = self.infer_explicit_args_from_expected_return(
@@ -2569,7 +2576,10 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub(super) fn param_names_from_params(&self, params: &[hir::Param]) -> Option<Vec<hir::Symbol>> {
+    pub(super) fn param_names_from_params(
+        &self,
+        params: &[hir::Param],
+    ) -> Option<Vec<hir::Symbol>> {
         let mut names = Vec::with_capacity(params.len());
         for param in params {
             match &param.pat.kind {
@@ -3133,8 +3143,7 @@ impl<'a> BodyBuilder<'a> {
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if has_explicit_args {
-                        if let Some(function) = self.lowering.generic_function_def(def_id)
-                        {
+                        if let Some(function) = self.lowering.generic_function_def(def_id) {
                             let info = self
                                 .lowering
                                 .ensure_function_specialization_from_explicit_args(
@@ -3158,8 +3167,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let Some(expected_sig) = expected_sig.as_ref() {
-                        if let Some(function) = self.lowering.generic_function_def(def_id)
-                        {
+                        if let Some(function) = self.lowering.generic_function_def(def_id) {
                             let expected_has_opaque = expected_sig
                                 .inputs
                                 .iter()
@@ -3293,8 +3301,7 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if let Some(variant) = self.lowering.enum_variant_def(def_id)
-                    {
+                    if let Some(variant) = self.lowering.enum_variant_def(def_id) {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)
                         });

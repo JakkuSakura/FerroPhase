@@ -309,6 +309,10 @@ pub fn parse_items_tokens(tokens: &[Token], file: FileId) -> Result<Vec<Item>, D
     crate::ast::items::parse_items_tokens(tokens, file)
 }
 
+pub fn parse_item_tokens(tokens: &[Token], file: FileId) -> Result<Vec<Item>, DirectParseError> {
+    crate::ast::items::parse_item_tokens(tokens, file)
+}
+
 pub fn parse_file_tokens(
     tokens: &[Token],
     file: FileId,
@@ -735,7 +739,9 @@ fn union_exprs(a: &Expr, b: &Expr) -> Span {
 fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<Ty>), ()> {
     let stripped = strip_number_suffix(raw);
     let normalized = stripped.replace('_', "");
-    let suffix = raw[stripped.len()..].strip_prefix('_').unwrap_or(&raw[stripped.len()..]);
+    let suffix = raw[stripped.len()..]
+        .strip_prefix('_')
+        .unwrap_or(&raw[stripped.len()..]);
     match suffix {
         "ib" => {
             if normalized.contains('.') {
