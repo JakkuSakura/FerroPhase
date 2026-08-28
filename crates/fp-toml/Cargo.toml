@@ -7,3 +7,6 @@ publish = false
 [dependencies]
 fp-core = { path = "../fp-core" }
 toml = "0.9.8"
+
+[dev-dependencies]
+tempfile = "3.10.1"
