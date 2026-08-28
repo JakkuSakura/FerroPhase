@@ -7,14 +7,7 @@ use fp_cli::cli::CliConfig;
 use fp_cli::commands::compile::{CompileArgs, compile_command};
 use tempfile::TempDir;
 
-// `AstProgram::merged_lir_program` merges in std's global constant
-// data (format strings for `println!`), which `fp_ebpf::validate_program`
-// rejects outright ("globals are not supported by fp-ebpf yet"). This is
-// a pre-existing gap from the TargetBackend unification (the LIR-merge
-// approach every codegen backend now shares), unrelated to today's
-// --target/--exec change.
 #[tokio::test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 async fn test_compile_ebpf_emits_text_artifact() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -63,9 +56,7 @@ fn main() -> i32 {
     assert!(rendered.contains("main:"));
 }
 
-// See the note on `test_compile_ebpf_emits_text_artifact` above.
 #[tokio::test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 async fn test_compile_ebpf_emits_object_artifact() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -112,12 +103,8 @@ fn main() -> i32 {
     assert_eq!(&bytes[..4], b"\x7FELF");
 }
 
-// See the note on `test_compile_ebpf_emits_text_artifact` above — even a
-// bare `fn main() -> i32 { 0 }` pulls in std's runtime-init globals via
-// `merged_lir_program`.
 #[cfg(unix)]
 #[test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 fn test_compile_ebpf_exec_uses_external_runtime() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -165,7 +152,6 @@ fn main() -> i32 {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 fn test_compile_ebpf_exec_passes_runtime_args() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -213,7 +199,6 @@ fn main() -> i32 {
 }
 
 #[test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 fn test_compile_ebpf_exec_uses_workspace_runtime() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");

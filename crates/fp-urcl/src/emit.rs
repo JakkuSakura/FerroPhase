@@ -334,9 +334,11 @@ fn format_value(value: &LirValue) -> String {
         LirValueKind::Global(name) => format!("@{}", name),
         LirValueKind::Function(LirFunctionRef::Name(name)) => name.to_string(),
         LirValueKind::Function(LirFunctionRef::Package { name, .. }) => name.to_string(),
-        LirValueKind::Function(LirFunctionRef::Definition(def_id)) => {
-            panic!("function definition `{def_id}` is not supported by URCL lowering")
-        }
+        // Definition references are resolved to symbols by the surrounding
+        // compiler when possible. URCL is text, so retaining the definition
+        // id gives the assembler a stable symbolic target instead of
+        // aborting emission for an otherwise representable call.
+        LirValueKind::Function(LirFunctionRef::Definition(def_id)) => def_id.to_string(),
         LirValueKind::Local(id) => format!("local{}", id),
         LirValueKind::StackSlot(id) => format!("stack{}", id),
     }
@@ -344,7 +346,15 @@ fn format_value(value: &LirValue) -> String {
 
 fn format_constant(constant: &LirConstant) -> String {
     match &constant.kind {
-        LirConstantKind::Data(LirConstantData::Integer(value)) => format!("{:?}", value),
+        LirConstantKind::Data(LirConstantData::Integer(value)) => match value {
+            fp_core::lir::LirInteger::I1(value) => (*value as u8).to_string(),
+            fp_core::lir::LirInteger::I8(value) => value.to_string(),
+            fp_core::lir::LirInteger::I16(value) => value.to_string(),
+            fp_core::lir::LirInteger::I32(value) => value.to_string(),
+            fp_core::lir::LirInteger::I64(value) => value.to_string(),
+            fp_core::lir::LirInteger::I128(value) => value.to_string(),
+            fp_core::lir::LirInteger::Arbitrary(value) => format!("{:?}", value),
+        },
         LirConstantKind::Data(LirConstantData::Float(value)) => format!("{:?}", value),
         LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
             format!("bytes(len={})", bytes.len())

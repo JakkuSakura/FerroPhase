@@ -203,6 +203,14 @@ impl NativeEmitter {
             std::fs::create_dir_all(parent)?;
         }
         let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+        if self.config.emit == EmitKind::AssemblyText {
+            let text = match arch {
+                emit::TargetArch::X86_64 => crate::asmir::lower_to_x86_64(&asmir).to_text(),
+                emit::TargetArch::Aarch64 => crate::asmir::lower_to_aarch64(&asmir).to_text(),
+            };
+            std::fs::write(&out, text)?;
+            return Ok(out);
+        }
         let plan = emit::emit_plan_from_asmir(asmir, format, arch)?;
         if let Some(path) = self.config.asm_dump.as_ref() {
             emit::dump_asm(path, &plan)?;

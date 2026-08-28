@@ -60,15 +60,7 @@ fn main() -> i64 {
     assert!(text.contains(".function main"));
 }
 
-// `AstProgram::merged_lir_program` (used by every codegen
-// `TargetBackend` since the workspace-based TargetBackend unification)
-// merges in the whole dependency graph's LIR, including std's global
-// constant data — fp-goasm's emitter doesn't support the
-// `GetElementPtr`-typed globals std's `println!` machinery produces
-// (`unsupported GoASM constant kind`). Pre-existing gap, unrelated to
-// --target/--exec; ignored until fp-goasm's emitter handles it.
 #[tokio::test]
-#[ignore = "fp-goasm emitter panics on GetElementPtr globals pulled in from std via merged_lir_program"]
 async fn compile_goasm_emits_text_output() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.fp");
@@ -124,11 +116,7 @@ fn main() -> i64 {
     assert!(text.contains("BITS 64"));
 }
 
-// See the note on `compile_goasm_emits_text_output` above — this panics
-// during compile (before the --exec rejection is even reached), for the
-// same pre-existing fp-goasm/merged_lir_program reason.
 #[tokio::test]
-#[ignore = "fp-goasm emitter panics on GetElementPtr globals pulled in from std via merged_lir_program"]
 async fn compile_goasm_emitter_rejects_exec() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("main.fp");
@@ -490,8 +478,8 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let text = fs::read_to_string(&output_file).unwrap();
-    assert!(text.contains("mov rax, [rbx + rcx*2 + 8]:8"));
-    assert!(text.contains("call rax"));
+    assert!(text.contains("mov v3:64, [v1:64 + v2:64*2 + 8]:8"));
+    assert!(text.contains("call v3:64"));
 }
 
 #[tokio::test]
@@ -668,6 +656,5 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let text = fs::read_to_string(&output_file).unwrap();
-    assert!(text.contains("mov [v"));
-    assert!(text.contains("*3 + 16]:8"));
+    assert!(text.contains("mov v1:64, [v2:64 + v3:64*3 + 16]:8"));
 }

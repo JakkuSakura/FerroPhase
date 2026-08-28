@@ -23,6 +23,7 @@ pub(super) fn build_frame_layout(
     // sized to the largest such constant seen, and materialize into it
     // immediately before each call that needs it (see `emit_call`).
     let mut const_agg_scratch_size = 0i32;
+    vreg_ids.extend(reg_types.keys().copied());
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {

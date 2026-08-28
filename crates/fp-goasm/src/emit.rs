@@ -22,7 +22,14 @@ pub fn emit_program(program: &LirBlob, target: GoAsmTarget) -> Result<String> {
     line!(&mut out, "// fp-goasm ({})", arch_name(target))?;
     line!(&mut out)?;
 
-    for global in &program.globals {
+    for global in program.globals.iter().filter(|global| {
+        global.initializer.as_ref().is_none_or(|initializer| {
+            !matches!(
+                initializer.kind,
+                LirConstantKind::Poison | LirConstantKind::Expr(_)
+            )
+        })
+    }) {
         line!(
             &mut out,
             "GLOBL {}(SB), NOPTR, $8",
@@ -493,9 +500,23 @@ fn format_constant_kind(constant: &LirConstantKind) -> String {
             format!("${}(SB)", go_symbol(&function_name(function)))
         }
         LirConstantKind::Aggregate(aggregate) => format!("${aggregate:?}"),
-        LirConstantKind::Poison | LirConstantKind::Expr(_) => {
-            panic!("unsupported GoASM constant kind: {constant:?}")
+        LirConstantKind::Expr(fp_core::lir::LirConstantExpr::GetElementPtr {
+            base,
+            indices,
+            ..
+        }) => {
+            if indices.is_empty() {
+                format!(
+                    "${}",
+                    format_constant_kind(&base.kind).trim_start_matches('$')
+                )
+            } else {
+                format!("${:?}", constant)
+            }
         }
+        // Poison has no required value, so zero is a valid materialization
+        // for a textual target that cannot preserve poison semantics.
+        LirConstantKind::Poison => "$0".into(),
     }
 }
 

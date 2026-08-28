@@ -850,7 +850,10 @@ mod tests {
         let program = external_call_program();
         let mut engine = JitEngine::new(None).expect("jit engine");
         let module = engine
-            .compile_host_with_symbols(&program, &[("jit_test_add1", jit_test_add1 as *const c_void)])
+            .compile_host_with_symbols(
+                &program,
+                &[("jit_test_add1", jit_test_add1 as *const c_void)],
+            )
             .expect("jit compile host program");
         let main = module.symbol_ptr("main").expect("main ptr");
         let func: unsafe extern "C" fn() -> i64 = unsafe { std::mem::transmute(main) };

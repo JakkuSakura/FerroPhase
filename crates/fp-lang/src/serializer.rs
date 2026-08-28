@@ -393,6 +393,19 @@ impl fp_core::backend::TargetBackend for RustBackend {
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = self.serializer.serialize_package(package)?;
+        if let Some(output) = &self.config.single_file_output {
+            let (_, code) = files
+                .into_iter()
+                .find(|(path, _)| path.ends_with(".rs") || !path.contains('/'))
+                .ok_or_else(|| {
+                    fp_core::error::Error::from("single-file Rust package has no source file")
+                })?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(output, code)?;
+            return Ok(());
+        }
         let writer =
             fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (rel_path, code) in files {

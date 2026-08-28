@@ -266,10 +266,73 @@ fn record_source_virtual_register_types(program: &mut AsmProgram) {
                     collect_register_type(reg, &mut discovered);
                 }
             }
+            collect_terminator_register_types(&block.terminator, &mut discovered);
         }
     }
     for (id, ty) in discovered {
         program.physical_register_types.entry(id).or_insert(ty);
+    }
+}
+
+fn collect_terminator_register_types(
+    terminator: &AsmTerminator,
+    types: &mut HashMap<u32, AsmType>,
+) {
+    let mut values = Vec::new();
+    match terminator {
+        AsmTerminator::Return(value) => {
+            if let Some(value) = value {
+                values.push(value);
+            }
+        }
+        AsmTerminator::Resume(value) => values.push(value),
+        AsmTerminator::CondBr { condition, .. }
+        | AsmTerminator::IndirectBr {
+            address: condition, ..
+        } => values.push(condition),
+        AsmTerminator::Switch { value, .. } => values.push(value),
+        AsmTerminator::Invoke { function, args, .. } => {
+            values.push(function);
+            values.extend(args);
+        }
+        AsmTerminator::CleanupRet { cleanup_pad, .. }
+        | AsmTerminator::CatchRet {
+            catch_pad: cleanup_pad,
+            ..
+        } => values.push(cleanup_pad),
+        AsmTerminator::CatchSwitch { parent_pad, .. } => {
+            if let Some(value) = parent_pad {
+                values.push(value);
+            }
+        }
+        AsmTerminator::Br(_) | AsmTerminator::Unreachable => {}
+    }
+    for value in values {
+        collect_value_register_types(value, types);
+    }
+}
+
+fn collect_value_register_types(value: &AsmValue, types: &mut HashMap<u32, AsmType>) {
+    match value {
+        AsmValue::Register(id) => {
+            types.entry(*id).or_insert(AsmType::I64);
+        }
+        AsmValue::Address(address) => {
+            if let Some(base) = &address.base {
+                collect_value_register_types(base, types);
+            }
+            if let Some(index) = &address.index {
+                collect_value_register_types(index, types);
+            }
+            if let Some(segment) = &address.segment {
+                collect_value_register_types(segment, types);
+            }
+        }
+        AsmValue::Comparison(comparison) => {
+            collect_value_register_types(&comparison.lhs, types);
+            collect_value_register_types(&comparison.rhs, types);
+        }
+        _ => {}
     }
 }
 
@@ -948,7 +1011,7 @@ pub(super) fn build_operand_type_map(function: &AsmFunction) -> HashMap<u32, Asm
 /// register reference, since those never correspond to any instruction.
 /// Every caller that resolves a register operand's type by id needs both
 /// merged, or it panics on any register that started out physical.
-pub(super) fn merged_register_types(
+pub(crate) fn merged_register_types(
     program: &AsmProgram,
     function: &AsmFunction,
 ) -> HashMap<u32, AsmType> {

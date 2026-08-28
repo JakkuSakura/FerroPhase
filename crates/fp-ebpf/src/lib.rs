@@ -141,10 +141,6 @@ pub fn write_object(path: &Path, program: &LirBlob) -> Result<()> {
 pub fn validate_program(program: &LirBlob) -> Result<()> {
     let mut errors = Vec::new();
 
-    if !program.globals.is_empty() {
-        errors.push("globals are not supported by fp-ebpf yet".to_string());
-    }
-
     for function in selected_functions(program) {
         validation::validate_function(function, &program.data_layout, &mut errors);
     }

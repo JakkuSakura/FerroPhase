@@ -129,6 +129,21 @@ impl fp_core::backend::TargetBackend for TypeScriptBackend {
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let files = self.serializer.serialize_package(&package)?;
+        if let Some(output) = &self.config.single_file_output {
+            let (_, code) = files
+                .into_iter()
+                .find(|(path, _)| path.ends_with(".ts") || !path.contains('/'))
+                .ok_or_else(|| eyre!("single-file TypeScript package has no source file"))?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(output, code)?;
+            if let Some(defs) = self.serializer.take_type_defs() {
+                let defs_path = output.with_extension("d.ts");
+                std::fs::write(defs_path, defs)?;
+            }
+            return Ok(());
+        }
         write_package_files(&self.config, &package.name, "ts", files)
     }
 }
@@ -190,6 +205,17 @@ impl fp_core::backend::TargetBackend for JavaScriptBackend {
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let files = JavaScriptSerializer.serialize_package(&package)?;
+        if let Some(output) = &self.config.single_file_output {
+            let (_, code) = files
+                .into_iter()
+                .find(|(path, _)| path.ends_with(".js") || !path.contains('/'))
+                .ok_or_else(|| eyre!("single-file JavaScript package has no source file"))?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(output, code)?;
+            return Ok(());
+        }
         write_package_files(&self.config, &package.name, "js", files)
     }
 }

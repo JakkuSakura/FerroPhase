@@ -458,6 +458,7 @@ pub(super) fn syscall_convention_for_target(target: &AsmTarget) -> Option<AsmSys
 }
 
 pub fn normalize_for_target(program: &mut AsmProgram) {
+    super::record_source_virtual_register_types(program);
     normalize_program_for_target(program);
 }
 

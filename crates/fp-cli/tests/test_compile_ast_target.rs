@@ -33,17 +33,7 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
     }
 }
 
-// AST-emitting backends (TypeScript/JavaScript/...) always write into
-// `BackendConfig.workspace_root/<package_name>/...` (see
-// `fp_typescript::ts::serializer::write_package_files`) — a pre-existing
-// gap from the TargetBackend unification (see git history around
-// `refactor(fp-cli): unify every compile target behind TargetBackend`):
-// there's no "write directly to this single file path" mode, so a
-// single-file compile with an explicit `-o test.ts` ends up creating
-// `test.ts` as a directory instead of a file. Ignored until every
-// AST-emitting backend crate supports a single-file output mode.
 #[tokio::test]
-#[ignore = "AST-emitting backends don't support single-file -o output yet (write into workspace_root/<package>/ instead)"]
 async fn test_compile_target_typescript_with_structs() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -86,7 +76,6 @@ fn main() {
 }
 
 #[tokio::test]
-#[ignore = "AST-emitting backends don't support single-file -o output yet (write into workspace_root/<package>/ instead)"]
 async fn test_compile_target_javascript_with_structs() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -121,7 +110,6 @@ fn main() {
 }
 
 #[tokio::test]
-#[ignore = "AST-emitting backends don't support single-file -o output yet (write into workspace_root/<package>/ instead)"]
 async fn test_compile_target_typescript_with_type_definitions() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -135,7 +123,7 @@ struct User {
 }
 
 fn main() {
-    let user = User { name: "Alice", age: 30 };
+    let user = User { name: String::new(), age: 30 };
     println!("{} {}", user.name, user.age);
 }
 "#;
@@ -148,7 +136,10 @@ fn main() {
 
     let config = CliConfig::default();
     let result = compile_command(args, &config).await;
-    assert!(result.is_ok(), "TypeScript target should succeed");
+    assert!(
+        result.is_ok(),
+        "TypeScript target should succeed: {result:?}"
+    );
 
     assert!(output_file.exists(), "Output file should be created");
     assert!(

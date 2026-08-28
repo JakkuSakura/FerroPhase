@@ -81,14 +81,7 @@ fn inspect_help_is_available() {
         ));
 }
 
-// `fp_stackcode::BytecodeBackend` lowers straight from MIR and
-// doesn't rename the entrypoint to a bare `main` symbol the way the
-// LIR-based backends do via `AstProgram::merged_lir_program`'s
-// entrypoint param — so the function keeps its fully qualified name
-// (`cli::main::main`) instead of `main`. Pre-existing gap from the
-// TargetBackend unification, unrelated to --target/--exec.
 #[tokio::test]
-#[ignore = "bytecode backend doesn't rename the entrypoint to a bare `main` symbol yet"]
 async fn inspect_binary_bytecode_can_export_text_form() {
     let temp_dir = TempDir::new().unwrap();
     let input = temp_dir.path().join("main.fp");
@@ -140,12 +133,7 @@ fn inspect_native_binary_prints_summary() {
         .stdout(predicate::str::contains("section_count:"));
 }
 
-// `AstProgram::merged_lir_program` merges in std's global constant
-// data (format strings for `println!`), which `fp_ebpf::validate_program`
-// rejects outright ("globals are not supported by fp-ebpf yet"). See the
-// same note on `test_compile_ebpf.rs`'s emit tests.
 #[tokio::test]
-#[ignore = "fp-ebpf rejects globals pulled in from std via merged_lir_program"]
 async fn inspect_ebpf_object_prints_runtime_metadata_and_relocations() {
     let temp_dir = TempDir::new().unwrap();
     let input = temp_dir.path().join("main.fp");

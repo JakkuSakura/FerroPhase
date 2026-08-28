@@ -33,11 +33,7 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
     }
 }
 
-// See the note in test_compile_ast_target.rs: AST-emitting backends always
-// write into `workspace_root/<package_name>/...`, not directly to a
-// single `-o` file path.
 #[tokio::test]
-#[ignore = "AST-emitting backends don't support single-file -o output yet (write into workspace_root/<package>/ instead)"]
 async fn test_compile_target_gdscript_with_struct() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
@@ -50,7 +46,7 @@ struct User {
 }
 
 fn main() {
-    let user = User { name: "Alice", age: 30 };
+    let user = User { name: String::new(), age: 30 };
     println!("{}", user.name);
 }
 "#;

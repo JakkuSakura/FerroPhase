@@ -33,9 +33,10 @@ pub(crate) fn data_layout() -> LirDataLayout {
 /// active source language: `fp_lang`'s hand-written `.fp` reimplementation
 /// for `.fp`-dialect projects, or real rustc source (`fp-rust`'s
 /// `RustStdProvider`, see `docs/RustStd.md`) for real `.rs`/Cargo projects.
-/// Panics on an unrecognized language rather than silently defaulting —
-/// wiring up std resolution for a new source language is a deliberate step,
-/// not something to fall through to FerroPhase's `.fp` std by accident.
+/// Languages whose providers do not use FerroPhase's std packages receive an
+/// empty dependency provider. Source-language validation remains the
+/// responsibility of provider/backend discovery, so adding a new registered
+/// language cannot turn a valid compile into a late panic here.
 fn std_provider_for(language: &str) -> Arc<dyn fp_core::ast::package::provider::PackageProvider> {
     match language {
         l if l == languages::FERROPHASE => Arc::new(fp_lang::provider::FerroPhaseProvider),
@@ -45,6 +46,12 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::ast::package::provider::
         l if l == languages::NATIVE_OBJECT
             || l == languages::NATIVE_ARCHIVE
             || l == languages::NATIVE_ASM
+            || l == "x86_64-asm"
+            || l == "aarch64-asm"
+            || l == "asm-x86_64"
+            || l == "asm-aarch64"
+            || l == "x86asm"
+            || l == "aarch64asm"
             || l == languages::GOASM
             || l == languages::URCL
             || l == languages::JVM_BYTECODE
@@ -52,7 +59,7 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::ast::package::provider::
         {
             Arc::new(fp_core::ast::package::provider::EmptyProvider)
         }
-        other => panic!("std_provider_for: no std/libc provider wired up for language {other:?}"),
+        _ => Arc::new(fp_core::ast::package::provider::EmptyProvider),
     }
 }
 
@@ -595,5 +602,22 @@ impl CompilerIdentity {
     fn new(segments: Vec<String>) -> Self {
         let path = FullyQualifiedPath::from_segments(segments);
         Self { path }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::std_provider_for;
+
+    #[test]
+    fn languages_without_ferrophase_std_use_empty_provider() {
+        for language in ["c", "python", "typescript", "future-language"] {
+            assert!(
+                std_provider_for(language)
+                    .list_packages()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 }

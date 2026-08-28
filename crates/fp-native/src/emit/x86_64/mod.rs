@@ -393,6 +393,11 @@ fn build_frame_layout(
     let mut alloca_info = Vec::new();
     let local_types = build_local_types(func);
 
+    // Include live-in and synthetic virtual registers, which do not have a
+    // defining instruction but still require spill slots when referenced by
+    // lifted assembly operands.
+    vreg_ids.extend(reg_types.keys().copied());
+
     for block in &func.basic_blocks {
         for inst in &block.instructions {
             vreg_ids.insert(inst.id);
@@ -782,7 +787,9 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             continue;
         }
 
-        let reg_types = build_reg_types(func, &signatures);
+        let mut reg_types = build_reg_types(func, &signatures);
+        let source_types = crate::asmir::merged_register_types(program, func);
+        reg_types.extend(source_types);
         let layout = build_frame_layout(func, format, &reg_types, &program.data_layout)?;
         let local_types = build_local_types(func);
         asm.needs_frame = layout.frame_size > 0;

@@ -521,7 +521,9 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             continue;
         }
 
-        let reg_types = build_reg_types(func);
+        let mut reg_types = build_reg_types(func);
+        let source_types = crate::asmir::merged_register_types(program, func);
+        reg_types.extend(source_types);
         let layout = build_frame_layout(func, &reg_types, use_x86_regfile, &program.data_layout)?;
         let local_types = build_local_types(func);
         asm.set_layout_context(func.name.as_str(), layout.frame_size);

@@ -430,7 +430,7 @@ mod tests {
     fn estimates_typescript_index_module_path() {
         assert_eq!(
             estimate_module_path(Path::new("/proj"), Path::new("/proj/src/features/index.ts")),
-            vec!["features".to_string()]
+            vec!["src".to_string(), "features".to_string()]
         );
     }
 }

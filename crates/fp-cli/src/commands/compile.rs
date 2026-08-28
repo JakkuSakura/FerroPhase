@@ -285,6 +285,24 @@ async fn run_named_target(
         (provider, vec![package_id], lang)
     };
 
+    // CIL text can be lifted into the compiler IR, but a compiled .NET
+    // binary has no disassembler/transpilation path. Keep this diagnostic
+    // tied to the declared input format and extension: test fixtures and
+    // partially invalid binaries do not necessarily carry a valid PE header.
+    if !input.is_dir()
+        && lang == crate::languages::CIL
+        && matches!(
+            input.extension().and_then(|extension| extension.to_str()),
+            Some(extension) if extension.eq_ignore_ascii_case("dll")
+                || extension.eq_ignore_ascii_case("exe")
+        )
+        && target_name == "native"
+    {
+        return Err(CliError::Compilation(
+            "binary .dll/.exe -> native transpilation is not implemented yet".to_string(),
+        ));
+    }
+
     // A foreign-artifact-input compile (a native object file, or asm/goasm/
     // URCL text, given directly as input) can legitimately just retarget
     // it without linking (`--link`/`--exec` both absent) — every ordinary
@@ -295,6 +313,8 @@ async fn run_named_target(
         l if l == crate::languages::NATIVE_OBJECT
             || l == crate::languages::NATIVE_ARCHIVE
             || l == crate::languages::NATIVE_ASM
+            || l == "x86_64-asm"
+            || l == "aarch64-asm"
             || l == crate::languages::GOASM
             || l == crate::languages::URCL
             || l == crate::languages::JVM_BYTECODE
@@ -308,7 +328,10 @@ async fn run_named_target(
     // Native asm-text input that isn't being linked/exec'd should stay as
     // human-readable assembly rather than getting reassembled to an
     // object it was never asked to produce.
-    let emit_text = lang == crate::languages::NATIVE_ASM && !link_requested;
+    let emit_text = matches!(
+        lang.as_str(),
+        crate::languages::NATIVE_ASM | "x86_64-asm" | "aarch64-asm"
+    ) && !link_requested;
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
         .with_target_triple(args.target_triple.clone())
         .with_target_cpu(args.target_cpu.clone())
@@ -322,6 +345,18 @@ async fn run_named_target(
         .with_save_intermediates(args.save_intermediates)
         .with_type_defs(args.type_defs)
         .with_single_world(args.single_world)
+        .with_single_file_output(
+            if !input.is_dir()
+                && matches!(
+                    target_name,
+                    "typescript" | "ts" | "javascript" | "js" | "rust" | "gdscript"
+                )
+            {
+                Some(output.to_path_buf())
+            } else {
+                None
+            },
+        )
         .with_root_name(root_name.clone())
         .with_link_requested(link_requested)
         .with_emit_text(emit_text)
@@ -387,6 +422,14 @@ async fn run_compile_pipeline(
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
     let (executor, mut session) =
         compiler::build_workspace_session(provider.clone(), lang, backend_capabilities);
+    // Source serializers consume lifted HIR, while native IR backends need
+    // the HIR -> MIR -> LIR stages populated before emission.
+    if matches!(
+        target_name,
+        "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
+    ) {
+        session.driver().pipeline = fp_compiler::PipelineMode::Native;
+    }
     executor
         .run(session.driver().compile_workspace(&root_id, &packages))
         .map_err(|e| {
@@ -397,7 +440,10 @@ async fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(session.driver())?;
-    if target_name == "native" {
+    if matches!(
+        target_name,
+        "native" | "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
+    ) {
         for package_id in &packages {
             executor
                 .run(session.driver().lower_package_native_lir(package_id))
