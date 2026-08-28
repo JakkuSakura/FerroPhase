@@ -597,6 +597,7 @@ fn try_split_leading_double_angle(input: &mut &[Token]) -> bool {
     let synthetic = Token {
         kind: TokenKind::Symbol,
         lexeme: "<".to_string(),
+        raw_identifier: false,
         span: crate::lexer::tokenizer::Span {
             start: first.span.start + 1,
             end: first.span.end,

@@ -1138,7 +1138,9 @@ fn parse_fn_param_core(
     // checker doesn't model binding modes beyond ordinary by-value
     // params (already true of the bare `mut name` case just below), so
     // `ref` is dropped the same way `mut` already is.
-    if peek_ident_like(*input) == Some("ref") {
+    if peek_ident_like(*input) == Some("ref")
+        && !input.first().is_some_and(|token| token.raw_identifier)
+    {
         let _ = ident_like(input);
     }
     let _is_mut = skip_keyword(input, Keyword::Mut).is_ok();

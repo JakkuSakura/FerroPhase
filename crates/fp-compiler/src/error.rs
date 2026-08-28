@@ -28,8 +28,6 @@ pub enum CompilerDriverError {
     InternalCompilerError(String),
     #[error("unresolvable comptime cycle: {0}")]
     UnresolvableComptime(String),
-    #[error(
-        "package {0} could not be loaded (no provider registered, or the provider failed repeatedly)"
-    )]
+    #[error("package resolution failed: {0}")]
     UnresolvablePackage(String),
 }

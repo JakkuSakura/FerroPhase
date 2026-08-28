@@ -1605,6 +1605,16 @@ fn parse_expr_ast_handles_raw_ref_identifier_binding() {
 }
 
 #[test]
+fn parse_function_accepts_raw_ref_parameter_name() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("fn read(r#ref: &str) { let _ = r#ref; }")
+        .unwrap();
+    assert_eq!(items.len(), 1);
+}
+
+#[test]
 fn parse_expr_ast_supports_turbofish_method_call() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

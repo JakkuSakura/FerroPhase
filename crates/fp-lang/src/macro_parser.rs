@@ -24,7 +24,12 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
             MacroTokenTree::Token(tok) => {
                 let (kind, lexeme) = classify_and_normalize_lexeme(&tok.text)
                     .unwrap_or((TokenKind::Symbol, tok.text.clone()));
-                out.push(make_token(kind, lexeme, lex_span_from_span(tok.span)));
+                out.push(make_token(
+                    kind,
+                    lexeme,
+                    tok.text.starts_with("r#"),
+                    lex_span_from_span(tok.span),
+                ));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
@@ -41,12 +46,22 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
     }
 }
 
-fn make_token(kind: TokenKind, lexeme: String, span: TokSpan) -> Token {
-    Token { kind, lexeme, span }
+fn make_token(kind: TokenKind, lexeme: String, raw_identifier: bool, span: TokSpan) -> Token {
+    Token {
+        kind,
+        raw_identifier,
+        lexeme,
+        span,
+    }
 }
 
 fn push_symbol_token(out: &mut Vec<Token>, symbol: &str, span: TokSpan) {
-    out.push(make_token(TokenKind::Symbol, symbol.to_string(), span));
+    out.push(make_token(
+        TokenKind::Symbol,
+        symbol.to_string(),
+        false,
+        span,
+    ));
 }
 
 pub(crate) fn tokens_to_top_level_slices(tokens: &[Token]) -> Vec<&[Token]> {
@@ -90,9 +105,9 @@ pub(crate) fn wrap_tokens_in_group(
 ) -> Vec<Token> {
     let (open_span, close_span) = lex_spans_for_group(span);
     let mut out = Vec::with_capacity(inner.len() + 2);
-    out.push(make_token(TokenKind::Symbol, open.to_string(), open_span));
+    out.push(make_token(TokenKind::Symbol, open.to_string(), false, open_span));
     out.extend_from_slice(inner);
-    out.push(make_token(TokenKind::Symbol, close.to_string(), close_span));
+    out.push(make_token(TokenKind::Symbol, close.to_string(), false, close_span));
     out
 }
 

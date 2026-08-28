@@ -119,6 +119,10 @@ pub struct Span {
 pub struct Token {
     pub kind: TokenKind,
     pub lexeme: String,
+    /// The source used a raw identifier spelling (`r#name`). Raw identifiers
+    /// have identifier semantics even when their normalized text is a
+    /// contextual parser keyword such as `ref`.
+    pub raw_identifier: bool,
     pub span: Span,
 }
 
@@ -303,6 +307,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
             tokens.push(Token {
                 kind: TokenKind::Symbol,
                 lexeme: ">".to_string(),
+                raw_identifier: false,
                 span: Span {
                     start,
                     end: start + 1,
@@ -323,6 +328,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
             _ => {}
         }
 
+        let raw_identifier = kind == TokenKind::Ident && lexeme.starts_with("r#");
         let kind = match kind {
             TokenKind::Ident => {
                 if let Some(keyword) = Keyword::from_lexeme(&lexeme) {
@@ -339,6 +345,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
         tokens.push(Token {
             kind,
             lexeme,
+            raw_identifier,
             span: Span { start, end },
         });
     }

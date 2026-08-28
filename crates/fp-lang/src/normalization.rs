@@ -1090,6 +1090,7 @@ fn lexeme_slice_to_tokens(
             crate::lexer::tokenizer::Token {
                 kind,
                 lexeme,
+                raw_identifier: lex.text.starts_with("r#"),
                 span: crate::lexer::Span {
                     start: lex.span.start,
                     end: lex.span.end,
