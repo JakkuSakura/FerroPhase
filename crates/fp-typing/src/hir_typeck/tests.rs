@@ -21,7 +21,10 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<hir::HirPackage>> {
-    let checker = HirTypeChecker::new(package, None, None, executor);
+    let current_package = Rc::new(package);
+    let mut program = hir::HirProgram::new();
+    program.add_package(current_package.clone());
+    let checker = HirTypeChecker::new(Rc::new(program), current_package, None, executor);
     let item_ids: Vec<_> = checker
         .borrow()
         .package()
@@ -398,10 +401,12 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
 fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
         Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
-    let package = hir::HirPackage::new(test_pkg());
+    let package = Rc::new(hir::HirPackage::new(test_pkg()));
+    let mut program = hir::HirProgram::new();
+    program.add_package(package.clone());
     let checker = HirTypeChecker::new(
+        Rc::new(program),
         package,
-        None,
         Some(resolver),
         fp_core::executor::CompilerExecutor::new().handle(),
     );

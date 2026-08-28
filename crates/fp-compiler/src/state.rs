@@ -138,8 +138,8 @@ impl CompilerState {
 
     /// Publishes `package` under its own `id` — `HirProgram::add_package`
     /// already keys by that, so no separate id parameter is needed.
-    pub fn insert_hir(&mut self, package: hir::HirPackage) {
-        Rc::make_mut(&mut self.hir_program).add_package(std::rc::Rc::new(package));
+    pub fn insert_hir(&mut self, package: Rc<hir::HirPackage>) {
+        Rc::make_mut(&mut self.hir_program).add_package(package);
     }
 
     /// Records `def_id`'s own lowered content — the only way `mir_program`

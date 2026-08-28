@@ -19,20 +19,6 @@ mod literals;
 mod type_shapes;
 use type_shapes::*;
 
-/// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
-/// runs against, by cloning `dependency_program` (a cheap `Rc`-map clone,
-/// not a deep one — see `hir::HirProgram`'s own `packages` field) and adding
-/// `current_package` (still in progress, not yet published) into it last,
-/// via `HirProgram::add_package`.
-pub fn build_typing_program(
-    current_package: hir::HirPackage,
-    dependency_program: Option<Rc<hir::HirProgram>>,
-) -> Rc<hir::HirProgram> {
-    let mut program = dependency_program.as_deref().cloned().unwrap_or_default();
-    program.add_package(Rc::new(current_package));
-    Rc::new(program)
-}
-
 /// One `HirTypeChecker` instance plays one of two roles, distinguished by
 /// `root`:
 ///
@@ -71,8 +57,8 @@ pub fn build_typing_program(
 pub struct HirTypeChecker {
     /// The whole compiled workspace's HIR, as of when this package's type
     /// checking started: every already-published dependency package, plus
-    /// this package's own (still in-progress, not yet published) HIR,
-    /// inserted under its own `PackageId` (see `build_typing_program`). Both
+    /// this package's own HIR, published under its own `PackageId` before
+    /// construction. Both
     /// `HirId` and `DefId` already carry their owning `PackageId` (see
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
     /// or cross-package alike — routes through this one `HirProgram` via
@@ -80,9 +66,9 @@ pub struct HirTypeChecker {
     program: Rc<hir::HirProgram>,
     /// Which entry in `program` is the package actually being checked —
     /// needed for iterating just this package's own items (the initial
-    /// per-item spawn loop) and for snapshotting the package's own,
-    /// not-yet-published HIR into a `ComptimeRequest.current`.
-    current_package: hir::PackageId,
+    /// per-item spawn loop) and for snapshotting the package's HIR into a
+    /// `ComptimeRequest.current`.
+    current_package: Rc<hir::HirPackage>,
     /// Answers requests made by HIR while checking compile-time constants —
     /// see `ComptimeResolver`'s doc comment. `None` when no resolver was
     /// supplied at construction; calling `request_comptime` in that case is
@@ -176,21 +162,17 @@ impl HirTypeChecker {
         }
     }
 
-    /// Builds the unified `program: Rc<hir::HirProgram>` (via
-    /// `build_typing_program`) and wraps the whole package-level state in
-    /// one `Rc<RefCell<_>>` root handle, spawned against by every item's
-    /// task (see `spawn_item_task`).
+    /// Wraps the already-published workspace and current package in one
+    /// `Rc<RefCell<_>>` root handle, spawned against by every item's task.
     pub fn new(
-        current_package: hir::HirPackage,
-        dependency_program: Option<Rc<hir::HirProgram>>,
+        program: Rc<hir::HirProgram>,
+        current_package: Rc<hir::HirPackage>,
         comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<RefCell<Self>> {
-        let package_id = current_package.id.clone();
-        let program = build_typing_program(current_package, dependency_program);
         Rc::new(RefCell::new(Self {
             program,
-            current_package: package_id,
+            current_package,
             comptime_resolver,
             executor,
             root: None,
@@ -444,11 +426,7 @@ impl HirTypeChecker {
     /// itself only hands out a plain `&HirPackage`, not the `Rc` needed
     /// here, so this reads the underlying `packages` map directly).
     pub fn package(&self) -> Rc<hir::HirPackage> {
-        self.program
-            .packages
-            .get(&self.current_package)
-            .cloned()
-            .expect("current_package is always inserted into program at construction")
+        self.current_package.clone()
     }
 
     /// The whole workspace `HirProgram`, for cross-package lookups that
@@ -472,14 +450,14 @@ impl HirTypeChecker {
     /// `CompilerState::in_progress_hir_program`), since the request itself
     /// no longer carries the package's own `Rc` directly.
     fn current_package(&self) -> hir::PackageId {
-        self.current_package.clone()
+        self.current_package.id.clone()
     }
 
     /// See `current_package`; kept as a distinctly-named `pub` accessor
     /// since external crates (`fp-compiler`) shouldn't need to know that
     /// the field itself is also called `current_package`.
     pub fn current_package_id(&self) -> hir::PackageId {
-        self.current_package.clone()
+        self.current_package.id.clone()
     }
 
     /// Request a compile-time value — awaits `ComptimeResolver` directly, so
@@ -4912,11 +4890,7 @@ impl HirTypeChecker {
             let mut receiver_substitutions = HashMap::new();
             let matches_receiver = Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
                 && scope
-                    .unify_call_types_probe(
-                        self_ty,
-                        receiver_ty,
-                        &mut receiver_substitutions,
-                    )
+                    .unify_call_types_probe(self_ty, receiver_ty, &mut receiver_substitutions)
                     .is_ok();
             if !matches_receiver {
                 continue;
@@ -5685,6 +5659,7 @@ impl HirTypeChecker {
             // keyword's own surface annotation (`TypeExprKind::Type`).
             IntrinsicKind::CreateStruct
             | IntrinsicKind::AddField
+            | IntrinsicKind::CloneStruct
             | IntrinsicKind::BuildType
             | IntrinsicKind::PrimitiveType => Ty { kind: TyKind::Type },
             IntrinsicKind::FsWriteString

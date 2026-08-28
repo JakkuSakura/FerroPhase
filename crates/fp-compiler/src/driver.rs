@@ -648,7 +648,9 @@ impl CompilerDriver {
             self.lower_package_hir(&package_source, hir_package_id)?;
         hir_package.hir_exports.extend(exports);
         package.borrow_mut().type_alias_exports.extend(type_aliases);
-        self.state.borrow_mut().insert_hir(hir_package);
+        self.state
+            .borrow_mut()
+            .insert_hir(std::rc::Rc::new(hir_package));
         Ok(())
     }
 
@@ -931,14 +933,14 @@ impl CompilerDriver {
         package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
-        let dependency_program = self.state.borrow().hir_program_rc();
+        let mut program = program;
+        program.hir_exports.extend(package_exports);
+        let hir_package = std::rc::Rc::new(program);
+        self.state.borrow_mut().insert_hir(hir_package.clone());
+        let hir_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
-        let checker = fp_typing::HirTypeChecker::new(
-            program,
-            Some(dependency_program),
-            comptime_resolver,
-            executor,
-        );
+        let checker =
+            fp_typing::HirTypeChecker::new(hir_program, hir_package, comptime_resolver, executor);
         let item_ids: Vec<_> = checker
             .borrow()
             .package()
@@ -976,17 +978,6 @@ impl CompilerDriver {
                 fp_core::diagnostics::Diagnostic::error(combined),
             ));
         }
-        let package = checker.borrow().finish();
-        // `checker` is the last other strong owner of this `Rc<HirPackage>`
-        // (via its own `program.packages` map) — dropping it here, before
-        // unwrapping, lets us take real ownership without ever deep-copying
-        // the package's own data.
-        drop(checker);
-        let mut package = Rc::try_unwrap(package).unwrap_or_else(|_| {
-            unreachable!("no other strong reference to this package's HirPackage should outlive its own typecheck pass")
-        });
-        package.hir_exports.extend(package_exports);
-        self.state.borrow_mut().insert_hir(package);
         Ok(())
     }
 
