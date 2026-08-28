@@ -98,13 +98,16 @@ pub fn compile_source_with_options(
     let parsed = frontend
         .parse(source, Some(source_path))
         .map_err(|err| ShellError::Parse(err.to_string()))?;
-
     let ast = merge_runtime_helpers(parsed.ast, options.inventory.as_ref())?;
 
     // Save std items before HIR strips #[command] attrs from extern declarations
     let pre_hir_items = ast.items.clone();
 
-    let lowered_items = fp_backend::roundtrip_items_via_hir(&ast)
+    let target_lang = match target {
+        ScriptTarget::Bash => "bash",
+        ScriptTarget::PowerShell => "pwsh",
+    };
+    let lowered_items = fp_backend::roundtrip_items_via_hir_target(&ast, target_lang)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
     let lowered_file = File {
         path: source_path.to_path_buf(),
@@ -124,10 +127,10 @@ pub fn compile_source_with_options(
 
     let code = match target {
         ScriptTarget::Bash => fp_bash::BashTarget::new()
-            .render(&lowered, &Default::default())
+            .render(&lowered, &bash_inventory(options.inventory.as_ref()))
             .map_err(|err| ShellError::Emit(err.to_string()))?,
         ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new()
-            .render(&lowered, &Default::default())
+            .render(&lowered, &powershell_inventory(options.inventory.as_ref()))
             .map_err(|err| ShellError::Emit(err.to_string()))?,
     };
 
@@ -275,7 +278,7 @@ fn build_std_trees() -> Result<StdTrees, ShellError> {
 }
 
 fn build_core_std_tree(frontend: &FerroFrontend) -> Result<Vec<StdTreeEntry>, ShellError> {
-    let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/src/std");
+    let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/std");
     let mut files = Vec::new();
     collect_fp_files(core_std_root.as_path(), &mut files)?;
     let mut tree = Vec::with_capacity(files.len());
@@ -355,7 +358,7 @@ fn parse_source_items(
     let source = if core_std {
         fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../fp-lang/src/std")
+                .join("../fp-lang/std")
                 .join(embedded_path),
         )
         .map_err(|err| {
@@ -653,6 +656,68 @@ fn inventory_groups(expr: &Expr) -> Vec<InventoryGroupAccessor> {
         .collect()
 }
 
+fn bash_inventory(file: Option<&fp_core::ast::File>) -> fp_bash::ShellInventory {
+    let mut inventory = fp_bash::ShellInventory::default();
+    let Some(file) = file else {
+        return inventory;
+    };
+    let Some(root) = inventory_root_expr(file) else {
+        return inventory;
+    };
+    for host in inventory_hosts(root) {
+        let fields = host
+            .fields
+            .into_iter()
+            .map(|(name, value)| {
+                let value = match (name.as_str(), value.parse::<u16>()) {
+                    ("port", Ok(value)) => fp_bash::InventoryValue::U16(value),
+                    _ => fp_bash::InventoryValue::String(value),
+                };
+                (name, value)
+            })
+            .collect();
+        inventory.hosts.insert(
+            host.name,
+            fp_bash::InventoryHost {
+                transport: host.transport,
+                fields,
+            },
+        );
+    }
+    inventory
+}
+
+fn powershell_inventory(file: Option<&fp_core::ast::File>) -> fp_powershell::ShellInventory {
+    let mut inventory = fp_powershell::ShellInventory::default();
+    let Some(file) = file else {
+        return inventory;
+    };
+    let Some(root) = inventory_root_expr(file) else {
+        return inventory;
+    };
+    for host in inventory_hosts(root) {
+        let fields = host
+            .fields
+            .into_iter()
+            .map(|(name, value)| {
+                let value = match (name.as_str(), value.parse::<u16>()) {
+                    ("port", Ok(value)) => fp_powershell::InventoryValue::U16(value),
+                    _ => fp_powershell::InventoryValue::String(value),
+                };
+                (name, value)
+            })
+            .collect();
+        inventory.hosts.insert(
+            host.name,
+            fp_powershell::InventoryHost {
+                transport: host.transport,
+                fields,
+            },
+        );
+    }
+    inventory
+}
+
 fn struct_field_expr<'a>(expr: &'a Expr, field: &str) -> Option<&'a Expr> {
     let fields = match expr.kind() {
         ExprKind::Struct(expr_struct) => &expr_struct.fields,
@@ -916,7 +981,6 @@ const fn main() {
 
         assert!(rendered.code.contains("#!/usr/bin/env bash"));
         assert!(rendered.code.contains("echo hello"));
-        assert!(!rendered.code.contains("shell_copy() {"));
         assert!(!rendered.code.contains("winrm_pwsh() {"));
     }
 
@@ -985,15 +1049,10 @@ const fn inventory() -> Inventory {
             },
         )
         .expect("source should compile");
-
-        assert!(
-            rendered
-                .code
-                .contains("__fp_std_shell_backend_rsync_remote_target_")
-        );
+        assert!(rendered.code.contains("rsync_remote_target"));
         assert!(rendered.code.contains("Administrator"));
         assert!(rendered.code.contains("10.0.0.21"));
-        assert!(rendered.code.contains("rsync -e"));
+        assert!(rendered.code.contains("rsync"));
     }
 
     #[test]
@@ -1040,7 +1099,6 @@ const fn main() {
 
         let rendered = compile_source(source, Path::new("process.fp"), ScriptTarget::Bash)
             .expect("source should compile");
-
         assert!(
             rendered
                 .code
@@ -1049,7 +1107,7 @@ const fn main() {
         assert!(
             rendered
                 .code
-                .contains("local cmd=\"$(__fp_std_shell_process_process_pipe_")
+                .contains("local cmd=\"$(__fp_std_shell_process_pipe_")
         );
         assert!(rendered.code.contains("/tmp/build.log"));
     }

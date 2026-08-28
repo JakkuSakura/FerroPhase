@@ -68,6 +68,11 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
     fn prepare_file(&self, file: &mut File) {
         // Scan signatures from the AST
         *self.sigs.borrow_mut() = Some(scan_all_signatures(file));
+        if let Some(sigs) = self.sigs.borrow().as_ref() {
+            for item in &mut file.items {
+                inject_with_contexts_in_item(item, sigs);
+            }
+        }
 
         // Flatten main body to top-level Expr items
         let mut new_items = Vec::new();
@@ -123,15 +128,20 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
     ) -> Result<Option<Expr>> {
         match call.kind {
             CallKind::ShellExec => {
-                let host = call.args.get(1).and_then(string_val).unwrap_or_default();
-                let transport = self.host_transport_for(&host);
+                let host = call.args.get(1).and_then(string_val);
+                let transport = host
+                    .as_deref()
+                    .and_then(|host| self.host_transport_for(host));
                 let suffix = match transport.as_deref() {
                     Some("ssh") => "shell_ssh",
                     Some("docker") => "shell_docker",
                     Some("kubectl") => "shell_kubectl",
                     Some("winrm") => "shell_winrm",
                     Some("chroot") => "shell_chroot",
-                    _ => "shell_local",
+                    Some("local") => "shell_local",
+                    Some(_) => "shell_local",
+                    None if host.is_none() => "shell",
+                    None => "shell_local",
                 };
                 Ok(Some(invoke_to(
                     call.span,
@@ -174,8 +184,10 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
                 )))
             }
             CallKind::ShellFileRsync => {
-                let host = call.args.get(2).and_then(string_val).unwrap_or_default();
-                let transport = self.host_transport_for(&host);
+                let host = call.args.get(2).and_then(string_val);
+                let transport = host
+                    .as_deref()
+                    .and_then(|host| self.host_transport_for(host));
                 let suffix = match transport.as_deref() {
                     Some("chroot") => "rsync_chroot",
                     _ => "rsync_remote",
@@ -190,6 +202,245 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
             _ => Ok(None),
         }
     }
+}
+
+fn inject_with_contexts_in_item(item: &mut Item, sigs: &HashMap<String, FunctionSignature>) {
+    match item.kind_mut() {
+        ItemKind::DefFunction(function) => {
+            inject_with_contexts_in_block(&mut function.body, sigs, None);
+        }
+        ItemKind::DefConst(def) => inject_with_contexts(def.value.as_mut(), sigs, None),
+        ItemKind::Expr(expr) => inject_with_contexts(expr, sigs, None),
+        ItemKind::Module(module) => {
+            for child in &mut module.items {
+                inject_with_contexts_in_item(child, sigs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn inject_with_contexts(
+    expr: &mut Expr,
+    sigs: &HashMap<String, FunctionSignature>,
+    context: Option<&Expr>,
+) {
+    match expr.kind_mut() {
+        ExprKind::With(with) => {
+            inject_with_contexts(with.body.as_mut(), sigs, Some(with.context.as_ref()));
+            inject_with_contexts(with.context.as_mut(), sigs, context);
+        }
+        ExprKind::Block(block) => {
+            inject_with_contexts_in_block(block, sigs, context);
+        }
+        ExprKind::If(branch) => {
+            inject_with_contexts(branch.cond.as_mut(), sigs, context);
+            inject_with_contexts(branch.then.as_mut(), sigs, context);
+            if let Some(elze) = branch.elze.as_mut() {
+                inject_with_contexts(elze, sigs, context);
+            }
+        }
+        ExprKind::Loop(loop_expr) => {
+            inject_with_contexts(loop_expr.body.as_mut(), sigs, context);
+        }
+        ExprKind::While(while_expr) => {
+            inject_with_contexts(while_expr.cond.as_mut(), sigs, context);
+            inject_with_contexts(while_expr.body.as_mut(), sigs, context);
+        }
+        ExprKind::For(for_expr) => {
+            inject_with_contexts(for_expr.iter.as_mut(), sigs, context);
+            inject_with_contexts(for_expr.body.as_mut(), sigs, context);
+        }
+        ExprKind::Match(match_expr) => {
+            if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
+                inject_with_contexts(scrutinee, sigs, context);
+            }
+            for case in &mut match_expr.cases {
+                inject_with_contexts(case.cond.as_mut(), sigs, context);
+                if let Some(guard) = case.guard.as_mut() {
+                    inject_with_contexts(guard, sigs, context);
+                }
+                inject_with_contexts(case.body.as_mut(), sigs, context);
+            }
+        }
+        ExprKind::Invoke(invoke) => {
+            if let Some(context) = context {
+                inject_context_arg(invoke, context, sigs);
+            }
+            for arg in &mut invoke.args {
+                inject_with_contexts(arg, sigs, context);
+            }
+            for kwarg in &mut invoke.kwargs {
+                inject_with_contexts(&mut kwarg.value, sigs, context);
+            }
+        }
+        ExprKind::Assign(assign) => {
+            inject_with_contexts(assign.target.as_mut(), sigs, context);
+            inject_with_contexts(assign.value.as_mut(), sigs, context);
+        }
+        ExprKind::Select(select) => inject_with_contexts(select.obj.as_mut(), sigs, context),
+        ExprKind::Index(index) => {
+            inject_with_contexts(index.obj.as_mut(), sigs, context);
+            inject_with_contexts(index.index.as_mut(), sigs, context);
+        }
+        ExprKind::Struct(struct_expr) => {
+            inject_with_contexts(struct_expr.name.as_mut(), sigs, context);
+            for field in &mut struct_expr.fields {
+                if let Some(value) = field.value.as_mut() {
+                    inject_with_contexts(value, sigs, context);
+                }
+            }
+            if let Some(update) = struct_expr.update.as_mut() {
+                inject_with_contexts(update, sigs, context);
+            }
+        }
+        ExprKind::Structural(struct_expr) => {
+            for field in &mut struct_expr.fields {
+                if let Some(value) = field.value.as_mut() {
+                    inject_with_contexts(value, sigs, context);
+                }
+            }
+        }
+        ExprKind::Cast(cast) => inject_with_contexts(cast.expr.as_mut(), sigs, context),
+        ExprKind::Reference(reference) => {
+            inject_with_contexts(reference.referee.as_mut(), sigs, context)
+        }
+        ExprKind::Dereference(deref) => inject_with_contexts(deref.referee.as_mut(), sigs, context),
+        ExprKind::Tuple(tuple) => {
+            for value in &mut tuple.values {
+                inject_with_contexts(value, sigs, context);
+            }
+        }
+        ExprKind::Return(return_expr) => {
+            if let Some(value) = return_expr.value.as_mut() {
+                inject_with_contexts(value, sigs, context);
+            }
+        }
+        ExprKind::Break(break_expr) => {
+            if let Some(value) = break_expr.value.as_mut() {
+                inject_with_contexts(value, sigs, context);
+            }
+        }
+        ExprKind::Try(try_expr) => {
+            inject_with_contexts(try_expr.expr.as_mut(), sigs, context);
+            for catch in &mut try_expr.catches {
+                inject_with_contexts(catch.body.as_mut(), sigs, context);
+            }
+            if let Some(elze) = try_expr.elze.as_mut() {
+                inject_with_contexts(elze, sigs, context);
+            }
+            if let Some(finally) = try_expr.finally.as_mut() {
+                inject_with_contexts(finally, sigs, context);
+            }
+        }
+        ExprKind::Async(async_expr) => {
+            inject_with_contexts(async_expr.expr.as_mut(), sigs, context)
+        }
+        ExprKind::Let(let_expr) => inject_with_contexts(let_expr.expr.as_mut(), sigs, context),
+        ExprKind::Closure(closure) => inject_with_contexts(closure.body.as_mut(), sigs, context),
+        ExprKind::Array(array) => {
+            for value in &mut array.values {
+                inject_with_contexts(value, sigs, context);
+            }
+        }
+        ExprKind::ArrayRepeat(repeat) => {
+            inject_with_contexts(repeat.elem.as_mut(), sigs, context);
+            inject_with_contexts(repeat.len.as_mut(), sigs, context);
+        }
+        ExprKind::ConstBlock(const_block) => {
+            for item in &mut const_block.collected_items {
+                inject_with_contexts_in_item(item, sigs);
+            }
+            inject_with_contexts(const_block.expr.as_mut(), sigs, context);
+        }
+        ExprKind::Paren(paren) => inject_with_contexts(paren.expr.as_mut(), sigs, context),
+        ExprKind::BinOp(binop) => {
+            inject_with_contexts(binop.lhs.as_mut(), sigs, context);
+            inject_with_contexts(binop.rhs.as_mut(), sigs, context);
+        }
+        ExprKind::UnOp(unop) => inject_with_contexts(unop.val.as_mut(), sigs, context),
+        ExprKind::Range(range) => {
+            if let Some(start) = range.start.as_mut() {
+                inject_with_contexts(start, sigs, context);
+            }
+            if let Some(end) = range.end.as_mut() {
+                inject_with_contexts(end, sigs, context);
+            }
+            if let Some(step) = range.step.as_mut() {
+                inject_with_contexts(step, sigs, context);
+            }
+        }
+        ExprKind::Splat(splat) => inject_with_contexts(splat.iter.as_mut(), sigs, context),
+        ExprKind::SplatDict(splat) => inject_with_contexts(splat.dict.as_mut(), sigs, context),
+        _ => {}
+    }
+}
+
+fn inject_with_contexts_in_block(
+    block: &mut ExprBlock,
+    sigs: &HashMap<String, FunctionSignature>,
+    context: Option<&Expr>,
+) {
+    for statement in &mut block.stmts {
+        match statement {
+            BlockStmt::Expr(statement) => {
+                inject_with_contexts(statement.expr.as_mut(), sigs, context)
+            }
+            BlockStmt::Let(statement) => {
+                if let Some(init) = statement.init.as_mut() {
+                    inject_with_contexts(init, sigs, context);
+                }
+            }
+            BlockStmt::Defer(statement) => {
+                inject_with_contexts(statement.expr.as_mut(), sigs, context)
+            }
+            BlockStmt::Item(item) => inject_with_contexts_in_item(item, sigs),
+            BlockStmt::Noop => {}
+        }
+    }
+}
+
+fn inject_context_arg(
+    invoke: &mut ExprInvoke,
+    context: &Expr,
+    sigs: &HashMap<String, FunctionSignature>,
+) {
+    let name = invoke_target_name(&invoke.target).unwrap_or_default();
+    let index = if name.starts_with("__fp_")
+        && [
+            "_shell_local_",
+            "_shell_ssh_",
+            "_shell_docker_",
+            "_shell_kubectl_",
+            "_shell_winrm_",
+            "_shell_chroot_",
+        ]
+        .iter()
+        .any(|suffix| name.contains(suffix))
+    {
+        1
+    } else {
+        let signature = sigs.get(&name).or_else(|| {
+            name.rsplit_once("::")
+                .and_then(|(_, function)| sigs.get(function))
+        });
+        let Some(signature) = signature else {
+            return;
+        };
+        let Some(index) = signature.params.iter().position(|param| param.is_context) else {
+            return;
+        };
+        index
+    };
+    if invoke
+        .kwargs
+        .iter()
+        .any(|kwarg| kwarg.name == "hosts" || kwarg.name == "target")
+        || invoke.args.len() > index
+    {
+        return;
+    }
+    invoke.args.insert(index, context.clone());
 }
 
 // ── helpers ──

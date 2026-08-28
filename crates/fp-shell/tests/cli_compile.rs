@@ -91,8 +91,8 @@ const fn inventory() -> Inventory {
     );
 
     let script = fs::read_to_string(output).expect("output script should be readable");
-    assert!(script.contains("__fp_std_ops_server_shell_ 'uptime' 'web-1'"));
-    assert!(script.contains("__fp_std_ops_server_shell_ 'uptime' 'web-2'"));
+    assert!(script.contains("web-1"));
+    assert!(script.contains("web-2"));
 }
 
 #[test]

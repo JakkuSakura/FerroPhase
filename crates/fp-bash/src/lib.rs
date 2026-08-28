@@ -33,6 +33,8 @@ impl BashTarget {
 struct BashRenderer<'a> {
     inventory: &'a ShellInventory,
     externs: HashMap<String, ItemDeclFunction>,
+    function_names: BTreeSet<String>,
+    aliases: BTreeSet<(String, String)>,
     required_commands: RefCell<BTreeSet<String>>,
     lines: Vec<String>,
     temp_counter: usize,
@@ -43,6 +45,8 @@ impl<'a> BashRenderer<'a> {
         Self {
             inventory,
             externs: HashMap::new(),
+            function_names: BTreeSet::new(),
+            aliases: BTreeSet::new(),
             required_commands: RefCell::new(BTreeSet::new()),
             lines: Vec::new(),
             temp_counter: 0,
@@ -174,6 +178,13 @@ impl<'a> BashRenderer<'a> {
         }
         script.push_str("\nSSH_CONTROL_PATH=\"${TMPDIR:-/tmp}/fp-shell-%r@%h:%p\"\n\n");
         script.push_str(&self.render_runtime_validator());
+        for (alias, target) in &self.aliases {
+            script.push_str(&format!(
+                "{}() {{ {} \"$@\"; }}\n\n",
+                alias,
+                bash_function_name(target)
+            ));
+        }
         for line in self.lines {
             script.push_str(&line);
             script.push('\n');
@@ -183,6 +194,14 @@ impl<'a> BashRenderer<'a> {
 
     fn render_program(&mut self, file: &File) -> Result<(), String> {
         self.externs = extern_decl_map(file.items.iter(), ScriptTarget::Bash)?;
+        self.function_names = file
+            .items
+            .iter()
+            .filter_map(|item| match item.kind() {
+                ItemKind::DefFunction(def) => Some(def.name.as_str().to_string()),
+                _ => None,
+            })
+            .collect();
         for item in &file.items {
             match item.kind() {
                 ItemKind::DefFunction(def) => self.render_function_or_stub(def),
@@ -204,11 +223,13 @@ impl<'a> BashRenderer<'a> {
     /// internal aborting the whole compile.
     fn render_function_or_stub(&mut self, def: &ItemDefFunction) {
         let checkpoint = self.lines.len();
-        if self.render_function(def).is_ok() {
-            return;
+        match self.render_function(def) {
+            Ok(()) => return,
+            Err(_err) => {}
         }
         self.lines.truncate(checkpoint);
-        self.push_line(0, &format!("{}() {{", def.name));
+        let function_name = bash_function_name(def.name.as_str());
+        self.push_line(0, &format!("{}() {{", function_name));
         self.push_line(
             1,
             &format!(
@@ -221,9 +242,22 @@ impl<'a> BashRenderer<'a> {
     }
 
     fn render_function(&mut self, def: &ItemDefFunction) -> Result<(), String> {
-        self.push_line(0, &format!("{}() {{", def.name));
+        let function_name = bash_function_name(def.name.as_str());
+        self.push_line(0, &format!("{}() {{", function_name));
         for (index, param) in def.sig.params.iter().enumerate() {
-            self.push_line(1, &format!("local {}=\"${}\"", param.name, index + 1));
+            self.push_line(1, &format!("local {}=\"${{{}-}}\"", param.name, index + 1));
+            if let Some(default) = &param.default {
+                let default = self.render_value(&Expr::value(default.clone()))?;
+                self.push_line(
+                    1,
+                    &format!(
+                        "if (( $# < {} )); then {}={}; fi",
+                        index + 1,
+                        param.name,
+                        default
+                    ),
+                );
+            }
         }
         if function_returns_value(def) {
             self.render_function_block(&def.body, 1)?;
@@ -236,14 +270,27 @@ impl<'a> BashRenderer<'a> {
     }
 
     fn render_block(&mut self, block: &ExprBlock, indent: usize) -> Result<(), String> {
+        let checkpoint = self.lines.len();
+        if block.stmts.is_empty() {
+            self.push_line(indent, ":");
+            return Ok(());
+        }
         for statement in &block.stmts {
             self.render_block_stmt(statement, indent)?;
+        }
+        if self.lines[checkpoint..]
+            .iter()
+            .all(|line| line.trim().is_empty())
+        {
+            self.push_line(indent, ":");
         }
         Ok(())
     }
 
     fn render_function_block(&mut self, block: &ExprBlock, indent: usize) -> Result<(), String> {
+        let checkpoint = self.lines.len();
         let Some((last, rest)) = block.stmts.split_last() else {
+            self.push_line(indent, ":");
             return Ok(());
         };
         for statement in rest {
@@ -252,7 +299,14 @@ impl<'a> BashRenderer<'a> {
         match last {
             BlockStmt::Expr(expr) => self.render_result_expr(&expr.expr, indent),
             _ => self.render_block_stmt(last, indent),
+        }?;
+        if self.lines[checkpoint..]
+            .iter()
+            .all(|line| line.trim().is_empty())
+        {
+            self.push_line(indent, ":");
         }
+        Ok(())
     }
 
     fn render_match_expr(&mut self, expr_match: &ExprMatch, indent: usize) -> Result<(), String> {
@@ -284,6 +338,10 @@ impl<'a> BashRenderer<'a> {
         args: &[Expr],
         indent: usize,
     ) -> Result<(), String> {
+        let target_name = bash_function_name(name);
+        if let Some(target) = short_function_target(name, &self.function_names) {
+            self.aliases.insert((name.to_string(), target));
+        }
         if self.externs.contains_key(name) {
             self.note_extern_requirements(name);
             let text = self.render_bash_extern_statement(name, args)?;
@@ -295,7 +353,7 @@ impl<'a> BashRenderer<'a> {
             .map(|arg| self.render_value(arg))
             .collect::<Result<Vec<_>, _>>()?
             .join(" ");
-        self.push_line(indent, &format!("{} {}", name, args));
+        self.push_line(indent, &format!("{} {}", target_name, args));
         Ok(())
     }
 
@@ -329,6 +387,7 @@ impl<'a> BashRenderer<'a> {
     fn render_expr_statement(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_block(block, indent),
+            ExprKind::With(expr_with) => self.render_expr_statement(&expr_with.body, indent),
             ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, false),
             ExprKind::Match(expr_match) => self.render_match_expr(expr_match, indent),
             ExprKind::If(expr_if) => {
@@ -399,6 +458,7 @@ impl<'a> BashRenderer<'a> {
     fn render_result_expr(&mut self, expr: &Expr, indent: usize) -> Result<(), String> {
         match expr.kind() {
             ExprKind::Block(block) => self.render_function_block(block, indent),
+            ExprKind::With(expr_with) => self.render_result_expr(&expr_with.body, indent),
             ExprKind::Try(expr_try) => self.render_try_expr(expr_try, indent, true),
             ExprKind::If(expr_if) => {
                 self.push_line(
@@ -631,9 +691,46 @@ impl<'a> BashRenderer<'a> {
                 ..
             } if call.kind == CallKind::Format => self.render_format_call_word(call),
             Expr {
+                kind: ExprKind::Match(expr_match),
+                ..
+            } => {
+                let scrutinee = expr_match
+                    .scrutinee
+                    .as_deref()
+                    .ok_or_else(|| "bash match requires scrutinee".to_string())?;
+                let mut command = format!("$(case {} in ", self.render_word(scrutinee)?);
+                for case in &expr_match.cases {
+                    let pattern = match case
+                        .pat
+                        .as_ref()
+                        .and_then(|pat| extract_match_case_string(pat))
+                    {
+                        Some(pattern) => self.render_case_pattern(&pattern)?,
+                        None => "*".to_string(),
+                    };
+                    command.push_str(&format!(
+                        "{}) printf '%s\\n' {} ;; ",
+                        pattern,
+                        self.render_word(&case.body)?
+                    ));
+                }
+                command.push_str("esac)");
+                Ok(format!("\"{}\"", command))
+            }
+            Expr {
                 kind: ExprKind::Paren(paren),
                 ..
             } => self.render_word(&paren.expr),
+            Expr {
+                kind: ExprKind::Select(select),
+                ..
+            } => {
+                let field = select.field.as_str();
+                let map = bash_host_field_map(field)
+                    .ok_or_else(|| format!("unsupported bash host field `{field}`"))?;
+                let host = self.render_word(&select.obj)?;
+                Ok(format!("\"${{{}[{}]:-}}\"", map, host))
+            }
             _ => Err("unsupported bash string expression".to_string()),
         }
     }
@@ -946,7 +1043,7 @@ impl<'a> BashRenderer<'a> {
     }
 
     fn render_call(&self, name: &str, args: &[Expr]) -> Result<String, String> {
-        if self.externs.contains_key(name) {
+        if self.externs.contains_key(name) || is_runtime_primitive(name) {
             self.note_extern_requirements(name);
             return Ok(self.render_bash_extern_call(name, args)?);
         }
@@ -1013,6 +1110,9 @@ impl<'a> BashRenderer<'a> {
                 "__fp_last_changed={}",
                 if is_true_expr(args.first()) { "1" } else { "0" }
             ),
+            "runtime_last_changed" => {
+                "if [[ \"${__fp_last_changed:-0}\" == '1' ]]; then printf '%s\\n' 'true'; else printf '%s\\n' 'false'; fi".to_string()
+            }
             other => self.render_generic_extern(other, args)?,
         })
     }
@@ -1131,7 +1231,7 @@ finally {{
                 escape_double_quotes(&command)
             ));
         }
-        script.push_str("}\n\nfp_validate_runtime\n\n");
+        script.push_str("}\n\n");
         script
     }
 
@@ -1155,6 +1255,42 @@ finally {{
             ExprKind::Tuple(tuple) => Ok(tuple.values.iter().collect()),
             _ => Err("bash renderer only supports string-list for iterables".to_string()),
         }
+    }
+}
+
+fn short_function_target(name: &str, functions: &BTreeSet<String>) -> Option<String> {
+    let mangled = name.strip_prefix("__fp_")?.strip_suffix('_')?;
+    let matches = functions
+        .iter()
+        .filter(|candidate| {
+            mangled == candidate.as_str() || mangled.ends_with(&format!("_{}", candidate.as_str()))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.into_iter().next().unwrap())
+}
+
+fn bash_function_name(name: &str) -> String {
+    match name {
+        "select" => "__fp_select".to_string(),
+        _ => name.to_string(),
+    }
+}
+
+fn bash_host_field_map(field: &str) -> Option<&'static str> {
+    match field {
+        "transport" => Some("FP_HOST_TRANSPORT"),
+        "address" => Some("FP_SSH_ADDRESS"),
+        "user" => Some("FP_SSH_USER"),
+        "port" => Some("FP_SSH_PORT"),
+        "container" => Some("FP_DOCKER_CONTAINER"),
+        "pod" => Some("FP_K8S_POD"),
+        "namespace" => Some("FP_K8S_NAMESPACE"),
+        "context" => Some("FP_K8S_CONTEXT"),
+        "password" => Some("FP_WINRM_PASSWORD"),
+        "scheme" => Some("FP_WINRM_SCHEME"),
+        "chroot_directory" => Some("FP_CHROOT_DIRECTORY"),
+        _ => None,
     }
 }
 
