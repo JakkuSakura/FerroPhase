@@ -404,6 +404,10 @@ impl AstToHirLowerer {
         self.target_env = TargetEnv::from_triple(target_triple);
     }
 
+    pub fn set_target_lang(&mut self, target_lang: Option<&str>) {
+        self.target_env.lang = target_lang.map(str::to_owned);
+    }
+
     pub fn set_cfg_filtering(&mut self, enabled: bool) {
         self.respect_cfg = enabled;
     }
@@ -2171,9 +2175,16 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefStatic(static_def) if attrs_has_name(&static_def.attrs, "host") => {
-                self.register_value_def(&static_def.name.name, def_id.clone(), &static_def.visibility);
+                self.register_value_def(
+                    &static_def.name.name,
+                    def_id.clone(),
+                    &static_def.visibility,
+                );
                 let konst = self.transform_static_def(static_def)?;
-                (hir::ItemKind::Const(konst), self.map_visibility(&static_def.visibility))
+                (
+                    hir::ItemKind::Const(konst),
+                    self.map_visibility(&static_def.visibility),
+                )
             }
             ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(
@@ -2467,7 +2478,8 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(def_type.name.name.clone()),
                     ty: self.create_simple_type("bool"),
                     body,
-                    mutable: false, is_host: false,
+                    mutable: false,
+                    is_host: false,
                 };
                 (hir::ItemKind::Const(konst), hir::Visibility::Private)
             }
@@ -2516,7 +2528,8 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(format!("__fp_error_{def_id}")),
                     ty: self.create_simple_type("bool"),
                     body,
-                    mutable: false, is_host: false,
+                    mutable: false,
+                    is_host: false,
                 };
                 return Ok(hir::Item {
                     hir_id,
@@ -2622,7 +2635,11 @@ impl AstToHirLowerer {
         Ok(hir::Const {
             name: hir::Symbol::new(def.name.name.clone()),
             ty,
-            body: hir::Body { hir_id: self.next_id(), params: Vec::new(), value },
+            body: hir::Body {
+                hir_id: self.next_id(),
+                params: Vec::new(),
+                value,
+            },
             mutable: def.mutable.unwrap_or(false),
             is_host,
         })

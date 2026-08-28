@@ -29,6 +29,9 @@ use crate::error::Result;
 /// reach past it into `CompileArgs`.
 pub struct BackendConfig {
     pub workspace_root: PathBuf,
+    /// Direct output for a single-file AST compile. Package-oriented AST
+    /// compiles leave this unset and use `workspace_root/package/...`.
+    pub single_file_output: Option<PathBuf>,
     pub target_triple: Option<String>,
     pub target_cpu: Option<String>,
     pub native_target: Option<String>,
@@ -71,6 +74,7 @@ impl BackendConfig {
     pub fn new(workspace_root: PathBuf) -> Self {
         Self {
             workspace_root,
+            single_file_output: None,
             target_triple: None,
             target_cpu: None,
             native_target: None,
@@ -92,6 +96,11 @@ impl BackendConfig {
 
     pub fn with_target_triple(mut self, target_triple: Option<String>) -> Self {
         self.target_triple = target_triple;
+        self
+    }
+
+    pub fn with_single_file_output(mut self, output: Option<PathBuf>) -> Self {
+        self.single_file_output = output;
         self
     }
 

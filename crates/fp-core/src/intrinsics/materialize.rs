@@ -206,7 +206,7 @@ pub fn materialize_expr(
                 kwarg.value = materialize_expr(value, strategy)?;
             }
             if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
-                expr
+                materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::new(ast::ExprKind::Invoke(invoke))
             }
@@ -296,6 +296,16 @@ pub fn materialize_expr(
         }
         ast::ExprKind::Try(mut expr_try) => {
             expr_try.expr = Box::new(materialize_expr(*expr_try.expr, strategy)?);
+            for catch in &mut expr_try.catches {
+                let body = std::mem::replace(&mut catch.body, Box::new(ast::Expr::unit()));
+                catch.body = Box::new(materialize_expr(*body, strategy)?);
+            }
+            if let Some(elze) = expr_try.elze.take() {
+                expr_try.elze = Some(Box::new(materialize_expr(*elze, strategy)?));
+            }
+            if let Some(finally) = expr_try.finally.take() {
+                expr_try.finally = Some(Box::new(materialize_expr(*finally, strategy)?));
+            }
             ast::Expr::new(ast::ExprKind::Try(expr_try))
         }
         // `return Ok(x);`/`break Some(x);` — omitted from this walker
@@ -349,7 +359,7 @@ pub fn materialize_expr(
             }
 
             if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {
-                expr
+                materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
             }

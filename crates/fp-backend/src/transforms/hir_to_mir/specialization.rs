@@ -112,18 +112,19 @@ impl HirToMirLowerer {
         self.current_item_path = self
             .hir_def_path(def_id.clone())
             .map(|path| path.join("::"));
-        let result = self.lower_method(
-            def_id,
-            &method_ref.function,
-            method_ref.span,
-            method_ref.method_context.as_ref(),
-        )
-        .map_err(|error| {
-            format!(
-                "while lowering method `{}`: {error}",
-                method_ref.function.sig.name
+        let result = self
+            .lower_method(
+                def_id,
+                &method_ref.function,
+                method_ref.span,
+                method_ref.method_context.as_ref(),
             )
-        });
+            .map_err(|error| {
+                format!(
+                    "while lowering method `{}`: {error}",
+                    method_ref.function.sig.name
+                )
+            });
         self.current_item_path = previous_item_path;
         let (mir_item, body_id, body, _sig) = result?;
         self.extra_items.push(mir_item);

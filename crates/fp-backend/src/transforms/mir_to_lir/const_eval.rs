@@ -142,8 +142,19 @@ impl MirToLirLowerer {
     pub(super) fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
         let name = lir::Name::new(mir_static.name.as_str().to_string());
         let lir_ty = self.lir_type_from_ty(&mir_static.ty);
-        if matches!(&mir_static.init, mir::Operand::Constant(c) if matches!(c.literal, mir::ConstantKind::Undef)) {
-            return Ok(lir::LirGlobal { name, ty: lir_ty.clone(), initializer: None, relocations: Vec::new(), linkage: lir::Linkage::External, visibility: lir::Visibility::Default, is_constant: matches!(mir_static.mutability, mir::Mutability::Not), alignment: Some(self.alignment_for_lir_type(&lir_ty).max(1)), section: None });
+        if matches!(&mir_static.init, mir::Operand::Constant(c) if matches!(c.literal, mir::ConstantKind::Undef))
+        {
+            return Ok(lir::LirGlobal {
+                name,
+                ty: lir_ty.clone(),
+                initializer: None,
+                relocations: Vec::new(),
+                linkage: lir::Linkage::External,
+                visibility: lir::Visibility::Default,
+                is_constant: matches!(mir_static.mutability, mir::Mutability::Not),
+                alignment: Some(self.alignment_for_lir_type(&lir_ty).max(1)),
+                section: None,
+            });
         }
         let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
         let (initializer, relocations) =

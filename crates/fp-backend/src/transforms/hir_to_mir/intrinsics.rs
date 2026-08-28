@@ -587,11 +587,9 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Literal(hir::Lit::Str(text)) => hir::FormatString {
                 parts: vec![hir::FormatTemplatePart::Literal(text.clone())],
             },
-            _ => {
-                hir::FormatString {
-                    parts: vec![hir::FormatTemplatePart::Literal(String::new())],
-                }
-            }
+            _ => hir::FormatString {
+                parts: vec![hir::FormatTemplatePart::Literal(String::new())],
+            },
         };
 
         let mut positional_slots: Vec<Option<hir::CallArg>> = Vec::new();

@@ -1,5 +1,17 @@
 use super::body::BodyBuilder;
 use super::*;
+
+fn projections_include_slice_before_index(projections: &[HirAssignTargetProjection]) -> bool {
+    let mut saw_slice = false;
+    for projection in projections {
+        match projection {
+            HirAssignTargetProjection::Slice(_) => saw_slice = true,
+            HirAssignTargetProjection::Index(_) if saw_slice => return true,
+            _ => {}
+        }
+    }
+    false
+}
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::mir;
@@ -140,7 +152,7 @@ impl<'a> BodyBuilder<'a> {
             }
         };
 
-        for projection in projected.projections {
+        for projection in &projected.projections {
             match projection {
                 HirAssignTargetProjection::Deref => {
                     let mut base_ty = place_info.ty.clone();
@@ -216,6 +228,9 @@ impl<'a> BodyBuilder<'a> {
                     place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
                 }
                 HirAssignTargetProjection::Index(index) => {
+                    if projections_include_slice_before_index(&projected.projections) {
+                        return Ok(None);
+                    }
                     let index_ty = Ty {
                         kind: TyKind::Uint(UintTy::Usize),
                     };

@@ -73,6 +73,25 @@ pub fn roundtrip_items_via_hir(
     transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
 }
 
+pub fn roundtrip_items_via_hir_target(
+    file: &fp_core::ast::File,
+    target_lang: &str,
+) -> fp_core::Result<Vec<fp_core::ast::Item>> {
+    let mut filtered = file.clone();
+    let mut target_env = fp_core::cfg::TargetEnv::host();
+    target_env.lang = Some(target_lang.to_owned());
+    fp_core::cfg::filter_items_in_file(&mut filtered, &target_env);
+    let package = package_from_file(&filtered)?;
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        package.hir_package_id.clone(),
+    );
+    generator.set_target_lang(Some(target_lang));
+    generator.set_cfg_filtering(true);
+    let program = generator.transform_package(&package)?;
+    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
+}
+
 pub fn roundtrip_items_via_hir_dce(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {

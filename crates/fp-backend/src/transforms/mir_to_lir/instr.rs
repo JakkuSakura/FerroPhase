@@ -293,13 +293,11 @@ impl MirToLirLowerer {
                     .iter()
                     .chain(std::iter::once(&mir_func.sig.output))
                     .any(|ty| self.contains_unresolved_param(ty))
-                    || bodies
-                        .get(&mir_func.body_id)
-                        .is_some_and(|body| {
-                            body.locals
-                                .iter()
-                                .any(|local| self.contains_unresolved_param(&local.ty))
-                        })
+                    || bodies.get(&mir_func.body_id).is_some_and(|body| {
+                        body.locals
+                            .iter()
+                            .any(|local| self.contains_unresolved_param(&local.ty))
+                    })
                 {
                     return Ok(lir_program);
                 }
@@ -1149,7 +1147,8 @@ impl MirToLirLowerer {
                         if args.len() != required {
                             return Err(fp_core::error::Error::from(format!(
                                 "{} expects {required} arguments, got {}",
-                                kind.name(), args.len()
+                                kind.name(),
+                                args.len()
                             )));
                         }
                         let mut values = Vec::with_capacity(args.len());
@@ -1159,7 +1158,9 @@ impl MirToLirLowerer {
                         }
                         let pointer = values[0].clone();
                         let pointer_ty = self.type_of_operand(&args[0]).ok_or_else(|| {
-                            fp_core::error::Error::from("host pointer operation has no pointer type")
+                            fp_core::error::Error::from(
+                                "host pointer operation has no pointer type",
+                            )
                         })?;
                         if !matches!(pointer_ty, lir::LirType::Ptr(_)) {
                             return Err(fp_core::error::Error::from(
@@ -1182,7 +1183,13 @@ impl MirToLirLowerer {
                                     kind: lir::LirInstructionKind::Store {
                                         value: values[1].clone(),
                                         address: pointer,
-                                        alignment: Some(self.alignment_for_lir_type(&self.type_of_operand(&args[1]).ok_or_else(|| fp_core::error::Error::from("host pointer write has no value type"))?)),
+                                        alignment: Some(self.alignment_for_lir_type(
+                                            &self.type_of_operand(&args[1]).ok_or_else(|| {
+                                                fp_core::error::Error::from(
+                                                    "host pointer write has no value type",
+                                                )
+                                            })?,
+                                        )),
                                         volatile: false,
                                     },
                                     result: None,
@@ -1190,11 +1197,13 @@ impl MirToLirLowerer {
                                 });
                                 return Ok(intrinsic_instructions);
                             }
-                            IntrinsicKind::HostPtrOffset => lir::LirInstructionKind::GetElementPtr {
-                                ptr: pointer,
-                                indices: vec![values[1].clone()],
-                                inbounds: false,
-                            },
+                            IntrinsicKind::HostPtrOffset => {
+                                lir::LirInstructionKind::GetElementPtr {
+                                    ptr: pointer,
+                                    indices: vec![values[1].clone()],
+                                    inbounds: false,
+                                }
+                            }
                             _ => unreachable!(),
                         };
                         intrinsic_instructions.push(lir::LirInstruction {
@@ -3877,8 +3886,7 @@ impl MirToLirLowerer {
         // a reference to a slice/string wrapper and a raw byte pointer both
         // carry one machine address. Preserve that address with an explicit
         // bitcast when a runtime function declares the narrower pointer ABI.
-        if matches!(&current_ty, lir::LirType::Ptr(_))
-            && matches!(&target_ty, lir::LirType::Ptr(_))
+        if matches!(&current_ty, lir::LirType::Ptr(_)) && matches!(&target_ty, lir::LirType::Ptr(_))
         {
             let instr_id = self.next_id();
             instructions.push(lir::LirInstruction {
@@ -3950,13 +3958,14 @@ impl MirToLirLowerer {
             // monomorphized pointee type. Both are the same null ABI value;
             // normalize the pointer-shaped integer constant to the expected
             // pointer type before aggregate construction.
-            if matches!((&constant.ty, target_ty), (lir::LirType::Ptr(_), lir::LirType::Ptr(_)))
-                && matches!(
-                    constant.kind,
-                    lir::LirConstantKind::Null
-                        | lir::LirConstantKind::Data(lir::LirConstantData::Integer(_))
-                )
-            {
+            if matches!(
+                (&constant.ty, target_ty),
+                (lir::LirType::Ptr(_), lir::LirType::Ptr(_))
+            ) && matches!(
+                constant.kind,
+                lir::LirConstantKind::Null
+                    | lir::LirConstantKind::Data(lir::LirConstantData::Integer(_))
+            ) {
                 return Ok(lir::LirConstant::null(target_ty.clone()));
             }
             // A zero-sized-type value (e.g. `()`, the payload of a
