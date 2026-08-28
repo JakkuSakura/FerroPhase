@@ -761,11 +761,6 @@ name = "fp"
 version = "0.0.0"
 
 [[package]]
-name = "fp-agent"
-version = "0.1.0"
-dependencies = ["reqwest 0.12.28 (registry+crates.io)", "serde_json 1.0.149 (registry+crates.io)", "chrono 0.4.44 (registry+crates.io)", "serde 1.0.228 (registry+crates.io)", "async-trait 0.1.89 (registry+crates.io)", "tracing 0.1.44 (registry+crates.io)"]
-
-[[package]]
 name = "fp-backend"
 version = "0.1.0"
 dependencies = ["itertools 0.12.1 (registry+crates.io)", "dashmap 5.5.3 (registry+crates.io)", "serde 1.0.228 (registry+crates.io)", "tracing 0.1.44 (registry+crates.io)", "bytes 1.11.0 (registry+crates.io)", "eyre 0.6.12 (registry+crates.io)", "derive_more 1.0.0 (registry+crates.io)", "serde_json 1.0.149 (registry+crates.io)"]
