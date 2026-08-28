@@ -303,7 +303,9 @@ mod tests {
                 assert!(
                     path.components()
                         .any(|component| component.as_os_str() == "intrinsics")
-                        || path.components().any(|component| component.as_os_str() == "alloc"),
+                        || path
+                            .components()
+                            .any(|component| component.as_os_str() == "alloc"),
                     "intrinsic markers must live under an intrinsic or allocation package: {}",
                     path.display()
                 );
@@ -314,9 +316,8 @@ mod tests {
     #[test]
     fn parses_string_literal_types_example() {
         let frontend = FerroFrontend::new();
-        let path =
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../examples/broken/41_string_literal_types.fp");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/broken/41_string_literal_types.fp");
         let source = fs::read_to_string(&path).expect("read example source");
         let result = frontend.parse(&source, Some(&path));
         assert!(

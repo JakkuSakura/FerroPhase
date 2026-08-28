@@ -1454,6 +1454,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "fp-core",
+ "semver",
  "tempfile",
  "tracing",
  "tree-sitter",
@@ -1615,6 +1616,7 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "fp-sql",
+ "tempfile",
 ]
 
 [[package]]
@@ -1627,6 +1629,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rustpython-parser",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -1666,6 +1669,7 @@ dependencies = [
  "anyhow",
  "fp-core",
  "sqlparser",
+ "tempfile",
 ]
 
 [[package]]
@@ -1700,6 +1704,7 @@ name = "fp-toml"
 version = "0.0.0"
 dependencies = [
  "fp-core",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -1752,6 +1757,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fp-core",
+ "tempfile",
  "thiserror 2.0.19",
  "wit-parser",
 ]
@@ -1762,6 +1768,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "fp-core",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-zig",
 ]

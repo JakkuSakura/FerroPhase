@@ -28,7 +28,10 @@ fn main() {
     generated.push_str("];\n\n");
 
     for package in ["core", "alloc", "libc", "std"] {
-        generated.push_str(&format!("pub const {}_PATHS: &[&str] = &[\n", package.to_uppercase()));
+        generated.push_str(&format!(
+            "pub const {}_PATHS: &[&str] = &[\n",
+            package.to_uppercase()
+        ));
         for (relative, _) in &files {
             let prefix = format!("{package}/");
             if let Some(package_relative) = relative.strip_prefix(&prefix) {
