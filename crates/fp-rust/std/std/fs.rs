@@ -379,6 +379,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
 /// }
 /// ```
 #[stable(feature = "fs_read_write", since = "1.26.0")]
+#[intrinsic = "fs_read_to_string"]
 pub fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
     fn inner(path: &Path) -> io::Result<String> {
         let mut file = File::open(path)?;
@@ -416,6 +417,7 @@ pub fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
 /// }
 /// ```
 #[stable(feature = "fs_read_write_bytes", since = "1.26.0")]
+#[intrinsic = "fs_write_string"]
 pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
     fn inner(path: &Path, contents: &[u8]) -> io::Result<()> {
         File::create(path)?.write_all(contents)
@@ -3096,6 +3098,7 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
+#[intrinsic = "fs_create_dir_all"]
 pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     DirBuilder::new().recursive(true).create(path.as_ref())
 }
@@ -3502,6 +3505,7 @@ impl AsInnerMut<fs_imp::DirBuilder> for DirBuilder {
 /// [TOCTOU]: self#time-of-check-to-time-of-use-toctou
 #[stable(feature = "fs_try_exists", since = "1.81.0")]
 #[inline]
+#[intrinsic = "fs_exists"]
 pub fn exists<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     fs_imp::exists(path.as_ref())
 }

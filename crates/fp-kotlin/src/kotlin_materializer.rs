@@ -1,9 +1,10 @@
 use fp_core::ast::{
-    Expr, ExprBinOp, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, TySlot, Value,
+    Expr, ExprBinOp, ExprClosure, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, Path,
+    TySlot, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicMaterializer;
+use fp_core::intrinsics::{CallKind, IntrinsicMaterializer};
 use fp_core::ops::BinOpKind;
 
 /// Materializes fp-lang portable operations into Kotlin AST constructs.
@@ -33,12 +34,12 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             | "as_str" | "as_deref" => Ok(Some(receiver())),
             "option_none" => Ok(Some(Expr::value(Value::Null(Default::default())))),
             "result_ok" => Ok(Some(invoke_static_method(
-                "Result",
+                &["Result"],
                 "success",
                 vec![result_constructor_arg(call)],
             ))),
             "result_err" => Ok(Some(invoke_static_method(
-                "Result",
+                &["Result"],
                 "failure",
                 vec![result_constructor_arg(call)],
             ))),
@@ -95,6 +96,34 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             _ => Ok(None),
         }
     }
+
+    fn materialize_call(&self, call: &mut ExprIntrinsicCall, _ty: &TySlot) -> Result<Option<Expr>> {
+        let args = call.args.clone();
+        let replacement = match call.kind {
+            CallKind::FsReadToString => run_catching(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "readString",
+                args,
+            )),
+            CallKind::FsWriteString => run_catching(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "write",
+                args,
+            )),
+            CallKind::FsExists => run_catching(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "exists",
+                args,
+            )),
+            CallKind::FsCreateDirAll => run_catching(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "createDirectories",
+                args,
+            )),
+            _ => return Ok(None),
+        };
+        Ok(Some(replacement))
+    }
 }
 
 fn invoke_function(name: &str, args: Vec<Expr>) -> Expr {
@@ -106,17 +135,37 @@ fn invoke_function(name: &str, args: Vec<Expr>) -> Expr {
     }))
 }
 
-fn invoke_static_method(receiver: &str, method: &str, args: Vec<Expr>) -> Expr {
+fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Expr {
     Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
         target: ExprInvokeTarget::Method(ExprSelect {
             span: Default::default(),
-            obj: Box::new(Expr::name(Name::ident(receiver))),
+            obj: Box::new(Expr::name(Name::path(Path::plain(
+                receiver
+                    .iter()
+                    .map(|segment| Ident::new(*segment))
+                    .collect(),
+            )))),
             field: Ident::new(method),
             generic_args: Vec::new(),
             select: ExprSelectType::Method,
         }),
         args,
+        kwargs: Vec::new(),
+    }))
+}
+
+fn run_catching(body: Expr) -> Expr {
+    Expr::new(ExprKind::Invoke(ExprInvoke {
+        span: Default::default(),
+        target: ExprInvokeTarget::Function(Name::ident("runCatching")),
+        args: vec![Expr::new(ExprKind::Closure(ExprClosure {
+            span: Default::default(),
+            params: Vec::new(),
+            ret_ty: None,
+            movability: None,
+            body: Box::new(body),
+        }))],
         kwargs: Vec::new(),
     }))
 }
@@ -130,7 +179,7 @@ fn result_constructor_arg(call: &ExprPortableOpCall) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use fp_core::ast::{ExprKind, ExprPortableOpCall, Value};
+    use fp_core::ast::{ExprIntrinsicCall, ExprKind, ExprPortableOpCall, Value};
     use fp_core::intrinsics::PortableOpRegistry;
 
     use super::*;
@@ -169,17 +218,36 @@ mod tests {
         assert_eq!(render_invoke_name(&err), "Result.failure");
     }
 
+    #[test]
+    fn materializes_resolved_filesystem_calls_to_run_catching() {
+        let mut call = ExprIntrinsicCall {
+            span: Default::default(),
+            kind: CallKind::FsReadToString,
+            args: vec![Expr::name(Name::ident("path"))],
+            kwargs: Vec::new(),
+        };
+
+        let materialized = KotlinMaterializer
+            .materialize_call(&mut call, &None)
+            .expect("materialize filesystem call")
+            .expect("filesystem replacement");
+        assert_eq!(render_invoke_name(&materialized), "runCatching");
+    }
+
     fn render_invoke_name(expr: &Expr) -> String {
         let ExprKind::Invoke(invoke) = expr.kind() else {
             panic!("expected invocation");
         };
-        let ExprInvokeTarget::Method(select) = &invoke.target else {
-            panic!("expected static method invocation");
-        };
-        let ExprKind::Name(Name::Ident(receiver)) = select.obj.kind() else {
-            panic!("expected static receiver");
-        };
-        format!("{}.{}", receiver.name, select.field.name)
+        match &invoke.target {
+            ExprInvokeTarget::Function(Name::Ident(name)) => return name.name.clone(),
+            ExprInvokeTarget::Method(select) => {
+                let ExprKind::Name(Name::Ident(receiver)) = select.obj.kind() else {
+                    panic!("expected static receiver");
+                };
+                format!("{}.{}", receiver.name, select.field.name)
+            }
+            _ => panic!("expected function or static method invocation"),
+        }
     }
 }
 
