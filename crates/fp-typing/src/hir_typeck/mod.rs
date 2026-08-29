@@ -1283,6 +1283,25 @@ impl HirTypeChecker {
                     if let hir::ExprKind::Path(path) = &callee.kind {
                         if path.segments.len() > 1 {
                             if let Some(hir::Res::Def(base_def_id)) = path.res.as_ref() {
+                                // Some type-relative paths are already
+                                // resolved to the associated member itself.
+                                // Keep that identity instead of treating it
+                                // as a nominal base and losing the selected
+                                // method before MIR lowering.
+                                if self
+                                    .program_rc()
+                                    .member_owner(base_def_id.clone())
+                                    .is_some()
+                                {
+                                    self.package().record_method_resolution(
+                                        expr.hir_id.clone(),
+                                        base_def_id.clone(),
+                                    );
+                                    self.package().record_method_resolution(
+                                        callee.hir_id.clone(),
+                                        base_def_id.clone(),
+                                    );
+                                }
                                 let is_type_base = self
                                     .program_rc()
                                     .item(base_def_id.clone())
@@ -1797,8 +1816,17 @@ impl HirTypeChecker {
                     }
                 }
                 hir::ExprKind::Cast(value, target) => {
-                    self.check_expr(value).await?;
-                    self.check_type_expr(target).await?
+                    let target_ty = if matches!(target.kind, hir::TypeExprKind::Infer) {
+                        self.expected_expr_type.clone().unwrap_or_else(|| Ty {
+                            kind: TyKind::Infer(ty::InferTy::FreshTy(target.hir_id.local_id())),
+                        })
+                    } else {
+                        self.check_type_expr(target).await?
+                    };
+                    self.with_expected_expr_type(target_ty.clone())
+                        .check_expr(value)
+                        .await?;
+                    target_ty
                 }
                 hir::ExprKind::Struct(path, fields) => {
                     let ty = match self.enum_variant_ty(path).await? {
@@ -4827,52 +4855,21 @@ impl HirTypeChecker {
         method: &hir::Symbol,
         actuals: &[Ty],
     ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
-        let program = self.program_rc();
-        for item in program.impls_for_adt(type_def_id.clone()) {
-            let hir::ItemKind::Impl(impl_block) = &item.kind else {
-                continue;
-            };
-            let mut scope = self.with_generics(&impl_block.generics);
-            let self_ty = scope.checked_impl_self_ty(&impl_block.self_ty).await?;
-            let self_ty = match &self_ty.kind {
-                TyKind::Ref(_, inner, _) => inner.as_ref(),
-                _ => &self_ty,
-            };
-            let TyKind::Adt(adt, _) = &self_ty.kind else {
-                continue;
-            };
-            if adt.did != *type_def_id {
-                continue;
-            }
-            for impl_item in &impl_block.items {
-                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
-                    continue;
-                };
-                if impl_item.name != *method {
-                    continue;
-                }
-                let signature = scope.function_signature(function).await?;
-                let Some((substitutions, output)) = scope
-                    .instantiate_call_with_explicit_args(
-                        &signature,
-                        actuals,
-                        Some(&function.sig.generics),
-                        None,
-                    )?
-                else {
-                    continue;
-                };
-                let args = scope.method_generic_args(
-                    &impl_block.generics,
-                    &function.sig.generics,
-                    &substitutions,
-                )?;
-                return Ok((impl_item.def_id.clone(), args, output));
-            }
-        }
-        Err(Error::from(format!(
-            "associated item `{method}` is not defined for type `{type_def_id}`"
-        )))
+        let receiver_ty = self.path_ty(&hir::Path {
+            segments: vec![hir::PathSegment {
+                name: hir::Symbol::new("_"),
+                args: None,
+            }],
+            res: Some(hir::Res::Def(type_def_id.clone())),
+        })
+        .await?;
+        self.method_output_at(&receiver_ty, method, actuals, None)
+            .await?
+            .ok_or_else(|| {
+                Error::from(format!(
+                    "associated item `{method}` is not defined for type `{type_def_id}`"
+                ))
+            })
     }
 
     /// Apply the autoderef step used for method lookup to the receiver

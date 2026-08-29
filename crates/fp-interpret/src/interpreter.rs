@@ -704,7 +704,7 @@ impl LirInterpreter {
             }
             LirInstructionKind::ComptimeOp(op) => match op {
                 ComptimeOp::CreateStruct { name } => {
-                    let struct_name = self.resolve_string_value(name)?;
+                    let struct_name = self.render_str_argument(name)?;
                     let fields: Vec<fp_core::ast::StructuralField> = vec![];
                     let struct_ty = Ty::Struct(TypeStruct {
                         name: fp_core::ast::Ident::new(struct_name),
@@ -716,7 +716,7 @@ impl LirInterpreter {
                     self.write_typed_result(dst, self.result_type(instr)?, obj)
                 }
                 ComptimeOp::PrimitiveType { name } => {
-                    let type_name = self.resolve_string_value(name)?;
+                    let type_name = self.render_str_argument(name)?;
                     let ty = primitive_type_value_ty(&type_name).ok_or_else(|| {
                         VmError::Runtime(format!(
                             "`{type_name}` is not a supported primitive type value"
@@ -730,7 +730,7 @@ impl LirInterpreter {
                     field_type,
                 } => {
                     let struct_val = self.object_value_operand(struct_handle)?;
-                    let field_name_str = self.resolve_string_value(field_name)?;
+                    let field_name_str = self.render_str_argument(field_name)?;
                     let field_ty = match self
                         .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
                     {
@@ -874,11 +874,18 @@ impl LirInterpreter {
     /// this also accepts a real `&str` fat pointer (the `__slice`
     /// `{ptr, len}` pair every ordinary `&str` value/argument uses), the
     /// same shape `render_intrinsic` already unwraps for `println!`-style
-    /// arguments — reused here via the same `resolve_runtime_value` +
-    /// `render_typed_value` pair, keyed by the argument's own `LirValue::ty`.
+    /// arguments — locals first resolve through their stack slot, then the
+    /// resulting aggregate is rendered with its declared slice type.
     fn render_str_argument(&self, val: &LirValue) -> LirResult<String> {
-        let value = self.resolve_runtime_value(val, &val.ty)?;
-        self.render_typed_value(&value, &val.ty)
+        let value = self.resolve_operand(val)?;
+        let value = self.read_typed_const_value(value.value, &value.ty)?;
+        match value {
+            Value::String(value) => Ok(value.value),
+            other => Err(VmError::TypeMismatch {
+                expected: "string slice".into(),
+                found: format!("{other:?}"),
+            }),
+        }
     }
 
     fn object_value_operand(&self, val: &LirValue) -> LirResult<Value> {

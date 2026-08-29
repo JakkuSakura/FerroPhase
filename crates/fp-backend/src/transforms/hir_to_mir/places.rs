@@ -493,7 +493,13 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
-                let target_ty = self.lower_type_expr(ty_expr);
+                let target_ty = if matches!(ty_expr.kind, hir::TypeExprKind::Infer) {
+                    self.lowering
+                        .typeck_expr_type(expr.hir_id.clone())
+                        .unwrap_or_else(|| expected_ty.clone())
+                } else {
+                    self.lower_type_expr(ty_expr)
+                };
                 let statement = mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(

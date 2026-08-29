@@ -1098,11 +1098,12 @@ impl CompilerDriver {
         let package_id = request.def_id.package_id.clone();
         let hir_program = state.borrow().hir_program_rc();
         let mir_package = state.borrow_mut().mir_package_rc(&package_id);
-        let mut lowering =
-            HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);
+        let mut lowering = HirToMirLowerer::new(hir_program, package_id.clone(), mir_package);
         lowering.register_package_items();
         Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone())
             .await?;
+
+        Self::lower_comptime_call_dependencies(state, &package_id, request.def_id.clone()).await?;
 
         lowering.sync_layout_exports();
 
@@ -1146,6 +1147,97 @@ impl CompilerDriver {
         } else {
             Self::evaluate_comptime_lir(state, &request.def_id)
         }
+    }
+
+    /// A comptime entry can call concrete code from another package (for
+    /// example `std::meta::TypeBuilder::new`). Lower those bodies in their
+    /// owning package before interpreting the entry; the caller keeps only a
+    /// `FnDef`, never a copied foreign method body.
+    async fn lower_comptime_call_dependencies(
+        state: &Rc<RefCell<CompilerState>>,
+        entry_package_id: &PackageId,
+        entry_def_id: hir::DefId,
+    ) -> Result<(), CompilerDriverError> {
+        fn call_def_ids(unit: &mir::MirCodeUnit) -> Vec<hir::DefId> {
+            unit.bodies
+                .values()
+                .flat_map(|body| &body.basic_blocks)
+                .filter_map(|block| match block.terminator.as_ref()?.kind {
+                    mir::TerminatorKind::Call {
+                        func: mir::Operand::Constant(ref constant),
+                        ..
+                    } => match &constant.literal {
+                        mir::ConstantKind::FnDef(def_id, _) => Some(def_id.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        }
+
+        let mut pending = vec![entry_def_id];
+        let mut visited = HashSet::new();
+        while let Some(def_id) = pending.pop() {
+            if !visited.insert(def_id.clone()) {
+                continue;
+            }
+            let owner_package_id = def_id.package_id.clone();
+            if owner_package_id != *entry_package_id {
+                let hir_program = state.borrow().hir_program_rc();
+                let mir_package = state.borrow_mut().mir_package_rc(&owner_package_id);
+                let mut lowering = HirToMirLowerer::new(
+                    hir_program,
+                    owner_package_id.clone(),
+                    mir_package,
+                );
+                lowering.register_package_items();
+                lowering.ensure_method_lowered(def_id.clone()).map_err(|error| {
+                    CompilerDriverError::InternalCompilerError(format!(
+                        "HIR-to-MIR lowering failed for comptime dependency `{def_id}`: {error}"
+                    ))
+                })?;
+                let unit = lowering.take_unit();
+                lowering.walk_program_types_for_layouts(&unit);
+                state
+                    .borrow_mut()
+                    .insert_mir_unit(&owner_package_id, def_id.clone(), unit);
+                lowering.sync_layout_exports();
+            }
+            let unit = state
+                .borrow()
+                .mir_program()
+                .package(&owner_package_id)
+                .and_then(|package| package.borrow().units.get(&def_id).cloned());
+            if let Some(unit) = unit {
+                pending.extend(call_def_ids(&unit));
+            }
+        }
+
+        for def_id in visited
+            .into_iter()
+            .filter(|def_id| def_id.package_id != *entry_package_id)
+        {
+            let owner_package_id = def_id.package_id.clone();
+            let mut lir_gen = {
+                let borrowed = state.borrow();
+                MirToLirLowerer::new(
+                    borrowed.data_layout.clone(),
+                    borrowed.mir_program_rc(),
+                    borrowed.lir_program_rc(),
+                )
+                .with_package_id(owner_package_id.clone())
+            };
+            lir_gen.prepare_package(&owner_package_id);
+            lir_gen.predeclare_loaded_lir_signatures();
+            Self::lower_package_to_lir_with(
+                state,
+                &owner_package_id,
+                &mut lir_gen,
+                def_id,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     fn evaluate_comptime_bytecode(

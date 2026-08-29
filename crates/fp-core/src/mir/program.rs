@@ -48,9 +48,14 @@ impl MirProgram {
         &self,
         def_id: &crate::hir::DefId,
     ) -> Option<(PackageId, super::Function)> {
-        self.packages.iter().find_map(|(id, package)| {
-            let package = package.borrow();
-            package.sigs.get(def_id).cloned().map(|function| (id.clone(), function))
+        let package_id = def_id.package_id.clone();
+        self.packages.get(&package_id).and_then(|package| {
+            package
+                .borrow()
+                .sigs
+                .get(def_id)
+                .cloned()
+                .map(|function| (package_id, function))
         })
     }
 
@@ -62,11 +67,12 @@ impl MirProgram {
         &self,
         def_id: &crate::hir::DefId,
     ) -> Option<(PackageId, crate::mir::Symbol, super::FunctionSig, super::SubstsRef)> {
-        self.packages.iter().find_map(|(id, package)| {
+        let package_id = def_id.package_id.clone();
+        self.packages.get(&package_id).and_then(|package| {
             let package = package.borrow();
             if let Some(info) = package.method_lookup_by_def.get(def_id) {
                 return Some((
-                    id.clone(),
+                    package_id.clone(),
                     info.fn_name.clone().into(),
                     info.sig.clone(),
                     info.substs.clone(),
@@ -74,7 +80,7 @@ impl MirProgram {
             }
             package.function_sigs.get(def_id).cloned().map(|sig| {
                 (
-                    id.clone(),
+                    package_id,
                     format!("fn#{}", def_id).into(),
                     sig,
                     Vec::new(),

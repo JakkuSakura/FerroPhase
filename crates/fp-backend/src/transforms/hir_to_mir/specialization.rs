@@ -75,7 +75,10 @@ impl HirToMirLowerer {
     /// caller shapes. A miss (unknown `def_id`, e.g. a generic method —
     /// those are lowered per call site via `ensure_method_specialization`
     /// instead) is not an error here, for the same reason.
-    pub(crate) fn ensure_method_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+    /// Lowers one resolved method body. The compiler driver uses this for a
+    /// concrete foreign method reached by a comptime entry, always with a
+    /// lowerer rooted in the method's owning package.
+    pub fn ensure_method_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }

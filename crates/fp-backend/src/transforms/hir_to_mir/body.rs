@@ -927,6 +927,27 @@ impl<'a> BodyBuilder<'a> {
         }
         let args = reordered_args.as_deref().unwrap_or(args);
         let arg_values = call_arg_values(args);
+        // A type-qualified call such as `TypeBuilder::new("Config")` has a
+        // callee path resolved to the base type, not to `new` itself. The
+        // type checker records the selected associated item's DefId on the
+        // call/callee HIR nodes; use that identity before inspecting the
+        // syntactic path so intrinsic wrappers lower exactly like methods.
+        let resolved_call_def = self
+            .lowering
+            .typeck_method_resolution(expr.hir_id.clone())
+            .or_else(|| self.lowering.typeck_method_resolution(callee.hir_id.clone()));
+        if let Some(def_id) = resolved_call_def {
+            if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id).copied() {
+                if self.lower_resolved_intrinsic_call(
+                    expr,
+                    kind,
+                    &arg_values,
+                    destination.clone(),
+                )? {
+                    return Ok(None);
+                }
+            }
+        }
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(hir::Res::Def(def_id)) = &path.res {
                 if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()).copied()
@@ -3532,7 +3553,13 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
-                let target_ty = self.lower_type_expr(ty_expr);
+                let target_ty = if matches!(ty_expr.kind, hir::TypeExprKind::Infer) {
+                    self.lowering
+                        .typeck_expr_type(expr.hir_id.clone())
+                        .unwrap_or_else(|| self.lowering.error_ty())
+                } else {
+                    self.lower_type_expr(ty_expr)
+                };
                 if let hir::ExprKind::Literal(hir::Lit::Integer(value)) = &inner.kind {
                     if matches!(target_ty.kind, TyKind::Int(_) | TyKind::Uint(_)) {
                         let (literal, ty) =
