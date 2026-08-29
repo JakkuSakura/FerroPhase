@@ -2884,6 +2884,21 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+            if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
+                self.lowering.ensure_method_lowered(def_id.clone())?;
+                let literal = info
+                    .def_id
+                    .clone()
+                    .map(|method_def_id| mir::ConstantKind::FnDef(method_def_id, Vec::new()))
+                    .unwrap_or_else(|| mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())));
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: callee.span,
+                    ty: info.fn_ty.clone(),
+                    user_ty: None,
+                    literal,
+                });
+                return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
+            }
             if self
                 .lowering
                 .mir_package
@@ -2951,10 +2966,14 @@ impl<'a> BodyBuilder<'a> {
                 .get(&String::from(struct_name.clone()))
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
-                let literal = match info.def_id {
-                    Some(ref def_id) => mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
-                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
-                };
+                let literal = mir::ConstantKind::FnDef(
+                    info.def_id.clone().ok_or_else(|| {
+                        crate::error::optimization_error(
+                            "resolved method is missing its definition identity",
+                        )
+                    })?,
+                    Vec::new(),
+                );
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
@@ -2993,10 +3012,14 @@ impl<'a> BodyBuilder<'a> {
             // existing `current_package_id` guard already handles.
             if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
                 self.lowering.ensure_method_lowered(def_id.clone())?;
-                let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
-                    None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
-                };
+                let literal = mir::ConstantKind::FnDef(
+                    info.def_id.clone().ok_or_else(|| {
+                        crate::error::optimization_error(
+                            "resolved method is missing its definition identity",
+                        )
+                    })?,
+                    Vec::new(),
+                );
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
@@ -4930,7 +4953,7 @@ impl<'a> BodyBuilder<'a> {
             span,
             ty: info.fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
+            literal: mir::ConstantKind::FnDef(def.def_id.clone(), info.substs.clone()),
         });
         let continue_block = self.new_block();
         let terminator = mir::Terminator {

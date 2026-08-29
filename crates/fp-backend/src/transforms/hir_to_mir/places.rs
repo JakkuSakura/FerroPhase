@@ -2116,11 +2116,20 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
+                let Some(def_id) = self
+                    .lowering
+                    .typeck_method_resolution(expr.hir_id.clone())
+                else {
+                    self.lowering
+                        .emit_error(expr.span, "method call has no resolved definition");
+                    return Ok(());
+                };
+                let literal = mir::ConstantKind::FnDef(def_id, Vec::new());
                 let func_operand = mir::Operand::Constant(mir::Constant {
                     span: expr.span,
                     ty: self.lowering.function_pointer_ty(&sanitized_sig),
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(Symbol::new(method_name.clone())),
+                    literal,
                 });
 
                 let continue_block = self.new_block();

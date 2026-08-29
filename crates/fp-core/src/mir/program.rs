@@ -40,4 +40,28 @@ impl MirProgram {
     pub fn package_rc(&mut self, id: &PackageId) -> Rc<RefCell<MirPackage>> {
         self.packages.entry(id.clone()).or_default().clone()
     }
+
+    /// Finds a concrete function definition and its owning package by the
+    /// resolved definition identity. This is the authoritative cross-package
+    /// lookup for downstream lowering stages.
+    pub fn function_by_def_id(&self, def_id: &crate::hir::DefId) -> Option<(PackageId, super::Function)> {
+        let package_id = PackageId::new(def_id.package_id.as_str());
+        self.packages.iter().find_map(|(id, package)| {
+            package
+                .borrow()
+                .sigs
+                .get(def_id)
+                .cloned()
+                .map(|function| (id.clone(), function))
+        }).or_else(|| {
+            self.packages.get(&package_id).and_then(|package| {
+                package
+                    .borrow()
+                    .sigs
+                    .get(def_id)
+                    .cloned()
+                    .map(|function| (package_id.clone(), function))
+            })
+        })
+    }
 }

@@ -2559,33 +2559,16 @@ impl MirToLirLowerer {
                         // so a second reference to the same `def_id` hits
                         // the ordinary fast path above.
                         None => {
-                            let resolved = self
+                            let (package_id, func) = self
                                 .mir_program
-                                .package(&self.package_id)
-                                .and_then(|package| package.borrow().sigs.get(def_id).cloned())
-                                .map(|func| (func, None))
-                                .or_else(|| {
-                                    self.mir_program.packages.iter().find_map(
-                                        |(dep_id, dep_package)| {
-                                            if dep_id == &self.package_id {
-                                                return None;
-                                            }
-                                            dep_package
-                                                .borrow()
-                                                .sigs
-                                                .get(def_id)
-                                                .cloned()
-                                                .map(|func| (func, Some(dep_id.clone())))
-                                        },
-                                    )
-                                });
-                            let (func, package_id) = resolved.ok_or_else(|| {
+                                .function_by_def_id(def_id)
+                                .ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
                                     "missing MIR function definition {} with substitutions {:?}",
                                     def_id, substs
                                 ))
                             })?;
-                            self.register_function_signature(&func, package_id).ok_or_else(|| {
+                            self.register_function_signature(&func, Some(package_id)).ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
                                     "unresolved generic signature for function definition {} with substitutions {:?}",
                                     def_id, substs
