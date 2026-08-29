@@ -77,6 +77,9 @@ pub struct AstToHirLowerer {
     preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
+    /// Lexical declaration module for each transparent alias, keyed by the
+    /// same canonical alias key as `type_aliases`.
+    type_alias_defining_modules: HashMap<String, fp_core::ast::path::QualifiedPath>,
     type_alias_children: HashMap<String, Vec<String>>,
     global_symbol_cache: RefCell<HashMap<(String, hir::Namespace, String), Option<hir::Res>>>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
@@ -325,6 +328,7 @@ impl AstToHirLowerer {
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
+            type_alias_defining_modules: HashMap::new(),
             type_alias_children: HashMap::new(),
             global_symbol_cache: RefCell::new(HashMap::new()),
             struct_field_defs: HashMap::new(),
@@ -395,8 +399,24 @@ impl AstToHirLowerer {
     /// dependent package can only ever reach one by spelling out its exact
     /// qualified path (e.g. `::libc::char`), so there's no meaningful
     /// privacy leak from exporting private aliases too.
-    pub fn exported_type_aliases(&self) -> HashMap<String, ast::Ty> {
-        self.type_aliases.clone()
+    pub fn exported_type_aliases(&self) -> HashMap<String, ast::package::TypeAliasExport> {
+        self.type_aliases
+            .iter()
+            .filter_map(|(key, target)| {
+                self.type_alias_defining_modules
+                    .get(key)
+                    .cloned()
+                    .map(|defining_module| {
+                        (
+                            key.clone(),
+                            ast::package::TypeAliasExport {
+                                target: target.clone(),
+                                defining_module,
+                            },
+                        )
+                    })
+            })
+            .collect()
     }
 
     pub fn with_intrinsic_normalizer<N>(mut self, normalizer: N) -> Self
@@ -1390,6 +1410,13 @@ impl AstToHirLowerer {
         // until now; this fixed-point worklist also makes re-export
         // chains resolve, not just direct single-hop imports.
         self.resolve_pending_imports(package)?;
+
+        // Predeclaration may have probed a transparent alias RHS before its
+        // imports existed and cached that miss (`type Result = result::Result`
+        // in core::io::error is the standard-library case). Imports have now
+        // changed the module symbol tables, so those negative cache entries
+        // are no longer valid when deferred aliases are lowered below.
+        self.global_symbol_cache.borrow_mut().clear();
 
         // 3: type aliases whose module-qualified RHS
         // (`type Result = result::Result<(), Error>;`) was deferred above.
@@ -2696,7 +2723,9 @@ impl AstToHirLowerer {
                     if !self.enter_type_alias(&key, span) {
                         return Ok(self.error_type_expr(span));
                     }
-                    let result = self.transform_type_to_hir(&alias);
+                    let result = self.with_type_alias_definition_scope(&key, |this| {
+                        this.transform_type_to_hir(&alias)
+                    });
                     self.exit_type_alias(&key);
                     return result;
                 }
@@ -3101,6 +3130,41 @@ impl AstToHirLowerer {
                         ));
                     }
                 }
+                // Transparent aliases intentionally have no nominal HIR item
+                // or module-tree binding. Resolve their source path before
+                // asking the nominal path resolver: a re-export chain such
+                // as `core::io::Result -> alloc::io::Result ->
+                // std::io::Result` otherwise reaches no binding at all and
+                // can never get to the alias expansion below.
+                let alias_segments = match expr.kind() {
+                    ast::ExprKind::Name(ast::Name::Ident(ident)) => Some(vec![ident.name.clone()]),
+                    ast::ExprKind::Name(ast::Name::Path(path)) => Some(
+                        path.segments
+                            .iter()
+                            .map(|segment| segment.name.clone())
+                            .collect(),
+                    ),
+                    ast::ExprKind::Name(ast::Name::ParameterPath(path)) => Some(
+                        path.segments
+                            .iter()
+                            .map(|segment| segment.ident.name.clone())
+                            .collect(),
+                    ),
+                    _ => None,
+                };
+                if let Some(segments) = alias_segments {
+                    if let Some((key, alias)) = self.lookup_type_alias_with_key(&segments) {
+                        let span = self.normalize_span(ty.span());
+                        if !self.enter_type_alias(&key, span) {
+                            return Ok(self.error_type_expr(span));
+                        }
+                        let result = self.with_type_alias_definition_scope(&key, |this| {
+                            this.transform_type_to_hir(&alias)
+                        });
+                        self.exit_type_alias(&key);
+                        return result;
+                    }
+                }
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
                     let segments = path
                         .segments
@@ -3115,7 +3179,9 @@ impl AstToHirLowerer {
                         if !self.enter_type_alias(&key, span) {
                             return Ok(self.error_type_expr(span));
                         }
-                        let result = self.transform_type_to_hir(&alias);
+                        let result = self.with_type_alias_definition_scope(&key, |this| {
+                            this.transform_type_to_hir(&alias)
+                        });
                         self.exit_type_alias(&key);
                         return result;
                     }
@@ -3691,7 +3757,9 @@ impl AstToHirLowerer {
             .entry(self.module_path.to_key())
             .or_default()
             .push(name.to_string());
-        self.type_aliases.insert(qualified, ty.clone());
+        self.type_aliases.insert(qualified.clone(), ty.clone());
+        self.type_alias_defining_modules
+            .insert(qualified, self.module_path.clone());
     }
 
     /// Look up `name` as if resolved via `use super::name` from every
@@ -3717,7 +3785,7 @@ impl AstToHirLowerer {
     /// Lazily consult `self.workspace` for a cross-package alias (e.g.
     /// `libc::char`) on a local-lookup miss, instead of relying on it
     /// having been eagerly copied into `self.type_aliases` up front.
-    fn find_workspace_type_alias(&self, key: &str) -> Option<ast::Ty> {
+    fn find_workspace_type_alias(&self, key: &str) -> Option<ast::package::TypeAliasExport> {
         self.workspace.as_ref()?.find_type_alias(key)
     }
 
@@ -3740,14 +3808,17 @@ impl AstToHirLowerer {
         if let Some(alias) = segments.get(0).and_then(|name| self.type_aliases.get(name)) {
             return Some(alias.clone());
         }
-        self.find_workspace_type_alias(&qualified).or_else(|| {
-            segments
-                .get(0)
-                .and_then(|name| self.find_workspace_type_alias(name))
-        })
+        self.find_workspace_type_alias(&qualified)
+            .map(|alias| alias.target)
+            .or_else(|| {
+                segments
+                    .get(0)
+                    .and_then(|name| self.find_workspace_type_alias(name))
+                    .map(|alias| alias.target)
+            })
     }
 
-    fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, ast::Ty)> {
+    fn lookup_type_alias_with_key(&mut self, segments: &[String]) -> Option<(String, ast::Ty)> {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
@@ -3808,17 +3879,24 @@ impl AstToHirLowerer {
             }
         }
         if let Some(alias) = self.find_workspace_type_alias(&qualified) {
-            if self.ty_is_simple_path(&alias, segments) {
+            if self.ty_is_simple_path(&alias.target, segments) {
                 return None;
             }
-            return Some((qualified, alias));
+            self.type_aliases
+                .insert(qualified.clone(), alias.target.clone());
+            self.type_alias_defining_modules
+                .insert(qualified.clone(), alias.defining_module);
+            return Some((qualified, alias.target));
         }
         if let Some(name) = segments.get(0) {
             if let Some(alias) = self.find_workspace_type_alias(name) {
-                if self.ty_is_simple_path(&alias, segments) {
+                if self.ty_is_simple_path(&alias.target, segments) {
                     return None;
                 }
-                return Some((name.clone(), alias));
+                self.type_aliases.insert(name.clone(), alias.target.clone());
+                self.type_alias_defining_modules
+                    .insert(name.clone(), alias.defining_module);
+                return Some((name.clone(), alias.target));
             }
         }
         None
@@ -3890,6 +3968,24 @@ impl AstToHirLowerer {
 
     pub(super) fn exit_type_alias(&mut self, key: &str) {
         self.resolving_type_aliases.remove(key);
+    }
+
+    /// Transparent aliases retain the lexical module context in which their
+    /// RHS was declared. Re-exporting `core::io::Result` as
+    /// `std::io::Result` must not make its `result::Result` RHS resolve as if
+    /// it had been written inside `std::io`.
+    fn with_type_alias_definition_scope<T>(
+        &mut self,
+        key: &str,
+        action: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let Some(defining_module) = self.type_alias_defining_modules.get(key).cloned() else {
+            return action(self);
+        };
+        let previous = std::mem::replace(&mut self.module_path, defining_module);
+        let result = action(self);
+        self.module_path = previous;
+        result
     }
 
     pub(super) fn materialized_type_alias(

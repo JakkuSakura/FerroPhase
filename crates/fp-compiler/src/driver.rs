@@ -614,7 +614,7 @@ impl CompilerDriver {
         (
             hir::HirPackage,
             std::collections::HashMap<String, hir::Res>,
-            std::collections::HashMap<String, fp_core::ast::Ty>,
+            std::collections::HashMap<String, fp_core::ast::package::TypeAliasExport>,
         ),
         CompilerDriverError,
     > {

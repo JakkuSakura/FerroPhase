@@ -157,10 +157,10 @@ impl AstProgram {
     /// reference like `::libc::char` the same way it already resolves
     /// same-package aliases, without eagerly copying every package's
     /// aliases into the caller's own map first.
-    pub fn find_type_alias(&self, key: &str) -> Option<crate::ast::Ty> {
+    pub fn find_type_alias(&self, key: &str) -> Option<crate::ast::package::TypeAliasExport> {
         for package in self.sorted_packages() {
-            if let Some(ty) = package.borrow().type_alias_exports.get(key) {
-                return Some(ty.clone());
+            if let Some(alias) = package.borrow().type_alias_exports.get(key) {
+                return Some(alias.clone());
             }
         }
         None

@@ -185,6 +185,11 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         // distinction through materialization and cannot erase errors.
         def("result_ok", false, 1, ResultSuccess(0)),
         def("result_err", false, 1, ResultFailure(0)),
+        def("result_map", true, 2, NotStaticallyKnowable),
+        def("result_map_err", true, 2, NotStaticallyKnowable),
+        def("result_is_ok", true, 1, AlwaysBool),
+        def("result_is_err", true, 1, AlwaysBool),
+        def("result_unwrap_or", true, 2, SameAsArg(1)),
         def("vec_new", false, 0, NotStaticallyKnowable),
         def("clone", true, 1, SameAsArg(0)),
         def("as_ref", true, 1, SameAsArg(0)),

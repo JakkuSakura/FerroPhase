@@ -95,6 +95,22 @@ impl<'a> HirToAstLifter<'a> {
         })
     }
 
+    /// Resolve a declaration-tagged call through the definition's owning
+    /// package.  The current package only owns local declarations; a call to
+    /// `std::fs::read_to_string`, for example, carries std's `DefId` and its
+    /// intrinsic declaration metadata lives in the published std snapshot.
+    fn intrinsic_call_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::CallKind> {
+        crate::transforms::resolve_call_kind(
+            &self.program.op_defs,
+            &self.program.intrinsic_defs,
+            def_id.clone(),
+        )
+        .or_else(|| {
+            self.hir_program
+                .and_then(|program| program.intrinsic_def(def_id.clone()).cloned())
+        })
+    }
+
     /// Declares `name` (for the binding identified by `hir_id`) in the
     /// innermost open scope, returning the name to actually emit — `name`
     /// itself if this is the first declaration of it in this scope, or a
@@ -555,11 +571,7 @@ impl<'a> HirToAstLifter<'a> {
                     }))
                 } else if let Some(kind) = match &callee.kind {
                     hir::ExprKind::Path(path) => match path.res {
-                        Some(hir::Res::Def(ref def_id)) => crate::transforms::resolve_call_kind(
-                            &self.program.op_defs,
-                            &self.program.intrinsic_defs,
-                            def_id.clone(),
-                        ),
+                        Some(hir::Res::Def(ref def_id)) => self.intrinsic_call_for_def(def_id),
                         _ => None,
                     },
                     _ => None,

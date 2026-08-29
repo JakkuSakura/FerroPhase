@@ -394,8 +394,10 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
         def_id: enum_def_id.clone(),
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
+            attrs: Vec::new(),
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
+                attrs: Vec::new(),
                 hir_id: hid(41),
                 def_id: variant_def_id.clone(),
                 name: Symbol::new("Some"),
@@ -504,8 +506,10 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
         def_id: enum_def_id.clone(),
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
+            attrs: Vec::new(),
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
+                attrs: Vec::new(),
                 hir_id: hid(53),
                 def_id: variant_def_id.clone(),
                 name: Symbol::new("Some"),

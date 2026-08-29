@@ -119,25 +119,6 @@ impl KotlinEmitter {
                                 ));
                             }
                         }
-                        // `.map_err(SomeError::Variant)` / `.map_err(some_fn)` — Rust
-                        // lets a tuple-variant constructor (or any named function) be
-                        // passed as a bare value where a closure is expected, since
-                        // it's itself a first-class `Fn(T) -> U` item. Kotlin's
-                        // equivalent (a variant's own constructor, referenced through
-                        // a dotted qualifier) isn't usable as a bare value the same
-                        // way — `CoreError.IO` isn't a value, only `CoreError.IO(x)`
-                        // is — so wrap it in an explicit one-arg lambda instead.
-                        // `map_err` itself has no dedicated Result-mapping support
-                        // here; this only needs to compile, matching every other
-                        // Result-shaped call in this file.
-                        if sel.field.name.as_str() == "map_err"
-                            && inv.args.len() == 1
-                            && !matches!(inv.args[0].kind(), ExprKind::Closure(_))
-                        {
-                            let obj = self.render_expr(&sel.obj)?;
-                            let ctor = self.render_expr(&inv.args[0])?;
-                            return Ok(format!("{}.map_err {{ __e -> {}(__e) }}", obj, ctor));
-                        }
                         // `Option::take()` — replaces a `var` with `None`/`null`, returning
                         // the old value. Kotlin has no equivalent method; model it directly.
                         // A function *parameter* receiver can't be reassigned at all in

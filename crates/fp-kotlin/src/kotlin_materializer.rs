@@ -43,6 +43,23 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 "failure",
                 vec![result_constructor_arg(call)],
             ))),
+            "result_map" => Ok(Some(invoke_method(
+                receiver(),
+                "map",
+                portable_op_args_after_receiver(call),
+            ))),
+            "result_map_err" => Ok(Some(invoke_method(
+                receiver(),
+                "recoverCatching",
+                portable_op_args_after_receiver(call),
+            ))),
+            "result_is_ok" => Ok(Some(invoke_method(receiver(), "isSuccess", Vec::new()))),
+            "result_is_err" => Ok(Some(invoke_method(receiver(), "isFailure", Vec::new()))),
+            "result_unwrap_or" => Ok(Some(invoke_method(
+                receiver(),
+                "getOrDefault",
+                portable_op_args_after_receiver(call),
+            ))),
             "vec_new" => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
                 ExprIntrinsicContainer::VecElements { elements: vec![] },
             )))),
@@ -175,6 +192,10 @@ fn result_constructor_arg(call: &ExprPortableOpCall) -> Expr {
         .first()
         .cloned()
         .unwrap_or_else(|| Expr::value(Value::Null(Default::default())))
+}
+
+fn portable_op_args_after_receiver(call: &ExprPortableOpCall) -> Vec<Expr> {
+    call.args.iter().skip(1).cloned().collect()
 }
 
 #[cfg(test)]

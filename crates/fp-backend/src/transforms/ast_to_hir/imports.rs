@@ -171,6 +171,22 @@ impl AstToHirLowerer {
     }
 
     fn package_crate_root(&self) -> Vec<String> {
+        // The vendored Rust sysroot is intentionally one FerroPhase package
+        // containing Rust's three distinct crates. Inside `core::io`,
+        // `crate::result` therefore means `core::result`, never the outer
+        // package's `std` root. Keep this decision at package metadata/module
+        // boundaries rather than rewriting paths at individual call sites.
+        if let Some(current_root) = self.module_path.segments.first()
+            && matches!(current_root.as_str(), "core" | "alloc" | "std")
+            && self
+                .package
+                .module_tree
+                .module_exists(&fp_core::ast::path::QualifiedPath::new(vec![
+                    current_root.clone(),
+                ]))
+        {
+            return vec![current_root.clone()];
+        }
         let root = hir::HirProgram::external_crate_name(&self.package_id);
         let candidate = fp_core::ast::path::QualifiedPath::new(vec![root]);
         if self.package.module_tree.module_exists(&candidate) {
@@ -388,7 +404,13 @@ impl AstToHirLowerer {
             // its own explicit copy step here, or a re-exported alias (e.g.
             // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
             // resolvable under the shorter path at all.
-            let type_alias = self.type_aliases.get(&key).cloned();
+            let type_alias = self.type_aliases.get(&key).cloned().or_else(|| {
+                self.find_workspace_type_alias(&key).map(|alias| {
+                    self.type_alias_defining_modules
+                        .insert(key.clone(), alias.defining_module);
+                    alias.target
+                })
+            });
             if value.is_none() && ty.is_none() && type_alias.is_none() {
                 return false;
             }
@@ -408,7 +430,11 @@ impl AstToHirLowerer {
                     .entry(self.module_path.to_key())
                     .or_default()
                     .push(alias.clone());
-                self.type_aliases.insert(new_key, alias_ty);
+                self.type_aliases.insert(new_key.clone(), alias_ty);
+                if let Some(defining_module) = self.type_alias_defining_modules.get(&key).cloned() {
+                    self.type_alias_defining_modules
+                        .insert(new_key, defining_module);
+                }
             }
             self.resolved_import_aliases.insert(resolved_key);
             return true;
@@ -447,25 +473,42 @@ impl AstToHirLowerer {
                 // root exactly once; otherwise `use prelude::rust_2024::*`
                 // in std is searched as an unrooted `prelude` path and the
                 // crate's own nominal re-exports never enter its prelude.
-                let local_base = if self.module_path.is_empty() {
-                    fp_core::ast::path::QualifiedPath::new(self.package_crate_root())
+                let local_bases = if self.module_path.is_empty() {
+                    vec![fp_core::ast::path::QualifiedPath::new(
+                        self.package_crate_root(),
+                    )]
                 } else {
-                    self.module_path.clone()
+                    // An import declared in a child module resolves an
+                    // unqualified first segment through enclosing module
+                    // scopes. Real std relies on this for `std::io`'s
+                    // `alloc_crate::io` re-export: `alloc_crate` is an
+                    // `extern crate` alias declared in the parent `std`
+                    // module, not a child of `std::io`.
+                    (0..=self.module_path.segments.len())
+                        .rev()
+                        .map(|len| {
+                            fp_core::ast::path::QualifiedPath::new(
+                                self.module_path.segments[..len].to_vec(),
+                            )
+                        })
+                        .collect()
                 };
-                let local = local_base.with_segment(segment.clone()).to_key();
-                let local_alias = self
-                    .lookup_symbol(&local, hir::Namespace::Value)
-                    .or_else(|| self.lookup_symbol(&local, hir::Namespace::Type));
-                if let Some(hir::Res::Module(real_path)) = local_alias {
-                    current = fp_core::ast::path::QualifiedPath::new(real_path);
-                    continue;
+                for local_base in local_bases {
+                    let local_path = local_base.with_segment(segment.clone());
+                    let local = local_path.to_key();
+                    let local_alias = self
+                        .lookup_symbol(&local, hir::Namespace::Value)
+                        .or_else(|| self.lookup_symbol(&local, hir::Namespace::Type));
+                    if let Some(hir::Res::Module(real_path)) = local_alias {
+                        current = fp_core::ast::path::QualifiedPath::new(real_path);
+                        break;
+                    }
+                    if self.package.module_tree.module_exists(&local_path) {
+                        current = local_path;
+                        break;
+                    }
                 }
-                if self
-                    .package
-                    .module_tree
-                    .module_exists(&local_base.with_segment(segment.clone()))
-                {
-                    current = local_base.with_segment(segment.clone());
+                if !current.segments.is_empty() {
                     continue;
                 }
                 // A bare type from the implicit prelude can own the next

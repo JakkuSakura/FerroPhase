@@ -153,7 +153,13 @@ impl AstToHirLowerer {
                     .collect(),
             )),
         };
-        self.resolved_name_to_hir_path(&resolved_name, &name, PathResolutionScope::Type)
+        let path =
+            self.resolved_name_to_hir_path(&resolved_name, &name, PathResolutionScope::Type)?;
+        // Frontend resolution can run before imports and deferred aliases
+        // are installed. Preserve an actual resolution, but do not let an
+        // unresolved snapshot suppress the authoritative AST-to-HIR resolver
+        // after those module tables have been completed.
+        Ok(path.filter(|path| path.res.is_some()))
     }
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
@@ -758,28 +764,39 @@ impl AstToHirLowerer {
                     });
                 }
             }
-            let local_path = self.module_path.join(
-                &segments
-                    .iter()
-                    .map(|segment| segment.name.as_str().to_string())
-                    .collect::<Vec<_>>(),
-            );
-            if let Some(res) = self.lookup_global_res(&local_path, scope) {
-                return Ok(hir::Path {
-                    segments: local_path
-                        .segments
-                        .iter()
-                        .enumerate()
-                        .map(|(index, name)| {
-                            let offset = local_path.segments.len().saturating_sub(segments.len());
-                            let args = (index >= offset)
-                                .then(|| segments[index - offset].args.clone())
-                                .flatten();
-                            self.make_path_segment(name, args)
-                        })
-                        .collect(),
-                    res: Some(res),
-                });
+            let suffix = segments
+                .iter()
+                .map(|segment| segment.name.as_str().to_string())
+                .collect::<Vec<_>>();
+            // A qualified path with no explicit `crate`/`self` prefix
+            // starts in the current module and then searches enclosing
+            // module scopes. `core::io::error` uses this for
+            // `result::Result`: `result` is a sibling of `io`, not a child
+            // of `io::error`. This is namespace resolution, not a retry or
+            // a suffix scan; each candidate is a concrete lexical ancestor.
+            for depth in (0..=self.module_path.segments.len()).rev() {
+                let local_path = fp_core::ast::path::QualifiedPath::new(
+                    self.module_path.segments[..depth].to_vec(),
+                )
+                .join(&suffix);
+                if let Some(res) = self.lookup_global_res(&local_path, scope) {
+                    return Ok(hir::Path {
+                        segments: local_path
+                            .segments
+                            .iter()
+                            .enumerate()
+                            .map(|(index, name)| {
+                                let offset =
+                                    local_path.segments.len().saturating_sub(segments.len());
+                                let args = (index >= offset)
+                                    .then(|| segments[index - offset].args.clone())
+                                    .flatten();
+                                self.make_path_segment(name, args)
+                            })
+                            .collect(),
+                        res: Some(res),
+                    });
+                }
             }
             // A path may also already BE its own real global key exactly
             // as written, with no module prefix at all — the case for a

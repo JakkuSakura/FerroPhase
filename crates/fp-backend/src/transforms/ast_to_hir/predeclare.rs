@@ -42,6 +42,7 @@ impl AstToHirLowerer {
         self.local_id = 0;
         self.current_position = 0;
         self.type_aliases.clear();
+        self.type_alias_defining_modules.clear();
         self.type_alias_children.clear();
         self.global_symbol_cache.borrow_mut().clear();
         self.trait_defs.clear();

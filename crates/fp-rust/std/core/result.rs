@@ -573,6 +573,7 @@ pub enum Result<T, E> {
 // Type implementation
 /////////////////////////////////////////////////////////////////////////////
 
+#[op(class = "Result")]
 impl<T, E> Result<T, E> {
     /////////////////////////////////////////////////////////////////////////
     // Querying the contained values
@@ -593,6 +594,7 @@ impl<T, E> Result<T, E> {
     #[rustc_const_stable(feature = "const_result_basics", since = "1.48.0")]
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "is_ok")]
     pub const fn is_ok(&self) -> bool {
         matches!(*self, Ok(_))
     }
@@ -646,6 +648,7 @@ impl<T, E> Result<T, E> {
     #[rustc_const_stable(feature = "const_result_basics", since = "1.48.0")]
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "is_err")]
     pub const fn is_err(&self) -> bool {
         !self.is_ok()
     }
@@ -831,6 +834,7 @@ impl<T, E> Result<T, E> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[op(method = "map")]
     pub const fn map<U, F>(self, op: F) -> Result<U, E>
     where
         F: FnOnce(T) -> U + Destruct,
@@ -960,6 +964,7 @@ impl<T, E> Result<T, E> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[op(method = "map_err")]
     pub const fn map_err<F, O>(self, op: O) -> Result<T, F>
     where
         O: FnOnce(E) -> F + Destruct,
@@ -1588,6 +1593,7 @@ impl<T, E> Result<T, E> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[op(method = "unwrap_or")]
     pub const fn unwrap_or(self, default: T) -> T
     where
         T: Destruct,

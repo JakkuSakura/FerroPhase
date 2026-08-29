@@ -1560,6 +1560,92 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
 }
 
 #[test]
+fn transform_package_resolves_sysroot_io_result_reexport_chain() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let result_items = parser.parse_items_ast("pub struct Result<T, E>; pub struct Error;")?;
+    let core_io_items = parser
+        .parse_items_ast("use crate::result; pub type Result<T> = result::Result<T, Error>;")?;
+    let alloc_io_items = parser.parse_items_ast("pub use core::io::{Error, Result};")?;
+    let std_root_items = parser.parse_items_ast("extern crate alloc as alloc_crate;")?;
+    let std_io_items = parser.parse_items_ast("pub use alloc_crate::io::{Error, Result};")?;
+    let consumer_items =
+        parser.parse_items_ast("pub fn load() -> std::io::Result<i64> { loop {} }")?;
+    let source = package_from_items_with_paths_as(
+        PackageId::new("std"),
+        result_items
+            .into_iter()
+            .map(|item| (vec!["core".to_string(), "result".to_string()], item))
+            .chain(
+                parser
+                    .parse_items_ast("pub struct Error;")?
+                    .into_iter()
+                    .map(|item| (vec!["core".to_string(), "io".to_string()], item)),
+            )
+            .chain(
+                core_io_items
+                    .into_iter()
+                    .map(|item| (vec!["core".to_string(), "io".to_string()], item)),
+            )
+            .chain(
+                alloc_io_items
+                    .into_iter()
+                    .map(|item| (vec!["alloc".to_string(), "io".to_string()], item)),
+            )
+            .chain(
+                std_root_items
+                    .into_iter()
+                    .map(|item| (vec!["std".to_string()], item)),
+            )
+            .chain(
+                std_io_items
+                    .into_iter()
+                    .map(|item| (vec!["std".to_string(), "io".to_string()], item)),
+            )
+            .chain(
+                consumer_items
+                    .into_iter()
+                    .map(|item| (vec!["consumer".to_string()], item)),
+            )
+            .collect(),
+    )?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("std"),
+    );
+    let program = lowerer.transform_package(&source)?;
+    assert!(
+        lowerer
+            .lookup_type_alias(&["std".to_string(), "io".to_string(), "Result".to_string()])
+            .is_some(),
+        "std re-exported Result alias missing: {:?}",
+        lowerer.exported_type_aliases().keys().collect::<Vec<_>>()
+    );
+    let function = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "load" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("consumer function");
+    let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
+        panic!("expected transparent Result alias to lower as a path");
+    };
+    let Some(hir::Res::Def(def_id)) = &path.res else {
+        panic!("std::io::Result must resolve through std and alloc re-exports: {path:?}");
+    };
+    let result = program
+        .items
+        .iter()
+        .find(|item| item.def_id == *def_id)
+        .expect("underlying Result definition");
+    assert!(matches!(result.kind, hir::ItemKind::Struct(_)));
+    Ok(())
+}
+
+#[test]
 fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let dependency_items = parser.parse_items_ast("pub struct PublicType;")?;
@@ -1618,6 +1704,52 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         vec!["dependency", "api", "PublicType"]
     );
     assert!(!consumer.def_paths.contains_key(&public_type_id));
+    Ok(())
+}
+
+#[test]
+fn lift_cross_package_intrinsic_call_from_its_resolved_definition() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser.parse_items_ast(
+        "#[intrinsic = \"fs_read_to_string\"] pub fn read_to_string(path: String) -> String { path }",
+    )?;
+    let dependency_source = package_from_items_with_paths_as(
+        PackageId::new("dependency"),
+        dependency_items
+            .into_iter()
+            .map(|item| (vec!["fs".to_string()], item))
+            .collect(),
+    )?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("dependency"),
+    );
+    let mut dependency = dependency_lowerer.transform_package(&dependency_source)?;
+    dependency.hir_exports = dependency_lowerer.exported_symbols();
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.add_package(std::rc::Rc::new(dependency));
+    let consumer_items = parser.parse_items_ast(
+        "pub fn load(path: String) -> String { dependency::fs::read_to_string(path) }",
+    )?;
+    let consumer_source = package_from_items_as(PackageId::new("consumer"), consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(workspace.clone()),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_source)?;
+
+    let lifted = HirToAstLifter::new(&consumer, Some(&workspace)).lift_items()?;
+    let ast::ItemKind::DefFunction(function) = lifted[0].kind() else {
+        panic!("expected consumer function");
+    };
+    let ast::BlockStmt::Expr(expr_stmt) = &function.body.stmts[0] else {
+        panic!("expected function expression");
+    };
+    let ast::ExprKind::IntrinsicCall(call) = expr_stmt.expr.kind() else {
+        panic!("expected dependency call to lift as an intrinsic");
+    };
+    assert_eq!(call.kind, fp_core::intrinsics::CallKind::FsReadToString);
     Ok(())
 }
 

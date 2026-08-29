@@ -172,11 +172,16 @@ pub struct AstPackage {
     /// nominal -- registration and lookup don't need to branch on that.
     pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
 
-    /// Fully-qualified `type X = Y;` aliases exported by this package (e.g.
-    /// `libc`'s `pub type char = u8;`) — consulted purely at AST-to-HIR
-    /// type-lowering time, before a HIR `Res` even exists, so they need
-    /// their own cross-package export path through `HirProgram`.
-    pub type_alias_exports: HashMap<String, crate::ast::Ty>,
+    /// Fully-qualified transparent aliases exported by this package. The
+    /// declaration module is semantic data: a re-export must expand its RHS
+    /// in the scope where that RHS was written, never in an importing module.
+    pub type_alias_exports: HashMap<String, TypeAliasExport>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAliasExport {
+    pub target: crate::ast::Ty,
+    pub defining_module: QualifiedPath,
 }
 
 impl AstPackage {
