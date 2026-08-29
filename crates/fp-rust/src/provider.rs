@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -982,46 +983,17 @@ fn is_cfg_test(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// Pre-parsed cache of real std source, bundled into the binary by
-/// `build.rs` from `std_cache.bin` (empty if none has been generated yet
-/// — see `package_std_parse_cache` in `build.rs`). Keyed by the same
-/// `relative_str` `load_real_std_package` already iterates by
-/// (`crate::embedded_std::module_paths()`), value is that file's raw
-/// parsed `Vec<Item>` (pre-`flatten_items`) — a direct substitute for
-/// `frontend.parse_file(...).ast.items`, letting the winnow tokenizer/
-/// parser be skipped entirely for every file the cache already covers.
-static STD_CACHE_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/std_cache.bin"));
-
-/// Deserialized fresh on each call rather than memoized behind a `static`
-/// — `Item` embeds `ExprClosured`'s `SharedScopedContext` (an `Rc`-based
-/// type), so `HashMap<String, Vec<Item>>` isn't `Sync` and can't live in a
-/// `static`/`OnceLock`. `load_real_std_package` is only ever called once
-/// per package load in practice, so the extra deserialize is negligible
-/// next to the winnow parsing it replaces.
-fn cached_std_items() -> HashMap<String, Vec<Item>> {
-    if STD_CACHE_BYTES.is_empty() {
-        return HashMap::new();
-    }
-    match bincode::deserialize(STD_CACHE_BYTES) {
-        Ok(cache) => cache,
-        Err(err) => {
-            eprintln!("fp-rust: failed to deserialize bundled std parse cache: {err}");
-            HashMap::new()
-        }
-    }
-}
+/// Bump this whenever the Rust AST representation or parser semantics change.
+/// Parsed standard-library source is semantic compiler input, so a cache entry
+/// created by an older parser must never be reused by a newer compiler.
+const STD_PARSE_CACHE_SCHEMA: u8 = 1;
 
 /// Parse every embedded real-std `.rs` file, skipping (with a warning) any
 /// that `RustFrontend` can't handle yet, rather than failing the whole load.
 ///
-/// Consults `cached_std_items()` first for each file — a cache hit still
-/// registers the file in the source map (`RustFrontend::register_file_only`)
-/// so its cached spans' `FileId`s stay in sync with this run's, but skips
-/// the actual tokenize/parse. Setting `FP_STD_CACHE_DUMP=<path>` bypasses
-/// the cache entirely (always parses fresh from source, so the dump is
-/// never built from a possibly-stale cache) and writes the resulting
-/// per-file item map to that path afterward, for `build.rs` to bundle into
-/// the next build.
+/// Uses a disk cache whose identity includes the exact embedded source and a
+/// parser schema version. A pre-parsed AST bundled with the executable cannot
+/// safely be reused because it has no source or parser provenance.
 fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage> {
     let package_id = PackageId::new(crate_name);
     let root = crate::embedded_std::root_dir();
@@ -1039,14 +1011,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("target/fp-cache")),
     );
-
-    let dump_path = std::env::var("FP_STD_CACHE_DUMP").ok();
-    let cache = if dump_path.is_some() {
-        HashMap::new()
-    } else {
-        cached_std_items()
-    };
-    let mut fresh_cache: HashMap<String, Vec<Item>> = HashMap::new();
 
     // Real rustc's sysroot vendors `core`/`alloc`/`std` as independent
     // crates (each its own crate root, `std`/`alloc` depending on `core`)
@@ -1082,13 +1046,12 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             .and_then(|p| p.to_str())
             .unwrap_or_default()
             .to_string();
-        let fingerprint = std::fs::metadata(path)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_nanos().to_string())
-            .unwrap_or_else(|| source.len().to_string());
-        let disk_key = format!("rust/std-source/{crate_name}/{relative}/{fingerprint}");
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let source_hash = hasher.finish();
+        let disk_key = format!(
+            "rust/std-source/v{STD_PARSE_CACHE_SCHEMA}/{crate_name}/{relative}/{source_hash:016x}"
+        );
         // A fresh frontend per file, not one shared across the whole
         // walk — each `.rs` file is its own independent translation
         // unit, and a parser is free to accumulate internal
@@ -1099,42 +1062,30 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         // state dirty enough to spuriously fail the *next* file's
         // otherwise-valid parse.
         let frontend = RustFrontend::new();
-        if let Some(cached) = cache.get(&relative) {
-            frontend.register_file_only(source, path);
-            cache_hits += 1;
-            return Ok(cached.clone());
-        }
-        if dump_path.is_none() {
-            match disk_cache.get(&disk_key) {
-                Ok(Some(bytes)) => match serde_json::from_slice::<Vec<Item>>(&bytes) {
-                    Ok(cached) => {
-                        frontend.register_file_only(source, path);
-                        cache_hits += 1;
-                        return Ok(cached);
-                    }
-                    Err(_) => decode_failures += 1,
-                },
-                Ok(None) => disk_misses += 1,
-                Err(_) => disk_misses += 1,
-            }
+        match disk_cache.get(&disk_key) {
+            Ok(Some(bytes)) => match serde_json::from_slice::<Vec<Item>>(&bytes) {
+                Ok(cached) => {
+                    frontend.register_file_only(source, path);
+                    cache_hits += 1;
+                    return Ok(cached);
+                }
+                Err(_) => decode_failures += 1,
+            },
+            Ok(None) => disk_misses += 1,
+            Err(_) => disk_misses += 1,
         }
         match frontend.parse_file(source, path) {
             Ok(result) => {
                 register_threadlocal_serializer(result.serializer.clone());
                 parsed += 1;
-                if dump_path.is_some() {
-                    fresh_cache.insert(relative, result.ast.items.clone());
-                }
                 let items = result.ast.items;
-                if dump_path.is_none() {
-                    match serde_json::to_vec(&items) {
-                        Ok(bytes) => {
-                            if disk_cache.put(&disk_key, &bytes).is_err() {
-                                write_failures += 1;
-                            }
+                match serde_json::to_vec(&items) {
+                    Ok(bytes) => {
+                        if disk_cache.put(&disk_key, &bytes).is_err() {
+                            write_failures += 1;
                         }
-                        Err(_) => encode_failures += 1,
                     }
+                    Err(_) => encode_failures += 1,
                 }
                 Ok(items)
             }
@@ -1195,21 +1146,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     eprintln!(
         "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {disk_misses} disk misses, {decode_failures} decode failures, {encode_failures} encode failures, {write_failures} write failures, {skipped} skipped (parse errors)"
     );
-
-    if let Some(dump_path) = dump_path {
-        match bincode::serialize(&fresh_cache) {
-            Ok(bytes) => match std::fs::write(&dump_path, &bytes) {
-                Ok(()) => eprintln!(
-                    "fp-rust: wrote {crate_name} parse cache ({} file(s)) to {dump_path}",
-                    fresh_cache.len()
-                ),
-                Err(err) => {
-                    eprintln!("fp-rust: failed to write {crate_name} cache to {dump_path}: {err}")
-                }
-            },
-            Err(err) => eprintln!("fp-rust: failed to serialize {crate_name} cache: {err}"),
-        }
-    }
 
     let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let mut metadata = PackageMetadata::default();

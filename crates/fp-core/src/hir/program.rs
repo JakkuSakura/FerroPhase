@@ -695,11 +695,51 @@ impl HirProgram {
             .module_exists_crate_path(crate_name, path)
             .then(|| path.clone())
     }
+
+    /// Public direct members of an external module, used to expand a Rust
+    /// glob import without copying or reinterpreting the defining package's
+    /// resolver entries. The later leaf lookup still returns that entry's
+    /// original `Res`, including enum-variant `DefId`s.
+    pub fn external_module_member_names(
+        &self,
+        path: &crate::ast::path::QualifiedPath,
+    ) -> Option<Vec<String>> {
+        let crate_name = path.head()?;
+        let package = self
+            .packages_by_crate_name
+            .get(crate_name)
+            .and_then(|package_id| self.packages.get(package_id))?;
+        let rooted = package
+            .module_tree
+            .module_exists(&crate::ast::path::QualifiedPath::new(vec![
+                crate_name.to_string(),
+            ]));
+        let internal = if rooted {
+            path.clone()
+        } else {
+            crate::ast::path::QualifiedPath::new(path.segments.iter().skip(1).cloned().collect())
+        };
+        let module = package.module_tree.module_id(&internal)?;
+        let mut names = std::collections::BTreeSet::new();
+        for namespace in [resolve::Namespace::Value, resolve::Namespace::Type] {
+            for (name, entry) in package.module_tree.bindings(module, namespace) {
+                if matches!(entry.export, resolve::SymbolExport::Public) {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        for (name, _) in package.module_tree.children(module) {
+            names.insert(name.to_string());
+        }
+        Some(names.into_iter().collect())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::path::QualifiedPath;
+    use crate::hir::resolve::{Namespace, SymbolEntry, SymbolExport};
 
     #[test]
     fn find_export_accepts_normalized_external_crate_root() {
@@ -746,6 +786,45 @@ mod tests {
         assert_eq!(
             program.find_export("core::option::Option"),
             Some(Res::Def(def_id))
+        );
+    }
+
+    #[test]
+    fn external_module_member_names_preserve_public_resolver_surface() {
+        let package_id = PackageId::new("dependency");
+        let mut package = HirPackage::new(package_id.clone());
+        let module_path = QualifiedPath::new(vec!["api".to_string()]);
+        let module = package.module_tree.ensure_module(&module_path);
+        package.module_tree.bind(
+            module,
+            Namespace::Value,
+            "PublicValue",
+            SymbolEntry {
+                res: Res::Def(DefId::new(package_id.clone(), 1)),
+                export: SymbolExport::Public,
+                path: Some(module_path.with_segment("PublicValue".to_string())),
+            },
+        );
+        package.module_tree.bind(
+            module,
+            Namespace::Type,
+            "PrivateType",
+            SymbolEntry {
+                res: Res::Def(DefId::new(package_id.clone(), 2)),
+                export: SymbolExport::Scoped(vec!["api".to_string()]),
+                path: Some(module_path.with_segment("PrivateType".to_string())),
+            },
+        );
+
+        let mut program = HirProgram::new();
+        program.add_package(std::rc::Rc::new(package));
+
+        assert_eq!(
+            program.external_module_member_names(&QualifiedPath::new(vec![
+                "dependency".to_string(),
+                "api".to_string(),
+            ])),
+            Some(vec!["PublicValue".to_string()])
         );
     }
 

@@ -854,13 +854,6 @@ impl CompilerDriver {
             // single, canonical reconciliation point.
             for pkg_item in &mut pkg.items {
                 if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
-                    // Trait impls aren't in `lifted_items_by_path` at
-                    // all (`lift_impl_methods_by_path` skips them) —
-                    // only attempt this for inherent impls, matching
-                    // what was actually lifted.
-                    if imp.trait_ty.is_some() {
-                        continue;
-                    }
                     let mut base_path = pkg_item.module_path.segments.clone();
                     let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
                         continue;

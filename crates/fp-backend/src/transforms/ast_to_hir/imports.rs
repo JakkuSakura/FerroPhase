@@ -203,10 +203,25 @@ impl AstToHirLowerer {
             }
         }
         for candidate in candidates {
+            let mut seen = HashSet::new();
+            if let Some(members) = self.hir_program.external_module_member_names(&candidate) {
+                for child_name in members {
+                    if !seen.insert(child_name.clone()) {
+                        continue;
+                    }
+                    let mut full = candidate.segments.clone();
+                    full.push(child_name);
+                    out.push(ImportBinding {
+                        target: full,
+                        alias: None,
+                        is_glob: false,
+                    });
+                }
+                return;
+            }
             let Some(module_id) = self.package.module_tree.module_id(&candidate) else {
                 continue;
             };
-            let mut seen = HashSet::new();
             // Item children (values/types) — a direct lookup of this
             // module's own bindings instead of a flat scan over every
             // global definition in the package filtered by key prefix.

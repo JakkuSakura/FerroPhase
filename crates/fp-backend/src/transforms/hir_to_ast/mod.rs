@@ -210,17 +210,6 @@ impl<'a> HirToAstLifter<'a> {
             let hir::ItemKind::Impl(imp) = &item.kind else {
                 continue;
             };
-            // Trait impls (`impl Trait for Type`) need their own, more
-            // careful handling — `self`-parameter stripping and receiver
-            // binding for these methods isn't wired through this generic
-            // `lift_function_item` path yet (confirmed: it renders
-            // `self` as a bare explicit parameter here, unlike the
-            // per-backend inherent-impl emission path), so scope this to
-            // inherent impls only for now rather than splicing in a
-            // typed body that's structurally wrong for a trait method.
-            if imp.trait_ty.is_some() {
-                continue;
-            }
             for impl_item in &imp.items {
                 let hir::ImplItemKind::Method(function) = &impl_item.kind else {
                     continue;
@@ -507,7 +496,22 @@ impl<'a> HirToAstLifter<'a> {
                     Value::Bytes(ast::ValueBytes::from(bytes.as_slice()))
                 }
             }),
-            hir::ExprKind::Path(path) => Expr::name(Name::path(self.lift_path(path))),
+            hir::ExprKind::Path(path) => {
+                let portable_op = match path.res {
+                    Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                    _ => None,
+                };
+                if let Some(op) = portable_op {
+                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
+                        span: expr.span,
+                        op,
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                    }))
+                } else {
+                    Expr::name(Name::path(self.lift_path(path)))
+                }
+            }
             hir::ExprKind::Query(_) => {
                 return Err(fp_core::error::Error::from(
                     "HIR query expressions cannot be lifted back into AST expressions".to_string(),
@@ -662,20 +666,38 @@ impl<'a> HirToAstLifter<'a> {
                 expr: Box::new(self.lift_expr(value)?),
                 ty: self.lift_type(ty)?,
             })),
-            hir::ExprKind::Struct(path, fields) => Expr::new(ast::ExprKind::Struct(ExprStruct {
-                span: expr.span,
-                name: Box::new(Expr::path(self.lift_path(path))),
-                fields: fields
-                    .iter()
-                    .map(|field| {
-                        ast::ExprField::new(
-                            Ident::new(field.name.as_str()),
-                            self.lift_expr(&field.expr).unwrap_or_else(|_| Expr::unit()),
-                        )
-                    })
-                    .collect(),
-                update: None,
-            })),
+            hir::ExprKind::Struct(path, fields) => {
+                let portable_op = match path.res {
+                    Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                    _ => None,
+                };
+                if let Some(op) = portable_op {
+                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
+                        span: expr.span,
+                        op,
+                        args: fields
+                            .iter()
+                            .map(|field| self.lift_expr(&field.expr))
+                            .collect::<Result<Vec<_>>>()?,
+                        kwargs: Vec::new(),
+                    }))
+                } else {
+                    Expr::new(ast::ExprKind::Struct(ExprStruct {
+                        span: expr.span,
+                        name: Box::new(Expr::path(self.lift_path(path))),
+                        fields: fields
+                            .iter()
+                            .map(|field| {
+                                Ok(ast::ExprField::new(
+                                    Ident::new(field.name.as_str()),
+                                    self.lift_expr(&field.expr)?,
+                                ))
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                        update: None,
+                    }))
+                }
+            }
             hir::ExprKind::If(cond, then_branch, else_branch) => {
                 Expr::new(ast::ExprKind::If(ExprIf {
                     span: expr.span,

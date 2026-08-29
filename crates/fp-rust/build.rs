@@ -30,30 +30,6 @@ fn main() {
     generated.push_str("];\n");
 
     fs::write(output, generated).expect("write embedded std");
-
-    package_std_parse_cache(&manifest_dir, &out_dir);
-}
-
-/// Bundles a pre-parsed cache of the real std source (see `provider.rs`'s
-/// `load_real_std_package`) into the binary if one has been checked in at
-/// `std_cache.bin` — a developer regenerates it on demand (when the
-/// vendored std source under `std/` changes) by running any `fp compile`
-/// with `FP_STD_CACHE_DUMP=<path to this file>` set, which parses std from
-/// source as normal but also writes out the resulting per-file `Vec<Item>`
-/// map. Absent that file (e.g. a fresh checkout before it's ever been
-/// generated), writes an empty placeholder so the crate still builds —
-/// `load_real_std_package` treats an empty/unparseable cache as "nothing
-/// cached" and falls back to parsing every file from source, exactly as
-/// it always has.
-fn package_std_parse_cache(manifest_dir: &Path, out_dir: &Path) {
-    let cache_path = manifest_dir.join("std_cache.bin");
-    let dest = out_dir.join("std_cache.bin");
-    println!("cargo:rerun-if-changed={}", cache_path.display());
-    if cache_path.is_file() {
-        fs::copy(&cache_path, &dest).expect("copy std_cache.bin to OUT_DIR");
-    } else {
-        fs::write(&dest, []).expect("write empty std_cache.bin placeholder");
-    }
 }
 
 /// Real rustc `core`/`alloc`/`std` source, copied verbatim from the toolchain's
