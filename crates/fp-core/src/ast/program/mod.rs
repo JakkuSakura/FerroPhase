@@ -110,7 +110,7 @@ impl AstProgram {
     ) -> Rc<RefCell<AstPackage>> {
         let _ = data_layout;
         let source_package_id = package_id.clone();
-        let hir_package_id = HirPackageId::new(package_id.as_str());
+        let hir_package_id = package_id.clone();
         let mut source = source;
         source.hir_package_id = hir_package_id.clone();
         let krate = Rc::new(RefCell::new(source));

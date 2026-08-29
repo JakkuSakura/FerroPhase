@@ -106,8 +106,8 @@ pub struct HirPackage {
     /// there's no dedicated item shape for this either), so the alias's
     /// own `DefId` still resolves (via `global_type_defs`/`def_map`
     /// registration at `ast_to_hir` time) but has no entry in `def_map`
-    /// itself — `path_ty` consults this table instead, recursively
-    /// checking the aliased type expression in the alias's own place.
+    /// itself — `path_ty` consults the already-resolved result recorded for
+    /// this target expression's `HirId`.
     /// Without this, `type __darwin_useconds_t = __uint32_t;`-style
     /// aliases (extremely common in real Rust — most of libc's typedefs,
     /// and many of std's own `pub type Result<T> = ...`-style aliases)
@@ -856,6 +856,14 @@ impl HirPackage {
 
     pub fn type_expr_types(&self) -> HashMap<HirId, Ty> {
         self.type_expr_types.borrow().clone()
+    }
+
+    /// The target node whose resolved type is the expansion of a transparent
+    /// alias. The lookup key is independent of the target's syntax.
+    pub fn type_alias_target_hir_id(&self, def_id: &DefId) -> Option<HirId> {
+        self.type_alias_targets
+            .get(def_id)
+            .map(|target| target.hir_id.clone())
     }
 
     pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {

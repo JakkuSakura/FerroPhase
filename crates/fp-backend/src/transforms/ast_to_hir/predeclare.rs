@@ -58,7 +58,7 @@ impl AstToHirLowerer {
                                     .filter_map(|dependency| {
                                         dependency.resolved_package_id.as_ref()
                                     })
-                                    .map(|id| hir::PackageId::new(id.as_str()))
+                                    .cloned()
                                     .collect()
                             })
                             .unwrap_or_default()

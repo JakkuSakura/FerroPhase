@@ -530,6 +530,77 @@ impl HirTypeChecker {
         Ty::error()
     }
 
+    /// Converts a comptime type value into the canonical result for the
+    /// requesting const block. Generated structs keep that block's real
+    /// definition identity, so aliases only consume a completed HIR result.
+    fn type_from_comptime_value(
+        &self,
+        value: fp_core::ast::Value,
+        def_id: &hir::DefId,
+    ) -> Result<Ty> {
+        let fp_core::ast::Value::Type(value_ty) = value else {
+            return Err(Error::from(format!(
+                "comptime type expression `{def_id}` returned a value instead of a type"
+            )));
+        };
+        let fp_core::ast::Ty::Struct(struct_ty) = value_ty else {
+            return ast_value_ty_to_hir_ty(&value_ty).ok_or_else(|| {
+                Error::from(format!(
+                    "comptime type expression `{def_id}` produced an unsupported type value `{value_ty:?}`"
+                ))
+            });
+        };
+        let fields: Vec<(hir::Symbol, Ty)> = struct_ty
+            .fields
+            .iter()
+            .map(|field| {
+                ast_value_ty_to_hir_ty(&field.value)
+                    .map(|ty| (hir::Symbol::new(field.name.name.clone()), ty))
+                    .ok_or_else(|| {
+                        Error::from(format!(
+                            "field `{}` in comptime type `{def_id}` has unsupported type `{}`",
+                            field.name.name, field.value
+                        ))
+                    })
+            })
+            .collect::<Result<_>>()?;
+        self.program_rc()
+            .insert_local_struct_fields(def_id.clone(), fields.clone());
+        let variant = ty::VariantDef {
+            def_id: def_id.clone(),
+            ctor_def_id: None,
+            ident: hir::Symbol::new(struct_ty.name.name.clone()),
+            discr: ty::VariantDiscr::Relative(0),
+            fields: fields
+                .iter()
+                .map(|(name, _)| ty::FieldDef {
+                    did: def_id.clone(),
+                    ident: name.clone(),
+                    vis: ty::TyVisibility::Public,
+                })
+                .collect(),
+            ctor_kind: ty::CtorKind::Fn,
+            is_recovered: false,
+        };
+        Ok(Ty {
+            kind: TyKind::Adt(
+                AdtDef {
+                    did: def_id.clone(),
+                    variants: vec![variant],
+                    flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
+                    repr: ReprOptions {
+                        int: None,
+                        align: None,
+                        pack: None,
+                        flags: ReprFlags::empty(),
+                        field_shuffle_seed: 0,
+                    },
+                },
+                Vec::new(),
+            ),
+        })
+    }
+
     /// Like `record_error`, but specifically for `typecheck_item`'s own
     /// catch — an item's `check_item` returned a hard `Err` and its check
     /// aborted outright, leaving a real gap in the package's typed results
@@ -621,13 +692,19 @@ impl HirTypeChecker {
         checker: &Rc<RefCell<Self>>,
         def_id: hir::DefId,
         request: crate::ComptimeRequest,
-    ) -> TaskHandle<Option<hir::Value>> {
+    ) -> TaskHandle<std::result::Result<Option<hir::Value>, String>> {
         let cache_key = format!("comptime:{def_id:?}");
         let checker = checker.clone();
         let executor = checker.borrow().executor.clone();
         executor.get_or_spawn(cache_key, move || {
-            Box::pin(async move { checker.borrow().request_comptime(request).await.ok() })
-                as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
+            Box::pin(async move {
+                checker
+                    .borrow()
+                    .request_comptime(request)
+                    .await
+                    .map(Some)
+                    .map_err(|error| error.to_string())
+            }) as Pin<Box<dyn Future<Output = std::result::Result<Option<hir::Value>, String>>>>
         })
     }
 }
@@ -1195,6 +1272,73 @@ impl HirTypeChecker {
                             }
                         }
                         arg_types.push(actual);
+                    }
+                    // A type-relative associated function is resolved only
+                    // after its arguments have been checked.  The resolver
+                    // gives us the base type (`TypeBuilder`), while rustc's
+                    // type checker selects the member (`new`) from the
+                    // applicable impl and records that member's identity.
+                    // Do the same here instead of letting MIR reconstruct a
+                    // `Type::method` name from strings.
+                    if let hir::ExprKind::Path(path) = &callee.kind {
+                        if path.segments.len() > 1 {
+                            if let Some(hir::Res::Def(base_def_id)) = path.res.as_ref() {
+                                let is_type_base = self
+                                    .program_rc()
+                                    .item(base_def_id.clone())
+                                    .is_some_and(|item| {
+                                        matches!(
+                                            &item.kind,
+                                            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
+                                        )
+                                    });
+                                if is_type_base {
+                                    let method = &path.segments.last().unwrap().name;
+                                    match self
+                                        .associated_method_output_for_def(
+                                            base_def_id,
+                                            method,
+                                            &arg_types,
+                                        )
+                                        .await
+                                    {
+                                        Ok((method_def_id, generic_args, _)) => {
+                                            let package = self.package();
+                                            package.record_method_resolution(
+                                                expr.hir_id.clone(),
+                                                method_def_id.clone(),
+                                            );
+                                            package.record_method_resolution(
+                                                callee.hir_id.clone(),
+                                                method_def_id.clone(),
+                                            );
+                                            if let Some(args) = generic_args {
+                                                let resolution = GenericCallResolution {
+                                                    def_id: method_def_id.clone(),
+                                                    args,
+                                                };
+                                                package.record_generic_method_arg(
+                                                    expr.hir_id.clone(),
+                                                    resolution.clone(),
+                                                );
+                                                package.record_generic_method_arg(
+                                                    callee.hir_id.clone(),
+                                                    resolution,
+                                                );
+                                            }
+                                        }
+                                        Err(error) => {
+                                            callee_ty = self.error_ty_with_span(
+                                                format!(
+                                                    "associated function `{method}` could not be resolved for type `{base_def_id}`: {error}",
+                                                ),
+                                                expr.span,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Trait-qualified UFCS syntax (`Add::add(lhs, rhs)`,
                     // `Ord::max(a, b)`) — generated en masse by std's
@@ -1841,8 +1985,15 @@ impl HirTypeChecker {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                            .await;
+                        if let Err(error) =
+                            HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                                .await
+                        {
+                            self.record_error_with_span(
+                                format!("comptime evaluation failed: {error}"),
+                                expr.span,
+                            );
+                        }
                     }
                     body_ty
                 }
@@ -2610,20 +2761,28 @@ impl HirTypeChecker {
                     // lower the block's body as ordinary code instead),
                     // correct for a value that isn't const-critical outside
                     // a monomorphized instantiation.
-                    if !ty_contains_param(&body_ty) {
+                    let resolved_ty = if !ty_contains_param(&body_ty) {
                         let request = crate::ComptimeRequest {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                        let value = HirTypeChecker::spawn_comptime_task(
+                            &self.root_handle(),
+                            def_id.clone(),
+                            request,
+                        )
                             .await
-                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-                    }
+                            .map_err(Error::from)?
+                            .ok_or_else(|| Error::from("comptime evaluation returned no value"))?;
+                        self.type_from_comptime_value(value, &def_id)?
+                    } else {
+                        body_ty
+                    };
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    body_ty
+                    resolved_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
                 hir::TypeExprKind::Structural(_) => {
@@ -2757,73 +2916,6 @@ impl HirTypeChecker {
                 )));
             }
             _ => {}
-        }
-        if let Some(hir::Res::Def(ref def_id)) = path.res {
-            // A local `type X = const { .. };` (`ast_to_hir`'s
-            // `comptime_type_alias_rhs` lowering) binds `X` to the const
-            // block's own `DefId` (scope-local only, not a real `def_map`
-            // item — see that lowering site's doc comment). Its shape is
-            // whatever the tagged expression comptime-evaluated to, already
-            // resolved by the time any later statement's `path_ty` call
-            // runs (the expression-position `ConstBlock` arm checks it
-            // eagerly, in-sequence). A real item's `Res::Def` never has a
-            // `const_block_values` entry, so this only fires for the
-            // comptime-local case; everything else falls through to the
-            // ordinary `def_map`-based resolution below.
-            if let Some(value) = self.package().const_block_value(def_id.clone()) {
-                return Ok(match value {
-                    fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
-                        let fields: Vec<(hir::Symbol, Ty)> = struct_ty
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                let field_ty = ast_value_ty_to_hir_ty(&field.value)
-                                    .unwrap_or_else(|| self.error_ty(format!(
-                                        "field `{}`'s comptime-constructed type is not supported here",
-                                        field.name.name
-                                    )));
-                                (hir::Symbol::new(field.name.name.clone()), field_ty)
-                            })
-                            .collect();
-                        self.program_rc()
-                            .insert_local_struct_fields(def_id.clone(), fields.clone());
-                        let variant = ty::VariantDef {
-                            def_id: def_id.clone(),
-                            ctor_def_id: None,
-                            ident: hir::Symbol::new(struct_ty.name.name.clone()),
-                            discr: ty::VariantDiscr::Relative(0),
-                            fields: fields
-                                .iter()
-                                .map(|(name, _)| ty::FieldDef {
-                                    did: def_id.clone(),
-                                    ident: name.clone(),
-                                    vis: ty::TyVisibility::Public,
-                                })
-                                .collect(),
-                            ctor_kind: ty::CtorKind::Fn,
-                            is_recovered: false,
-                        };
-                        Ty {
-                            kind: TyKind::Adt(
-                                AdtDef {
-                                    did: def_id.clone(),
-                                    variants: vec![variant],
-                                    flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
-                                    repr: ReprOptions {
-                                        int: None,
-                                        align: None,
-                                        pack: None,
-                                        flags: ReprFlags::empty(),
-                                        field_shuffle_seed: 0,
-                                    },
-                                },
-                                Vec::new(),
-                            ),
-                        }
-                    }
-                    _ => self.error_ty(format!("local `{def_id:?}` is not a type")),
-                });
-            }
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
             let Some(self_type) = self.self_type.clone() else {
@@ -3043,13 +3135,16 @@ impl HirTypeChecker {
         if let Some(generic) = self.generic_ty(def_id.clone()) {
             return Ok(generic);
         }
-        // A transparent type alias (`type __darwin_useconds_t =
-        // __uint32_t;`) — HIR has no first-class item for one (see
-        // `hir::HirPackage::type_alias_targets`'s doc comment), so its
-        // `DefId` has no `def_map` entry to look up; expand it in place by
-        // checking its already-lowered target type expression instead.
-        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()).cloned() {
-            return self.check_type_expr(&target).await;
+        // Alias expansion is an identity lookup into completed type results.
+        // The alias does not distinguish a const block from any other target.
+        if let Some(target_hir_id) = self.program_rc().type_alias_target_hir_id(def_id.clone()) {
+            return self
+                .program_rc()
+                .package(target_hir_id.package_id())
+                .and_then(|package| package.type_expr_type(target_hir_id))
+                .ok_or_else(|| Error::from(format!(
+                    "type alias `{def_id}` was used before its target was resolved"
+                )));
         }
         let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
             // No `hir::Item`/`def_path` at all for this `DefId` — real
@@ -4718,6 +4813,66 @@ impl HirTypeChecker {
             }
         }
         Err(Error::from(format!("method `{method}` was not found")))
+    }
+
+    /// Resolve `Type::item` after the resolver has established the nominal
+    /// type's `DefId`.  This is the type-relative equivalent of
+    /// `method_output`: unlike receiver-method lookup, it must not invent a
+    /// runtime receiver (`TypeBuilder` has type `type`, not the `TypeBuilder`
+    /// ADT).  The impl member selected here is the identity later consumed
+    /// by MIR, matching rustc's associated-item lookup through a `QPath`.
+    async fn associated_method_output_for_def(
+        &mut self,
+        type_def_id: &hir::DefId,
+        method: &hir::Symbol,
+        actuals: &[Ty],
+    ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
+        let program = self.program_rc();
+        for item in program.impls_for_adt(type_def_id.clone()) {
+            let hir::ItemKind::Impl(impl_block) = &item.kind else {
+                continue;
+            };
+            let mut scope = self.with_generics(&impl_block.generics);
+            let self_ty = scope.checked_impl_self_ty(&impl_block.self_ty).await?;
+            let self_ty = match &self_ty.kind {
+                TyKind::Ref(_, inner, _) => inner.as_ref(),
+                _ => &self_ty,
+            };
+            let TyKind::Adt(adt, _) = &self_ty.kind else {
+                continue;
+            };
+            if adt.did != *type_def_id {
+                continue;
+            }
+            for impl_item in &impl_block.items {
+                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+                    continue;
+                };
+                if impl_item.name != *method {
+                    continue;
+                }
+                let signature = scope.function_signature(function).await?;
+                let Some((substitutions, output)) = scope
+                    .instantiate_call_with_explicit_args(
+                        &signature,
+                        actuals,
+                        Some(&function.sig.generics),
+                        None,
+                    )?
+                else {
+                    continue;
+                };
+                let args = scope.method_generic_args(
+                    &impl_block.generics,
+                    &function.sig.generics,
+                    &substitutions,
+                )?;
+                return Ok((impl_item.def_id.clone(), args, output));
+            }
+        }
+        Err(Error::from(format!(
+            "associated item `{method}` is not defined for type `{type_def_id}`"
+        )))
     }
 
     /// Apply the autoderef step used for method lookup to the receiver

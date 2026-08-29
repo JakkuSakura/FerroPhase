@@ -1,68 +1,10 @@
 use std::collections::BTreeMap;
-use std::fmt::{self, Display};
 
 use semver::{Version, VersionReq};
 
 use crate::ast::module::{FeatureRef, ModuleId};
 use crate::vfs::VirtualPath;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PackageId {
-    name: String,
-    version: Option<Version>,
-    source: Option<String>,
-}
-
-impl PackageId {
-    pub fn new<S: Into<String>>(name: S) -> Self {
-        Self {
-            name: name.into(),
-            version: None,
-            source: None,
-        }
-    }
-
-    pub fn resolved(name: impl Into<String>, version: Version, source: impl Into<String>) -> Self {
-        Self::with_source(name, Some(version), source)
-    }
-
-    pub fn with_source(
-        name: impl Into<String>,
-        version: Option<Version>,
-        source: impl Into<String>,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            version,
-            source: Some(source.into()),
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.name
-    }
-
-    pub fn version(&self) -> Option<&Version> {
-        self.version.as_ref()
-    }
-
-    pub fn source(&self) -> Option<&str> {
-        self.source.as_deref()
-    }
-}
-
-impl Display for PackageId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.name.fmt(f)?;
-        if let Some(version) = &self.version {
-            write!(f, "@{version}")?;
-        }
-        if let Some(source) = &self.source {
-            write!(f, " [{source}]")?;
-        }
-        Ok(())
-    }
-}
+pub use crate::package::PackageId;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TargetFilter {

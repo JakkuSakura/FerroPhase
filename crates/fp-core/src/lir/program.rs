@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::package::PackageId;
-
-use super::{LirDataLayout, LirFunction, LirGlobal, LirPackage, Name};
+use super::{LirDataLayout, LirFunction, LirGlobal, LirPackage, Name, PackageId};
 
 /// The whole compiled result across every package this compilation session
 /// has produced LIR for, keyed by `PackageId` — mirrors `mir::MirProgram`/
@@ -118,7 +116,7 @@ impl LirProgram {
     /// Looks a function up by its own `DefId` — `def_id` already carries
     /// its owning package's id, so no separate package lookup is needed.
     pub fn find_function_by_def_id(&self, def_id: &crate::hir::DefId) -> Option<&LirFunction> {
-        let package_id = PackageId::new(def_id.package_id.as_str());
+        let package_id = def_id.package_id.clone();
         self.package(&package_id)?
             .blobs
             .iter()

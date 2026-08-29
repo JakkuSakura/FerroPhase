@@ -98,6 +98,12 @@ impl HirProgram {
             .get(&def_id)
     }
 
+    /// The HIR node whose checked result is this alias's expansion.
+    pub fn type_alias_target_hir_id(&self, def_id: DefId) -> Option<HirId> {
+        self.package(&def_id.package_id)?
+            .type_alias_target_hir_id(&def_id)
+    }
+
     pub fn item(&self, def_id: DefId) -> Option<&Item> {
         self.package(&def_id.package_id)?.def_map.get(&def_id)
     }

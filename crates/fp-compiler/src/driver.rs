@@ -1095,7 +1095,7 @@ impl CompilerDriver {
         // The request's own `def_id` already carries its owning package's
         // id — no need to look the compiled package up in the workspace
         // just to recover an id it already has.
-        let package_id = PackageId::new(request.def_id.package_id.as_str());
+        let package_id = request.def_id.package_id.clone();
         let hir_program = state.borrow().hir_program_rc();
         let mir_package = state.borrow_mut().mir_package_rc(&package_id);
         let mut lowering =
@@ -1152,7 +1152,7 @@ impl CompilerDriver {
         state: &Rc<RefCell<CompilerState>>,
         def_id: &hir::DefId,
     ) -> Result<Value, CompilerDriverError> {
-        let package_id = PackageId::new(def_id.package_id.as_str());
+        let package_id = def_id.package_id.clone();
         let (mir, function_name) = {
             let state_ref = state.borrow();
             let package = state_ref
@@ -1301,7 +1301,7 @@ impl CompilerDriver {
         // identity `lower_executable_const`/`LirProgram::
         // find_function_by_def_id` use to name/find this exact entry's
         // LIR function, so no separate `package_id` parameter is needed.
-        let package_id = PackageId::new(def_id.package_id.as_str());
+        let package_id = def_id.package_id.clone();
         let mut state_mut = state.borrow_mut();
         // The whole session's `LirProgram`, not just `package_id`'s own
         // blob — a comptime function can call into a dependency package,

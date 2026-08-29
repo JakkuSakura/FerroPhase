@@ -628,6 +628,47 @@ impl MirToLirLowerer {
         Some(name)
     }
 
+    pub(super) fn register_resolved_method_signature(
+        &mut self,
+        def_id: mir::DefId,
+        name: String,
+        substs: mir::ty::SubstsRef,
+        sig: mir::FunctionSig,
+        package_id: fp_core::ast::package::PackageId,
+    ) -> Option<String> {
+        if sig
+            .inputs
+            .iter()
+            .chain(std::iter::once(&sig.output))
+            .any(|ty| self.contains_unresolved_param(ty))
+        {
+            return None;
+        }
+        let lir_signature = lir::LirFunctionSignature {
+            params: sig
+                .inputs
+                .iter()
+                .map(|ty| self.lir_type_from_ty(ty))
+                .collect(),
+            return_type: self.lir_type_from_ty(&sig.output),
+            is_variadic: false,
+        };
+        self.function_def_map
+            .insert((def_id, substs), name.clone());
+        self.function_signatures
+            .entry(name.clone())
+            .or_insert(lir_signature);
+        let calling_convention = self.calling_convention_for_abi(&mir::ty::Abi::Rust);
+        self.function_call_conventions
+            .entry(name.clone())
+            .or_insert(calling_convention);
+        self.function_declarations.entry(name.clone()).or_insert(true);
+        self.function_package_ids
+            .entry(name.clone())
+            .or_insert(package_id);
+        Some(name)
+    }
+
     /// Transform a MIR function to LIR
     pub(super) fn transform_function_with_bodies(
         &mut self,
@@ -687,6 +728,8 @@ impl MirToLirLowerer {
         if lir_func.is_declaration {
             return Ok(lir_func);
         }
+
+        self.current_function = Some(lir_func.clone());
 
         // Transform MIR body if present
         if let Some(mir_body) = bodies.get(&mir_func.body_id) {
@@ -2559,18 +2602,26 @@ impl MirToLirLowerer {
                         // so a second reference to the same `def_id` hits
                         // the ordinary fast path above.
                         None => {
-                            let (package_id, func) = self
-                                .mir_program
-                                .function_by_def_id(def_id)
-                                .ok_or_else(|| {
+                            if let Some((package_id, func)) =
+                                self.mir_program.function_by_def_id(def_id)
+                            {
+                                self.register_function_signature(&func, Some(package_id))
+                            } else if let Some((package_id, name, sig, stored_substs)) =
+                                self.mir_program.signature_by_def_id(def_id)
+                            {
+                                self.register_resolved_method_signature(
+                                    def_id.clone(),
+                                    name.as_str().to_owned(),
+                                    if substs.is_empty() { stored_substs } else { substs.clone() },
+                                    sig,
+                                    package_id,
+                                )
+                            } else {
+                                None
+                            }
+                            .ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
-                                    "missing MIR function definition {} with substitutions {:?}",
-                                    def_id, substs
-                                ))
-                            })?;
-                            self.register_function_signature(&func, Some(package_id)).ok_or_else(|| {
-                                fp_core::error::Error::from(format!(
-                                    "unresolved generic signature for function definition {} with substitutions {:?}",
+                                    "missing LIR signature for resolved definition {} with substitutions {:?}",
                                     def_id, substs
                                 ))
                             })?

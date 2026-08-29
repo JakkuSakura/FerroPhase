@@ -1575,7 +1575,12 @@ impl<'a> BodyBuilder<'a> {
                     generic_def_id = Some(def_id.clone());
                 }
             }
-            if let Some(hir::Res::Def(def_id)) = &path.res {
+            let resolved_method_def_id = self
+                .lowering
+                .typeck_method_resolution(callee.hir_id.clone());
+            if let Some(def_id) = resolved_method_def_id.as_ref() {
+                generic_method_def = self.lowering.ensure_generic_method_def(def_id.clone());
+            } else if let Some(hir::Res::Def(def_id)) = &path.res {
                 // `ensure_generic_method_def` is the uniform lookup —
                 // resolves a generic method (`Vec::from`, etc.) in this
                 // package or any dependency's the same way, lazily
@@ -1602,7 +1607,14 @@ impl<'a> BodyBuilder<'a> {
                 span: callee.span,
                 ty: fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
+                literal: mir::ConstantKind::FnDef(
+                    def_id.clone(),
+                    explicit_args
+                        .iter()
+                        .cloned()
+                        .map(GenericArg::Type)
+                        .collect(),
+                ),
             });
             (operand, sig, Some(name))
         } else if let Some(def) = generic_method_def.as_ref() {
@@ -1618,27 +1630,29 @@ impl<'a> BodyBuilder<'a> {
                 span: callee.span,
                 ty: fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
+                literal: mir::ConstantKind::FnDef(
+                    def.def_id.clone(),
+                    explicit_args
+                        .iter()
+                        .cloned()
+                        .map(GenericArg::Type)
+                        .collect(),
+                ),
             });
             (operand, sig, Some(name))
         } else {
             self.resolve_callee(callee)?
         };
         let mut associated_struct = match &callee.kind {
-            hir::ExprKind::Path(path) => path
-                .res
-                .as_ref()
-                .and_then(|res| match res {
-                    hir::Res::Def(def_id) => self
-                        .lowering
-                        .mir_package
-                        .borrow()
-                        .method_lookup_by_def
-                        .get(def_id)
-                        .cloned(),
+            hir::ExprKind::Path(path) => self
+                .lowering
+                .typeck_method_resolution(callee.hir_id.clone())
+                .or_else(|| match path.res.as_ref() {
+                    Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
                     _ => None,
                 })
-                .and_then(|info| info.struct_def.clone()),
+                .and_then(|def_id| self.lowering.ensure_method_info(def_id))
+                .and_then(|info| info.struct_def),
             _ => None,
         };
         let callee_tail = if let hir::ExprKind::Path(path) = &callee.kind {
@@ -2616,15 +2630,12 @@ impl<'a> BodyBuilder<'a> {
         Ok(true)
     }
 
-    pub(super) fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
+    pub(super) fn param_names_for_callee(&mut self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
         match &path.res {
             Some(hir::Res::Def(def_id)) => {
                 self.param_names_for_def_id(def_id.clone()).or_else(|| {
                     self.lowering
-                        .mir_package
-                        .borrow()
-                        .method_defs_by_def
-                        .get(def_id)
+                        .ensure_generic_method_def(def_id.clone())
                         .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
                 })
             }
@@ -2883,6 +2894,30 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
+        // Type checking resolves type-relative associated functions (for
+        // example `TypeBuilder::new`) to the concrete impl member.  Consume
+        // that identity directly; MIR must not rediscover the member through
+        // a `struct_methods["Type"]["method"]` name lookup.
+        if let Some(method_def_id) = self
+            .lowering
+            .typeck_method_resolution(callee.hir_id.clone())
+        {
+            if let Some(info) = self.lowering.ensure_method_info(method_def_id.clone()) {
+                self.lowering.ensure_method_lowered(method_def_id.clone())?;
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: callee.span,
+                    ty: info.fn_ty.clone(),
+                    user_ty: None,
+                    literal: mir::ConstantKind::FnDef(method_def_id, Vec::new()),
+                });
+                return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
+            }
+            self.lowering.emit_error(
+                callee.span,
+                format!("resolved associated method `{method_def_id}` has no MIR signature"),
+            );
+        }
+
         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
             if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
                 self.lowering.ensure_method_lowered(def_id.clone())?;
@@ -2890,7 +2925,11 @@ impl<'a> BodyBuilder<'a> {
                     .def_id
                     .clone()
                     .map(|method_def_id| mir::ConstantKind::FnDef(method_def_id, Vec::new()))
-                    .unwrap_or_else(|| mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())));
+                    .ok_or_else(|| {
+                        crate::error::optimization_error(format!(
+                            "method definition `{def_id}` has no resolved identity"
+                        ))
+                    })?;
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
@@ -2945,107 +2984,15 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        if resolved_path.segments.len() >= 2 {
-            let method_name = resolved_path
-                .segments
-                .last()
-                .expect("segments len checked")
-                .name
-                .clone();
-            let struct_name = resolved_path
-                .segments
-                .get(resolved_path.segments.len() - 2)
-                .expect("segments len checked")
-                .name
-                .clone();
-            if let Some(info) = self
-                .lowering
-                .mir_package
-                .borrow()
-                .struct_methods
-                .get(&String::from(struct_name.clone()))
-                .and_then(|methods| methods.get(&String::from(method_name.clone())))
-            {
-                let literal = mir::ConstantKind::FnDef(
-                    info.def_id.clone().ok_or_else(|| {
-                        crate::error::optimization_error(
-                            "resolved method is missing its definition identity",
-                        )
-                    })?,
-                    Vec::new(),
-                );
-                let operand = mir::Operand::Constant(mir::Constant {
-                    span: callee.span,
-                    ty: info.fn_ty.clone(),
-                    user_ty: None,
-                    literal,
-                });
-                let qualified_name = format!("{}::{}", struct_name, method_name);
-                return Ok((operand, info.sig.clone(), Some(qualified_name)));
-            }
-        }
-
-        // Built lazily here, not at function entry — every fast path above
-        // (local-variable indirect call, resolved `Def`, and the
-        // struct-method `>= 2` segments case) returns before ever needing
-        // this joined name.
-        let name = resolved_path
+        let path = resolved_path
             .segments
             .iter()
-            .map(|seg| seg.name.as_str())
+            .map(|segment| segment.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-
-        if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
-            // `ensure_method_info` is the uniform lookup — it resolves a
-            // method in this package or any dependency's the same way
-            // (mirrors `compute_adt_layout`'s existing "check the cache,
-            // lazily register on a miss" shape for ADTs). A hit only
-            // proves the *signature* is known — the body itself may not
-            // be lowered yet if this pass never proactively reached this
-            // method's own `impl` item (e.g. the comptime-probe's
-            // item-scoped entry point, which deliberately never walks
-            // unrelated items, or a dependency's own method, whose body
-            // belongs to that package's own separate compile). Ensure it
-            // now, on demand, before referencing it — a no-op for a
-            // cross-package method, which `ensure_method_lowered`'s
-            // existing `current_package_id` guard already handles.
-            if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
-                self.lowering.ensure_method_lowered(def_id.clone())?;
-                let literal = mir::ConstantKind::FnDef(
-                    info.def_id.clone().ok_or_else(|| {
-                        crate::error::optimization_error(
-                            "resolved method is missing its definition identity",
-                        )
-                    })?,
-                    Vec::new(),
-                );
-                let operand = mir::Operand::Constant(mir::Constant {
-                    span: callee.span,
-                    ty: info.fn_ty.clone(),
-                    user_ty: None,
-                    literal,
-                });
-                return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
-            }
-        }
-
-        self.lowering.emit_error(
-            callee.span,
-            format!("unresolved call target `{}` during MIR lowering", name),
-        );
-        let sig = mir::FunctionSig {
-            inputs: Vec::new(),
-            output: HirToMirLowerer::unit_ty(),
-        };
-        let fn_ty = self.lowering.function_pointer_ty(&sig);
-        let operand = mir::Operand::Constant(mir::Constant {
-            span: callee.span,
-            ty: fn_ty.clone(),
-            user_ty: None,
-            literal: mir::ConstantKind::Fn(Symbol::new(name.clone())),
-        });
-        Ok((operand, sig, Some(name)))
+        Err(crate::error::optimization_error(format!(
+            "unresolved call target `{path}`: no HIR-resolved definition"
+        )))
     }
 
     pub(super) fn lower_operand(
@@ -3267,9 +3214,10 @@ impl<'a> BodyBuilder<'a> {
                                         span: expr.span,
                                         ty: fn_ty.clone(),
                                         user_ty: None,
-                                        literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                            function.sig.name.as_str().to_string(),
-                                        )),
+                                        literal: mir::ConstantKind::FnDef(
+                                            def_id.clone(),
+                                            Vec::new(),
+                                        ),
                                     }),
                                     ty: fn_ty,
                                 });
@@ -3287,9 +3235,10 @@ impl<'a> BodyBuilder<'a> {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                        info.name.clone(),
-                                    )),
+                                    literal: mir::ConstantKind::FnDef(
+                                        info.def_id.clone(),
+                                        info.substs.clone(),
+                                    ),
                                 }),
                                 ty: info.fn_ty,
                             });
@@ -3458,7 +3407,7 @@ impl<'a> BodyBuilder<'a> {
                                 span: expr.span,
                                 ty: fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(mir::Symbol::from(fn_name)),
+                                literal: mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
                             }),
                             ty: fn_ty,
                         });
@@ -3522,16 +3471,14 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if has_explicit_args {
-                    let method_def = match resolved_path.res.as_ref() {
-                        Some(hir::Res::Def(def_id)) => self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .method_defs_by_def
-                            .get(def_id)
-                            .cloned(),
-                        _ => None,
-                    };
+                    let method_def = self
+                        .lowering
+                        .typeck_method_resolution(expr.hir_id.clone())
+                        .or_else(|| match resolved_path.res.as_ref() {
+                            Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
+                            _ => None,
+                        })
+                        .and_then(|def_id| self.lowering.ensure_generic_method_def(def_id));
                     if let Some(def) = method_def {
                         let info = self
                             .lowering

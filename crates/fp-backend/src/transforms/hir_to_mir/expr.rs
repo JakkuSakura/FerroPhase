@@ -1259,7 +1259,7 @@ impl HirToMirLowerer {
         };
         let name = hir::Symbol::new(format!(
             "__const_block_{}_{}",
-            def_id.package_id.0, def_id.index
+            def_id.package_id.as_str(), def_id.index
         ));
         let konst = hir::Const {
             name: name.clone(),

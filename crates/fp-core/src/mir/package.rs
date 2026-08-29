@@ -10,7 +10,7 @@ use super::{
 /// A package's MIR-level identity — the same `hir::PackageId` a `DefId`
 /// embeds, reused directly (not a separate namespace) since MIR items are
 /// always lowered 1:1 from an already-identified HIR package.
-pub type PackageId = crate::hir::PackageId;
+pub type PackageId = crate::package::PackageId;
 
 /// Monotonic fresh-id counters for MIR lowering — the "next id to mint"
 /// state that used to live as private fields on `HirToMirLowerer`. Lifted

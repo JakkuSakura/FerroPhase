@@ -4,6 +4,8 @@ use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+pub type PackageId = crate::package::PackageId;
+
 pub mod ident;
 pub mod package;
 pub mod path;
@@ -30,47 +32,6 @@ pub type NodeId = u32;
 /// (`HirPackage`'s typed-results fields, ...) names it as `hir::Value`, not
 /// a lower layer's type reaching up into this one.
 pub type Value = crate::ast::Value;
-
-/// A package's HIR-level identity — the package's own name, reused
-/// directly (not a separately-assigned sequential index). A numeric
-/// newtype here previously let a forgotten/wrong assignment silently
-/// default to a "plausible-looking" `PackageId(0)` that could collide
-/// with another package's real id in a `HashMap` with no diagnostic at
-/// all (see the `HirPackage.id`/`HirProgram::add_package` bug this
-/// replaced); a wrong or missing string id is immediately, visibly wrong
-/// instead. Not `Copy` (a `String` isn't) — `DefId`/`HirId`, which embed
-/// this, aren't `Copy` either as a result; both are still cheap `Clone`s,
-/// and every real usage is `HashMap`-keyed rather than densely
-/// array-indexed, so this isn't a hot-path concern.
-#[derive(
-    Debug,
-    Clone,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct PackageId(pub String);
-
-impl PackageId {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for PackageId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 /// The `DefId` of the closest enclosing item-like definition for a HIR node
 /// (rustc's `OwnerId`). Wrapping a real `DefId` means the owner already
@@ -170,13 +131,13 @@ impl DefId {
     /// there is only ever one name because there is only ever one
     /// function producing it from the one real identity.
     pub fn comptime_const_symbol(&self) -> String {
-        format!("__fp_const_{}_{}", self.package_id.0, self.index)
+        format!("__fp_const_{}_{}", self.package_id.as_str(), self.index)
     }
 }
 
 impl fmt::Display for DefId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.package_id.0, self.index)
+        write!(f, "{}:{}", self.package_id, self.index)
     }
 }
 

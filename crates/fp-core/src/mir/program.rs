@@ -44,23 +44,41 @@ impl MirProgram {
     /// Finds a concrete function definition and its owning package by the
     /// resolved definition identity. This is the authoritative cross-package
     /// lookup for downstream lowering stages.
-    pub fn function_by_def_id(&self, def_id: &crate::hir::DefId) -> Option<(PackageId, super::Function)> {
-        let package_id = PackageId::new(def_id.package_id.as_str());
+    pub fn function_by_def_id(
+        &self,
+        def_id: &crate::hir::DefId,
+    ) -> Option<(PackageId, super::Function)> {
         self.packages.iter().find_map(|(id, package)| {
-            package
-                .borrow()
-                .sigs
-                .get(def_id)
-                .cloned()
-                .map(|function| (id.clone(), function))
-        }).or_else(|| {
-            self.packages.get(&package_id).and_then(|package| {
-                package
-                    .borrow()
-                    .sigs
-                    .get(def_id)
-                    .cloned()
-                    .map(|function| (package_id.clone(), function))
+            let package = package.borrow();
+            package.sigs.get(def_id).cloned().map(|function| (id.clone(), function))
+        })
+    }
+
+    /// Finds a callable signature for a resolved definition. Impl methods
+    /// and signature-only declarations do not necessarily have a concrete
+    /// `Function` body in this program, so callers that only need call
+    /// metadata must use this identity-based API instead of fabricating one.
+    pub fn signature_by_def_id(
+        &self,
+        def_id: &crate::hir::DefId,
+    ) -> Option<(PackageId, crate::mir::Symbol, super::FunctionSig, super::SubstsRef)> {
+        self.packages.iter().find_map(|(id, package)| {
+            let package = package.borrow();
+            if let Some(info) = package.method_lookup_by_def.get(def_id) {
+                return Some((
+                    id.clone(),
+                    info.fn_name.clone().into(),
+                    info.sig.clone(),
+                    info.substs.clone(),
+                ));
+            }
+            package.function_sigs.get(def_id).cloned().map(|sig| {
+                (
+                    id.clone(),
+                    format!("fn#{}", def_id).into(),
+                    sig,
+                    Vec::new(),
+                )
             })
         })
     }

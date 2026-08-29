@@ -1,4 +1,4 @@
-use crate::ast::package::PackageId;
+use crate::lir::PackageId;
 use crate::ast::path::QualifiedPath;
 
 /// Addresses one LIR lowering unit — a package plus the module path within

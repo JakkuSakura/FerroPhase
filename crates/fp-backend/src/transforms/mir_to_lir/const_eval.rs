@@ -408,7 +408,19 @@ impl MirToLirLowerer {
         ty: &Ty,
     ) -> Result<lir::LirConstant> {
         match value {
-            mir::ConstValue::Unit => Ok(lir::LirConstant::undef(self.lir_type_from_ty(ty))),
+            mir::ConstValue::Unit => {
+                if matches!(ty.kind, TyKind::Error(_)) {
+                    let function = self
+                        .current_function
+                        .as_ref()
+                        .map(|function| function.name.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    return Err(fp_core::error::Error::from(format!(
+                        "unit constant carries an error MIR type `{ty}` while lowering `{function}`"
+                    )));
+                }
+                Ok(lir::LirConstant::undef(self.lir_type_from_ty(ty)))
+            }
             mir::ConstValue::Bool(value) => Ok(lir::LirConstant::integer(
                 self.lir_type_from_ty(ty),
                 lir::LirInteger::I1(*value),

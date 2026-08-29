@@ -21,6 +21,7 @@ pub mod lang;
 pub mod lir;
 pub mod mir;
 pub mod ops;
+pub mod package;
 pub mod place;
 pub mod pretty;
 pub mod printer;

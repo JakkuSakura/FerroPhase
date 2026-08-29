@@ -1494,10 +1494,13 @@ impl<'a> BodyBuilder<'a> {
                         lowered_args.push(operand.operand);
                     }
 
-                    let literal = match info.def_id {
-                        Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
-                        None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
-                    };
+                    let method_def_id = info.def_id.clone().ok_or_else(|| {
+                        crate::error::optimization_error(format!(
+                            "resolved method `{}` has no definition identity",
+                            info.fn_name
+                        ))
+                    })?;
+                    let literal = mir::ConstantKind::FnDef(method_def_id, info.substs.clone());
                     let func_operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
                         ty: info.fn_ty.clone(),
@@ -1542,14 +1545,7 @@ impl<'a> BodyBuilder<'a> {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
-                                .and_then(|def_id| {
-                                    self.lowering
-                                        .mir_package
-                                        .borrow()
-                                        .method_defs_by_def
-                                        .get(&def_id)
-                                        .cloned()
-                                });
+                                .and_then(|def_id| self.lowering.ensure_generic_method_def(def_id));
                             if let Some(def) = method_def {
                                 let method_ctx = self
                                     .lowering
@@ -1606,9 +1602,15 @@ impl<'a> BodyBuilder<'a> {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                        info.fn_name.clone(),
-                                    )),
+                                    literal: mir::ConstantKind::FnDef(
+                                        info.def_id.clone().ok_or_else(|| {
+                                            crate::error::optimization_error(format!(
+                                                "specialized method `{}` has no definition identity",
+                                                info.fn_name
+                                            ))
+                                        })?,
+                                        info.substs.clone(),
+                                    ),
                                 });
 
                                 let continue_block = self.new_block();
@@ -1645,14 +1647,7 @@ impl<'a> BodyBuilder<'a> {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
-                                .and_then(|def_id| {
-                                    self.lowering
-                                        .mir_package
-                                        .borrow()
-                                        .method_defs_by_def
-                                        .get(&def_id)
-                                        .cloned()
-                                });
+                                .and_then(|def_id| self.lowering.ensure_generic_method_def(def_id));
                             if let Some(def) = method_def {
                                 let method_ctx = self
                                     .lowering
@@ -1709,9 +1704,15 @@ impl<'a> BodyBuilder<'a> {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                        info.fn_name.clone(),
-                                    )),
+                                    literal: mir::ConstantKind::FnDef(
+                                        info.def_id.clone().ok_or_else(|| {
+                                            crate::error::optimization_error(format!(
+                                                "specialized method `{}` has no definition identity",
+                                                info.fn_name
+                                            ))
+                                        })?,
+                                        info.substs.clone(),
+                                    ),
                                 });
 
                                 let continue_block = self.new_block();

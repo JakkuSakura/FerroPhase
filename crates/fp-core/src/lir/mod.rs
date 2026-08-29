@@ -11,6 +11,8 @@ pub use ident::Name;
 pub use path::LirPath;
 pub use program::LirProgram;
 pub use ty::Ty;
+/// LIR packages share the compiler-wide package identity.
+pub type PackageId = crate::package::PackageId;
 pub type LirType = Ty;
 pub type LirId = u32;
 pub type RegisterId = u32;
@@ -139,7 +141,7 @@ impl LirPackage {
 /// just a `LirBlob` now).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirCodeUnit {
-    pub package_id: crate::ast::package::PackageId,
+    pub package_id: PackageId,
     pub module_path: crate::ast::path::QualifiedPath,
     pub kind: LirCodeUnitKind,
 }
@@ -499,7 +501,7 @@ pub enum LirValueKind {
 pub enum LirFunctionRef {
     Name(Name),
     Package {
-        package_id: crate::ast::package::PackageId,
+        package_id: PackageId,
         name: Name,
     },
     Definition(crate::hir::DefId),
