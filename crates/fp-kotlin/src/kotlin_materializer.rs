@@ -48,13 +48,20 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 "map",
                 portable_op_args_after_receiver(call),
             ))),
-            "result_map_err" => Ok(Some(invoke_method(
-                receiver(),
-                "recoverCatching",
-                portable_op_args_after_receiver(call),
+            "result_map_err" => Ok(Some(runtime_method(
+                "mapError",
+                std::iter::once(receiver())
+                    .chain(portable_op_args_after_receiver(call))
+                    .collect(),
             ))),
             "result_is_ok" => Ok(Some(invoke_method(receiver(), "isSuccess", Vec::new()))),
             "result_is_err" => Ok(Some(invoke_method(receiver(), "isFailure", Vec::new()))),
+            "result_ok_value" => Ok(Some(invoke_method(receiver(), "getOrNull", Vec::new()))),
+            "result_err_value" => Ok(Some(invoke_method(
+                receiver(),
+                "exceptionOrNull",
+                Vec::new(),
+            ))),
             "result_unwrap_or" => Ok(Some(invoke_method(
                 receiver(),
                 "getOrDefault",
@@ -63,6 +70,11 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             "vec_new" => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
                 ExprIntrinsicContainer::VecElements { elements: vec![] },
             )))),
+            "vec_push" => Ok(Some(invoke_method(
+                receiver(),
+                "add",
+                portable_op_args_after_receiver(call),
+            ))),
             "trim_end" | "trim_start" => Ok(Some(invoke_method(
                 receiver(),
                 if call.op.name() == "trim_end" {
@@ -137,6 +149,12 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 "createDirectories",
                 args,
             )),
+            CallKind::FsRemoveFile => run_catching(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "delete",
+                args,
+            )),
+            CallKind::FsRemoveDirAll => run_catching(runtime_method("deleteRecursively", args)),
             _ => return Ok(None),
         };
         Ok(Some(replacement))
@@ -150,6 +168,10 @@ fn invoke_function(name: &str, args: Vec<Expr>) -> Expr {
         args,
         kwargs: Vec::new(),
     }))
+}
+
+fn runtime_method(method: &str, args: Vec<Expr>) -> Expr {
+    invoke_static_method(&["RustKotlinRuntime"], method, args)
 }
 
 fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Expr {
@@ -253,6 +275,48 @@ mod tests {
             .expect("materialize filesystem call")
             .expect("filesystem replacement");
         assert_eq!(render_invoke_name(&materialized), "runCatching");
+    }
+
+    #[test]
+    fn materializes_result_error_mapping_through_the_runtime() {
+        let registry = PortableOpRegistry::builtin();
+        let mut call = ExprPortableOpCall {
+            span: Default::default(),
+            op: registry
+                .resolve("result_map_err")
+                .expect("registered result_map_err"),
+            args: vec![
+                Expr::name(Name::ident("result")),
+                Expr::name(Name::ident("convert_error")),
+            ],
+            kwargs: Vec::new(),
+        };
+
+        let materialized = KotlinMaterializer
+            .materialize_portable_op(&mut call, &None)
+            .expect("materialize result map_err")
+            .expect("result map_err replacement");
+        assert_eq!(
+            render_invoke_name(&materialized),
+            "RustKotlinRuntime.mapError"
+        );
+    }
+
+    #[test]
+    fn materializes_vec_push_as_mutable_list_add() {
+        let registry = PortableOpRegistry::builtin();
+        let mut call = ExprPortableOpCall {
+            span: Default::default(),
+            op: registry.resolve("vec_push").expect("registered vec_push"),
+            args: vec![Expr::name(Name::ident("items")), Expr::value(Value::int(1))],
+            kwargs: Vec::new(),
+        };
+
+        let materialized = KotlinMaterializer
+            .materialize_portable_op(&mut call, &None)
+            .expect("materialize vec push")
+            .expect("vec push replacement");
+        assert_eq!(render_invoke_name(&materialized), "items.add");
     }
 
     fn render_invoke_name(expr: &Expr) -> String {

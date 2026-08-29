@@ -278,6 +278,16 @@ fn kotlin_runtime_source(prefix: Option<&str>) -> String {
          object RustKotlinRuntime {{\n\
              fun decodeUtf8(bytes: ByteArray): String = bytes.toString(StandardCharsets.UTF_8)\n\
              fun encodeUtf8(value: String): ByteArray = value.toByteArray(StandardCharsets.UTF_8)\n\
+             fun <T> mapError(result: Result<T>, transform: (Throwable) -> Throwable): Result<T> {{\n\
+                 val error = result.exceptionOrNull() ?: return result\n\
+                 return Result.failure(transform(error))\n\
+             }}\n\
+             fun deleteRecursively(path: java.nio.file.Path) {{\n\
+                 if (!java.nio.file.Files.exists(path)) return\n\
+                 java.nio.file.Files.walk(path).use {{ paths ->\n\
+                     paths.sorted(java.util.Comparator.reverseOrder()).forEach(java.nio.file.Files::delete)\n\
+                 }}\n\
+             }}\n\
          }}\n"
     )
 }

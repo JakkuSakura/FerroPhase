@@ -334,6 +334,11 @@ impl KotlinSerializer {
                 code.push_str("package ");
                 code.push_str(package);
                 code.push_str("\n\n");
+                let runtime_package = package
+                    .rsplit_once('.')
+                    .map(|(prefix, _)| format!("{prefix}.runtime"))
+                    .unwrap_or_else(|| "runtime".to_owned());
+                code.push_str(&format!("import {runtime_package}.RustKotlinRuntime\n\n"));
             }
             code.push_str(&emitter.writer.finish());
             let out_path = format!("src/main/kotlin/{}.kt", output_name);

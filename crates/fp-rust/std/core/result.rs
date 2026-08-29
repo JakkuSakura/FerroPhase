@@ -711,6 +711,7 @@ impl<T, E> Result<T, E> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
     #[rustc_diagnostic_item = "result_ok_method"]
+    #[op(method = "ok_value")]
     pub const fn ok(self) -> Option<T>
     where
         T: Destruct,
@@ -739,6 +740,7 @@ impl<T, E> Result<T, E> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[op(method = "err_value")]
     pub const fn err(self) -> Option<E>
     where
         T: Destruct,

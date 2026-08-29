@@ -53,6 +53,11 @@ fn collect_rs_files(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) 
             continue;
         }
 
+        // Cargo does not recursively watch directory contents. Each vendored
+        // std source file contributes directly to the embedded bundle, so a
+        // declaration change must rebuild it and refresh the parser cache key.
+        println!("cargo:rerun-if-changed={}", path.display());
+
         let relative = path
             .strip_prefix(root)
             .expect("relative std path")

@@ -2670,6 +2670,7 @@ impl AsInner<fs_imp::DirEntry> for DirEntry {
 /// ```
 #[doc(alias = "rm", alias = "unlink", alias = "DeleteFile")]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[intrinsic = "fs_remove_file"]
 pub fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::remove_file(path.as_ref())
 }
@@ -3208,6 +3209,7 @@ pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
+#[intrinsic = "fs_remove_dir_all"]
 pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::remove_dir_all(path.as_ref())
 }

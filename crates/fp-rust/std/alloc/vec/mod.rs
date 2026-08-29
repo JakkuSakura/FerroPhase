@@ -1000,6 +1000,7 @@ const impl<T, A: Allocator + Destruct> Vec<T, A> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_confusables("push_back", "put", "append")]
+    #[op(method = "push")]
     pub fn push(&mut self, value: T) {
         let _ = self.push_mut(value);
     }
