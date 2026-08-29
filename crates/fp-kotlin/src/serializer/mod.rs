@@ -6,8 +6,7 @@ use fp_core::ast::{
     Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
-use fp_core::diagnostics::DiagnosticManager;
-use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
+use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use std::collections::BTreeSet;
@@ -1095,19 +1094,14 @@ impl KotlinEmitter {
         self.writer
             .write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
         self.writer.increase_indent();
-        match untranspilable_reason(f) {
-            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
-            None => {
-                let len = f.body.stmts.len();
-                for (i, stmt) in f.body.stmts.iter().enumerate() {
-                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
-                        Tail::Return
-                    } else {
-                        Tail::None
-                    };
-                    self.emit_stmt(stmt, tail)?;
-                }
-            }
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
+                Tail::Return
+            } else {
+                Tail::None
+            };
+            self.emit_stmt(stmt, tail)?;
         }
         self.writer.decrease_indent();
         self.writer.write_line("}\n");
@@ -1160,19 +1154,14 @@ impl KotlinEmitter {
             ret
         ));
         self.writer.increase_indent();
-        match untranspilable_reason(f) {
-            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
-            None => {
-                let len = f.body.stmts.len();
-                for (i, stmt) in f.body.stmts.iter().enumerate() {
-                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
-                        Tail::Return
-                    } else {
-                        Tail::None
-                    };
-                    self.emit_stmt(stmt, tail)?;
-                }
-            }
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
+                Tail::Return
+            } else {
+                Tail::None
+            };
+            self.emit_stmt(stmt, tail)?;
         }
         self.writer.decrease_indent();
         self.writer.write_line("}\n");
@@ -1226,19 +1215,14 @@ impl KotlinEmitter {
             ret
         ));
         self.writer.increase_indent();
-        match untranspilable_reason(f) {
-            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
-            None => {
-                let len = f.body.stmts.len();
-                for (i, stmt) in f.body.stmts.iter().enumerate() {
-                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
-                        Tail::Return
-                    } else {
-                        Tail::None
-                    };
-                    self.emit_stmt(stmt, tail)?;
-                }
-            }
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
+                Tail::Return
+            } else {
+                Tail::None
+            };
+            self.emit_stmt(stmt, tail)?;
         }
         self.writer.decrease_indent();
         self.writer.write_line("}\n");
@@ -1278,61 +1262,18 @@ impl KotlinEmitter {
         self.writer
             .write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
         self.writer.increase_indent();
-        match untranspilable_reason(f) {
-            Some(reason) => self.emit_stub_body(name, reason),
-            None => {
-                let len = f.body.stmts.len();
-                for (i, stmt) in f.body.stmts.iter().enumerate() {
-                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
-                        Tail::Return
-                    } else {
-                        Tail::None
-                    };
-                    self.emit_stmt(stmt, tail)?;
-                }
-            }
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let tail = if i == len - 1 && f.sig.ret_ty.is_some() {
+                Tail::Return
+            } else {
+                Tail::None
+            };
+            self.emit_stmt(stmt, tail)?;
         }
         self.writer.decrease_indent();
         self.writer.write_line("}\n");
         Ok(())
-    }
-}
-
-/// The single reason a function's real body isn't attempted (checked before
-/// `emit_function`/`emit_impl_function`/`emit_companion_function` try to
-/// render it) — `None` means go ahead and emit the real body. Kept as one
-/// shared check (see `emit_stub_body`) rather than each caller repeating
-/// its own `if is_x { stub } else if is_y { stub } else { ... }` chain.
-fn untranspilable_reason(f: &ItemDefFunction) -> Option<&'static str> {
-    if is_winnow_parser(&f.body.stmts) {
-        Some("parser function not transpilable (winnow combinator)")
-    } else {
-        None
-    }
-}
-
-/// Records that `context` (a qualified function name, e.g. `Foo::bar`)
-/// couldn't be transpiled and why — via `fp_core::diagnostics`, so this is
-/// visible in `fp compile`'s own output (like the "skipping impl with
-/// unresolvable self-type" warnings emitted during HIR generation) instead
-/// of only surfacing much later as a Gradle compile error nobody connects
-/// back to this specific, already-known cause.
-fn report_untranspilable(context: &str, reason: &str) {
-    DiagnosticManager::report_warning_with_context(
-        context.to_string(),
-        format!("Kotlin codegen: {reason}"),
-    );
-}
-
-/// Emits `throw NotImplementedError(reason)` as a function's body and
-/// reports it (see `report_untranspilable`) — the one place both of those
-/// happen, so every stub call site does both instead of some only doing
-/// the first.
-impl KotlinEmitter {
-    fn emit_stub_body(&mut self, context: &str, reason: &str) {
-        report_untranspilable(context, reason);
-        self.writer
-            .write_line(&format!("throw NotImplementedError(\"{}\")", reason));
     }
 }
 
@@ -1383,109 +1324,6 @@ impl KotlinEmitter {
         self.writer.decrease_indent();
         self.writer.write_line("}\n");
         Ok(())
-    }
-}
-
-/// Detect parser combinator functions that rely on winnow/nom patterns.
-fn is_winnow_parser(stmts: &[BlockStmt]) -> bool {
-    for stmt in stmts {
-        if stmt_contains_winnow(stmt) {
-            return true;
-        }
-    }
-    false
-}
-
-fn stmt_contains_winnow(stmt: &BlockStmt) -> bool {
-    match stmt {
-        BlockStmt::Expr(se) => expr_contains_winnow(&se.expr),
-        BlockStmt::Let(l) => {
-            if let Some(init) = &l.init {
-                expr_contains_winnow(init)
-            } else {
-                false
-            }
-        }
-        BlockStmt::Item(item) => item_contains_winnow(item),
-        _ => false,
-    }
-}
-
-fn item_contains_winnow(item: &Item) -> bool {
-    match item.kind() {
-        ItemKind::DefFunction(f) => is_winnow_parser(&f.body.stmts),
-        _ => false,
-    }
-}
-
-fn expr_contains_winnow(expr: &Expr) -> bool {
-    match expr.kind() {
-        ExprKind::Invoke(inv) => {
-            let method = match &inv.target {
-                ExprInvokeTarget::Method(sel) => sel.field.name.as_str().to_string(),
-                ExprInvokeTarget::Function(name) => {
-                    let s = name.to_string();
-                    s.rsplit("::").next().unwrap_or(&s).to_string()
-                }
-                _ => return false,
-            };
-            let winnow_methods = &[
-                "parse_next",
-                "take_while",
-                "verify",
-                "alt",
-                "preceded",
-                "delimited",
-                "terminated",
-                "separated_pair",
-                "tuple",
-                "many0",
-                "many1",
-            ];
-            if winnow_methods.contains(&method.as_str()) {
-                return true;
-            }
-            // A winnow call can be the *receiver* of a further chained call
-            // (`"...".parse_next(input).map(...)`), not just an argument.
-            if let ExprInvokeTarget::Method(sel) = &inv.target {
-                if expr_contains_winnow(&sel.obj) {
-                    return true;
-                }
-            }
-            for arg in &inv.args {
-                if expr_contains_winnow(arg) {
-                    return true;
-                }
-            }
-            false
-        }
-        ExprKind::Select(sel) => expr_contains_winnow(&sel.obj),
-        ExprKind::Closure(cl) => expr_contains_winnow(&cl.body),
-        ExprKind::Block(block) => {
-            for s in &block.stmts {
-                if stmt_contains_winnow(s) {
-                    return true;
-                }
-            }
-            false
-        }
-        ExprKind::BinOp(bin) => expr_contains_winnow(&bin.lhs) || expr_contains_winnow(&bin.rhs),
-        ExprKind::UnOp(un) => expr_contains_winnow(&un.val),
-        ExprKind::If(if_expr) => {
-            expr_contains_winnow(&if_expr.cond)
-                || expr_contains_winnow(&if_expr.then)
-                || if_expr
-                    .elze
-                    .as_ref()
-                    .map_or(false, |e| expr_contains_winnow(e))
-        }
-        ExprKind::Match(mt) => {
-            mt.scrutinee
-                .as_ref()
-                .map_or(false, |s| expr_contains_winnow(s))
-                || mt.cases.iter().any(|c| expr_contains_winnow(&c.body))
-        }
-        _ => false,
     }
 }
 
