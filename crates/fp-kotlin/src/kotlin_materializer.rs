@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprBinOp, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, TySlot, Value,
+    ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, Path, TySlot, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicMaterializer;
@@ -32,24 +32,14 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             "option_some" | "option_unwrap" | "clone" | "as_ref" | "iter" | "to_owned"
             | "as_str" | "as_deref" => Ok(Some(receiver())),
             "option_none" => Ok(Some(Expr::value(Value::Null(Default::default())))),
-            "result_ok" => Ok(Some(match call.args.first() {
-                Some(expr)
-                    if matches!(expr.kind(), ExprKind::Value(v) if matches!(**v, Value::Unit(_)))
-                        || matches!(expr.kind(), ExprKind::Block(b) if b.stmts.is_empty()) =>
-                {
-                    Expr::name(Name::ident("Unit"))
-                }
-                Some(expr) => expr.clone(),
-                None => Expr::value(Value::Null(Default::default())),
-            })),
-            "result_err" => {
-                let arg = call
-                    .args
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| Expr::value(Value::string(String::new())));
-                Ok(Some(invoke_function("error", vec![arg])))
-            }
+            "result_ok" => Ok(Some(invoke_path(
+                &["Result", "success"],
+                vec![result_constructor_arg(call)],
+            ))),
+            "result_err" => Ok(Some(invoke_path(
+                &["Result", "failure"],
+                vec![result_constructor_arg(call)],
+            ))),
             "vec_new" => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
                 ExprIntrinsicContainer::VecElements { elements: vec![] },
             )))),
@@ -112,6 +102,79 @@ fn invoke_function(name: &str, args: Vec<Expr>) -> Expr {
         args,
         kwargs: Vec::new(),
     }))
+}
+
+fn invoke_path(segments: &[&str], args: Vec<Expr>) -> Expr {
+    Expr::new(ExprKind::Invoke(ExprInvoke {
+        span: Default::default(),
+        target: ExprInvokeTarget::Function(Name::path(Path::plain(
+            segments
+                .iter()
+                .map(|segment| Ident::new(*segment))
+                .collect(),
+        ))),
+        args,
+        kwargs: Vec::new(),
+    }))
+}
+
+fn result_constructor_arg(call: &ExprPortableOpCall) -> Expr {
+    call.args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| Expr::value(Value::Null(Default::default())))
+}
+
+#[cfg(test)]
+mod tests {
+    use fp_core::ast::{ExprKind, ExprPortableOpCall, Value};
+    use fp_core::intrinsics::PortableOpRegistry;
+
+    use super::*;
+
+    #[test]
+    fn materializes_result_constructors_without_erasing_them() {
+        let registry = PortableOpRegistry::builtin();
+        let mut ok = ExprPortableOpCall {
+            span: Default::default(),
+            op: registry.resolve("result_ok").expect("registered result_ok"),
+            args: vec![Expr::value(Value::string("value".to_string()))],
+            kwargs: Vec::new(),
+        };
+        let mut err = ExprPortableOpCall {
+            span: Default::default(),
+            op: registry
+                .resolve("result_err")
+                .expect("registered result_err"),
+            args: vec![Expr::value(Value::string("failure".to_string()))],
+            kwargs: Vec::new(),
+        };
+
+        let materializer = KotlinMaterializer;
+        let ok = materializer
+            .materialize_portable_op(&mut ok, &None)
+            .expect("materialize Ok")
+            .expect("Ok replacement");
+        let err = materializer
+            .materialize_portable_op(&mut err, &None)
+            .expect("materialize Err")
+            .expect("Err replacement");
+
+        assert!(matches!(ok.kind(), ExprKind::Invoke(_)));
+        assert!(matches!(err.kind(), ExprKind::Invoke(_)));
+        assert_eq!(render_invoke_name(&ok), "Result::success");
+        assert_eq!(render_invoke_name(&err), "Result::failure");
+    }
+
+    fn render_invoke_name(expr: &Expr) -> String {
+        let ExprKind::Invoke(invoke) = expr.kind() else {
+            panic!("expected invocation");
+        };
+        let ExprInvokeTarget::Function(name) = &invoke.target else {
+            panic!("expected function invocation");
+        };
+        name.to_string()
+    }
 }
 
 fn invoke_method(receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {

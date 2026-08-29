@@ -18,6 +18,14 @@ pub enum ResultTypeRule {
     /// Result is always the target language's native string type (e.g.
     /// `x.to_string()`, `String::from_utf8(..)`).
     TargetNativeString,
+    /// Result wraps argument `N` in the source language's `Result` success
+    /// constructor. Targets that support result values must preserve that
+    /// wrapper instead of erasing it into the successful value.
+    ResultSuccess(usize),
+    /// Result wraps argument `N` in the source language's `Result` failure
+    /// constructor. This is not `Never`: constructing an error result is an
+    /// ordinary expression and may be returned, bound, or matched.
+    ResultFailure(usize),
     /// Result never produces a value normally (e.g. `Err(e)` → `error(e)`,
     /// unifies with whatever the caller expects, like `panic!`).
     Never,
@@ -172,13 +180,11 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         def("option_some", false, 1, NotStaticallyKnowable),
         def("option_none", false, 0, NotStaticallyKnowable),
         def("option_unwrap", true, 1, NotStaticallyKnowable),
-        // `Ok(x)` → `x` (Kotlin has no `Result<T, E>` with an arbitrary
-        // error type; the function's own return type is unwrapped the same
-        // way, `Result<T, E>` → `T` — see `kotlin_type_from_ty`).
-        def("result_ok", false, 1, SameAsArg(0)),
-        // `Err(e)` → `error(e)` — never produces a value, unifies with
-        // whatever the surrounding context expects.
-        def("result_err", false, 1, Never),
+        // `Ok(x)` and `Err(e)` construct result values. A target decides how
+        // to represent `Result`, but it must retain the success/failure
+        // distinction through materialization and cannot erase errors.
+        def("result_ok", false, 1, ResultSuccess(0)),
+        def("result_err", false, 1, ResultFailure(0)),
         def("vec_new", false, 0, NotStaticallyKnowable),
         def("clone", true, 1, SameAsArg(0)),
         def("as_ref", true, 1, SameAsArg(0)),

@@ -140,22 +140,6 @@ pub(super) fn map_name_to_kt(name: &str) -> String {
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Box") {
         return map_name_to_kt(inner);
     }
-    if let Some(inner) = strip_generic_wrapper(&dot_name, "Result").and_then(|s| {
-        // Result<T, E> → just T. Only the first *top-level* comma marks the
-        // T/E boundary — T can itself contain commas (`Result<Vec<(A, B)>, E>`),
-        // which a naive `s.find(',')` would wrongly split on instead.
-        let parts = split_top_level(s, ',');
-        (parts.len() > 1).then_some(parts[0])
-    }) {
-        return map_name_to_kt(inner);
-    }
-    // `std::fmt::Result` — a plain type ALIAS for `Result<(), fmt::Error>`
-    // (never written with `<...>` at the use site, unlike a real generic
-    // instantiation), so the generic-wrapper strip above never matches
-    // it. Same "unwrap to the success type" rule applies: `() → Unit`.
-    if last_seg == "Result" && !dot_name.contains('<') {
-        return "Unit".into();
-    }
     // `std::fmt::Formatter` — the one parameter type `Display`/`Debug`'s
     // `fmt` method takes, always by `&mut` reference. Modeled directly as
     // Kotlin's `StringBuilder`: `write!(f, ..)` normalizes to `f.append(..)`
