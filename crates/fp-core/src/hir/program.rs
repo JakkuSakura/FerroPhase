@@ -158,6 +158,13 @@ impl HirProgram {
             .cloned()
     }
 
+    /// Stable HIR identity of a transparent type alias target. Comptime
+    /// results are keyed by this target identity, not by a display name.
+    pub fn type_alias_target_hir_id(&self, def_id: DefId) -> Option<HirId> {
+        self.package(&def_id.package_id)?
+            .type_alias_target_hir_id(&def_id)
+    }
+
     pub fn item(&self, def_id: DefId) -> Option<Item> {
         self.package(&def_id.package_id)?
             .def_map
