@@ -1,7 +1,7 @@
 use fp_core::ast::Name;
 use fp_core::ast::Pattern;
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicKind, IntrinsicNormalizer};
+use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
@@ -1038,9 +1038,7 @@ impl AstToHirLowerer {
                 let qualified = self.module_path.with_segment(name.to_string()).to_key();
                 is_trait(self.lookup_symbol(&qualified, hir::Namespace::Type))
             })
-            .or_else(|| {
-                is_trait(self.lookup_prelude_symbol(name, hir::Namespace::Type))
-            })
+            .or_else(|| is_trait(self.lookup_prelude_symbol(name, hir::Namespace::Type)))
             .or_else(|| is_trait(self.lookup_symbol(name, hir::Namespace::Type)))
     }
 
@@ -1185,6 +1183,17 @@ impl AstToHirLowerer {
             span: self.create_span(4), // Span for "main" function
         };
 
+        if let hir::ItemKind::Function(function) = &main_item.kind {
+            if let Some(body) = &function.body {
+                for stmt in &body.stmts {
+                    if let hir::StmtKind::Item(nested) = &stmt.kind {
+                        self.program_def_map
+                            .insert(nested.def_id.clone(), nested.clone());
+                    }
+                }
+            }
+        }
+
         hir_program.items.push(main_item);
 
         if !self.synthetic_items.is_empty() {
@@ -1198,6 +1207,21 @@ impl AstToHirLowerer {
             }
             hir_program.items.extend(synthetic.drain(..));
         }
+
+        // Keep block-local materialized declarations in the package index;
+        // their paths are resolved in the enclosing expression body, while
+        // type checking needs the corresponding HIR item by DefId.
+        hir_program.def_map = self.program_def_map.clone();
+        hir_program.def_paths = self.package.def_paths.clone();
+        hir_program.placeholder_defs = self.package.placeholder_defs.clone();
+        hir_program.op_defs.extend(self.package.op_defs.clone());
+        hir_program
+            .intrinsic_defs
+            .extend(self.package.intrinsic_defs.clone());
+        hir_program
+            .type_alias_targets
+            .extend(self.package.type_alias_targets.clone());
+        hir_program.index_derived_lookups();
 
         Ok(hir_program)
     }
@@ -1444,6 +1468,18 @@ impl AstToHirLowerer {
                 .insert(item.def_id.clone(), item.clone());
             program.items.push(item);
         }
+        for item in &program.items {
+            if let hir::ItemKind::Function(function) = &item.kind {
+                if let Some(body) = &function.body {
+                    for stmt in &body.stmts {
+                        if let hir::StmtKind::Item(nested) = &stmt.kind {
+                            self.program_def_map
+                                .insert(nested.def_id.clone(), nested.clone());
+                        }
+                    }
+                }
+            }
+        }
         program
             .items
             .extend(std::mem::take(&mut self.local_dispatch_items));
@@ -1457,6 +1493,9 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
+        for (def_id, block) in self.package.const_block_defs() {
+            program.record_const_block_def(def_id, block);
+        }
         // Crate metadata must travel with the published HIR snapshot. The
         // consumer lowerer uses this edge set to select the implicit prelude;
         // deriving it again from a transient package workspace makes the
@@ -2020,42 +2059,52 @@ impl AstToHirLowerer {
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item.as_ref(), def_type)? {
+                    // A materialized local type alias is a real HIR struct or
+                    // enum item. Bind its name to that item's DefId in both
+                    // namespaces so later local uses (`Base { ... }` and
+                    // `type(Base)`) resolve to the materialized definition
+                    // instead of falling back to an unresolved type param.
+                    let def_id = hir_item.def_id.clone();
+                    self.program_def_map
+                        .insert(def_id.clone(), hir_item.clone());
+                    self.current_type_scope()
+                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
+                    self.current_value_scope()
+                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Item(hir_item))
-                } else if let Some(inner) = comptime_type_alias_rhs(&def_type.value) {
-                    // `type X = const { .. };` / `type X = EXPR;` (where
-                    // `EXPR` needs compile-time evaluation to produce a
-                    // concrete type, e.g. a `TypeBuilder`-constructed
-                    // struct) has no `def_map` entry to give — a real
-                    // struct/enum's shape is known up front, this one only
-                    // once the checker evaluates `inner`. Lower it as an
-                    // ordinary, eagerly-checked expression-position
-                    // `ConstBlock` statement (per Part B: `const { .. }` in
-                    // this position is transparent sugar, so both syntaxes
-                    // collapse to the same node here), and bind `X`'s name
-                    // to that const block's own `DefId` via `Res::Def` —
-                    // scope-local only (like `register_type_generic`'s
-                    // generics binding), not exported through
-                    // `record_value_symbol`/`record_type_symbol`, since this
-                    // name is lexically scoped to this statement, not a real
-                    // module-level definition. `path_ty`/`field_ty` read the
-                    // resolved shape straight out of the package's own
-                    // `const_block_values` by that `DefId` once this
-                    // statement has been checked.
-                    let body = Box::new(self.transform_expr_to_hir(inner)?);
-                    let def_id = self.next_def_id();
-                    let const_block_expr = hir::Expr {
+                } else if comptime_type_alias_rhs(&def_type.value).is_some() {
+                    // The const block is the alias target, not the alias
+                    // declaration itself. Keep `type X = ...` as a real HIR
+                    // definition with its own stable identity; the target's
+                    // `ConstBlock` remains an expression/type node and is
+                    // evaluated by the normal comptime pipeline.
+                    let def_id = self.def_id_for_item(item.as_ref());
+                    let target = self.transform_type_to_hir(&def_type.value)?;
+                    self.package
+                        .type_alias_targets
+                        .insert(def_id.clone(), target);
+                    let alias = hir::Item {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock {
-                            def_id: def_id.clone(),
-                            body,
+                        def_id: def_id.clone(),
+                        visibility: self.map_visibility(&def_type.visibility),
+                        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
+                            name: hir::Symbol::new(def_type.name.name.clone()),
+                            target: self
+                                .package
+                                .type_alias_targets
+                                .get(&def_id)
+                                .cloned()
+                                .expect("type alias target recorded before HIR item creation"),
                         }),
                         span: item.span(),
                     };
+                    self.program_def_map
+                        .insert(def_id.clone(), alias.clone());
                     self.current_value_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
                     self.current_type_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
-                    Ok(hir::StmtKind::Expr(const_block_expr))
+                    Ok(hir::StmtKind::Item(alias))
                 } else {
                     let unit_block = hir::Block {
                         hir_id: self.next_id(),
@@ -2414,6 +2463,14 @@ impl AstToHirLowerer {
                 if function_body_is_compiler_intrinsic_marker(&function) {
                     function.body = None;
                 }
+                if let Some(body) = &function.body {
+                    for stmt in &body.stmts {
+                        if let hir::StmtKind::Item(nested) = &stmt.kind {
+                            self.program_def_map
+                                .insert(nested.def_id.clone(), nested.clone());
+                        }
+                    }
+                }
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),
@@ -2563,6 +2620,14 @@ impl AstToHirLowerer {
             let span = this.create_span(1);
             this.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
             let function = this.transform_decl_function_sig(decl, None)?;
+            if let Some(body) = &function.body {
+                for stmt in &body.stmts {
+                    if let hir::StmtKind::Item(nested) = &stmt.kind {
+                        this.program_def_map
+                            .insert(nested.def_id.clone(), nested.clone());
+                    }
+                }
+            }
             Ok(hir::Item {
                 hir_id,
                 def_id,

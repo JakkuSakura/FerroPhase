@@ -41,6 +41,9 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
         ItemKind::Function(func) => write_function(item, func, f, ctx),
         ItemKind::Struct(strukt) => write_struct(item, strukt, f, ctx),
         ItemKind::Enum(enm) => write_enum(item, enm, f, ctx),
+        ItemKind::TypeAlias(alias) => {
+            ctx.writeln(f, format!("type {} = {:?};", alias.name, alias.target.kind))
+        }
         ItemKind::Const(konst) => write_const(item, konst, f, ctx),
         ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
         ItemKind::Trait(tr) => write_trait(item, tr, f, ctx),

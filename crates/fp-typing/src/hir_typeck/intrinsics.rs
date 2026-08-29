@@ -106,6 +106,7 @@ impl HirTypeChecker {
                 }),
             IntrinsicKind::CreateStruct
             | IntrinsicKind::AddField
+            | IntrinsicKind::CloneStruct
             | IntrinsicKind::BuildType
             | IntrinsicKind::PrimitiveType => Ty { kind: TyKind::Type },
             IntrinsicKind::FsWriteString

@@ -722,6 +722,9 @@ impl HirTypeChecker {
                         scope.check_type_expr(&field.ty).await?;
                     }
                 }
+                hir::ItemKind::TypeAlias(alias) => {
+                    self.check_type_expr(&alias.target).await?;
+                }
                 hir::ItemKind::Enum(def) => {
                     let mut scope = self.with_generics(&def.generics);
                     for variant in &def.variants {
@@ -2585,6 +2588,13 @@ impl HirTypeChecker {
                     let def_id = def_id.clone();
                     let hir_id = expr.hir_id.clone();
                     let body_ty = self.check_expr(body).await?;
+                    // The comptime resolver needs the block's checked result
+                    // type to emit its synthetic entry before it can execute
+                    // the block. Publish it before awaiting the request;
+                    // this is the same ordering used by expression-position
+                    // const blocks below.
+                    self.package()
+                        .record_type_expr_type(hir_id.clone(), body_ty.clone());
                     // A `const { .. }` block whose value still depends on
                     // an uninstantiated generic parameter of the enclosing
                     // (still-generic) function/impl can't be evaluated yet
@@ -2613,8 +2623,6 @@ impl HirTypeChecker {
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    self.package()
-                        .record_type_expr_type(hir_id, body_ty.clone());
                     body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
@@ -3528,6 +3536,11 @@ impl HirTypeChecker {
             let _ = local;
             return Ok(self.error_ty(format!("local `{local}` has no inferred type")));
         }
+        if let Some(hir::Res::Def(def_id)) = &path.res {
+            if let Some(fp_core::ast::Value::Type(_)) = self.package().const_block_value(def_id.clone()) {
+                return Ok(Ty { kind: TyKind::Type });
+            }
+        }
         // A fully- or partially-qualified trait-method value path
         // (`core::fmt::Display::fmt`/`fmt::Debug::fmt`, real vendored
         // std's own idiom for calling a trait method explicitly rather
@@ -3903,6 +3916,13 @@ impl HirTypeChecker {
             });
         };
         match &item.kind {
+            // A type alias name in value position denotes a type value (the
+            // value consumed by `type(X)`, `TypeBuilder::from`, and the
+            // reflection intrinsics). Its target is checked separately when
+            // the alias is declared; returning the target here would make
+            // `type(Alias)` receive the represented struct rather than a
+            // value of the language's `type` meta-type.
+            hir::ItemKind::TypeAlias(_) => Ok(Ty { kind: TyKind::Type }),
             // Host statics are externally initialized globals. Their HIR
             // body is only a typed placeholder, so resolving the value must
             // use the declaration directly rather than checking that body.

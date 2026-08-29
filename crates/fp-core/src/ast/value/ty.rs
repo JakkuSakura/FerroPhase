@@ -205,6 +205,14 @@ impl Ty {
                 .ty
                 .primitive_type_value_name()
                 .map(|inner| format!("&{inner}")),
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Name(Name::Ident(ident)) => {
+                    TypePrimitive::from_name(&ident.name).map(|primitive| {
+                        primitive.canonical_name().unwrap_or(&ident.name).to_string()
+                    })
+                }
+                _ => None,
+            },
             _ => None,
         }
     }

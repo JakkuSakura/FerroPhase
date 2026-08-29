@@ -653,6 +653,7 @@ impl HirPackage {
             // items are.
             ItemKind::Function(_)
             | ItemKind::Const(_)
+            | ItemKind::TypeAlias(_)
             | ItemKind::Trait(_)
             | ItemKind::Query(_)
             | ItemKind::Expr(_) => {}
@@ -681,8 +682,8 @@ impl HirPackage {
         self.blanket_impls.clear();
         self.enum_variant_item_index.clear();
         self.member_to_owning_item.clear();
-        for index in 0..self.items.len() {
-            let item = self.items[index].clone();
+        let items: Vec<Item> = self.def_map.values().cloned().collect();
+        for item in items {
             self.index_item(&item);
         }
     }
@@ -996,5 +997,9 @@ impl HirPackage {
 
     pub fn const_block_def(&self, def_id: DefId) -> Option<Block> {
         self.const_block_defs.borrow().get(&def_id).cloned()
+    }
+
+    pub fn const_block_defs(&self) -> HashMap<DefId, Block> {
+        self.const_block_defs.borrow().clone()
     }
 }

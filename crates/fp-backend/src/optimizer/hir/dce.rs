@@ -99,8 +99,9 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
                 || variant
                     .discriminant
                     .as_ref()
-                    .is_some_and(expr_has_unresolved_paths)
+                .is_some_and(expr_has_unresolved_paths)
         }),
+        hir::ItemKind::TypeAlias(alias) => type_has_unresolved_paths(&alias.target),
         hir::ItemKind::Impl(_) => true,
         hir::ItemKind::Trait(_) => true,
         hir::ItemKind::Query(_) => false,
@@ -310,6 +311,7 @@ fn item_name(item: &hir::Item) -> Option<&str> {
         hir::ItemKind::Function(function) => Some(function.sig.name.as_str()),
         hir::ItemKind::Struct(def) => Some(def.name.as_str()),
         hir::ItemKind::Enum(def) => Some(def.name.as_str()),
+        hir::ItemKind::TypeAlias(alias) => Some(alias.name.as_str()),
         hir::ItemKind::Const(def) => Some(def.name.as_str()),
         hir::ItemKind::Impl(_) => None,
         hir::ItemKind::Trait(_) => None,
@@ -355,6 +357,7 @@ pub(crate) fn collect_item_refs(
                 }
             }
         }
+        hir::ItemKind::TypeAlias(alias) => collect_type_refs(&alias.target, tail_map, work),
         hir::ItemKind::Impl(_) => {}
         hir::ItemKind::Trait(_) => {}
         hir::ItemKind::Query(_) => {}

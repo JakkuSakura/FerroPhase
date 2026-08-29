@@ -7,7 +7,7 @@ use fp_core::ast::{
     ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect,
     ExprSelectType, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
     ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, Pattern,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemDefType, ItemKind, Name, Path, Pattern,
     PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct,
     PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference,
     TypeSlice, TypeStruct, TypeTuple, Value,
@@ -319,6 +319,13 @@ impl<'a> HirToAstLifter<'a> {
                         })
                         .collect::<Result<Vec<_>>>()?,
                 },
+            })),
+            hir::ItemKind::TypeAlias(alias) => Item::from(ItemKind::DefType(ItemDefType {
+                attrs: Vec::new(),
+                visibility: lift_visibility(&item.visibility),
+                name: Ident::new(alias.name.as_str()),
+                generics_params: Vec::new(),
+                value: self.lift_type(&alias.target)?,
             })),
             hir::ItemKind::Const(def) => Item::from(ItemKind::DefConst(ItemDefConst {
                 attrs: Vec::new(),

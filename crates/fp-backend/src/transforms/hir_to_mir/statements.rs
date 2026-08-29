@@ -152,6 +152,7 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering
                     .register_enum(item.def_id.clone(), enm, item.span);
             }
+            hir::ItemKind::TypeAlias(_) => {}
             hir::ItemKind::Const(konst) => {
                 if konst.is_host {
                     let ty = self.lowering.lower_type_expr(&konst.ty);

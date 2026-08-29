@@ -533,6 +533,24 @@ impl HirTypeChecker {
             {
                 self.unify_call_types_impl(expected, &actual, substitutions, record)
             }
+            // String literals are represented as unsized slice values in HIR,
+            // while APIs expose them through the ordinary shared-reference
+            // spelling `&str` (`&[u8]`). This is the one-way borrow adjustment
+            // needed at call sites; mutable references must not be synthesized
+            // from a literal.
+            (TyKind::Ref(_, expected, expected_mut), TyKind::Slice(actual))
+                if *expected_mut == ty::Mutability::Not
+                    && matches!(expected.kind, TyKind::Slice(_)) =>
+            {
+                self.unify_call_types_impl(
+                    expected,
+                    &Ty {
+                        kind: TyKind::Slice(actual.clone()),
+                    },
+                    substitutions,
+                    record,
+                )
+            }
             (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
                 if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
             {

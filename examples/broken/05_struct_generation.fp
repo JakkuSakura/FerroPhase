@@ -58,11 +58,11 @@ fn main() {
     println!("config fields: {}", type(Config).fields.len());
     println!(
         "config has mode: {}",
-        type(Config).fields.contains("mode")
+        has_field!(Config, "mode")
     );
     println!(
         "config has max_retries: {}",
-        type(Config).fields.contains("max_retries")
+        has_field!(Config, "max_retries")
     );
     println!("config size: {}", type(Config).size);
     println!("config type: {}", type(Config).name);

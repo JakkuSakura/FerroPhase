@@ -197,11 +197,18 @@ pub enum ItemKind {
     Function(Function),
     Struct(Struct),
     Enum(Enum),
+    TypeAlias(TypeAlias),
     Const(Const),
     Impl(Impl),
     Trait(Trait),
     Query(Query),
     Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAlias {
+    pub name: Symbol,
+    pub target: TypeExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -979,6 +986,7 @@ impl ItemKind {
             ItemKind::Function(func) => func.span(),
             ItemKind::Struct(stru) => stru.span(),
             ItemKind::Enum(enm) => enm.span(),
+            ItemKind::TypeAlias(alias) => alias.target.span,
             ItemKind::Const(cons) => cons.span(),
             ItemKind::Impl(imp) => imp.span(),
             ItemKind::Trait(tr) => tr.span(),

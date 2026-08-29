@@ -935,6 +935,59 @@ impl CompilerDriver {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let mut program = program;
         program.hir_exports.extend(package_exports);
+        fn collect_nested_items(block: &hir::Block, output: &mut Vec<hir::Item>) {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    hir::StmtKind::Item(item) => output.push(item.clone()),
+                    hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                        if let hir::ExprKind::Block(inner) = &expr.kind {
+                            collect_nested_items(inner, output);
+                        }
+                    }
+                    hir::StmtKind::Local(local) => {
+                        if let Some(init) = &local.init {
+                            if let hir::ExprKind::Block(inner) = &init.kind {
+                                collect_nested_items(inner, output);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(expr) = &block.expr {
+                if let hir::ExprKind::Block(inner) = &expr.kind {
+                    collect_nested_items(inner, output);
+                }
+            }
+        }
+
+        let mut nested_items = Vec::new();
+        for item in &program.items {
+            match &item.kind {
+                hir::ItemKind::Function(function) => {
+                    if let Some(body) = &function.body {
+                        collect_nested_items(body, &mut nested_items);
+                    }
+                }
+                hir::ItemKind::Expr(expr) => {
+                    if let hir::ExprKind::Block(block) = &expr.kind {
+                        collect_nested_items(block, &mut nested_items);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for item in nested_items {
+            program.def_map.insert(item.def_id.clone(), item);
+        }
+        let nested_items: Vec<hir::Item> = program
+            .def_map
+            .values()
+            .filter(|item| {
+                matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_))
+            })
+            .cloned()
+            .collect();
+        program.items.extend(nested_items);
         let hir_package = std::rc::Rc::new(program);
         self.state.borrow_mut().insert_hir(hir_package.clone());
         let hir_program = self.state.borrow().hir_program_rc();
@@ -1062,6 +1115,29 @@ impl CompilerDriver {
             )
             .with_package_id(package_id.clone())
         };
+        let dependency_units = {
+            let borrowed = state.borrow();
+            borrowed
+                .mir_program()
+                .packages
+                .iter()
+                .filter(|(dependency_id, _)| *dependency_id != &package_id)
+                .flat_map(|(dependency_id, package)| {
+                    let dependency_id = dependency_id.clone();
+                    package
+                        .borrow()
+                        .units
+                        .values()
+                        .cloned()
+                        .map(move |unit| (dependency_id.clone(), unit))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (dependency_id, dependency) in dependency_units {
+            lir_gen.predeclare_dependency_function_signatures(&dependency, dependency_id);
+        }
+        lir_gen.predeclare_loaded_lir_signatures();
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone())
             .await?;
 

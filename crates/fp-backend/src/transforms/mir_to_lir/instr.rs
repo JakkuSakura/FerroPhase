@@ -278,6 +278,40 @@ impl MirToLirLowerer {
         }
     }
 
+    /// Make signatures from precompiled dependencies available while
+    /// lowering a newly-created unit. Such packages intentionally have no
+    /// MIR units in the current session, but their LIR blobs still provide
+    /// the callable ABI needed by references from comptime code.
+    pub fn predeclare_loaded_lir_signatures(&mut self) {
+        for (package_id, package) in &self.lir_program.packages {
+            for blob in &package.blobs {
+                for function in &blob.functions {
+                    let name = function.name.as_str().to_string();
+                    let mut names = vec![name.clone()];
+                    let segments = name.split("::").collect::<Vec<_>>();
+                    if segments.len() >= 2 {
+                        names.push(format!(
+                            "{}::{}",
+                            segments[segments.len() - 2],
+                            segments[segments.len() - 1]
+                        ));
+                    }
+                    for name in names {
+                        self.function_signatures
+                            .entry(name.clone())
+                            .or_insert_with(|| function.signature.clone());
+                        self.function_package_ids
+                            .entry(name.clone())
+                            .or_insert_with(|| package_id.clone());
+                        self.function_call_conventions
+                            .entry(name)
+                            .or_insert(function.calling_convention.clone());
+                    }
+                }
+            }
+        }
+    }
+
     /// Lower one MIR declaration into independently publishable LIR.
     pub fn transform_item(
         &mut self,

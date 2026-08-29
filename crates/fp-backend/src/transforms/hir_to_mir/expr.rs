@@ -981,7 +981,7 @@ impl HirToMirLowerer {
 
         for item in &items {
             match &item.kind {
-                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
+                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {}
                 hir::ItemKind::Const(const_item) => {
                     let ty = self.lower_type_expr(&const_item.ty);
                     if const_item.is_host {
@@ -1164,6 +1164,7 @@ impl HirToMirLowerer {
         match &item.kind {
             hir::ItemKind::Struct(_)
             | hir::ItemKind::Enum(_)
+            | hir::ItemKind::TypeAlias(_)
             | hir::ItemKind::Trait(_)
             | hir::ItemKind::Expr(_) => {}
             hir::ItemKind::Const(const_item) => {
@@ -1253,7 +1254,7 @@ impl HirToMirLowerer {
         let Some(body) = block.expr.as_ref() else {
             return Ok(());
         };
-        let Some(ty) = self.typeck_expr_type(block.hir_id.clone()) else {
+        let Some(ty) = self.typeck_type_expr_type(block.hir_id.clone()) else {
             return Ok(());
         };
         let name = hir::Symbol::new(format!(

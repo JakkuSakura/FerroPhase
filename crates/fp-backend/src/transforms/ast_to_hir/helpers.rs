@@ -261,16 +261,15 @@ impl AstToHirLowerer {
             // identified the first segment as a crate root. Rustc does not
             // consult every dependency when probing an ordinary lexical path;
             // doing so would change shadowing and module-relative lookup.
-            let is_extern_crate_root = candidate
-                .segments
-                .first()
-                .is_some_and(|root| {
-                    self.hir_program.packages.values().any(|package| {
-                        hir::HirProgram::external_crate_name(&package.id) == root.as_str()
-                    })
-                });
+            let is_extern_crate_root = candidate.segments.first().is_some_and(|root| {
+                self.hir_program.packages.values().any(|package| {
+                    hir::HirProgram::external_crate_name(&package.id) == root.as_str()
+                })
+            });
             if is_extern_crate_root
-                && self.lookup_dependency_module_tree(candidate, scope).is_some()
+                && self
+                    .lookup_dependency_module_tree(candidate, scope)
+                    .is_some()
             {
                 return true;
             }
@@ -1072,7 +1071,9 @@ impl AstToHirLowerer {
                         if let Some(path) =
                             self.resolved_name_to_hir_path(&resolved_name, name, scope)?
                         {
-                            return Ok(path);
+                            if path.res.is_some() {
+                                return Ok(path);
+                            }
                         }
                     }
                 }
@@ -1110,8 +1111,7 @@ impl AstToHirLowerer {
                 if matches!(
                     select.select,
                     ast::ExprSelectType::Const | ast::ExprSelectType::Function
-                )
-                    && !matches!(base.res, Some(hir::Res::Module(_)))
+                ) && !matches!(base.res, Some(hir::Res::Module(_)))
                 {
                     if let Some(res) = self.lookup_enum_variant(&base, &select.field.name) {
                         base.res = Some(res);
@@ -1151,10 +1151,9 @@ impl AstToHirLowerer {
                             PathResolutionScope::Type,
                         )?,
                         ast::Ty::Expr(type_expr) => match type_expr.kind() {
-                            ast::ExprKind::Name(name) => self.name_to_hir_path_with_scope(
-                                name,
-                                PathResolutionScope::Type,
-                            )?,
+                            ast::ExprKind::Name(name) => {
+                                self.name_to_hir_path_with_scope(name, PathResolutionScope::Type)?
+                            }
                             ast::ExprKind::Value(value) => match value.as_ref() {
                                 ast::Value::Type(inner) => match inner {
                                     ast::Ty::Struct(struct_ty) => self
@@ -1189,8 +1188,8 @@ impl AstToHirLowerer {
                                             Diagnostic::error(
                                                 "expected a path-like type target".to_string(),
                                             )
-                                                .with_source_context(DIAGNOSTIC_CONTEXT)
-                                                .with_span(expr.span()),
+                                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                                            .with_span(expr.span()),
                                         );
                                         hir::Path {
                                             segments: vec![
@@ -1205,8 +1204,8 @@ impl AstToHirLowerer {
                                         Diagnostic::error(
                                             "expected a path-like type target".to_string(),
                                         )
-                                            .with_source_context(DIAGNOSTIC_CONTEXT)
-                                            .with_span(expr.span()),
+                                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                                        .with_span(expr.span()),
                                     );
                                     hir::Path {
                                         segments: vec![self.make_path_segment("__fp_error", None)],
@@ -1219,8 +1218,8 @@ impl AstToHirLowerer {
                                     Diagnostic::error(
                                         "expected a path-like type target".to_string(),
                                     )
-                                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                                        .with_span(expr.span()),
+                                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                                    .with_span(expr.span()),
                                 );
                                 hir::Path {
                                     segments: vec![self.make_path_segment("__fp_error", None)],
@@ -1239,7 +1238,7 @@ impl AstToHirLowerer {
                                 res: None,
                             }
                         }
-                    }
+                    },
                     ast::ExprInvokeTarget::Method(select) => {
                         let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
                         let seg = self.make_path_segment(&select.field.name, None);

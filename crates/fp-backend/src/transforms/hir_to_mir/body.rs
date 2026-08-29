@@ -3729,7 +3729,9 @@ impl<'a> BodyBuilder<'a> {
                     structural_ty = inner.as_ref().clone();
                 }
                 if matches!(structural_ty.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
-                    let index_ty = Ty { kind: TyKind::Uint(UintTy::Usize) };
+                    let index_ty = Ty {
+                        kind: TyKind::Uint(UintTy::Usize),
+                    };
                     let index_operand = self.lower_operand(index, Some(&index_ty))?;
                     let mut place_info = match self.lower_place(base)? {
                         Some(place) => place,
@@ -3743,17 +3745,20 @@ impl<'a> BodyBuilder<'a> {
                             mir::Rvalue::Use(index_operand.operand),
                         ),
                     });
-                    place_info.place.projection.push(mir::PlaceElem::Index(index_local));
-                    place_info.ty = self.expect_array_element_ty(&structural_ty)
+                    place_info
+                        .place
+                        .projection
+                        .push(mir::PlaceElem::Index(index_local));
+                    place_info.ty = self
+                        .expect_array_element_ty(&structural_ty)
                         .unwrap_or_else(|| self.lowering.error_ty());
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(place_info.place),
                         ty: place_info.ty,
                     });
                 }
-                let Some(method_def_id) = self
-                    .lowering
-                    .typeck_method_resolution(expr.hir_id.clone())
+                let Some(method_def_id) =
+                    self.lowering.typeck_method_resolution(expr.hir_id.clone())
                 else {
                     self.lowering.emit_error(
                         expr.span,
@@ -3761,7 +3766,9 @@ impl<'a> BodyBuilder<'a> {
                     );
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                        ty: expected.cloned().unwrap_or_else(|| self.lowering.error_ty()),
+                        ty: expected
+                            .cloned()
+                            .unwrap_or_else(|| self.lowering.error_ty()),
                     });
                 };
                 let element_ty = expected
@@ -4799,7 +4806,8 @@ impl<'a> BodyBuilder<'a> {
             .cloned()
             .ok_or_else(|| {
                 crate::error::optimization_error(format!(
-                    "no method `{}` found on struct {:?}", method_name, struct_def_id
+                    "no method `{}` found on struct {:?}",
+                    method_name, struct_def_id
                 ))
             })?;
         self.call_method_def_into_place(
@@ -4827,7 +4835,9 @@ impl<'a> BodyBuilder<'a> {
             .lowering
             .ensure_generic_method_def(method_def_id.clone())
             .ok_or_else(|| {
-                crate::error::optimization_error(format!("no method definition for {method_def_id:?}"))
+                crate::error::optimization_error(format!(
+                    "no method definition for {method_def_id:?}"
+                ))
             })?;
         let method_ctx = self
             .lowering
