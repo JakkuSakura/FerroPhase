@@ -1183,6 +1183,8 @@ impl CompilerDriver {
             }
             let owner_package_id = def_id.package_id.clone();
             if owner_package_id != *entry_package_id {
+                Self::type_check_comptime_dependency(state, &owner_package_id, def_id.clone())
+                    .await?;
                 let hir_program = state.borrow().hir_program_rc();
                 let mir_package = state.borrow_mut().mir_package_rc(&owner_package_id);
                 let mut lowering = HirToMirLowerer::new(
@@ -1236,6 +1238,46 @@ impl CompilerDriver {
                 def_id,
             )
             .await?;
+        }
+        Ok(())
+    }
+
+    /// Foreign concrete comptime calls are lowered lazily. Their owning
+    /// package may therefore not have run its normal item typecheck task;
+    /// run that exact task before MIR lowering so local initializer and
+    /// expression types are available to the lowerer.
+    async fn type_check_comptime_dependency(
+        state: &Rc<RefCell<CompilerState>>,
+        package_id: &PackageId,
+        def_id: hir::DefId,
+    ) -> Result<(), CompilerDriverError> {
+        let (hir_program, hir_package, comptime_resolver, executor) = {
+            let borrowed = state.borrow();
+            let hir_program = borrowed.hir_program_rc();
+            let hir_package = hir_program.package_rc(package_id).ok_or_else(|| {
+                CompilerDriverError::MissingHir(format!("package `{package_id}`"))
+            })?;
+            (
+                hir_program,
+                hir_package,
+                borrowed.comptime_resolver.clone(),
+                borrowed.tasks.clone(),
+            )
+        };
+        let typecheck_def_id = hir_program
+            .member_owner(def_id.clone())
+            .unwrap_or(def_id);
+        let checker = fp_typing::HirTypeChecker::new(
+            hir_program,
+            hir_package,
+            comptime_resolver,
+            executor,
+        );
+        fp_typing::HirTypeChecker::spawn_item_task(&checker, typecheck_def_id).await;
+        if checker.borrow().has_typing_errors() {
+            return Err(CompilerDriverError::InternalCompilerError(format!(
+                "type checking comptime dependency in package `{package_id}` failed"
+            )));
         }
         Ok(())
     }

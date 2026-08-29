@@ -3555,16 +3555,34 @@ impl<'a> BodyBuilder<'a> {
                     .collect::<Vec<_>>()
                     .join("::");
                 // Type names used as values (i64, bool, str, etc.) —
-                // return an opaque placeholder constant.
+                // materialize the corresponding comptime type handle. This
+                // is the value-side counterpart of the `type` syntax, used
+                // by concrete std wrappers such as `TypeBuilder::with_field`.
                 if is_known_type_name(&name) {
-                    let ty = self.lowering.error_ty();
+                    let ty = HirToMirLowerer::type_ty();
+                    let local_id = self.allocate_temp(ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let name_ty = self.lowering.string_slice_ty();
                     return Ok(OperandInfo {
-                        operand: mir::Operand::Constant(mir::Constant {
-                            span: expr.span,
-                            ty: ty.clone(),
-                            user_ty: None,
-                            literal: mir::ConstantKind::Val(mir::ConstValue::Unit),
-                        }),
+                        operand: {
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    local_place.clone(),
+                                    mir::Rvalue::IntrinsicCall {
+                                        kind: IntrinsicKind::PrimitiveType,
+                                        format: String::new(),
+                                        args: vec![mir::Operand::Constant(mir::Constant {
+                                            span: expr.span,
+                                            ty: name_ty,
+                                            user_ty: None,
+                                            literal: mir::ConstantKind::Str(name),
+                                        })],
+                                    },
+                                ),
+                            });
+                            mir::Operand::copy(local_place)
+                        },
                         ty,
                     });
                 }
