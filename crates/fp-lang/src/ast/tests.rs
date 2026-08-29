@@ -2040,6 +2040,41 @@ fn parse_items_ast_handles_type_alias_const_block_expr() {
 }
 
 #[test]
+fn parse_type_alias_rhs_forms() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+                type IntLiteral = 1;
+                type StringLiteral = "xxx";
+                type Direct = Bar;
+                type Structural = struct { a: i32 };
+                type Computed = comptime_fn(1);
+                type Generic = Vec<i32>;
+                type ExplicitConst = const { comptime_fn(1) };
+            "#,
+        )
+        .expect("type alias RHS forms parse");
+
+    let aliases = items
+        .iter()
+        .map(|item| match item.kind() {
+            ItemKind::DefType(alias) => alias,
+            kind => panic!("expected type alias, found {kind:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 7);
+    assert!(matches!(aliases[0].value, Ty::Expr(_)));
+    assert!(matches!(aliases[1].value, Ty::Literal(_)));
+    assert!(matches!(aliases[2].value, Ty::Expr(_)));
+    assert!(matches!(aliases[3].value, Ty::Structural(_)));
+    assert!(matches!(aliases[4].value, Ty::Function(_)));
+    assert!(matches!(aliases[5].value, Ty::Expr(_)));
+    assert!(matches!(aliases[6].value, Ty::ConstBlock(_)));
+}
+
+#[test]
 fn parse_items_ast_handles_type_alias_macro_expr() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

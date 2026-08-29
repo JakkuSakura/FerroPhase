@@ -5695,9 +5695,9 @@ impl HirTypeChecker {
             | IntrinsicKind::Sleep
             | IntrinsicKind::Yield
             | IntrinsicKind::CompileWarning => self.unit_ty(),
-            IntrinsicKind::CompileError => {
-                self.error_ty("compile_error intrinsic requested an error")
-            }
+            // `compile_error!` diverges just like `panic!`; marker bodies
+            // can therefore satisfy any declared return type.
+            IntrinsicKind::CompileError => Ty::never(),
             _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", kind)),
         })
     }

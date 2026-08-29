@@ -344,32 +344,49 @@ fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
 }
 
 #[test]
-fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
-    let const_block_ty = ast::Ty::ConstBlock(ast::ExprConstBlock {
-        span: Span::null(),
-        collected_items: Vec::new(),
-        expr: Box::new(ast::Expr::value(ast::Value::int(1))),
-    });
-    let type_item = ast::Item::from(ast::ItemKind::DefType(ast::ItemDefType {
-        attrs: Vec::new(),
-        visibility: ast::Visibility::Private,
-        name: ident("X"),
-        generics_params: Vec::new(),
-        value: const_block_ty,
-    }));
-
-    let package = package_from_items(vec![type_item])?;
+fn type_alias_rhs_forms_remain_declarations() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        r#"
+            type IntLiteral = 1;
+            type StringLiteral = "xxx";
+            type Direct = Bar;
+            type Structural = struct { a: i32 };
+            type Computed = comptime_fn(1);
+            type Generic = Vec<i32>;
+            type ExplicitConst = const { comptime_fn(1) };
+        "#,
+    )?;
+    let package = package_from_items(items)?;
     let mut generator = AstToHirLowerer::new(
         std::rc::Rc::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
-    assert!(
-        program.items.is_empty(),
-        "`type X = const {{ ... }};` must not synthesize a fake HIR item; uses of X \
-         resolve via type_aliases substitution instead: {:?}",
-        program.items
-    );
+    let aliases = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::ItemKind::TypeAlias(alias) => Some(alias),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 6);
+    assert!(program.items.iter().any(|item| {
+        matches!(&item.kind, hir::ItemKind::Struct(def) if def.name.as_str() == "Structural")
+    }));
+    let explicit_const = aliases
+        .iter()
+        .find(|alias| alias.name.as_str() == "ExplicitConst")
+        .expect("explicit const type alias");
+    assert!(matches!(
+        explicit_const.target.kind,
+        hir::TypeExprKind::ConstBlock(_, _)
+    ));
+    assert!(aliases
+        .iter()
+        .filter(|alias| alias.name.as_str() != "ExplicitConst")
+        .all(|alias| !matches!(alias.target.kind, hir::TypeExprKind::ConstBlock(_, _))));
     Ok(())
 }
 
@@ -2946,6 +2963,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             }
             hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => collect_paths(expr, out),
+            hir::ItemKind::TypeAlias(_) => {}
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::Trait(_) => {}
         }
     }

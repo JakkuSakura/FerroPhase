@@ -129,9 +129,10 @@ impl HirTypeChecker {
                 )
                 .unwrap_or_else(|| self.error_ty_with_span("std::alloc::Vec is not declared", span))
             }
-            IntrinsicKind::CompileError => {
-                self.error_ty_with_span("compile_error intrinsic requested an error", span)
-            }
+            // Like `panic!`, `compile_error!` never produces a value. This
+            // lets intrinsic marker bodies inhabit their declared return
+            // type without reporting a spurious mismatch.
+            IntrinsicKind::CompileError => Ty::never(),
             _ => self
                 .error_ty_with_span(format!("intrinsic `{:?}` has no HIR type rule", kind), span),
         })

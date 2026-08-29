@@ -1950,6 +1950,25 @@ impl AstToHirLowerer {
                     self.program_def_map
                         .insert(hir_item.def_id.clone(), hir_item.clone());
                     program.items.push(hir_item);
+                } else {
+                    let def_id = self.def_id_for_item(item);
+                    let target = self.transform_type_to_hir(&def_type.value)?;
+                    self.package
+                        .type_alias_targets
+                        .insert(def_id.clone(), target.clone());
+                    let alias = hir::Item {
+                        hir_id: self.next_id(),
+                        def_id: def_id.clone(),
+                        visibility: self.map_visibility(&def_type.visibility),
+                        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
+                            name: hir::Symbol::new(def_type.name.name.clone()),
+                            target,
+                        }),
+                        span: item.span(),
+                    };
+                    program.def_map.insert(def_id.clone(), alias.clone());
+                    self.program_def_map.insert(def_id, alias.clone());
+                    program.items.push(alias);
                 }
                 Ok(())
             }
@@ -2072,29 +2091,23 @@ impl AstToHirLowerer {
                     self.current_value_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Item(hir_item))
-                } else if comptime_type_alias_rhs(&def_type.value).is_some() {
-                    // The const block is the alias target, not the alias
-                    // declaration itself. Keep `type X = ...` as a real HIR
-                    // definition with its own stable identity; the target's
-                    // `ConstBlock` remains an expression/type node and is
-                    // evaluated by the normal comptime pipeline.
+                } else {
+                    // A type declaration always owns a real alias item.
+                    // Whether its target later needs comptime evaluation is
+                    // determined from the target expression itself, not by
+                    // alias lowering.
                     let def_id = self.def_id_for_item(item.as_ref());
                     let target = self.transform_type_to_hir(&def_type.value)?;
                     self.package
                         .type_alias_targets
-                        .insert(def_id.clone(), target);
+                        .insert(def_id.clone(), target.clone());
                     let alias = hir::Item {
                         hir_id: self.next_id(),
                         def_id: def_id.clone(),
                         visibility: self.map_visibility(&def_type.visibility),
                         kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
                             name: hir::Symbol::new(def_type.name.name.clone()),
-                            target: self
-                                .package
-                                .type_alias_targets
-                                .get(&def_id)
-                                .cloned()
-                                .expect("type alias target recorded before HIR item creation"),
+                            target,
                         }),
                         span: item.span(),
                     };
@@ -2105,18 +2118,6 @@ impl AstToHirLowerer {
                     self.current_type_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Item(alias))
-                } else {
-                    let unit_block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    let unit_expr = hir::Expr {
-                        hir_id: self.next_id(),
-                        kind: hir::ExprKind::Block(unit_block),
-                        span: self.create_span(1),
-                    };
-                    Ok(hir::StmtKind::Expr(unit_expr))
                 }
             }
             ItemKind::Macro(_) => {

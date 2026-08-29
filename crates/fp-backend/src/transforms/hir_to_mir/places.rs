@@ -998,6 +998,20 @@ impl<'a> BodyBuilder<'a> {
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
+                    if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()).copied()
+                    {
+                        let mut intrinsic_args = Vec::with_capacity(arg_values.len() + 1);
+                        intrinsic_args.push(receiver.as_ref());
+                        intrinsic_args.extend(arg_values.iter().copied());
+                        if self.lower_resolved_intrinsic_call(
+                            expr,
+                            kind,
+                            &intrinsic_args,
+                            Some((place.clone(), expected_ty.clone())),
+                        )? {
+                            return Ok(());
+                        }
+                    }
                     // `ensure_method_info` is the uniform lookup, same
                     // shape as `compute_adt_layout` — see `resolve_callee_path`'s
                     // matching comment.

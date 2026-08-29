@@ -928,6 +928,21 @@ impl<'a> BodyBuilder<'a> {
         let args = reordered_args.as_deref().unwrap_or(args);
         let arg_values = call_arg_values(args);
         if let hir::ExprKind::Path(path) = &callee.kind {
+            if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()).copied()
+                {
+                    if self.lower_resolved_intrinsic_call(
+                        expr,
+                        kind,
+                        &arg_values,
+                        destination.clone(),
+                    )? {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+        if let hir::ExprKind::Path(path) = &callee.kind {
             let segments = &path.segments;
             if segments.len() >= 2
                 && segments[segments.len() - 2].name.as_str() == "HashMap"
@@ -2550,6 +2565,55 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(place_info)
+    }
+
+    /// Lowers type-building declarations tagged as intrinsics. The resolved
+    /// declaration chooses this path; wrapper names and module paths play no
+    /// part in the decision.
+    pub(super) fn lower_resolved_intrinsic_call(
+        &mut self,
+        expr: &hir::Expr,
+        kind: IntrinsicKind,
+        args: &[&hir::Expr],
+        destination: Option<(mir::Place, Ty)>,
+    ) -> Result<bool> {
+        if !matches!(
+            kind,
+            IntrinsicKind::CreateStruct
+                | IntrinsicKind::AddField
+                | IntrinsicKind::BuildType
+                | IntrinsicKind::PrimitiveType
+        ) {
+            return Ok(false);
+        }
+
+        let operands = args
+            .iter()
+            .map(|arg| self.lower_operand(arg, None).map(|info| info.operand))
+            .collect::<Result<Vec<_>>>()?;
+        let (place, ty) = destination.unwrap_or_else(|| {
+            let ty = self
+                .lowering
+                .typeck_expr_type(expr.hir_id.clone())
+                .unwrap_or_else(HirToMirLowerer::type_ty);
+            let local = self.allocate_temp(ty.clone(), expr.span);
+            (mir::Place::from_local(local), ty)
+        });
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                place.clone(),
+                mir::Rvalue::IntrinsicCall {
+                    kind,
+                    format: String::new(),
+                    args: operands,
+                },
+            ),
+        });
+        if (place.local as usize) < self.locals.len() {
+            self.locals[place.local as usize].ty = ty;
+        }
+        Ok(true)
     }
 
     pub(super) fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {

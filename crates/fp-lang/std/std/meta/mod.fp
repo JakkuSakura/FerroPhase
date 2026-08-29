@@ -18,8 +18,10 @@ impl TypeBuilder {
         TypeBuilder { ty }
     }
 
-    pub const fn build(self) -> type {
-        self.ty
+    // Convert the builder's internal type handle into the completed,
+    // concrete type value visible to callers.
+    pub const fn build(self) -> type<_> {
+        self.ty as _
     }
 }
 
