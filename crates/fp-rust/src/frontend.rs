@@ -66,3 +66,33 @@ impl LanguageFrontend for RustFrontend {
         self.inner.set_parse_mode(mode)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::ast::{AttrMeta, ItemKind};
+    use fp_core::frontend::LanguageFrontend;
+
+    #[test]
+    fn preserves_error_derive_metadata_on_rust_enums() {
+        let parsed = RustFrontend::new()
+            .parse_file(
+                "#[derive(Debug, Error)] pub enum Problem { Broken(String) }",
+                Path::new("problem.rs"),
+            )
+            .expect("parse Rust enum");
+        let ItemKind::DefEnum(def) = parsed.ast.items[0].kind() else {
+            panic!("expected enum");
+        };
+        assert!(def.attrs.iter().any(|attr| {
+            matches!(
+                &attr.meta,
+                AttrMeta::List(list)
+                    if list.name.last().as_str() == "derive"
+                        && list.items.iter().any(|item| {
+                            matches!(item, AttrMeta::Path(path) if path.last().as_str() == "Error")
+                        })
+            )
+        }));
+    }
+}

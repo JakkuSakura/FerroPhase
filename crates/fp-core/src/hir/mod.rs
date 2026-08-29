@@ -212,6 +212,9 @@ pub struct Struct {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Enum {
+    /// Source declaration metadata retained through HIR for target backends
+    /// that need semantic derives or attributes after type checking.
+    pub attrs: Vec<crate::ast::Attribute>,
     pub name: Symbol,
     pub variants: Vec<EnumVariant>,
     pub generics: Generics,
@@ -220,6 +223,7 @@ pub struct Enum {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
+    pub attrs: Vec<crate::ast::Attribute>,
     pub hir_id: HirId,
     pub def_id: DefId,
     pub name: Symbol,

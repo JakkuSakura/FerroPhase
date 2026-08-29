@@ -1,4 +1,5 @@
 use super::*;
+use crate::transforms::HirToAstLifter;
 use fp_core::ast;
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
@@ -1418,6 +1419,53 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
     };
     assert_eq!(error_id.package_id, hir::PackageId::new("dependency"));
     assert!(consumer_lowerer.is_trait_definition(&error_id));
+    Ok(())
+}
+
+#[test]
+fn enum_attributes_survive_hir_roundtrip() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items =
+        parser.parse_items_ast("#[derive(Debug, Error)] pub enum Problem { Broken(String) }")?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let hir = lowerer.transform_package(&package)?;
+    let item = hir
+        .items
+        .iter()
+        .find(|item| matches!(item.kind, hir::ItemKind::Enum(_)))
+        .expect("enum HIR item");
+    let hir::ItemKind::Enum(def) = &item.kind else {
+        unreachable!();
+    };
+    assert!(def.attrs.iter().any(|attr| {
+        matches!(
+            &attr.meta,
+            ast::AttrMeta::List(list)
+                if list.name.last().as_str() == "derive"
+                    && list.items.iter().any(|item| {
+                        matches!(item, ast::AttrMeta::Path(path) if path.last().as_str() == "Error")
+                    })
+        )
+    }));
+
+    let lifted = HirToAstLifter::new(&hir, None).lift_items()?;
+    let ast::ItemKind::DefEnum(def) = lifted[0].kind() else {
+        panic!("expected lifted enum");
+    };
+    assert!(def.attrs.iter().any(|attr| {
+        matches!(
+            &attr.meta,
+            ast::AttrMeta::List(list)
+                if list.name.last().as_str() == "derive"
+                    && list.items.iter().any(|item| {
+                        matches!(item, ast::AttrMeta::Path(path) if path.last().as_str() == "Error")
+                    })
+        )
+    }));
     Ok(())
 }
 

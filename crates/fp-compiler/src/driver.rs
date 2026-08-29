@@ -883,7 +883,9 @@ impl CompilerDriver {
                     path.into_iter().map(fp_core::hir::Symbol::new).collect(),
                 );
                 if let Some(typed) = lifted_items_by_path.get(&key) {
-                    pkg_item.item = typed.clone();
+                    let mut typed = typed.clone();
+                    preserve_source_declaration_metadata(&pkg_item.item, &mut typed);
+                    pkg_item.item = typed;
                 }
             }
             pkg.referenced_paths = referenced_paths_by_path
@@ -1290,6 +1292,43 @@ fn item_own_name(item: &Item) -> Option<&str> {
         | ItemKind::PrecompiledAsm(_)
         | ItemKind::PrecompiledLir(_)
         | ItemKind::PrecompiledArtifact(_) => None,
+    }
+}
+
+/// HIR owns checked declaration shape and bodies, while some Rust source
+/// attributes are backend-facing metadata with no HIR representation (for
+/// example `#[derive(thiserror::Error)]`). Preserve that metadata when the
+/// typed splice replaces a source declaration. This is structural, never
+/// keyed on declaration names or target-language behavior.
+fn preserve_source_declaration_metadata(source: &Item, typed: &mut Item) {
+    match (source.kind(), typed.kind_mut()) {
+        (ItemKind::DefStruct(source), ItemKind::DefStruct(typed)) => {
+            typed.attrs = source.attrs.clone();
+        }
+        (ItemKind::DefStructural(source), ItemKind::DefStructural(typed)) => {
+            typed.attrs = source.attrs.clone();
+        }
+        (ItemKind::DefEnum(source), ItemKind::DefEnum(typed)) => {
+            typed.attrs = source.attrs.clone();
+            for (source_variant, typed_variant) in source
+                .value
+                .variants
+                .iter()
+                .zip(typed.value.variants.iter_mut())
+            {
+                typed_variant.attrs = source_variant.attrs.clone();
+            }
+        }
+        (ItemKind::DefType(source), ItemKind::DefType(typed)) => {
+            typed.attrs = source.attrs.clone();
+        }
+        (ItemKind::DefConst(source), ItemKind::DefConst(typed)) => {
+            typed.attrs = source.attrs.clone();
+        }
+        (ItemKind::DefStatic(source), ItemKind::DefStatic(typed)) => {
+            typed.attrs = source.attrs.clone();
+        }
+        _ => {}
     }
 }
 

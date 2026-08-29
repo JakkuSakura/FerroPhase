@@ -2369,6 +2369,7 @@ impl AstToHirLowerer {
                         };
 
                         Ok(hir::EnumVariant {
+                            attrs: variant.attrs.clone(),
                             hir_id: self.next_id(),
                             def_id: variant_def_id,
                             name: hir::Symbol::new(variant.name.name.clone()),
@@ -2381,6 +2382,7 @@ impl AstToHirLowerer {
 
                 (
                     hir::ItemKind::Enum(hir::Enum {
+                        attrs: enum_def.attrs.clone(),
                         name: qualified_enum_name,
                         variants,
                         generics,
@@ -4073,6 +4075,7 @@ impl AstToHirLowerer {
                         };
 
                         Ok(hir::EnumVariant {
+                            attrs: variant.attrs.clone(),
                             hir_id: self.next_id(),
                             def_id: variant_def_id,
                             name: hir::Symbol::new(variant.name.name.clone()),
@@ -4085,6 +4088,7 @@ impl AstToHirLowerer {
 
                 (
                     hir::ItemKind::Enum(hir::Enum {
+                        attrs: def_type.attrs.clone(),
                         name: qualified_enum_name,
                         variants,
                         generics,

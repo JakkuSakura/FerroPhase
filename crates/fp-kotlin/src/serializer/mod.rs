@@ -835,12 +835,17 @@ impl KotlinEmitter {
     ) -> Result<()> {
         let name = en.name.name.as_str().to_string();
         let variants = &en.value.variants;
-        let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
+        let is_error = derives_rust_error(&en.attrs);
+        let has_data = is_error || variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
         let implemented_traits = implemented_trait_names(traits);
-        let header_suffix = if implemented_traits.is_empty() {
+        let mut supertypes = implemented_traits;
+        if is_error {
+            supertypes.push("Exception()".to_string());
+        }
+        let header_suffix = if supertypes.is_empty() {
             String::new()
         } else {
-            format!(" : {}", implemented_traits.join(", "))
+            format!(" : {}", supertypes.join(", "))
         };
 
         if has_data {
@@ -975,6 +980,22 @@ impl KotlinEmitter {
         self.writer.write_line("}");
         Ok(())
     }
+}
+
+/// Rust error enums derive `thiserror::Error` (or an imported `Error`). Kotlin's
+/// standard `Result.failure` accepts only a `Throwable`, so preserve that source
+/// declaration contract by making the generated sealed base an `Exception`.
+/// This inspects the structured derive attribute, never a declaration name.
+fn derives_rust_error(attrs: &[fp_core::ast::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let fp_core::ast::AttrMeta::List(list) = &attr.meta else {
+            return false;
+        };
+        list.name.last().as_str() == "derive"
+            && list.items.iter().any(|item| {
+                matches!(item, fp_core::ast::AttrMeta::Path(path) if path.last().as_str() == "Error")
+            })
+    })
 }
 
 /// The distinct trait names in `traits`, in first-seen order — for the
@@ -2312,9 +2333,51 @@ impl KotlinEmitter {
 }
 
 mod tests {
-    use fp_core::ast::{ExprBlock, ExprInvoke, Ident};
+    use fp_core::ast::{
+        AttrMeta, AttrMetaList, AttrStyle, Attribute, EnumTypeVariant, ExprBlock, ExprInvoke,
+        Ident, ItemDefEnum, Path, ReprOptions, TypeEnum,
+    };
 
     use super::*;
+
+    #[test]
+    fn error_derive_emits_throwable_enum_base() {
+        let error_attr = Attribute {
+            style: AttrStyle::Outer,
+            meta: AttrMeta::List(AttrMetaList {
+                name: Path::plain(vec![Ident::new("derive")]),
+                items: vec![AttrMeta::Path(Path::plain(vec![Ident::new("Error")]))],
+            }),
+        };
+        let error = ItemDefEnum {
+            attrs: vec![error_attr],
+            visibility: fp_core::ast::Visibility::Public,
+            name: Ident::new("Problem"),
+            value: TypeEnum {
+                name: Ident::new("Problem"),
+                generics_params: Vec::new(),
+                repr: ReprOptions::default(),
+                variants: vec![EnumTypeVariant {
+                    attrs: Vec::new(),
+                    name: Ident::new("Broken"),
+                    value: Ty::unit(),
+                    discriminant: None,
+                }],
+            },
+        };
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefEnum(error))],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize error enum");
+        assert!(rendered.contains("sealed class Problem : Exception()"));
+        assert!(rendered.contains("object Broken : Problem()"));
+    }
 
     #[test]
     fn unsupported_invoke_target_errors_instead_of_producing_a_callee_less_call() {

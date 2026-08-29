@@ -287,7 +287,7 @@ impl<'a> HirToAstLifter<'a> {
                 },
             })),
             hir::ItemKind::Enum(def) => Item::from(ItemKind::DefEnum(ItemDefEnum {
-                attrs: Vec::new(),
+                attrs: def.attrs.clone(),
                 visibility: lift_visibility(&item.visibility),
                 name: Ident::new(def.name.as_str()),
                 value: TypeEnum {
@@ -299,7 +299,7 @@ impl<'a> HirToAstLifter<'a> {
                         .iter()
                         .map(|variant| -> Result<ast::EnumTypeVariant> {
                             Ok(ast::EnumTypeVariant {
-                                attrs: Vec::new(),
+                                attrs: variant.attrs.clone(),
                                 name: Ident::new(variant.name.as_str()),
                                 value: variant
                                     .payload
