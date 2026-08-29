@@ -2616,6 +2616,7 @@ impl<'a> BodyBuilder<'a> {
             kind,
             IntrinsicKind::CreateStruct
                 | IntrinsicKind::AddField
+                | IntrinsicKind::CloneStruct
                 | IntrinsicKind::BuildType
                 | IntrinsicKind::PrimitiveType
         ) {
@@ -4320,6 +4321,7 @@ impl<'a> BodyBuilder<'a> {
                     kind,
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
+                        | IntrinsicKind::CloneStruct
                         | IntrinsicKind::BuildType
                         | IntrinsicKind::PrimitiveType
                 ) {

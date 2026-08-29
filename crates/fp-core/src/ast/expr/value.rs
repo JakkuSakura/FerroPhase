@@ -1072,7 +1072,7 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
             ))
         }
         CallKind::Format => None,
-        CallKind::CreateStruct | CallKind::PrimitiveType => {
+        CallKind::CreateStruct | CallKind::CloneStruct | CallKind::PrimitiveType => {
             if invoke.args.len() != 1 {
                 return None;
             }
@@ -1117,7 +1117,6 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
         | CallKind::HasMethod
         | CallKind::TypeName
         | CallKind::BuildType
-        | CallKind::CloneStruct
         | CallKind::HasField
         | CallKind::FieldCount
         | CallKind::MethodCount

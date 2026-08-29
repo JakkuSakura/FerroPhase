@@ -1136,6 +1136,7 @@ impl MirToLirLowerer {
                     kind,
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
+                        | IntrinsicKind::CloneStruct
                         | IntrinsicKind::BuildType
                         | IntrinsicKind::PrimitiveType
                         | IntrinsicKind::CompileWarning
@@ -1168,6 +1169,11 @@ impl MirToLirLowerer {
                                 })?,
                             }
                         }
+                        IntrinsicKind::CloneStruct => lir::ComptimeOp::CloneStruct {
+                            value: lir_args.into_iter().next().ok_or_else(|| {
+                                fp_core::error::Error::from("CloneStruct requires one argument")
+                            })?,
+                        },
                         IntrinsicKind::BuildType => lir::ComptimeOp::IntoType {
                             value: lir_args.into_iter().next().ok_or_else(|| {
                                 fp_core::error::Error::from("BuildType requires one argument")

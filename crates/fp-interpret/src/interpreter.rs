@@ -764,6 +764,20 @@ impl LirInterpreter {
                     }
                     self.write_typed_result(dst, self.result_type(instr)?, new_val)
                 }
+                ComptimeOp::CloneStruct { value } => {
+                    let value = self.object_value_operand(value)?;
+                    let Value::Type(Ty::Struct(struct_ty)) = value else {
+                        return Err(VmError::TypeMismatch {
+                            expected: "struct type value".into(),
+                            found: format!("{value:?}"),
+                        });
+                    };
+                    self.write_typed_result(
+                        dst,
+                        self.result_type(instr)?,
+                        Value::Type(Ty::Struct(struct_ty)),
+                    )
+                }
                 ComptimeOp::IntoType { value } => {
                     let struct_val = self.object_value_operand(value)?;
                     let completed_type = match struct_val {

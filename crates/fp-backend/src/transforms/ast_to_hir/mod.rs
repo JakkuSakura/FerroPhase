@@ -3118,34 +3118,28 @@ impl AstToHirLowerer {
                         _ => {}
                     }
                 }
-                // A bare `f"...{...}..."` in type position is an implicit
-                // const block — type position is already a const-eval
-                // context, so there's no need for the explicit `const { }`
-                // wrapper this otherwise mirrors exactly (see the
-                // `ast::Ty::ConstBlock` arm above). Checked explicitly by
-                // shape (an intrinsic call can never be a type path) rather
-                // than folded into the generic path-resolution-failed
-                // fallback below, which exists to produce a real
-                // "unresolved type" error for genuine mistakes.
-                if let ast::ExprKind::IntrinsicCall(call) = expr.kind() {
-                    if call.kind == fp_core::intrinsics::CallKind::Format {
-                        let body = Box::new(self.transform_expr_to_hir(expr)?);
-                        let def_id = self.next_def_id();
-                        let hir_id = self.next_id();
-                        self.package.record_const_block_def(
-                            def_id.clone(),
-                            hir::Block {
-                                hir_id: hir_id.clone(),
-                                stmts: Vec::new(),
-                                expr: Some(body.clone()),
-                            },
-                        );
-                        return Ok(hir::TypeExpr::new(
-                            hir_id,
-                            hir::TypeExprKind::ConstBlock(def_id, body),
-                            self.normalize_span(ty.span()),
-                        ));
-                    }
+                // An intrinsic expression in type position is an implicit
+                // const block. This covers formatted string literal types as
+                // well as type-producing macros such as `clone_struct!`;
+                // expression lowering normalizes the latter before their
+                // comptime body is recorded.
+                if matches!(expr.kind(), ast::ExprKind::IntrinsicCall(_) | ast::ExprKind::Macro(_)) {
+                    let body = Box::new(self.transform_expr_to_hir(expr)?);
+                    let def_id = self.next_def_id();
+                    let hir_id = self.next_id();
+                    self.package.record_const_block_def(
+                        def_id.clone(),
+                        hir::Block {
+                            hir_id: hir_id.clone(),
+                            stmts: Vec::new(),
+                            expr: Some(body.clone()),
+                        },
+                    );
+                    return Ok(hir::TypeExpr::new(
+                        hir_id,
+                        hir::TypeExprKind::ConstBlock(def_id, body),
+                        self.normalize_span(ty.span()),
+                    ));
                 }
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
                     let segments = path

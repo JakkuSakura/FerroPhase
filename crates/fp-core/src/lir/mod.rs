@@ -397,6 +397,9 @@ pub enum ComptimeOp {
         field_name: LirValue,
         field_type: LirValue,
     },
+    CloneStruct {
+        value: LirValue,
+    },
     IntoType {
         value: LirValue,
     },
