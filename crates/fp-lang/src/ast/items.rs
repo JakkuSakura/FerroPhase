@@ -600,6 +600,7 @@ fn parse_fn_item_core(
             ty_annotation: None,
             name,
             sig,
+            is_async,
         })));
     }
     // `quote fn f(..) -> item { <items> }` is sugar for
@@ -898,6 +899,7 @@ fn parse_trait_fn_member(
             ty_annotation: None,
             name,
             sig,
+            is_async,
         })));
     }
     let mut body = parse_function_block(input, file)?;
@@ -1658,6 +1660,7 @@ fn parse_extern_fn_item(
             ty_annotation: None,
             name,
             sig,
+            is_async: false,
         })));
     }
     if is_host {
@@ -1820,6 +1823,7 @@ fn parse_abi_fn_item(
             ty_annotation: None,
             name,
             sig,
+            is_async: false,
         })));
     }
     let body = parse_function_block(input, file)?;

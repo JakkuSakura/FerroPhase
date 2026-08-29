@@ -301,6 +301,7 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
             ty_annotation: None,
             name: Ident::new(function.name.clone()),
             sig: signature,
+            is_async: false,
         })));
     }
     File {

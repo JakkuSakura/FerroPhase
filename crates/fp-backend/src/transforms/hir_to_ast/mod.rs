@@ -1,16 +1,17 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
     ExprCast, ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg,
     ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect,
     ExprSelectType, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
     ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemDefType, ItemKind, Name, Path,
-    Pattern, PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple,
-    PatternTupleStruct, PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum,
-    TypeFunction, TypeReference, TypeSlice, TypeStruct, TypeTuple, Value,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, ParameterPath,
+    ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternStruct,
+    PatternStructField, PatternTuple, PatternTupleStruct, PatternVariant, StmtLet, StructuralField,
+    Ty, TypeArray, TypeEnum, TypeFunction, TypeReference, TypeSlice, TypeStruct, TypeTuple, Value,
 };
 use fp_core::error::Result;
 use fp_core::hir;
@@ -266,7 +267,7 @@ impl<'a> HirToAstLifter<'a> {
             let referenced = work
                 .into_iter()
                 .filter(|def_id| *def_id != item.def_id)
-                .filter_map(|def_id| self.def_path_for(&def_id))
+                .filter_map(|def_id| self.def_path_for(&def_id).cloned())
                 .collect::<Vec<_>>();
             result.insert(path.clone(), referenced);
         }
@@ -327,13 +328,6 @@ impl<'a> HirToAstLifter<'a> {
                         .collect::<Result<Vec<_>>>()?,
                 },
             })),
-            hir::ItemKind::TypeAlias(alias) => Item::from(ItemKind::DefType(ItemDefType {
-                attrs: Vec::new(),
-                visibility: lift_visibility(&item.visibility),
-                name: Ident::new(alias.name.as_str()),
-                generics_params: Vec::new(),
-                value: self.lift_type(&alias.target)?,
-            })),
             hir::ItemKind::Const(def) => Item::from(ItemKind::DefConst(ItemDefConst {
                 attrs: Vec::new(),
                 mutable: None,
@@ -370,6 +364,7 @@ impl<'a> HirToAstLifter<'a> {
                 ty_annotation: None,
                 name: Ident::new(function.sig.name.as_str()),
                 sig,
+                is_async: function.is_async,
             }))
             .with_span(item.span))
         } else {
@@ -1178,22 +1173,16 @@ impl<'a> HirToAstLifter<'a> {
         Ok(match &ty.kind {
             hir::TypeExprKind::Primitive(primitive) => Ty::Primitive(*primitive),
             // A written type reference's generic arguments (`Vec<Hunk>`,
-            // `Arc<GitBackend>`, ...) live on the path's last `PathSegment.
-            // args` — `lift_path` alone drops them (it only carries
-            // segment names), which would otherwise let a struct field or
-            // parameter's declared type lose its element/wrapped type
-            // entirely. Preserve them the same way `hir_ty_to_ast`'s `Adt`
-            // case does for resolved types: render as a source-shaped name
-            // (`"Vec<Hunk>"`) and let `kotlin_type_from_ty`'s `Ty::Expr`
-            // case (`map_name_to_kt`) do the actual Kotlin mapping.
+            // `Result<(), CoreError>`, ...) live on each `PathSegment`.
+            // Preserve them structurally rather than flattening them into a
+            // source string: flattening drops arguments that do not have a
+            // printable name (notably `()`), silently changing generic
+            // parameter order before a target backend can materialize it.
             hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty(path)? {
                 Some(ty) => ty,
-                None => match self.type_expr_path_source_name(path) {
-                    Some(name) => {
-                        Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(name)]))))
-                    }
-                    None => Ty::path(self.lift_path(path)),
-                },
+                None => Ty::expr(Expr::name(Name::parameter_path(
+                    self.lift_parameter_path(path)?,
+                ))),
             },
             hir::TypeExprKind::Projection(projection) => {
                 Ty::Projection(Box::new(ast::TypeProjection {
@@ -1325,50 +1314,32 @@ impl<'a> HirToAstLifter<'a> {
         Ok(Some(Ty::Structural(ast::TypeStructural { fields })))
     }
 
-    fn type_expr_path_source_name(&self, path: &hir::Path) -> Option<String> {
-        let last = path.segments.last()?;
-        let args = last.args.as_ref()?;
-        let arg_names: Vec<String> = args
-            .args
+    fn lift_parameter_path(&self, path: &hir::Path) -> Result<ParameterPath> {
+        let segments = path
+            .segments
             .iter()
-            .filter_map(|arg| match arg {
-                hir::GenericArg::Type(inner) => self.type_expr_source_name(inner),
-                hir::GenericArg::Const(_) => None,
+            .map(|segment| {
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| {
+                        args.args
+                            .iter()
+                            .filter_map(|arg| match arg {
+                                hir::GenericArg::Type(ty) => Some(self.lift_type(ty)),
+                                hir::GenericArg::Const(_) => None,
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(ParameterPathSegment::new(
+                    Ident::new(segment.name.as_str()),
+                    args,
+                ))
             })
-            .collect();
-        if arg_names.is_empty() {
-            None
-        } else {
-            Some(format!("{}<{}>", last.name.as_str(), arg_names.join(", ")))
-        }
-    }
-
-    /// Recursive helper for `type_expr_path_source_name` — same
-    /// source-shaped-name rendering, for a generic argument position
-    /// (which may itself be a further-nested generic type).
-    fn type_expr_source_name(&self, ty: &hir::TypeExpr) -> Option<String> {
-        match &ty.kind {
-            hir::TypeExprKind::Path(path) => match self.type_expr_path_source_name(path) {
-                Some(name) => Some(name),
-                None => path.segments.last().map(|s| s.name.as_str().to_string()),
-            },
-            hir::TypeExprKind::Primitive(primitive) => Some(rust_primitive_source_name(primitive)),
-            // A reference generic argument (`Vec<&'a str>`, `Vec<&Hunk>`)
-            // — Kotlin has no borrow-checked reference type to preserve,
-            // so unwrap to the referent's own name, same as every other
-            // by-value argument. Without this, `&str`/`&T` here fell
-            // through to `None`, making the whole arg list empty and
-            // collapsing the wrapper to a bare, ungenericized `Vec`/
-            // `Option` (the same "arg silently drops out" failure mode
-            // already guarded against on the resolved-`Ty` side, in
-            // `resolved_ty_source_name`).
-            hir::TypeExprKind::Ref(inner) => self.type_expr_source_name(inner),
-            hir::TypeExprKind::Dynamic(bounds) => bounds
-                .first()
-                .and_then(|bound| bound.segments.last())
-                .map(|segment| format!("dyn {}", segment.name.as_str())),
-            _ => None,
-        }
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ParameterPath::new(PathPrefix::Plain, segments))
     }
 
     /// Converts a *resolved* (post-typecheck) HIR type — `fp_core::hir::ty::Ty`,
@@ -1479,8 +1450,7 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let def_path = self.def_path_for(&adt.did)?;
-                    let name = def_path.segments.last()?.as_str();
+                    let name = self.def_path_for(&adt.did)?.segments.last()?.as_str();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
                         Ident::new(format!("{}<{}>", name, args.join(", "))),
                     ])))))
@@ -1523,8 +1493,7 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let def_path = self.def_path_for(&adt.did)?;
-                let name = def_path.segments.last()?.as_str();
+                let name = self.def_path_for(&adt.did)?.segments.last()?.as_str();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1584,7 +1553,8 @@ impl<'a> HirToAstLifter<'a> {
             TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
                 hir::ty::ExistentialPredicate::Trait(trait_ref) => self
                     .def_path_for(&trait_ref.def_id)
-                    .and_then(|path| path.segments.last().map(|s| s.as_str().to_string())),
+                    .and_then(|path| path.segments.last())
+                    .map(|s| s.as_str().to_string()),
                 _ => None,
             }),
             _ => None,
@@ -1602,8 +1572,8 @@ impl<'a> HirToAstLifter<'a> {
     /// Dependency HIR may intentionally contain only exported metadata. A
     /// lifted root item still needs those `DefPath`s to spell inferred types
     /// and collect imports, but it must not require dependency bodies.
-    fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
-        self.program.def_paths.get(def_id).cloned().or_else(|| {
+    fn def_path_for(&self, def_id: &DefId) -> Option<&hir::DefPath> {
+        self.program.def_paths.get(def_id).or_else(|| {
             self.hir_program
                 .and_then(|program| program.def_path(def_id.clone()))
         })
@@ -1907,33 +1877,6 @@ fn lift_abi(abi: &hir::Abi) -> ast::Abi {
         hir::Abi::C { .. } => ast::Abi::Named("C".to_string()),
         hir::Abi::Named(name) => ast::Abi::Named(name.clone()),
         other => ast::Abi::Named(format!("{other:?}").to_ascii_lowercase()),
-    }
-}
-
-/// A `fp_core::ast::TypePrimitive` rendered as the Rust-syntax name
-/// `map_name_to_kt` (in `fp-kotlin`) expects when it appears nested inside
-/// a generic-wrapper source name built by `type_expr_source_name` (e.g.
-/// the `i64` in `"Vec<i64>"`).
-fn rust_primitive_source_name(primitive: &fp_core::ast::TypePrimitive) -> String {
-    use fp_core::ast::{TypeInt, TypePrimitive};
-    match primitive {
-        TypePrimitive::Bool => "bool".to_string(),
-        TypePrimitive::Char => "char".to_string(),
-        TypePrimitive::String => "String".to_string(),
-        TypePrimitive::Decimal(_) => "f64".to_string(),
-        TypePrimitive::List => "Vec".to_string(),
-        TypePrimitive::Int(int_ty) => match int_ty {
-            TypeInt::I8 => "i8",
-            TypeInt::I16 => "i16",
-            TypeInt::I32 => "i32",
-            TypeInt::I64 => "i64",
-            TypeInt::U8 => "u8",
-            TypeInt::U16 => "u16",
-            TypeInt::U32 => "u32",
-            TypeInt::U64 => "u64",
-            _ => "i64",
-        }
-        .to_string(),
     }
 }
 

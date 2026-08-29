@@ -103,6 +103,7 @@ fn parse_extern_fn_item(
             ty_annotation: None,
             name,
             sig,
+            is_async: false,
         })));
     }
     if is_host {

@@ -732,8 +732,10 @@ impl KotlinEmitter {
                         .as_ref()
                         .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty)))
                         .unwrap_or_else(|| ": Unit".to_string());
+                    let fn_kw = if f.is_async { "suspend fun" } else { "fun" };
                     self.writer.write_line(format!(
-                        "fun {}({}){}",
+                        "{} {}({}){}",
+                        fn_kw,
                         f.name.name.as_str(),
                         params,
                         ret
@@ -2267,6 +2269,7 @@ impl KotlinEmitter {
             // anything wider needs a real named type — see ExprKind::Tuple in
             // render_expr for the matching value-construction side.
             Ty::Tuple(t) => match t.types.len() {
+                0 => "Unit".into(),
                 2 => format!(
                     "Pair<{}, {}>",
                     self.kotlin_type_from_ty(&t.types[0]),

@@ -172,6 +172,7 @@ fn lower_function(function: &WitFunction) -> Item {
         ty_annotation: None,
         name: function.name.clone(),
         sig: signature,
+        is_async: false,
     })
 }
 

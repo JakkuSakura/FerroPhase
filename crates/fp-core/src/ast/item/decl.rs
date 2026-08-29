@@ -75,6 +75,8 @@ common_struct! {
         pub ty_annotation: TySlot,
         pub name: Ident,
         pub sig: FunctionSignature,
+        #[serde(default)]
+        pub is_async: bool,
     }
 }
 impl ItemDeclFunction {

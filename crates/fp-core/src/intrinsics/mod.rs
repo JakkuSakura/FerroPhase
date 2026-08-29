@@ -354,6 +354,7 @@ fn build_function_decl_item(
         ty_annotation: Some(ty_annotation),
         name: name_ident,
         sig,
+        is_async: false,
     }
 }
 

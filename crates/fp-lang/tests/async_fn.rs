@@ -37,3 +37,17 @@ fn async_trait_method_body_wrapped() {
         other => panic!("expected trait item, got {:?}", other),
     }
 }
+
+#[test]
+fn async_trait_method_declaration_preserves_asyncness() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("trait T { async fn f(); }", None).expect("parse");
+    let item = res.ast.items.first().cloned().expect("file item");
+    match item.kind() {
+        ItemKind::DefTrait(def) => match def.items.first().expect("trait item").kind() {
+            ItemKind::DeclFunction(func) => assert!(func.is_async),
+            other => panic!("expected function declaration, got {other:?}"),
+        },
+        other => panic!("expected trait item, got {other:?}"),
+    }
+}

@@ -1610,6 +1610,7 @@ mod tests {
             ty_annotation: None,
             name: Ident::new(name),
             sig,
+            is_async: false,
         }))
     }
 

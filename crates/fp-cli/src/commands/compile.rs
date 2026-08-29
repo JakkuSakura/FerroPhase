@@ -170,16 +170,7 @@ pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<(
     // concern, decided by its own factory closure in
     // `crate::languages::backend_registry::builtin_target_backends` once it
     // has the resolved `BackendConfig`.
-    let output_file = match args.output.as_ref() {
-        Some(output) if output.is_dir() => {
-            let stem = input_file
-                .file_stem()
-                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-            output.join(stem)
-        }
-        Some(output) => output.clone(),
-        None => input_file.with_extension(""),
-    };
+    let output_file = resolve_output_path(input_file, args.output.as_deref())?;
 
     compile_workspace_entrypoint(input_file, &output_file, &args, exec).await?;
     progress.inc(1);
@@ -187,6 +178,24 @@ pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<(
     progress.finish_with_message(format!("{} Compiled successfully", style("✓").green()));
 
     Ok(())
+}
+
+fn resolve_output_path(input: &Path, output: Option<&Path>) -> Result<PathBuf> {
+    match output {
+        // A directory input denotes a workspace. Its output must remain the
+        // user-selected workspace root even after a prior transpile created
+        // it; treating it as a single-file container makes repeated builds
+        // depend on whether the output happens to exist.
+        Some(output) if input.is_dir() => Ok(output.to_path_buf()),
+        Some(output) if output.is_dir() => {
+            let stem = input
+                .file_stem()
+                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+            Ok(output.join(stem))
+        }
+        Some(output) => Ok(output.to_path_buf()),
+        None => Ok(input.with_extension("")),
+    }
 }
 
 // Note: former compile watch loop removed intentionally.
@@ -717,4 +726,19 @@ fn is_tsconfig(path: &Path) -> bool {
             lower == "tsconfig.json" || lower.ends_with(".tsconfig.json")
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_output_path;
+
+    #[test]
+    fn workspace_output_root_is_stable_after_the_directory_exists() {
+        let input = std::env::temp_dir();
+        let output = input.join("fp-kotlin-output");
+        assert_eq!(
+            resolve_output_path(&input, Some(&output)).expect("workspace output"),
+            output
+        );
+    }
 }
