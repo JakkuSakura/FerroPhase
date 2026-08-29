@@ -1635,8 +1635,20 @@ impl<'a> BodyBuilder<'a> {
             .unwrap_or_default();
 
         if let Some(hir::Res::Def(def_id)) = &path.res {
+            let resolved_def_id = self
+                .lowering
+                .hir_program
+                .type_alias_target_hir_id(def_id.clone())
+                .and_then(|target| self.lowering.typeck_type_expr_type(target))
+                .and_then(|ty| match ty.kind {
+                    TyKind::Adt(adt, _) => Some(adt.did),
+                    _ => None,
+                })
+                .unwrap_or_else(|| def_id.clone());
+            self.lowering
+                .try_lazily_register_adt(resolved_def_id.clone(), expr.span);
             return Some(StructRef {
-                def_id: def_id.clone(),
+                def_id: resolved_def_id,
                 args,
             });
         }

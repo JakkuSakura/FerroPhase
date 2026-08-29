@@ -588,6 +588,10 @@ impl HirToMirLowerer {
     /// `register_all_dependency_adts`'s eager sweep — reached only when a
     /// `def_id` isn't already registered locally.
     pub(crate) fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
+        if let Some(fields) = self.hir_program.local_struct_fields(def_id.clone()) {
+            self.register_comptime_struct(def_id, fields, span);
+            return;
+        }
         let Some(item) = self.hir_item(def_id.clone()) else {
             return;
         };
@@ -600,6 +604,60 @@ impl HirToMirLowerer {
             }
             _ => {}
         }
+    }
+
+    /// Materializes a comptime-generated struct's layout from the checked
+    /// field table keyed by its real `DefId`. The type checker owns the field
+    /// shapes; MIR only gives those shapes a normal `StructDefinition` so
+    /// places, field projections, and layout calculation use the same path as
+    /// source-declared structs.
+    fn register_comptime_struct(
+        &mut self,
+        def_id: hir::DefId,
+        fields: Vec<(hir::Symbol, hir::ty::Ty)>,
+        span: Span,
+    ) {
+        if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
+            return;
+        }
+
+        let mut field_index = HashMap::new();
+        let fields = fields
+            .into_iter()
+            .enumerate()
+            .map(|(index, (name, ty))| {
+                field_index.insert(name.as_str().to_string(), index);
+                let hir_id = hir::HirId::new(
+                    hir::OwnerId(def_id.clone()),
+                    u32::MAX.saturating_sub(index as u32),
+                );
+                self.hir_program.record_type_expr_type(hir_id.clone(), ty);
+                StructFieldDef {
+                    name: name.as_str().to_string(),
+                    ty: hir::TypeExpr {
+                        hir_id,
+                        kind: hir::TypeExprKind::Infer,
+                        span,
+                    },
+                }
+            })
+            .collect();
+        let name = self.def_path_str(def_id.clone(), "<comptime struct>");
+        self.mir_package
+            .borrow_mut()
+            .struct_defs_by_tail_name
+            .entry(Self::name_tail(&name).to_string())
+            .or_default()
+            .push(def_id.clone());
+        self.mir_package.borrow_mut().struct_defs.insert(
+            def_id,
+            StructDefinition {
+                name,
+                generics: Vec::new(),
+                fields,
+                field_index,
+            },
+        );
     }
 
     pub(super) fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
@@ -3159,14 +3217,24 @@ impl HirToMirLowerer {
             }
             hir::TypeExprKind::Dynamic(_) => self
                 .typeck_type_expr_type(ty_expr.hir_id.clone())
+                .map(|ty| self.substitute_ty(&ty, substs))
                 .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Never => Ty {
                 kind: TyKind::Never,
             },
-            hir::TypeExprKind::Infer => self.error_ty(),
+            // Comptime-generated struct fields are synthetic `Infer` nodes
+            // whose concrete checked type is recorded by their stable HIR
+            // identity when the struct metadata is installed. Consume that
+            // result here before treating a genuine unresolved infer as an
+            // error, and compose the active specialization when present.
+            hir::TypeExprKind::Infer => self
+                .typeck_type_expr_type(ty_expr.hir_id.clone())
+                .map(|ty| self.substitute_ty(&ty, substs))
+                .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Error => self.error_ty(),
             hir::TypeExprKind::ConstBlock(_, _) => self
                 .typeck_type_expr_type(ty_expr.hir_id.clone())
+                .map(|ty| self.substitute_ty(&ty, substs))
                 .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
@@ -3826,25 +3894,20 @@ impl HirToMirLowerer {
             .get(&def_id)
             .cloned()?;
         let idx = *def.field_index.get(name)?;
-        let layout = self
-            .struct_layout_for_ty(struct_ty)
-            .or_else(|| match &struct_ty.kind {
-                TyKind::Adt(_, args) => {
-                    let type_args =
-                        args.iter()
-                            .filter_map(|arg| match arg {
-                                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
-                                mir::ty::GenericArg::Lifetime(_)
-                                | mir::ty::GenericArg::Const(_) => None,
-                            })
-                            .collect::<Vec<_>>();
-                    self.struct_layout_for_instance(def_id, &type_args, span)
-                }
-                _ if self.is_opaque_ty(struct_ty) => {
-                    self.struct_layout_for_instance(def_id, &[], span)
-                }
-                _ => None,
-            })?;
+        // The lowered representation may already be this struct's tuple
+        // storage. The resolved definition identity, rather than that
+        // representation, selects the layout.
+        let type_args = match &struct_ty.kind {
+            TyKind::Adt(_, args) => args
+                .iter()
+                .filter_map(|arg| match arg {
+                    mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                    mir::ty::GenericArg::Lifetime(_) | mir::ty::GenericArg::Const(_) => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let layout = self.struct_layout_for_instance(def_id, &type_args, span)?;
         let ty = layout.field_tys.get(idx)?.clone();
         Some((
             idx,

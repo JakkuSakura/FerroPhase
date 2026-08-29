@@ -1106,6 +1106,18 @@ impl HirToMirLowerer {
 
     pub(super) fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
         if let Some(def_id) = self.resolve_path_def_id(path) {
+            // A resolved generic parameter has its own DefId but no HIR item
+            // entry. Preserve that identity as a parameter type so callers
+            // lowering an abstract generic definition can defer it to the
+            // normal specialization map instead of reporting an unknown path.
+            if path.segments.len() == 1 && self.hir_item(def_id.clone()).is_none() {
+                return Ty {
+                    kind: TyKind::Param(mir::ty::ParamTy {
+                        index: def_id.index,
+                        name: path.segments[0].name.clone().into(),
+                    }),
+                };
+            }
             if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
                 let args = path
                     .segments

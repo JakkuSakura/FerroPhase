@@ -890,13 +890,13 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "file_rsync" => Some(IntrinsicKind::ShellFileRsync),
         "sizeof" => Some(IntrinsicKind::SizeOf),
         "reflect_fields" => Some(IntrinsicKind::ReflectFields),
-        "hasmethod" => Some(IntrinsicKind::HasMethod),
+        "hasmethod" | "has_method" => Some(IntrinsicKind::HasMethod),
         "type_name" => Some(IntrinsicKind::TypeName),
         "type_info" | "type_of" => Some(IntrinsicKind::TypeOf),
         "clone_struct" => Some(IntrinsicKind::CloneStruct),
         "create_struct" => Some(IntrinsicKind::CreateStruct),
         "addfield" => Some(IntrinsicKind::AddField),
-        "hasfield" => Some(IntrinsicKind::HasField),
+        "hasfield" | "has_field" => Some(IntrinsicKind::HasField),
         "count_fields" | "field_count" => Some(IntrinsicKind::FieldCount),
         "method_count" => Some(IntrinsicKind::MethodCount),
         "field_type" => Some(IntrinsicKind::FieldType),
@@ -1586,6 +1586,14 @@ mod tests {
             };
             assert_eq!(call.kind, kind);
         }
+    }
+
+    #[test]
+    fn intrinsic_macro_names_accept_snake_case_reflection_spelling() {
+        use fp_core::intrinsics::IntrinsicKind;
+
+        assert_eq!(intrinsic_macro_kind("has_field"), Some(IntrinsicKind::HasField));
+        assert_eq!(intrinsic_macro_kind("has_method"), Some(IntrinsicKind::HasMethod));
     }
 
     #[test]

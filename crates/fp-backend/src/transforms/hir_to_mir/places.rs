@@ -211,15 +211,32 @@ impl<'a> BodyBuilder<'a> {
                         }
                     };
                     let (field_index, field_info) = match self.lowering.struct_field(
-                        struct_def,
+                        struct_def.clone(),
                         &base_ty,
                         field.as_str(),
                         expr.span,
                     ) {
                         Some(data) => data,
                         None => {
+                            let available = self
+                                .lowering
+                                .struct_def(&struct_def)
+                                .map(|definition| {
+                                    definition
+                                        .fields
+                                        .iter()
+                                        .map(|field| field.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .unwrap_or_default();
                             self.lowering
-                                .emit_error(expr.span, format!("unknown field `{}`", field));
+                                .emit_error(
+                                    expr.span,
+                                    format!(
+                                        "unknown field `{field}` on `{struct_def}`; available fields: [{available}]"
+                                    ),
+                                );
                             return Ok(None);
                         }
                     };

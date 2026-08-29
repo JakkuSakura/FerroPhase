@@ -3038,10 +3038,12 @@ impl<'a> BodyBuilder<'a> {
         self.active_exprs.insert(expr.hir_id.clone());
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id.clone());
         if matches!(expr.kind, hir::ExprKind::FieldAccess(_, _)) {
-            if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
-                let ty = expected
-                    .cloned()
-                    .or_else(|| self.constant_ty_from_constant(&constant))
+            // A reflection field (for example `type(T).name`) computes its
+            // own concrete type. It must not inherit the enclosing
+            // expression's expectation: `println(...)` itself has unit type.
+            if let Some(constant) = self.lowering.lower_const_expr(expr, None, None) {
+                let ty = self
+                    .constant_ty_from_constant(&constant)
                     .unwrap_or_else(|| self.lowering.error_ty());
                 return Ok(OperandInfo {
                     operand: mir::Operand::Constant(constant),
