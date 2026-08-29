@@ -40,6 +40,8 @@ fn class_and_member_to_canonical_name(class: &str, member: &str) -> Option<&'sta
         ("Result", "err_value") => Some("result_err_value"),
         ("Result", "unwrap_or") => Some("result_unwrap_or"),
         ("Vec", "push") => Some("vec_push"),
+        ("Vec", "extend") => Some("vec_extend"),
+        ("Vec", "from_iter") => Some("vec_from_iter"),
         ("Option", "as_ref") => Some("as_ref"),
         ("Option", "unwrap_or") => Some("unwrap_or"),
         ("Option", "map_or") => Some("map_or"),
@@ -50,10 +52,17 @@ fn class_and_member_to_canonical_name(class: &str, member: &str) -> Option<&'sta
         ("Option", "as_deref") => Some("as_deref"),
         ("str", "trim_end") => Some("trim_end"),
         ("str", "trim_start") => Some("trim_start"),
+        ("str", "trim") => Some("trim"),
         ("str", "split_whitespace") => Some("split_whitespace"),
+        ("str", "split") => Some("split"),
+        ("str", "lines") => Some("lines"),
+        ("str", "starts_with") => Some("starts_with"),
+        ("str", "ends_with") => Some("ends_with"),
         ("String", "from_utf8_lossy") => Some("string_from_utf8_lossy"),
         ("String", "from_utf8") => Some("string_from_utf8"),
         ("Iterator", "position") => Some("position"),
+        ("Iterator", "filter") => Some("filter"),
+        ("Iterator", "collect") => Some("collect"),
         _ => None,
     }
 }
@@ -81,6 +90,31 @@ pub fn class_and_member_to_portable_op(class: &str, member: &str) -> Option<Port
                 .then(|| member.to_string())
         });
     canonical.and_then(|name| central_registry().resolve(&name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::class_and_member_to_portable_op;
+
+    #[test]
+    fn resolves_collection_and_string_member_operations() {
+        for (class, member, expected) in [
+            ("Vec", "extend", "vec_extend"),
+            ("Vec", "from_iter", "vec_from_iter"),
+            ("Iterator", "filter", "filter"),
+            ("Iterator", "collect", "collect"),
+            ("str", "lines", "lines"),
+            ("str", "starts_with", "starts_with"),
+            ("str", "ends_with", "ends_with"),
+        ] {
+            assert_eq!(
+                class_and_member_to_portable_op(class, member)
+                    .expect("registered portable operation")
+                    .name(),
+                expected
+            );
+        }
+    }
 }
 
 #[derive(Clone, Default)]

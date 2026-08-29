@@ -75,12 +75,27 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 "add",
                 portable_op_args_after_receiver(call),
             ))),
-            "trim_end" | "trim_start" => Ok(Some(invoke_method(
+            "vec_extend" => Ok(Some(invoke_method(
                 receiver(),
-                if call.op.name() == "trim_end" {
-                    "trimEnd"
-                } else {
-                    "trimStart"
+                "addAll",
+                portable_op_args_after_receiver(call),
+            ))),
+            "vec_from_iter" | "collect" => Ok(Some(invoke_method(
+                receiver(),
+                "toMutableList",
+                Vec::new(),
+            ))),
+            "filter" => Ok(Some(invoke_method(
+                receiver(),
+                "filter",
+                portable_op_args_after_receiver(call),
+            ))),
+            "trim" | "trim_end" | "trim_start" => Ok(Some(invoke_method(
+                receiver(),
+                match call.op.name() {
+                    "trim" => "trim",
+                    "trim_end" => "trimEnd",
+                    _ => "trimStart",
                 },
                 Vec::new(),
             ))),
@@ -108,6 +123,22 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                     "Regex",
                     vec![Expr::value(Value::string("\\s+".to_string()))],
                 )],
+            ))),
+            "split" => Ok(Some(invoke_method(
+                receiver(),
+                "split",
+                portable_op_args_after_receiver(call),
+            ))),
+            "lines" => Ok(Some(invoke_method(receiver(), "lines", Vec::new()))),
+            "starts_with" => Ok(Some(invoke_method(
+                receiver(),
+                "startsWith",
+                portable_op_args_after_receiver(call),
+            ))),
+            "ends_with" => Ok(Some(invoke_method(
+                receiver(),
+                "endsWith",
+                portable_op_args_after_receiver(call),
             ))),
             "string_from_utf8_lossy" | "string_from_utf8" => Ok(Some(invoke_function(
                 "String",
@@ -317,6 +348,56 @@ mod tests {
             .expect("materialize vec push")
             .expect("vec push replacement");
         assert_eq!(render_invoke_name(&materialized), "items.add");
+    }
+
+    #[test]
+    fn materializes_collection_operations_as_kotlin_collection_calls() {
+        let registry = PortableOpRegistry::builtin();
+        let materializer = KotlinMaterializer;
+
+        for (op, expected) in [
+            ("vec_extend", "items.addAll"),
+            ("collect", "items.toMutableList"),
+            ("filter", "items.filter"),
+        ] {
+            let mut call = ExprPortableOpCall {
+                span: Default::default(),
+                op: registry.resolve(op).expect("registered portable op"),
+                args: vec![Expr::name(Name::ident("items")), Expr::name(Name::ident("f"))],
+                kwargs: Vec::new(),
+            };
+            let materialized = materializer
+                .materialize_portable_op(&mut call, &None)
+                .expect("materialize collection operation")
+                .expect("collection replacement");
+            assert_eq!(render_invoke_name(&materialized), expected);
+        }
+    }
+
+    #[test]
+    fn materializes_string_operations_with_kotlin_names() {
+        let registry = PortableOpRegistry::builtin();
+        let materializer = KotlinMaterializer;
+
+        for (op, expected) in [
+            ("trim", "text.trim"),
+            ("split", "text.split"),
+            ("lines", "text.lines"),
+            ("starts_with", "text.startsWith"),
+            ("ends_with", "text.endsWith"),
+        ] {
+            let mut call = ExprPortableOpCall {
+                span: Default::default(),
+                op: registry.resolve(op).expect("registered portable op"),
+                args: vec![Expr::name(Name::ident("text")), Expr::name(Name::ident("pattern"))],
+                kwargs: Vec::new(),
+            };
+            let materialized = materializer
+                .materialize_portable_op(&mut call, &None)
+                .expect("materialize string operation")
+                .expect("string replacement");
+            assert_eq!(render_invoke_name(&materialized), expected);
+        }
     }
 
     fn render_invoke_name(expr: &Expr) -> String {

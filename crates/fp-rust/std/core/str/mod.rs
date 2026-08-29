@@ -1346,6 +1346,7 @@ impl str {
     // which happen to already resolve fine on their own.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "lines")]
     pub fn lines(&self) -> alloc::vec::Vec<&str> {
         compile_error!("compiler intrinsic")
     }
@@ -1438,6 +1439,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_starts_with"]
+    #[op(method = "starts_with")]
     pub fn starts_with<P: Pattern>(&self, pat: P) -> bool {
         pat.is_prefix_of(self)
     }
@@ -1463,6 +1465,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_ends_with"]
+    #[op(method = "ends_with")]
     pub fn ends_with<P: Pattern>(&self, pat: P) -> bool
     where
         for<'a> P::Searcher<'a>: ReverseSearcher<'a>,
@@ -1688,6 +1691,7 @@ impl str {
     /// [`split_whitespace`]: str::split_whitespace
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "split")]
     pub fn split<P: Pattern>(&self, pat: P) -> Split<'_, P> {
         Split(SplitInternal {
             start: 0,
@@ -2204,6 +2208,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_trim"]
+    #[op(method = "trim")]
     pub fn trim(&self) -> &str {
         self.trim_matches(char::is_whitespace)
     }

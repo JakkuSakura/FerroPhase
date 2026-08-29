@@ -950,6 +950,7 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "iter_filter"]
+    #[op(method = "filter")]
     fn filter<P>(self, predicate: P) -> Filter<Self, P>
     where
         Self: Sized,
@@ -2075,6 +2076,7 @@ pub const trait Iterator {
     #[must_use = "if you really need to exhaust the iterator, consider `.for_each(drop)` instead"]
     #[rustc_diagnostic_item = "iterator_collect_fn"]
     #[rustc_non_const_trait_method]
+    #[op(method = "collect")]
     fn collect<B: FromIterator<Self::Item>>(self) -> B
     where
         Self: Sized,

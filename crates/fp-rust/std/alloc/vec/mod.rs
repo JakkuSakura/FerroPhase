@@ -3938,8 +3938,10 @@ const impl<T, I: SliceIndex<[T]>, A: Allocator> IndexMut<I> for Vec<T, A> {
 /// ```
 #[cfg(not(no_global_oom_handling))]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[op(class = "Vec")]
 impl<T> FromIterator<T> for Vec<T> {
     #[inline]
+    #[op(method = "from_iter")]
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Vec<T> {
         <Self as SpecFromIter<T, I::IntoIter>>::from_iter(iter.into_iter())
     }
@@ -4006,8 +4008,10 @@ impl<'a, T, A: Allocator> IntoIterator for &'a mut Vec<T, A> {
 
 #[cfg(not(no_global_oom_handling))]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[op(class = "Vec")]
 impl<T, A: Allocator> Extend<T> for Vec<T, A> {
     #[inline]
+    #[op(method = "extend")]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         <Self as SpecExtend<T, I::IntoIter>>::spec_extend(self, iter.into_iter())
     }
