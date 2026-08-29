@@ -689,6 +689,10 @@ impl MirToLirLowerer {
             .iter()
             .map(|ty| self.lir_type_from_ty(ty))
             .collect();
+        // Function parameters are addressed as virtual registers `r1..rN`
+        // by the LIR calling convention. Instruction ids share that register
+        // namespace, so reserve those ids before lowering the body.
+        self.next_lir_id = self.next_lir_id.max((param_types.len() + 1) as lir::LirId);
         let return_type = self.lir_type_from_ty(&mir_func.sig.output);
         self.current_return_type = Some(return_type.clone());
 
@@ -1208,7 +1212,8 @@ impl MirToLirLowerer {
                             fp_core::error::Error::from("comptime intrinsic has no result type")
                         })?,
                     ));
-                    return Ok(intrinsic_instructions);
+                    instructions.append(&mut intrinsic_instructions);
+                    return Ok(instructions);
                 }
 
                 let lir_kind = match kind {
@@ -1272,7 +1277,8 @@ impl MirToLirLowerer {
                                     result: None,
                                     debug_info: None,
                                 });
-                                return Ok(intrinsic_instructions);
+                                instructions.append(&mut intrinsic_instructions);
+                                return Ok(instructions);
                             }
                             IntrinsicKind::HostPtrOffset => {
                                 lir::LirInstructionKind::GetElementPtr {
@@ -1293,7 +1299,8 @@ impl MirToLirLowerer {
                             debug_info: None,
                         });
                         result_value = Some(lir::LirValue::register(id, result_ty));
-                        return Ok(intrinsic_instructions);
+                        instructions.append(&mut intrinsic_instructions);
+                        return Ok(instructions);
                     }
                     IntrinsicKind::Format => lir::LirIntrinsicKind::Format,
                     IntrinsicKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
@@ -1399,7 +1406,8 @@ impl MirToLirLowerer {
 
                         if matches!(destination_lir_ty, Some(lir::LirType::Ptr(_))) {
                             result_value = Some(slice_ptr);
-                            return Ok(intrinsic_instructions);
+                            instructions.append(&mut intrinsic_instructions);
+                            return Ok(instructions);
                         }
 
                         let slice_value = self.build_slice_value_with_len_value(
@@ -1409,7 +1417,8 @@ impl MirToLirLowerer {
                             &mut intrinsic_instructions,
                         )?;
                         result_value = Some(slice_value);
-                        return Ok(intrinsic_instructions);
+                        instructions.append(&mut intrinsic_instructions);
+                        return Ok(instructions);
                     }
                     _ => {
                         return Err(fp_core::error::Error::from(format!(

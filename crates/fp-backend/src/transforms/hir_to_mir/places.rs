@@ -987,19 +987,6 @@ impl<'a> BodyBuilder<'a> {
                 },
             },
             hir::ExprKind::MethodCall(receiver, method_name, _, args) => {
-                if let Some(constant) =
-                    self.lowering
-                        .lower_const_expr(expr, Some(expected_ty), None)
-                {
-                    self.push_statement(mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            place.clone(),
-                            mir::Rvalue::Use(mir::Operand::Constant(constant)),
-                        ),
-                    });
-                    return Ok(());
-                }
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 

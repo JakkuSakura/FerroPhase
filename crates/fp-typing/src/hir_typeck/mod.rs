@@ -540,7 +540,7 @@ impl HirTypeChecker {
     ) -> Result<Ty> {
         let fp_core::ast::Value::Type(value_ty) = value else {
             return Err(Error::from(format!(
-                "comptime type expression `{def_id}` returned a value instead of a type"
+                "comptime type expression `{def_id}` returned a value instead of a type: {value:?}"
             )));
         };
         let fp_core::ast::Ty::Struct(struct_ty) = value_ty else {

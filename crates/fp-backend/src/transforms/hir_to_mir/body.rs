@@ -3034,10 +3034,7 @@ impl<'a> BodyBuilder<'a> {
         }
         self.active_exprs.insert(expr.hir_id.clone());
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id.clone());
-        if matches!(
-            expr.kind,
-            hir::ExprKind::FieldAccess(_, _) | hir::ExprKind::MethodCall(_, _, _, _)
-        ) {
+        if matches!(expr.kind, hir::ExprKind::FieldAccess(_, _)) {
             if let Some(constant) = self.lowering.lower_const_expr(expr, expected, None) {
                 let ty = expected
                     .cloned()
@@ -3048,6 +3045,30 @@ impl<'a> BodyBuilder<'a> {
                     ty,
                 });
             }
+        }
+        // A method call is a value expression, even when its receiver is a
+        // place. Do not let `lower_place` project through the receiver and
+        // discard the resolved method call (notably in chained comptime
+        // calls such as `TypeBuilder::new(..).build()`). Materializing it
+        // routes it through `lower_expr_into_place`, which dispatches by
+        // typeck's recorded method DefId.
+        if matches!(expr.kind, hir::ExprKind::MethodCall(_, _, _, _)) {
+            let ty = expected
+                .cloned()
+                .or_else(|| self.lowering.typeck_expr_type(expr.hir_id.clone()))
+                .ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "missing HIR type for method call {}",
+                        expr.hir_id
+                    ))
+                })?;
+            let local_id = self.allocate_temp(ty.clone(), expr.span);
+            let place = mir::Place::from_local(local_id);
+            self.lower_expr_into_place(expr, place.clone(), &ty)?;
+            return Ok(OperandInfo {
+                operand: mir::Operand::copy(place),
+                ty,
+            });
         }
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {

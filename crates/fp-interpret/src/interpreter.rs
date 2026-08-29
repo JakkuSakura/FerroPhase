@@ -340,12 +340,9 @@ impl LirInterpreter {
                 ty: ty.clone(),
                 value: arg.clone(),
             };
-            let raw = self.encode_value(&typed)?;
-            self.write_typed_register(reg, typed)?;
+            self.write_typed_register(reg, typed.clone())?;
             if let Some(local) = argument_locals.get(i) {
-                self.state
-                    .mem
-                    .store_u64(self.state.local_addr(local.id)?, raw)?;
+                self.store_value_at(self.state.local_addr(local.id)?, &typed.ty, &typed.value)?;
             }
         }
         let mut current = func.basic_blocks.first().map(|b| b.id).unwrap_or(0);
@@ -3824,6 +3821,16 @@ impl LirInterpreter {
         match ty {
             LirType::F32 => Ok(Value::decimal(f32::from_bits(raw as u32) as f64)),
             LirType::F64 => Ok(Value::decimal(f64::from_bits(raw))),
+            // `type` values use the pointer-sized `Ptr(Void)` ABI. Their
+            // payloads live in the interpreter object pool, so recover the
+            // typed value on a load instead of exposing its pool handle as
+            // an ordinary pointer.
+            LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void) => {
+                match self.state.objects.get(raw as usize) {
+                    Some(Value::Type(value)) => Ok(Value::Type(value.clone())),
+                    _ => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(raw as i64))),
+                }
+            }
             LirType::Ptr(_) => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
                 raw as i64,
             ))),
