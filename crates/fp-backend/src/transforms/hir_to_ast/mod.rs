@@ -1398,6 +1398,7 @@ impl<'a> HirToAstLifter<'a> {
         match &ty.kind {
             TyKind::Bool => Some(Ty::Primitive(TypePrimitive::Bool)),
             TyKind::Char => Some(Ty::Primitive(TypePrimitive::Char)),
+            TyKind::Str => Some(Ty::Primitive(TypePrimitive::String)),
             TyKind::Int(int_ty) => Some(Ty::Primitive(TypePrimitive::Int(match int_ty {
                 hir::ty::IntTy::I8 => TypeInt::I8,
                 hir::ty::IntTy::I16 => TypeInt::I16,
@@ -1558,18 +1559,7 @@ impl<'a> HirToAstLifter<'a> {
                 }
             }
             TyKind::Ref(_, inner, _) => self.resolved_ty_source_name(inner),
-            // `str` has no dedicated `TyKind` of its own — it's modeled as
-            // `Slice(Int(I8))` (see `hir_typeck.rs`'s primitive-name table),
-            // so recognize that specific shape and render it as `"str"`
-            // (`map_name_to_kt` already maps `str`/`String` -> `String`).
-            // Without this, a generic argument like `Vec<&str>`'s `&str`
-            // silently resolved to `None` here, making the whole arg list
-            // empty and collapsing the wrapper to a bare, ungenericized
-            // `Vec` — exactly the same "arg drops out entirely" failure
-            // mode already guarded against for the `Adt` case above.
-            TyKind::Slice(elem) if matches!(elem.kind, TyKind::Int(hir::ty::IntTy::I8)) => {
-                Some("str".to_string())
-            }
+            TyKind::Str => Some("str".to_string()),
             TyKind::Slice(elem) => self
                 .resolved_ty_source_name(elem)
                 .map(|inner| format!("[{}]", inner)),
