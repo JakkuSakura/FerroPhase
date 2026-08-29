@@ -1422,6 +1422,96 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
 }
 
 #[test]
+fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+
+    let core_items = parser.parse_items_ast("pub struct Ok;")?;
+    let core_source = package_from_items_with_paths_as(
+        PackageId::new("core"),
+        core_items
+            .into_iter()
+            .map(|item| {
+                (
+                    vec![
+                        "core".to_string(),
+                        "prelude".to_string(),
+                        "rust_2024".to_string(),
+                    ],
+                    item,
+                )
+            })
+            .collect(),
+    )?;
+    let mut core_lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("core"),
+    );
+    let mut core = core_lowerer.transform_package(&core_source)?;
+    core.hir_exports = core_lowerer.exported_symbols();
+    let ok_def_id = core
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Ok" => Some(item.def_id.clone()),
+            _ => None,
+        })
+        .expect("core Ok definition");
+
+    let mut core_workspace = hir::HirProgram::new();
+    core_workspace.add_package(std::rc::Rc::new(core));
+    let std_items = parser.parse_items_ast("pub use core::prelude::rust_2024::*;")?;
+    let std_source = package_from_items_with_paths_as(
+        PackageId::new("std"),
+        std_items
+            .into_iter()
+            .map(|item| {
+                (
+                    vec![
+                        "std".to_string(),
+                        "prelude".to_string(),
+                        "rust_2024".to_string(),
+                    ],
+                    item,
+                )
+            })
+            .collect(),
+    )?;
+    let mut std_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(core_workspace), hir::PackageId::new("std"));
+    let mut std = std_lowerer.transform_package(&std_source)?;
+    std.hir_exports = std_lowerer.exported_symbols();
+    assert_eq!(
+        std.module_tree
+            .prelude_bindings(hir::Namespace::Type)
+            .find(|(name, _)| *name == "Ok")
+            .map(|(_, entry)| entry.res.clone()),
+        Some(hir::Res::Def(ok_def_id.clone())),
+    );
+
+    let mut workspace = (*std_lowerer.hir_program).clone();
+    workspace.add_package(std::rc::Rc::new(std));
+    let consumer_items = parser.parse_items_ast("pub struct Holder { value: Ok }")?;
+    let consumer_source = package_from_items_as(PackageId::new("consumer"), consumer_items)?;
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
+    consumer_lowerer.package.prelude = Some(hir::PackageId::new("std"));
+    let consumer = consumer_lowerer.transform_package(&consumer_source)?;
+    let holder = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Holder" => Some(def),
+            _ => None,
+        })
+        .expect("consumer Holder definition");
+    let hir::TypeExprKind::Path(path) = &holder.fields[0].ty.kind else {
+        panic!("expected Holder field to be a path");
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(ok_def_id)));
+    Ok(())
+}
+
+#[test]
 fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let dependency_items = parser.parse_items_ast("pub struct PublicType;")?;

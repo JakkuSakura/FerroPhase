@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprBinOp, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, Path, TySlot, Value,
+    ExprPortableOpCall, ExprSelect, ExprSelectType, Ident, Name, TySlot, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicMaterializer;
@@ -32,12 +32,14 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             "option_some" | "option_unwrap" | "clone" | "as_ref" | "iter" | "to_owned"
             | "as_str" | "as_deref" => Ok(Some(receiver())),
             "option_none" => Ok(Some(Expr::value(Value::Null(Default::default())))),
-            "result_ok" => Ok(Some(invoke_path(
-                &["Result", "success"],
+            "result_ok" => Ok(Some(invoke_static_method(
+                "Result",
+                "success",
                 vec![result_constructor_arg(call)],
             ))),
-            "result_err" => Ok(Some(invoke_path(
-                &["Result", "failure"],
+            "result_err" => Ok(Some(invoke_static_method(
+                "Result",
+                "failure",
                 vec![result_constructor_arg(call)],
             ))),
             "vec_new" => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
@@ -104,15 +106,16 @@ fn invoke_function(name: &str, args: Vec<Expr>) -> Expr {
     }))
 }
 
-fn invoke_path(segments: &[&str], args: Vec<Expr>) -> Expr {
+fn invoke_static_method(receiver: &str, method: &str, args: Vec<Expr>) -> Expr {
     Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
-        target: ExprInvokeTarget::Function(Name::path(Path::plain(
-            segments
-                .iter()
-                .map(|segment| Ident::new(*segment))
-                .collect(),
-        ))),
+        target: ExprInvokeTarget::Method(ExprSelect {
+            span: Default::default(),
+            obj: Box::new(Expr::name(Name::ident(receiver))),
+            field: Ident::new(method),
+            generic_args: Vec::new(),
+            select: ExprSelectType::Method,
+        }),
         args,
         kwargs: Vec::new(),
     }))
@@ -162,18 +165,21 @@ mod tests {
 
         assert!(matches!(ok.kind(), ExprKind::Invoke(_)));
         assert!(matches!(err.kind(), ExprKind::Invoke(_)));
-        assert_eq!(render_invoke_name(&ok), "Result::success");
-        assert_eq!(render_invoke_name(&err), "Result::failure");
+        assert_eq!(render_invoke_name(&ok), "Result.success");
+        assert_eq!(render_invoke_name(&err), "Result.failure");
     }
 
     fn render_invoke_name(expr: &Expr) -> String {
         let ExprKind::Invoke(invoke) = expr.kind() else {
             panic!("expected invocation");
         };
-        let ExprInvokeTarget::Function(name) = &invoke.target else {
-            panic!("expected function invocation");
+        let ExprInvokeTarget::Method(select) = &invoke.target else {
+            panic!("expected static method invocation");
         };
-        name.to_string()
+        let ExprKind::Name(Name::Ident(receiver)) = select.obj.kind() else {
+            panic!("expected static receiver");
+        };
+        format!("{}.{}", receiver.name, select.field.name)
     }
 }
 
