@@ -63,8 +63,18 @@ pub struct RustPackageProvider {
 
 impl RustPackageProvider {
     fn source_fingerprint(member_root: &MemberRoot) -> String {
-        let path = member_root.root_path();
-        let Ok(metadata) = std::fs::metadata(path) else {
+        let path = match member_root {
+            MemberRoot::File(path) => path.clone(),
+            MemberRoot::Dir(dir) => {
+                let lib = dir.join("src/lib.rs");
+                if lib.is_file() {
+                    lib
+                } else {
+                    dir.join("src/main.rs")
+                }
+            }
+        };
+        let Ok(metadata) = std::fs::metadata(&path) else {
             return "missing".to_string();
         };
         let modified = metadata
@@ -230,7 +240,14 @@ impl RustPackageProvider {
             }
         }
         if let Ok(Some(bytes)) = self.disk_cache.get(&cache_key) {
-            if let Ok(items) = bincode::deserialize::<Vec<PackageItem>>(&bytes) {
+            if let Ok(cached) = serde_json::from_slice::<Vec<(Vec<String>, Item)>>(&bytes) {
+                let items = cached
+                    .into_iter()
+                    .map(|(module_path, item)| PackageItem {
+                        module_path: QualifiedPath::new(module_path),
+                        item,
+                    })
+                    .collect::<Vec<_>>();
                 if let Ok(mut c) = self.cache.write() {
                     c.insert(id.as_str().to_string(), items.clone());
                 }
@@ -291,7 +308,11 @@ impl RustPackageProvider {
         if let Ok(mut c) = self.cache.write() {
             c.insert(id.as_str().to_string(), items.clone());
         }
-        if let Ok(bytes) = bincode::serialize(&items) {
+        let serializable = items
+            .iter()
+            .map(|item| (item.module_path.segments.clone(), item.item.clone()))
+            .collect::<Vec<_>>();
+        if let Ok(bytes) = serde_json::to_vec(&serializable) {
             let _ = self.disk_cache.put(&cache_key, &bytes);
         }
         Ok(items)
@@ -1485,6 +1506,42 @@ mod provider_tests {
             actual_metadata.root.to_path_buf().canonicalize().unwrap(),
             renamed_dir.canonicalize().unwrap()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_source_cache_survives_a_fresh_provider() {
+        let root = std::env::temp_dir().join(format!(
+            "fp-rust-disk-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("sample.rs");
+        std::fs::write(&source, "pub struct CachedType;").unwrap();
+
+        let package_id = PackageId::new("sample");
+        let first = RustPackageProvider::new(source.clone())
+            .load_package_source(&package_id)
+            .unwrap();
+        assert_eq!(first.items.len(), 1);
+        let serializable = first
+            .items
+            .iter()
+            .map(|item| (item.module_path.segments.clone(), item.item.clone()))
+            .collect::<Vec<_>>();
+        serde_json::to_vec(&serializable).unwrap();
+        assert!(root.join("target/fp-cache").is_dir());
+
+        let second = RustPackageProvider::new(source.clone())
+            .load_package_source(&package_id)
+            .unwrap();
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].module_path, first.items[0].module_path);
+
         std::fs::remove_dir_all(root).unwrap();
     }
 }
