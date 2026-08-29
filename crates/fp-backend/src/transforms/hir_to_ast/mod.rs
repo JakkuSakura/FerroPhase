@@ -1660,7 +1660,7 @@ impl<'a> HirToAstLifter<'a> {
     /// single-segment local variable reference is the only path shape
     /// `renamed_locals` ever has an entry for. A path resolving
     /// (`hir::Res::Def`) to a real enum variant is rewritten to its real
-    /// declaring enum's name (via `AstProgram::find_hir_enum_for_variant`,
+    /// declaring enum's name (via `HirProgram::find_hir_enum_for_variant`,
     /// a confirmed structural fact from the compiler's own name
     /// resolution) rather than trusting the source text's own segments,
     /// which may be module-qualified in ways Kotlin (flat-imports
@@ -1675,28 +1675,12 @@ impl<'a> HirToAstLifter<'a> {
             }
         }
         if let Some(hir::Res::Def(def_id)) = &path.res {
-            // `Some`/`None`/`Ok`/`Err` already have dedicated, correct
-            // handling elsewhere. A known, pre-existing `DefId`/`package_id` collision
-            // (confirmed: cross-package `DefId`s aren't always unique)
-            // means `find_hir_enum_for_variant` can otherwise match one of
-            // these against a real but unrelated enum sharing a numeric
-            // `DefId` — exclude the four monadic-wrapper names explicitly
-            // rather than trusting a lookup that's already known to
-            // collide for them.
-            let is_monadic_wrapper = path
-                .segments
-                .last()
-                .map(|s| matches!(s.name.as_str(), "Some" | "None" | "Ok" | "Err"))
-                .unwrap_or(false);
-            if !is_monadic_wrapper {
-                if let Some(enum_name) = self.hir_program.find_hir_enum_for_variant(def_id.clone())
-                {
-                    if let Some(variant_name) = path.segments.last() {
-                        return Path::plain(vec![
-                            Ident::new(enum_name),
-                            Ident::new(variant_name.name.as_str()),
-                        ]);
-                    }
+            if let Some(enum_name) = self.hir_program.find_hir_enum_for_variant(def_id.clone()) {
+                if let Some(variant_name) = path.segments.last() {
+                    return Path::plain(vec![
+                        Ident::new(enum_name),
+                        Ident::new(variant_name.name.as_str()),
+                    ]);
                 }
             }
         }

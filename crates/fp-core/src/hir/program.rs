@@ -940,7 +940,7 @@ impl HirProgram {
         let rooted = package
             .module_tree
             .module_exists(&crate::ast::path::QualifiedPath::new(vec![
-                crate_name.to_string(),
+                crate_name.to_string()
             ]));
         let internal = if rooted {
             path.clone()
@@ -967,7 +967,9 @@ impl HirProgram {
 mod tests {
     use super::*;
     use crate::ast::path::QualifiedPath;
+    use crate::ast::ReprOptions;
     use crate::hir::resolve::{Namespace, SymbolEntry, SymbolExport};
+    use crate::hir::{Enum, EnumVariant, Item, ItemKind, OwnerId, Symbol, Visibility};
 
     #[test]
     fn find_export_accepts_normalized_external_crate_root() {
@@ -1094,10 +1096,72 @@ mod tests {
             program.find_export("dependency::api::PublicType"),
             Some(Res::Def(def_id.clone()))
         );
-        assert!(
-            program
-                .package(&consumer_id)
-                .is_some_and(|package| !package.def_map.contains_key(&def_id))
+        assert!(program
+            .package(&consumer_id)
+            .is_some_and(|package| !package.def_map.contains_key(&def_id)));
+    }
+
+    #[test]
+    fn enum_variant_lookup_uses_the_variant_package_identity() {
+        let option_id = PackageId::new("option-provider");
+        let conflicting_id = PackageId::new("unrelated-provider");
+        let variant_index = 7;
+
+        let mut option = HirPackage::new(option_id.clone());
+        let option_enum = DefId::new(option_id.clone(), 1);
+        let option_variant = DefId::new(option_id.clone(), variant_index);
+        option.add_item(Item {
+            hir_id: HirId::new(OwnerId(option_enum.clone()), 0),
+            def_id: option_enum,
+            visibility: Visibility::Public,
+            span: Default::default(),
+            kind: ItemKind::Enum(Enum {
+                attrs: Vec::new(),
+                name: Symbol::new("Option"),
+                variants: vec![EnumVariant {
+                    attrs: Vec::new(),
+                    hir_id: HirId::new(OwnerId(option_variant.clone()), 0),
+                    def_id: option_variant.clone(),
+                    name: Symbol::new("Some"),
+                    discriminant: None,
+                    payload: None,
+                }],
+                generics: Default::default(),
+                repr: ReprOptions::default(),
+            }),
+        });
+
+        let mut unrelated = HirPackage::new(conflicting_id.clone());
+        let unrelated_enum = DefId::new(conflicting_id.clone(), 2);
+        let unrelated_variant = DefId::new(conflicting_id, variant_index);
+        unrelated.add_item(Item {
+            hir_id: HirId::new(OwnerId(unrelated_enum.clone()), 0),
+            def_id: unrelated_enum,
+            visibility: Visibility::Public,
+            span: Default::default(),
+            kind: ItemKind::Enum(Enum {
+                attrs: Vec::new(),
+                name: Symbol::new("Unrelated"),
+                variants: vec![EnumVariant {
+                    attrs: Vec::new(),
+                    hir_id: HirId::new(OwnerId(unrelated_variant.clone()), 0),
+                    def_id: unrelated_variant,
+                    name: Symbol::new("Some"),
+                    discriminant: None,
+                    payload: None,
+                }],
+                generics: Default::default(),
+                repr: ReprOptions::default(),
+            }),
+        });
+
+        let mut program = HirProgram::new();
+        program.publish_package(unrelated);
+        program.publish_package(option);
+
+        assert_eq!(
+            program.find_hir_enum_for_variant(option_variant),
+            Some("Option".to_string())
         );
     }
 
