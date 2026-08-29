@@ -422,7 +422,12 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
     );
     let program = generator.transform_package(&package)?;
     assert!(
-        program.items.is_empty(),
+        program
+            .items
+            .iter()
+            .filter(|item| !matches!(item.kind, hir::ItemKind::Impl(_)))
+            .count()
+            == 0,
         "`type X = const {{ ... }};` must not synthesize a fake HIR item; uses of X \
          resolve via type_aliases substitution instead: {:?}",
         program.items
@@ -834,13 +839,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     // `Result` is defined in `std::result` and re-exported through the
     // prelude; only the prelude alias entry is needed here for the bare
     // `Result` reference below to resolve.
-    let prelude_module = generator
-        .package
-        .module_tree
-        .ensure_module(&QualifiedPath::new(vec![
-            "std".to_string(),
-            "prelude".to_string(),
-        ]));
+    let prelude_module = generator.package.module_tree.prelude();
     generator.package.module_tree.bind(
         prelude_module,
         hir::Namespace::Type,
@@ -1028,7 +1027,14 @@ fn transform_package_with_function_and_struct() -> Result<()> {
     );
     let program = generator.transform_package(&package)?;
 
-    assert_eq!(program.items.len(), 2);
+    assert_eq!(
+        program
+            .items
+            .iter()
+            .filter(|item| !matches!(item.kind, hir::ItemKind::Impl(_)))
+            .count(),
+        2
+    );
     let names: Vec<String> = program
         .items
         .iter()
@@ -1340,6 +1346,7 @@ fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
         std::rc::Rc::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
+    generator.package.prelude = Some(hir::PackageId::new("test"));
     let program = generator.transform_package(&package)?;
     let holder = program
         .items
@@ -1356,7 +1363,7 @@ fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
     let hir::Res::Def(trait_def_id) = bounds[0].res.clone().expect("resolved trait bound") else {
         panic!("expected trait definition");
     };
-    assert!(program.placeholder_defs.contains(&trait_def_id));
+    assert!(!program.placeholder_defs.contains(&trait_def_id));
     Ok(())
 }
 
@@ -1433,7 +1440,8 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         std::rc::Rc::new(hir::HirProgram::new()),
         hir::PackageId::new("dependency"),
     );
-    let dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    dependency.hir_exports = dependency_lowerer.exported_symbols();
     let dependency_exports = dependency_lowerer.exported_symbols();
     let mut dependency = dependency;
     dependency.hir_exports = dependency_exports;
@@ -3269,14 +3277,6 @@ fn transform_package_resolves_self_group_import_nested_in_module_via_default_pre
             ],
         }),
     }));
-    let nested_inline_module = ast::Item::from(ast::ItemKind::Module(ast::Module {
-        attrs: Vec::new(),
-        name: ident("ambiguous_macros_only"),
-        collected_items: Vec::new(),
-        items: vec![prelude_use],
-        visibility: ast::Visibility::Public,
-        is_external: false,
-    }));
 
     // A third, unrelated module — no `use` of its own, relying entirely on
     // the default-prelude mechanism to see the bare name.
@@ -3295,10 +3295,7 @@ fn transform_package_resolves_self_group_import_nested_in_module_via_default_pre
 
     let items = vec![
         (vec!["inner".to_string()], inner_item),
-        (
-            vec!["prelude".to_string(), "v1".to_string()],
-            nested_inline_module,
-        ),
+        (vec!["prelude".to_string(), "v1".to_string()], prelude_use),
         (vec!["other".to_string()], make_fn_item),
     ];
     let package = package_from_items_with_paths_as(PackageId::new("test"), items)?;

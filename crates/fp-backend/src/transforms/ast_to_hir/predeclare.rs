@@ -158,6 +158,7 @@ impl AstToHirLowerer {
         }
 
         for hir_program in self.hir_program.packages.values() {
+            program.def_map.extend(hir_program.def_map.clone());
             // Rust's extern-prelude spelling normalizes Cargo package names
             // (`skln-core` is imported as `skln_core`). Keep published
             // definition paths consistent with module-tree export keys and
