@@ -49,6 +49,12 @@ pub struct BackendConfig {
     /// project directory's name, not `workspace_root` (the output
     /// directory).
     pub root_name: String,
+    /// Package identities selected for source emission. Dependencies outside
+    /// this set can still be loaded for resolution, but must not become
+    /// output-project dependencies.
+    pub emitted_packages: Vec<PackageId>,
+    /// Target-specific namespace prefix for generated Kotlin packages.
+    pub kotlin_package_prefix: Option<String>,
     /// Whether the backend should produce a fully-linked, runnable
     /// artifact rather than a relocatable object — `true` for every
     /// ordinary source compile (which always wants an executable
@@ -88,6 +94,8 @@ impl BackendConfig {
             type_defs: false,
             single_world: false,
             root_name: "workspace".to_string(),
+            emitted_packages: Vec::new(),
+            kotlin_package_prefix: None,
             link_requested: true,
             emit_text: false,
             exec_requested: false,
@@ -161,6 +169,16 @@ impl BackendConfig {
 
     pub fn with_root_name(mut self, root_name: String) -> Self {
         self.root_name = root_name;
+        self
+    }
+
+    pub fn with_emitted_packages(mut self, packages: Vec<PackageId>) -> Self {
+        self.emitted_packages = packages;
+        self
+    }
+
+    pub fn with_kotlin_package_prefix(mut self, prefix: Option<String>) -> Self {
+        self.kotlin_package_prefix = prefix;
         self
     }
 

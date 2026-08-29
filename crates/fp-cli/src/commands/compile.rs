@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use clap::Args;
+
+struct KotlinTranspileConfig {
+    packages: Vec<PackageId>,
+    package_prefix: String,
+}
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
@@ -257,10 +262,11 @@ async fn run_named_target(
     use crate::languages::detect_project_language;
     use crate::languages::package_provider_registry::provider_for_language;
 
-    let (provider, packages, lang): (
+    let (provider, packages, lang, kotlin_package_prefix): (
         std::sync::Arc<dyn fp_core::ast::package::provider::PackageProvider>,
         Vec<PackageId>,
         String,
+        Option<String>,
     ) = if input.is_dir() {
         let lang = args
             .source_language
@@ -278,7 +284,18 @@ async fn run_named_target(
         let discovered_packages = provider
             .list_packages()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
-        let packages = if lang == crate::languages::RUST || lang == "rs" {
+        let kotlin_config = if (lang == crate::languages::RUST || lang == "rs")
+            && target_name == "kotlin"
+            && args.package.is_none()
+            && input.join("Magnet.toml").is_file()
+        {
+            Some(kotlin_transpile_config(input, discovered_packages.clone())?)
+        } else {
+            None
+        };
+        let packages = if let Some(config) = &kotlin_config {
+            config.packages.clone()
+        } else if lang == crate::languages::RUST || lang == "rs" {
             select_rust_directory_roots(
                 input,
                 provider.as_ref(),
@@ -288,11 +305,16 @@ async fn run_named_target(
         } else {
             discovered_packages
         };
-        (provider, packages, lang)
+        (
+            provider,
+            packages,
+            lang,
+            kotlin_config.map(|config| config.package_prefix),
+        )
     } else {
         let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
         let (provider, package_id, _tag) = provider_and_package_for_input(input, &lang)?;
-        (provider, vec![package_id], lang)
+        (provider, vec![package_id], lang, None)
     };
 
     // CIL text can be lifted into the compiler IR, but a compiled .NET
@@ -368,6 +390,8 @@ async fn run_named_target(
             },
         )
         .with_root_name(root_name.clone())
+        .with_emitted_packages(packages.clone())
+        .with_kotlin_package_prefix(kotlin_package_prefix)
         .with_link_requested(link_requested)
         .with_emit_text(emit_text)
         .with_exec_requested(args.exec);
@@ -385,6 +409,71 @@ async fn run_named_target(
         exec,
     )
     .await
+}
+
+fn kotlin_transpile_config(
+    input: &Path,
+    discovered: Vec<PackageId>,
+) -> Result<KotlinTranspileConfig> {
+    let manifest = input.join("Magnet.toml");
+    let content = std::fs::read_to_string(&manifest)
+        .map_err(|error| CliError::Compilation(format!("read {}: {error}", manifest.display())))?;
+    let document = toml::from_str::<toml::Value>(&content)
+        .map_err(|error| CliError::Compilation(format!("parse {}: {error}", manifest.display())))?;
+    let kotlin = document
+        .get("transpile")
+        .and_then(|section| section.get("kotlin"))
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "{} must define [transpile.kotlin]",
+                manifest.display()
+            ))
+        })?;
+    let names = kotlin
+        .get("packages")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "{} must define [transpile.kotlin].packages",
+                manifest.display()
+            ))
+        })?;
+    let discovered = discovered
+        .into_iter()
+        .map(|id| (id.as_str().to_string(), id))
+        .collect::<std::collections::HashMap<_, _>>();
+    let packages = names
+        .iter()
+        .map(|name| {
+            let name = name.as_str().ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "{} contains a non-string Kotlin package selection",
+                    manifest.display()
+                ))
+            })?;
+            discovered.get(name).cloned().ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "Kotlin package `{name}` in {} is not a Cargo workspace member",
+                    manifest.display()
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let package_prefix = kotlin
+        .get("package-prefix")
+        .and_then(toml::Value::as_str)
+        .filter(|prefix| !prefix.is_empty())
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "{} must define transpile.kotlin.package-prefix",
+                manifest.display()
+            ))
+        })?
+        .to_string();
+    Ok(KotlinTranspileConfig {
+        packages,
+        package_prefix,
+    })
 }
 
 /// Select the package requested by a Rust directory input without changing

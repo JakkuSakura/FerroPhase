@@ -3,10 +3,11 @@ use super::*;
 struct KotlinScan {
     ctx: KotlinWorkspaceContext,
     workspace_packages: HashSet<String>,
-    /// Every package name in this workspace compile, sorted — used only
-    /// by `write_workspace_files` for `settings.gradle.kts`'s
-    /// `include(...)` lines.
+    /// Every package selected for Kotlin emission, sorted — used by
+    /// `write_workspace_files` for `settings.gradle.kts`'s `include(...)`
+    /// lines.
     package_names: Vec<String>,
+    kotlin_packages: HashMap<String, String>,
 }
 
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
@@ -21,6 +22,7 @@ pub struct KotlinBackend {
     serializer: KotlinSerializer,
     config: BackendConfig,
     scan: std::sync::OnceLock<KotlinScan>,
+    output_initialized: std::sync::OnceLock<()>,
 }
 
 impl KotlinBackend {
@@ -29,6 +31,7 @@ impl KotlinBackend {
             serializer: KotlinSerializer,
             config,
             scan: std::sync::OnceLock::new(),
+            output_initialized: std::sync::OnceLock::new(),
         }
     }
 
@@ -44,21 +47,30 @@ impl KotlinBackend {
         if let Some(scan) = self.scan.get() {
             return Ok(scan);
         }
-        // The provider may describe the entire Cargo workspace, while this
-        // compile can intentionally select one member. Scan only packages
-        // that the driver actually loaded and type-checked; asking for every
-        // provider member would make a focused `--package` compile fail on
-        // unrelated packages.
-        let workspace_packages: HashSet<String> = workspace
-            .crates()
-            .keys()
+        // The compiler loads dependencies for resolution, but only selected
+        // roots become Kotlin projects. Keeping this set separate prevents
+        // Rust sysroot crates such as `core` and `libc` from becoming Gradle
+        // project dependencies without emitted Kotlin artifacts.
+        let workspace_packages: HashSet<String> = self
+            .config
+            .emitted_packages
+            .iter()
             .map(|package_id| package_id.as_str().to_owned())
             .collect();
+        let kotlin_packages = workspace_packages
+            .iter()
+            .flat_map(|name| {
+                let package =
+                    kotlin_package_name(self.config.kotlin_package_prefix.as_deref(), name);
+                [
+                    (name.clone(), package.clone()),
+                    (name.replace('-', "_"), package),
+                ]
+            })
+            .collect::<HashMap<_, _>>();
         let sources: Vec<AstPackage> = workspace_packages
             .iter()
-            .map(|name| {
-                workspace.package_source(&fp_core::ast::package::PackageId::new(name.clone()))
-            })
+            .map(|name| workspace.package_source(&fp_core::ast::package::PackageId::new(name)))
             .collect::<fp_core::error::Result<_>>()?;
         let ctx = KotlinWorkspaceContext::collect(sources.iter());
         let mut package_names: Vec<String> = sources.iter().map(|s| s.name.clone()).collect();
@@ -67,8 +79,50 @@ impl KotlinBackend {
             ctx,
             workspace_packages,
             package_names,
+            kotlin_packages,
         });
         Ok(self.scan.get().expect("just set above"))
+    }
+
+    fn initialize_output(&self) -> fp_core::error::Result<()> {
+        if self.output_initialized.get().is_none() {
+            if self.config.workspace_root.exists() {
+                std::fs::remove_dir_all(&self.config.workspace_root)?;
+            }
+            self.output_initialized
+                .set(())
+                .map_err(|_| fp_core::error::Error::from("Kotlin output initialization raced"))?;
+        }
+        Ok(())
+    }
+}
+
+fn kotlin_package_name(prefix: Option<&str>, package: &str) -> String {
+    let crate_name = package.replace('-', "_");
+    match prefix
+        .map(|prefix| prefix.trim_end_matches('.'))
+        .filter(|prefix| !prefix.is_empty())
+    {
+        Some(prefix) => format!("{prefix}.{crate_name}"),
+        None => crate_name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kotlin_package_name;
+
+    #[test]
+    fn kotlin_package_name_normalizes_cargo_names_under_prefix() {
+        assert_eq!(
+            kotlin_package_name(Some("com.example.generated"), "skln-git"),
+            "com.example.generated.skln_git"
+        );
+    }
+
+    #[test]
+    fn kotlin_package_name_has_no_leading_dot_without_prefix() {
+        assert_eq!(kotlin_package_name(None, "skln-git"), "skln_git");
     }
 }
 
@@ -84,6 +138,7 @@ impl TargetBackend for KotlinBackend {
         mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
+        self.initialize_output()?;
         let scan = self.ensure_scan(workspace)?;
         // Materialize the central portable-operation representation into
         // Kotlin constructs before serialization. `package_source` derives
@@ -105,9 +160,12 @@ impl TargetBackend for KotlinBackend {
         }
         let package = workspace.package_source(package_id)?;
         let package = &package;
-        let files =
-            self.serializer
-                .serialize_package(package, &scan.workspace_packages, &scan.ctx)?;
+        let files = self.serializer.serialize_package(
+            package,
+            &scan.workspace_packages,
+            &scan.kotlin_packages,
+            &scan.ctx,
+        )?;
         let writer = PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (mod_path, code) in files {
             let rel = if mod_path.contains('.') {
