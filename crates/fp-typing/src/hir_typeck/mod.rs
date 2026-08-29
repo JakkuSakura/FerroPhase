@@ -389,7 +389,7 @@ impl HirTypeChecker {
                     if !seen.insert(trait_id.clone()) {
                         continue;
                     }
-                    let Some(item) = child.program.item(trait_id).cloned() else {
+                    let Some(item) = child.program.item(trait_id) else {
                         continue;
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -442,15 +442,12 @@ impl HirTypeChecker {
         self.generic_scope.get(&def_id).cloned()
     }
 
-    /// The package actually being checked — an `Rc` clone (a pointer bump,
-    /// never a deep copy of the package's own data; `HirProgram::package`
-    /// itself only hands out a plain `&HirPackage`, not the `Rc` needed
-    /// here, so this reads the underlying `packages` map directly).
-    pub fn package(&self) -> Rc<hir::HirPackage> {
+    /// The package actually being checked. The program owns it in a shared
+    /// cell; this scoped read borrow preserves direct package access without
+    /// cloning its compiler state.
+    pub fn package(&self) -> std::cell::Ref<'_, hir::HirPackage> {
         self.program
-            .packages
-            .get(&self.current_package)
-            .cloned()
+            .package(&self.current_package)
             .expect("current_package is always inserted into program at construction")
     }
 
@@ -582,8 +579,10 @@ impl HirTypeChecker {
     /// (an `Rc` clone, not a deep copy — see `package`) *is* the whole
     /// snapshot; there's no separate side table to read back alongside it,
     /// and no need to ever copy the package's own data out of it.
-    pub fn finish(&self) -> Rc<hir::HirPackage> {
-        self.package()
+    pub fn finish(&self) -> Rc<std::cell::RefCell<hir::HirPackage>> {
+        self.program
+            .package_rc(&self.current_package)
+            .expect("current_package is always inserted into program at construction")
     }
 
     /// Entrypoint for type-checking a single item by `DefId`, directly —
@@ -760,6 +759,13 @@ impl HirTypeChecker {
                 }
                 hir::ItemKind::Trait(trait_def) => {
                     self.check_trait(item.def_id.clone(), trait_def).await?;
+                }
+                hir::ItemKind::TypeAlias(alias) => {
+                    tracing::info!(
+                        def_id = ?item.def_id,
+                        alias = %alias.name,
+                        "skipping standalone type-alias item type checking"
+                    );
                 }
                 hir::ItemKind::Query(_) => {}
                 hir::ItemKind::Expr(expr) => {
@@ -2471,7 +2477,7 @@ impl HirTypeChecker {
                     let Some(hir::Res::Def(trait_def_id)) = &projection.trait_path.res else {
                         return Ok(self.error_ty("qualified projection trait is unresolved"));
                     };
-                    let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
+                    let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
                         return Ok(self.error_ty("qualified projection trait was not found"));
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -2479,7 +2485,7 @@ impl HirTypeChecker {
                     };
                     let mut seen = HashSet::new();
                     let Some(assoc_type) =
-                        self.trait_assoc_type(trait_def, &projection.assoc, &mut seen)
+                        self.trait_assoc_type(&trait_def, &projection.assoc, &mut seen)
                     else {
                         return Ok(self.error_ty(format!(
                             "trait does not declare associated type `{}`",
@@ -2947,10 +2953,10 @@ impl HirTypeChecker {
         // `hir::HirPackage::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
-        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()).cloned() {
+        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()) {
             return self.check_type_expr(&target).await;
         }
-        let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
+        let Some(item) = self.program_rc().item(def_id.clone()) else {
             // A resolved definition without a published HIR item is a
             // broken identity boundary. Returning a name-keyed parameter
             // here would hide the publication error and lose the `DefId`
@@ -3614,7 +3620,7 @@ impl HirTypeChecker {
                 }
             }
         }
-        let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
+        let Some(item) = self.program_rc().item(def_id.clone()) else {
             // `program` is an owned `Rc` clone (cheap — it's the same
             // `Rc<HirProgram>` `self.program` already is), not a borrow
             // of `self` — so `item`/`impl_item` below can stay borrowed
@@ -3637,17 +3643,23 @@ impl HirTypeChecker {
                         .items
                         .iter()
                         .find(|member| member.def_id == *def_id)?;
-                    Some((impl_item, &impl_member.kind))
+                    Some((
+                        impl_item.generics.clone(),
+                        impl_item.self_ty.clone(),
+                        impl_item.items.clone(),
+                        impl_member.kind.clone(),
+                    ))
                 });
-            if let Some((impl_item, hir::ImplItemKind::Method(function))) = found {
-                let mut scope = self.with_generics(&impl_item.generics);
-                let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
+            if let Some((generics, self_ty, impl_items, hir::ImplItemKind::Method(function))) =
+                found
+            {
+                let mut scope = self.with_generics(&generics);
+                let self_ty_hir_id = self_ty.hir_id.clone();
+                let self_ty = scope.check_type_expr(&self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
-                let assoc_types = scope
-                    .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                    .await?;
+                let assoc_types = scope.impl_assoc_types(&impl_items, self_ty_hir_id).await?;
                 let mut scope = scope.with_assoc_types(assoc_types);
-                return scope.function_signature(function).await;
+                return scope.function_signature(&function).await;
             }
             // An impl's own associated const (`impl char { pub const MIN:
             // char = '\0'; }`) — its *declared* type annotation is all a
@@ -3667,9 +3679,9 @@ impl HirTypeChecker {
             // not a real cycle in the *types* (a const's declared type
             // never needs another item's body), only in this
             // coarser-than-necessary task granularity.
-            if let Some((impl_item, hir::ImplItemKind::AssocConst(constant))) = found {
-                let mut scope = self.with_generics(&impl_item.generics);
-                let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
+            if let Some((generics, self_ty, _, hir::ImplItemKind::AssocConst(constant))) = found {
+                let mut scope = self.with_generics(&generics);
+                let self_ty = scope.check_type_expr(&self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
                 return scope.check_type_expr(&constant.ty).await;
             }
@@ -3692,7 +3704,7 @@ impl HirTypeChecker {
                     // this point, which makes a resolved `Type::CONST` lose
                     // its owner as soon as it crosses a crate boundary.
                     let impl_def_id = package.member_to_owning_item.get(def_id)?;
-                    package.def_map.get(impl_def_id)
+                    package.def_map.get(impl_def_id).cloned()
                 })
                 .and_then(|item| {
                     let hir::ItemKind::Impl(impl_item) = &item.kind else {
@@ -3734,7 +3746,7 @@ impl HirTypeChecker {
             let matched_enum_item = self
                 .program_rc()
                 .member_owner(def_id.clone())
-                .and_then(|owner_id| self.program_rc().item(owner_id).cloned())
+                .and_then(|owner_id| self.program_rc().item(owner_id))
                 .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)));
             if let Some(enum_item) = matched_enum_item {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
@@ -3863,7 +3875,7 @@ impl HirTypeChecker {
                 // annotations remain hard errors from `check_type_expr`.
                 self.check_type_expr(&constant.ty).await
             }
-            hir::ItemKind::Function(function) => self.function_signature(function).await,
+            hir::ItemKind::Function(function) => self.function_signature(&function).await,
             _ => Ok(self.error_ty("resolved path is not a value")),
         }
     }
@@ -4120,14 +4132,14 @@ impl HirTypeChecker {
             let Some(hir::Res::Def(trait_def_id)) = &path.res else {
                 continue;
             };
-            let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
+            let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
                 continue;
             };
             let hir::ItemKind::Trait(trait_def) = &item.kind else {
                 continue;
             };
             let mut seen = HashSet::new();
-            if let Some(assoc_type) = self.trait_assoc_type(trait_def, assoc_name, &mut seen) {
+            if let Some(assoc_type) = self.trait_assoc_type(&trait_def, assoc_name, &mut seen) {
                 if !assoc_type.bounds.is_empty() {
                     self.generic_param_bounds
                         .entry(assoc_name.clone())
@@ -4194,7 +4206,7 @@ impl HirTypeChecker {
             if !seen.insert(trait_id.clone()) {
                 continue;
             }
-            let Some(trait_item) = program.item(trait_id.clone()).cloned() else {
+            let Some(trait_item) = program.item(trait_id.clone()) else {
                 continue;
             };
             let hir::ItemKind::Trait(trait_def) = &trait_item.kind else {
@@ -4325,7 +4337,7 @@ impl HirTypeChecker {
                 if !seen.insert(current_id.clone()) {
                     continue;
                 }
-                let Some(item) = self.program_rc().item(current_id).cloned() else {
+                let Some(item) = self.program_rc().item(current_id) else {
                     continue;
                 };
                 let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -4476,9 +4488,9 @@ impl HirTypeChecker {
             _ => None,
         };
         let program = self.program_rc();
-        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match receiver_def {
+        let candidates: Box<dyn Iterator<Item = hir::Item> + '_> = match receiver_def {
             Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
-            None => Box::new(shape_and_blanket_candidates(&program, &target_ty.kind)),
+            None => shape_and_blanket_candidates(&program, &target_ty.kind),
         };
         let result: Result<Option<Ty>> = 'search: {
             for item in candidates {
@@ -4716,7 +4728,7 @@ impl HirTypeChecker {
                     if !seen.insert(current_id.clone()) {
                         continue;
                     }
-                    let Some(item) = self.program_rc().item(current_id).cloned() else {
+                    let Some(item) = self.program_rc().item(current_id) else {
                         continue;
                     };
                     let hir::ItemKind::Trait(trait_def) = &item.kind else {
@@ -4792,19 +4804,16 @@ impl HirTypeChecker {
                         },
                         _ => None,
                     })
-                    .and_then(|item| match &item.kind {
-                        hir::ItemKind::Trait(trait_def) => Some(trait_def),
-                        _ => None,
-                    })
-                    .is_some_and(|trait_def| {
-                        trait_def.items.iter().any(|item| {
+                    .is_some_and(|item| match item.kind {
+                        hir::ItemKind::Trait(trait_def) => trait_def.items.iter().any(|item| {
                             item.name == *method
                                 && matches!(
                                     &item.kind,
                                     hir::TraitItemKind::Method(function)
                                         if function.body.is_some()
                                 )
-                        })
+                        }),
+                        _ => false,
                     })
             };
             if !declares_method && !declares_trait_default {
@@ -5030,7 +5039,7 @@ impl HirTypeChecker {
             _ => return None,
         };
         let program = self.program_rc();
-        let candidates: Vec<hir::Item> = program.impls_for_adt(receiver_def).cloned().collect();
+        let candidates: Vec<hir::Item> = program.impls_for_adt(receiver_def).collect();
         for item in &candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
@@ -5262,7 +5271,7 @@ impl HirTypeChecker {
             };
             return Ok(field_ty.clone());
         }
-        let Some(item) = self.program_rc().item(adt.did.clone()).cloned() else {
+        let Some(item) = self.program_rc().item(adt.did.clone()) else {
             return Ok(self.error_ty("struct definition was not found"));
         };
         let hir::ItemKind::Struct(def) = item.kind else {
@@ -5360,8 +5369,8 @@ impl HirTypeChecker {
         if matches!(
             self.program_rc()
                 .item(adt.did.clone())
-                .map(|item| &item.kind),
-            Some(hir::ItemKind::Struct(_))
+                .map(|item| matches!(item.kind, hir::ItemKind::Struct(_))),
+            Some(true)
         ) {
             Ok(Some(payload))
         } else {
@@ -5391,7 +5400,7 @@ impl HirTypeChecker {
             .package(&variant_id.package_id)
             .and_then(|package| {
                 let enum_def_id = package.enum_variant_item_index.get(&variant_id)?;
-                package.def_map.get(enum_def_id)
+                package.def_map.get(enum_def_id).cloned()
             })
             .and_then(|item| {
                 let hir::ItemKind::Enum(def) = &item.kind else {
@@ -5754,7 +5763,7 @@ impl HirTypeChecker {
                         if trait_id == principal.def_id {
                             break true;
                         }
-                        if let Some(item) = program.item(trait_id).cloned() {
+                        if let Some(item) = program.item(trait_id) {
                             if let hir::ItemKind::Trait(trait_def) = &item.kind {
                                 for supertrait in &trait_def.supertraits {
                                     if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
@@ -5770,7 +5779,6 @@ impl HirTypeChecker {
                     let candidates: Vec<_> = program
                         .impls_for_adt(actual_adt.did.clone())
                         .chain(program.blanket_impls())
-                        .cloned()
                         .collect();
                     let mut found = false;
                     for item in candidates {

@@ -1045,6 +1045,7 @@ impl AstToHirLowerer {
         self.package
             .def_map
             .get(def_id)
+            .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()))
             .is_some_and(|item| matches!(item.kind, hir::ItemKind::Trait(_)))
     }
@@ -1083,7 +1084,7 @@ impl AstToHirLowerer {
             .op_defs
             .get(&def_id)
             .cloned()
-            .or_else(|| self.hir_program.op_def(def_id).cloned())
+            .or_else(|| self.hir_program.op_def(def_id))
     }
 
     /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —

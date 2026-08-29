@@ -1,4 +1,6 @@
 use super::*;
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
 
 /// The whole compiled result — every package involved, keyed by
 /// `PackageId`. `AstToHirLowerer` owns one of these and works package-by-package
@@ -6,15 +8,15 @@ use super::*;
 /// already-compiled dependency package is a lookup into this same
 /// structure, not a separate clone-and-merge pass.
 ///
-/// Packages are `Rc`, not owned — building a `HirProgram` (e.g. a
+/// Packages are shared mutable cells — building a `HirProgram` (e.g. a
 /// `AstProgram` snapshotting its already-compiled dependency
-/// packages, each already an `Rc<HirPackage>`, for a consumer like
+/// packages, each already an `Rc<RefCell<HirPackage>>`, for a consumer like
 /// `HirToMirLowerer` to dispatch cross-package `DefId` lookups against) is
 /// then just a handful of `Rc` clones, never a deep clone of every
 /// dependency's own items/def_map/def_paths.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HirProgram {
-    pub packages: HashMap<PackageId, std::rc::Rc<HirPackage>>,
+    pub packages: HashMap<PackageId, Rc<RefCell<HirPackage>>>,
     /// Direct name -> `DefId` lookup across every package, for well-known
     /// cross-package lookups by bare name (e.g. `fp_typing`'s well-known
     /// standard-library collection types) — maintained incrementally by
@@ -44,16 +46,12 @@ impl HirProgram {
         }
     }
 
-    pub fn package(&self, id: &PackageId) -> Option<&HirPackage> {
-        self.packages.get(id).map(|package| package.as_ref())
+    pub fn package(&self, id: &PackageId) -> Option<Ref<'_, HirPackage>> {
+        self.packages.get(id).map(|package| package.borrow())
     }
 
-    /// Same package, but the shared `Rc<HirPackage>` itself — for a caller
-    /// that wants to mutate one of `HirPackage`'s own interior-mutable
-    /// fields (e.g. `record_const_block_value`) in place and have that
-    /// visible to everyone else already holding the same `Rc`, with no
-    /// separate write-back step needed afterward.
-    pub fn package_rc(&self, id: &PackageId) -> Option<std::rc::Rc<HirPackage>> {
+    /// Same package, but the shared mutable package cell itself.
+    pub fn package_rc(&self, id: &PackageId) -> Option<Rc<RefCell<HirPackage>>> {
         self.packages.get(id).cloned()
     }
 
@@ -67,8 +65,8 @@ impl HirProgram {
     /// package with empty or stale derived indexes.
     pub fn publish_package(&mut self, mut package: HirPackage) {
         package.index_derived_lookups();
-        let package = std::rc::Rc::new(package);
         let package_id = package.id.clone();
+        let package = Rc::new(RefCell::new(package));
 
         // Replacement is used when a package is re-lowered after a comptime
         // result becomes available.  Rebuild the aggregate index from the
@@ -83,8 +81,8 @@ impl HirProgram {
     /// HIR construction tests); the snapshot must already have complete
     /// derived indexes because it cannot be reindexed through `Rc` without
     /// taking ownership of the caller's handle.
-    pub fn add_package(&mut self, package: std::rc::Rc<HirPackage>) {
-        let package_id = package.id.clone();
+    pub fn add_package(&mut self, package: Rc<RefCell<HirPackage>>) {
+        let package_id = package.borrow().id.clone();
         self.packages.insert(package_id, package);
         self.rebuild_indexes();
     }
@@ -96,7 +94,7 @@ impl HirProgram {
         let mut package_ids = self.packages.keys().cloned().collect::<Vec<_>>();
         package_ids.sort();
         for package_id in package_ids {
-            let package = &self.packages[&package_id];
+            let package = self.packages[&package_id].borrow();
             self.packages_by_crate_name
                 .entry(Self::external_crate_name(&package.id))
                 .or_insert_with(|| package.id.clone());
@@ -133,31 +131,38 @@ impl HirProgram {
     /// Every item across every package this `HirProgram` knows about — for
     /// callers that genuinely need the full set (e.g. a one-time reverse
     /// index build), not a single `DefId` lookup.
-    pub fn all_items(&self) -> impl Iterator<Item = &Item> {
+    pub fn all_items(&self) -> impl Iterator<Item = Item> {
         self.packages
             .values()
-            .flat_map(|package| package.items.iter())
+            .flat_map(|package| package.borrow().items.clone().into_iter())
     }
 
     /// A definition's fully-qualified path, wherever its owning package
     /// lives — routes to that package's own `def_paths` via the `DefId`'s
     /// own `package_id`, so a caller never has to know or track which
     /// package a `DefId` came from before asking this question.
-    pub fn def_path(&self, def_id: DefId) -> Option<&DefPath> {
-        self.package(&def_id.package_id)?.def_paths.get(&def_id)
+    pub fn def_path(&self, def_id: DefId) -> Option<DefPath> {
+        self.package(&def_id.package_id)?
+            .def_paths
+            .get(&def_id)
+            .cloned()
     }
 
     /// A transparent type alias's expansion target — see
     /// `HirPackage::type_alias_targets`'s doc comment for why this table
     /// exists at all.
-    pub fn type_alias_target(&self, def_id: DefId) -> Option<&TypeExpr> {
+    pub fn type_alias_target(&self, def_id: DefId) -> Option<TypeExpr> {
         self.package(&def_id.package_id)?
             .type_alias_targets
             .get(&def_id)
+            .cloned()
     }
 
-    pub fn item(&self, def_id: DefId) -> Option<&Item> {
-        self.package(&def_id.package_id)?.def_map.get(&def_id)
+    pub fn item(&self, def_id: DefId) -> Option<Item> {
+        self.package(&def_id.package_id)?
+            .def_map
+            .get(&def_id)
+            .cloned()
     }
 
     /// Cross-package counterpart of `HirPackage::member_owner` — routes to
@@ -392,14 +397,18 @@ impl HirProgram {
         }
     }
 
-    pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
-        self.package(&def_id.package_id)?.op_defs.get(&def_id)
+    pub fn op_def(&self, def_id: DefId) -> Option<crate::intrinsics::PortableOp> {
+        self.package(&def_id.package_id)?
+            .op_defs
+            .get(&def_id)
+            .cloned()
     }
 
-    pub fn intrinsic_def(&self, def_id: DefId) -> Option<&CallKind> {
+    pub fn intrinsic_def(&self, def_id: DefId) -> Option<CallKind> {
         self.package(&def_id.package_id)?
             .intrinsic_defs
             .get(&def_id)
+            .cloned()
     }
 
     pub fn is_placeholder_def(&self, def_id: DefId) -> bool {
@@ -413,14 +422,18 @@ impl HirProgram {
     /// `HirPackage::impls_by_self_did` rather than only looking in `did`'s
     /// own package. Each per-package lookup is still O(1); only the number
     /// of packages that actually declare a matching impl costs anything.
-    pub fn impls_for_adt(&self, did: DefId) -> impl Iterator<Item = &Item> {
+    pub fn impls_for_adt(&self, did: DefId) -> impl Iterator<Item = Item> {
         self.packages.values().flat_map(move |package| {
-            package
+            let package = package.borrow();
+            let impl_ids = package
                 .impls_by_self_did
                 .get(&did)
+                .cloned()
+                .unwrap_or_default();
+            impl_ids
                 .into_iter()
-                .flatten()
-                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
+                .filter_map(|impl_def_id| package.def_map.get(&impl_def_id).cloned())
+                .collect::<Vec<_>>()
         })
     }
 
@@ -432,14 +445,18 @@ impl HirProgram {
     /// workspace the way an `all_impls` scan would — see `blanket_impls`
     /// for the one class of impl that genuinely must apply regardless of
     /// shape.
-    pub fn impls_for_shape(&self, shape: &str) -> impl Iterator<Item = &Item> {
+    pub fn impls_for_shape(&self, shape: &str) -> impl Iterator<Item = Item> {
         self.packages.values().flat_map(move |package| {
-            package
+            let package = package.borrow();
+            let impl_ids = package
                 .impls_by_shape
                 .get(shape)
+                .cloned()
+                .unwrap_or_default();
+            impl_ids
                 .into_iter()
-                .flatten()
-                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
+                .filter_map(|impl_def_id| package.def_map.get(&impl_def_id).cloned())
+                .collect::<Vec<_>>()
         })
     }
 
@@ -448,12 +465,14 @@ impl HirProgram {
     /// regardless of the receiver's own shape, since a blanket impl's
     /// self-type is itself just a bare generic parameter with nothing
     /// concrete to bucket it under.
-    pub fn blanket_impls(&self) -> impl Iterator<Item = &Item> {
+    pub fn blanket_impls(&self) -> impl Iterator<Item = Item> {
         self.packages.values().flat_map(|package| {
-            package
-                .blanket_impls
-                .iter()
-                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
+            let package = package.borrow();
+            let impl_ids = package.blanket_impls.iter().cloned().collect::<Vec<_>>();
+            impl_ids
+                .into_iter()
+                .filter_map(|impl_def_id| package.def_map.get(&impl_def_id).cloned())
+                .collect::<Vec<_>>()
         })
     }
 
@@ -489,7 +508,8 @@ impl HirProgram {
         let mut ids: Vec<_> = self.packages.keys().cloned().collect();
         ids.sort();
         for id in ids {
-            for (key, res) in self.packages[&id].hir_exports.iter() {
+            let package = self.packages[&id].borrow();
+            for (key, res) in &package.hir_exports {
                 if key.rsplit("::").next().unwrap_or(key.as_str()) == name {
                     return Some(res.clone());
                 }
@@ -505,7 +525,8 @@ impl HirProgram {
         let mut ids: Vec<_> = self.packages.keys().cloned().collect();
         ids.sort();
         for id in ids {
-            for (key, res) in self.packages[&id].hir_exports.iter() {
+            let package = self.packages[&id].borrow();
+            for (key, res) in &package.hir_exports {
                 if key == suffix || key.ends_with(&dotted_suffix) {
                     return Some(res.clone());
                 }
@@ -525,16 +546,22 @@ impl HirProgram {
         &self,
     ) -> Vec<(
         crate::ast::path::QualifiedPath,
-        std::rc::Rc<HirPackage>,
+        Rc<RefCell<HirPackage>>,
         HashMap<String, Res>,
     )> {
         self.packages
             .values()
             .map(|package| {
-                let exports = package
+                let package_ref = package.borrow();
+                let exports = package_ref
                     .hir_exports
                     .iter()
-                    .map(|(key, res)| (Self::canonical_export_key(&package.id, key), res.clone()))
+                    .map(|(key, res)| {
+                        (
+                            Self::canonical_export_key(&package_ref.id, key),
+                            res.clone(),
+                        )
+                    })
                     .collect();
                 (
                     crate::ast::path::QualifiedPath::new(Vec::new()),
@@ -646,10 +673,10 @@ impl HirProgram {
         from_module: &crate::ast::path::QualifiedPath,
         ns: resolve::Namespace,
         name: &str,
-    ) -> Option<&Res> {
+    ) -> Option<Res> {
         let package = self.package(from)?;
         let module = package.module_tree.module_id(from_module)?;
-        package.module_tree.lookup_res(module, ns, name)
+        package.module_tree.lookup_res(module, ns, name).cloned()
     }
 
     /// Resolves a path whose first segment is an extern-prelude crate name.
@@ -670,13 +697,17 @@ impl HirProgram {
         &self,
         path: &crate::ast::path::QualifiedPath,
         ns: resolve::Namespace,
-    ) -> Option<&resolve::SymbolEntry> {
+    ) -> Option<resolve::SymbolEntry> {
         let crate_name = path.head()?;
         let package = self
             .packages_by_crate_name
             .get(crate_name)
             .and_then(|package_id| self.packages.get(package_id))?;
-        package.module_tree.lookup_crate_path(crate_name, path, ns)
+        package
+            .borrow()
+            .module_tree
+            .lookup_crate_path(crate_name, path, ns)
+            .cloned()
     }
 
     /// Resolves an extern-prelude path as a module and returns its canonical
@@ -691,6 +722,7 @@ impl HirProgram {
             .get(crate_name)
             .and_then(|package_id| self.packages.get(package_id))?;
         package
+            .borrow()
             .module_tree
             .module_exists_crate_path(crate_name, path)
             .then(|| path.clone())
@@ -709,6 +741,7 @@ impl HirProgram {
             .packages_by_crate_name
             .get(crate_name)
             .and_then(|package_id| self.packages.get(package_id))?;
+        let package = package.borrow();
         let rooted = package
             .module_tree
             .module_exists(&crate::ast::path::QualifiedPath::new(vec![

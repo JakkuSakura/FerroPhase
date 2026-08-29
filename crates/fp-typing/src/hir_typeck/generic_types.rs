@@ -1320,19 +1320,16 @@ impl HirTypeChecker {
                         },
                         _ => None,
                     })
-                    .and_then(|item| match item.kind {
-                        hir::ItemKind::Trait(trait_def) => Some(trait_def),
-                        _ => None,
-                    })
-                    .is_some_and(|trait_def| {
-                        trait_def.items.iter().any(|item| {
+                    .is_some_and(|item| match item.kind {
+                        hir::ItemKind::Trait(trait_def) => trait_def.items.iter().any(|item| {
                             item.name == *method
                                 && matches!(
                                     &item.kind,
                                     hir::TraitItemKind::Method(function)
                                         if function.body.is_some()
                                 )
-                        })
+                        }),
+                        _ => false,
                     })
             };
             if !declares_item && !declares_trait_default {

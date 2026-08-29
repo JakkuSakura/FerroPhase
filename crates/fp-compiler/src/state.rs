@@ -144,6 +144,12 @@ impl CompilerState {
         Rc::make_mut(&mut self.hir_program).publish_package(package);
     }
 
+    /// Publishes an already shared typed package without discarding the
+    /// `Rc<RefCell<_>>` through which its type checker recorded results.
+    pub fn insert_hir_shared(&mut self, package: Rc<RefCell<hir::HirPackage>>) {
+        Rc::make_mut(&mut self.hir_program).add_package(package);
+    }
+
     /// Records `def_id`'s own lowered content — the only way `mir_program`
     /// is ever written, so re-lowering one item after a comptime value
     /// resolves is always this exact call with a fresh unit (see
@@ -298,11 +304,11 @@ impl CompilerState {
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {
         self.hir_program
             .package(&package_id)
-            .cloned()
+            .map(|package| package.clone())
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
-    /// Same package `hir` reads, but the same shared `Rc<hir::HirPackage>`
+    /// Same package `hir` reads, but the same shared `Rc<RefCell<hir::HirPackage>>`
     /// already published in `hir_program` — not a deep clone of it. A
     /// caller that only needs to record something onto one of `HirPackage`'s
     /// own interior-mutable fields (e.g. `record_const_block_value`) can
@@ -312,7 +318,7 @@ impl CompilerState {
     pub fn hir_package_rc(
         &self,
         package_id: hir::PackageId,
-    ) -> Result<Rc<hir::HirPackage>, CompilerDriverError> {
+    ) -> Result<Rc<RefCell<hir::HirPackage>>, CompilerDriverError> {
         self.hir_program
             .package_rc(&package_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
@@ -322,7 +328,7 @@ impl CompilerState {
     /// report typing diagnostics, which live directly on each package
     /// (see `hir::HirPackage::diagnostics`'s doc comment), not on the
     /// driver's scratch, per-package `TypingShared`.
-    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<hir::HirPackage>> {
+    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<RefCell<hir::HirPackage>>> {
         self.hir_program.packages.values()
     }
 }

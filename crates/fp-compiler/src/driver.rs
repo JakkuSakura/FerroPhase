@@ -239,8 +239,12 @@ impl CompilerDriver {
                 .hir_package_id
                 .clone();
             let hir_package = self.state.borrow().hir_package_rc(hir_package_id)?;
-            hir_package.record_const_value(def_id.clone(), value.clone());
-            hir_package.record_const_block_value(def_id.clone(), value);
+            hir_package
+                .borrow()
+                .record_const_value(def_id.clone(), value.clone());
+            hir_package
+                .borrow()
+                .record_const_block_value(def_id.clone(), value);
             resolved_entries.push(def_id);
         }
         // The first lowering represents executable constants as entry points so
@@ -721,10 +725,10 @@ impl CompilerDriver {
         if let Some((const_values, const_block_values)) = prior_const_values {
             let hir_package = self.state.borrow().hir_package_rc(hir_package_id.clone())?;
             for (def_id, value) in const_values {
-                hir_package.record_const_value(def_id, value);
+                hir_package.borrow().record_const_value(def_id, value);
             }
             for (def_id, value) in const_block_values {
-                hir_package.record_const_block_value(def_id, value);
+                hir_package.borrow().record_const_block_value(def_id, value);
             }
         }
 
@@ -753,20 +757,16 @@ impl CompilerDriver {
         // references them) pulls in whatever a root item transitively
         // needs. A private item unreached from any root is genuinely dead
         // code and no longer gets a MIR unit at all.
-        for item in &current_package.items {
-            if item.def_id.package_id != hir_package_id {
-                continue;
-            }
-            if !Self::is_lowering_root(item) {
-                continue;
-            }
-            Self::lower_package_to_mir(
-                &state,
-                &current_package_id,
-                &mut lowering,
-                item.def_id.clone(),
-            )
-            .await?;
+        let root_def_ids = current_package
+            .borrow()
+            .items
+            .iter()
+            .filter(|item| item.def_id.package_id == hir_package_id)
+            .filter(|item| Self::is_lowering_root(item))
+            .map(|item| item.def_id.clone())
+            .collect::<Vec<_>>();
+        for def_id in root_def_ids {
+            Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, def_id).await?;
         }
         let runtime_support = state
             .borrow_mut()
@@ -965,6 +965,7 @@ impl CompilerDriver {
         // specific diagnostic recorded here.
         if checker.borrow().has_typing_errors() {
             let package = checker.borrow().finish();
+            let package = package.borrow();
             Self::emit_typing_diagnostics_to_stderr(&package);
             let combined = package
                 .diagnostics
@@ -981,16 +982,8 @@ impl CompilerDriver {
             }
         }
         let package = checker.borrow().finish();
-        // `checker` is the last other strong owner of this `Rc<HirPackage>`
-        // (via its own `program.packages` map) — dropping it here, before
-        // unwrapping, lets us take real ownership without ever deep-copying
-        // the package's own data.
-        drop(checker);
-        let mut package = Rc::try_unwrap(package).unwrap_or_else(|_| {
-            unreachable!("no other strong reference to this package's HirPackage should outlive its own typecheck pass")
-        });
-        package.hir_exports.extend(package_exports);
-        self.state.borrow_mut().insert_hir(package);
+        package.borrow_mut().hir_exports.extend(package_exports);
+        self.state.borrow_mut().insert_hir_shared(package);
         Ok(())
     }
 

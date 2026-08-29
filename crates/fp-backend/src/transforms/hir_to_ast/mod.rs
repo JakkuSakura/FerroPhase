@@ -91,7 +91,7 @@ impl<'a> HirToAstLifter<'a> {
     fn portable_op_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
         crate::transforms::resolve_portable_op(&self.program.op_defs, def_id).or_else(|| {
             self.hir_program
-                .and_then(|program| program.op_def(def_id.clone()).cloned())
+                .and_then(|program| program.op_def(def_id.clone()))
         })
     }
 
@@ -107,7 +107,7 @@ impl<'a> HirToAstLifter<'a> {
         )
         .or_else(|| {
             self.hir_program
-                .and_then(|program| program.intrinsic_def(def_id.clone()).cloned())
+                .and_then(|program| program.intrinsic_def(def_id.clone()))
         })
     }
 
@@ -272,7 +272,7 @@ impl<'a> HirToAstLifter<'a> {
             let referenced = work
                 .into_iter()
                 .filter(|def_id| *def_id != item.def_id)
-                .filter_map(|def_id| self.def_path_for(&def_id).cloned())
+                .filter_map(|def_id| self.def_path_for(&def_id))
                 .collect::<Vec<_>>();
             result.insert(path.clone(), referenced);
         }
@@ -332,6 +332,13 @@ impl<'a> HirToAstLifter<'a> {
                         })
                         .collect::<Result<Vec<_>>>()?,
                 },
+            })),
+            hir::ItemKind::TypeAlias(alias) => Item::from(ItemKind::DefType(ast::ItemDefType {
+                attrs: Vec::new(),
+                visibility: lift_visibility(&item.visibility),
+                name: Ident::new(alias.name.as_str()),
+                generics_params: Vec::new(),
+                value: self.lift_type(&alias.target)?,
             })),
             hir::ItemKind::Const(def) => Item::from(ItemKind::DefConst(ItemDefConst {
                 attrs: Vec::new(),
@@ -1485,7 +1492,8 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let name = self.def_path_for(&adt.did)?.segments.last()?.as_str();
+                    let path = self.def_path_for(&adt.did)?;
+                    let name = path.segments.last()?.as_str().to_owned();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
                         Ident::new(format!("{}<{}>", name, args.join(", "))),
                     ])))))
@@ -1528,7 +1536,8 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let name = self.def_path_for(&adt.did)?.segments.last()?.as_str();
+                let path = self.def_path_for(&adt.did)?;
+                let name = path.segments.last()?.as_str().to_owned();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1575,10 +1584,13 @@ impl<'a> HirToAstLifter<'a> {
             // empty, and the caller falls back to bare, wrapper-only
             // "Arc" (dropping the trait name entirely).
             TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
-                hir::ty::ExistentialPredicate::Trait(trait_ref) => self
-                    .def_path_for(&trait_ref.def_id)
-                    .and_then(|path| path.segments.last())
-                    .map(|s| s.as_str().to_string()),
+                hir::ty::ExistentialPredicate::Trait(trait_ref) => {
+                    self.def_path_for(&trait_ref.def_id).and_then(|path| {
+                        path.segments
+                            .last()
+                            .map(|segment| segment.as_str().to_owned())
+                    })
+                }
                 _ => None,
             }),
             _ => None,
@@ -1596,8 +1608,8 @@ impl<'a> HirToAstLifter<'a> {
     /// Dependency HIR may intentionally contain only exported metadata. A
     /// lifted root item still needs those `DefPath`s to spell inferred types
     /// and collect imports, but it must not require dependency bodies.
-    fn def_path_for(&self, def_id: &DefId) -> Option<&hir::DefPath> {
-        self.program.def_paths.get(def_id).or_else(|| {
+    fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
+        self.program.def_paths.get(def_id).cloned().or_else(|| {
             self.hir_program
                 .and_then(|program| program.def_path(def_id.clone()))
         })

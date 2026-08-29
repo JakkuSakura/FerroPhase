@@ -44,6 +44,7 @@ impl AstToHirLowerer {
                 .package
                 .def_map
                 .get(&def_id)
+                .cloned()
                 .or_else(|| self.hir_program.item(def_id.clone()))?;
             match &item.kind {
                 hir::ItemKind::Enum(enum_def) => {
@@ -59,6 +60,7 @@ impl AstToHirLowerer {
                         .package
                         .type_alias_targets
                         .get(&def_id)
+                        .cloned()
                         .or_else(|| self.hir_program.type_alias_target(def_id.clone()))?;
                     let hir::TypeExprKind::Path(path) = &target.kind else {
                         return None;
@@ -106,9 +108,10 @@ impl AstToHirLowerer {
         );
         let namespace = scope.namespace();
         let mut packages: Vec<_> = self.hir_program.packages.values().collect();
-        packages.sort_by(|left, right| left.id.cmp(&right.id));
+        packages.sort_by(|left, right| left.borrow().id.cmp(&right.borrow().id));
 
         for package in packages {
+            let package = package.borrow();
             let external_root = hir::HirProgram::external_crate_name(&package.id);
 
             // Follow public module re-exports before consulting physical
@@ -2134,6 +2137,7 @@ impl AstToHirLowerer {
         let item = self
             .program_def_map
             .get(&def_id)
+            .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()));
         let Some(item) = item else {
             return None;
