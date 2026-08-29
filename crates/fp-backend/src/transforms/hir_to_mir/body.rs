@@ -3219,6 +3219,36 @@ impl<'a> BodyBuilder<'a> {
                     }
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+                    // A type alias can be named in value position only for
+                    // a comptime intrinsic argument. Its target's completed
+                    // const-block result is the authoritative type handle;
+                    // do not lower the alias again or recover it by name.
+                    if let Some(hir::TypeExprKind::ConstBlock(const_def_id, _)) = self
+                        .lowering
+                        .hir_program
+                        .type_alias_target(def_id.clone())
+                        .map(|target| &target.kind)
+                    {
+                        if let Some(Value::Type(value)) = self
+                            .lowering
+                            .typeck_const_block_value(const_def_id.clone())
+                        {
+                            let ty = HirToMirLowerer::type_ty();
+                            let local_id = self.allocate_temp(ty.clone(), expr.span);
+                            let local_place = mir::Place::from_local(local_id);
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    local_place.clone(),
+                                    mir::Rvalue::TypeValue(value),
+                                ),
+                            });
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(local_place),
+                                ty,
+                            });
+                        }
+                    }
                     if has_explicit_args {
                         if let Some(function) = self.lowering.generic_function_def(def_id) {
                             let info = self

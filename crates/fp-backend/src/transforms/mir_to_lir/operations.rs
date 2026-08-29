@@ -140,6 +140,7 @@ impl MirToLirLowerer {
                 self.collect_place_struct_layout(place, body);
             }
             mir::Rvalue::Query(_)
+            | mir::Rvalue::TypeValue(_)
             | mir::Rvalue::ThreadLocalRef(_)
             | mir::Rvalue::NullaryOp(_, _) => {}
         }

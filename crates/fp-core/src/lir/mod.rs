@@ -389,6 +389,9 @@ pub enum LirIntrinsicKind {
 /// re-execute it at runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeOp {
+    TypeValue {
+        value: crate::ast::Ty,
+    },
     CreateStruct {
         name: LirValue,
     },

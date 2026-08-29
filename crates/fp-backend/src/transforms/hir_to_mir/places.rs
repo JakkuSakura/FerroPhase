@@ -950,6 +950,37 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(());
                     }
                     _ => {
+                        // Type-producing comptime intrinsics are expressions,
+                        // so a tail expression must assign their handle into
+                        // the destination (including a synthetic const
+                        // function's return place). Operand lowering has the
+                        // same family for nested uses.
+                        if matches!(
+                            call.kind,
+                            IntrinsicKind::CreateStruct
+                                | IntrinsicKind::AddField
+                                | IntrinsicKind::CloneStruct
+                                | IntrinsicKind::BuildType
+                                | IntrinsicKind::PrimitiveType
+                        ) {
+                            let operands = call
+                                .callargs
+                                .iter()
+                                .map(|arg| self.lower_operand(&arg.value, None).map(|arg| arg.operand))
+                                .collect::<Result<Vec<_>>>()?;
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::IntrinsicCall {
+                                        kind: call.kind,
+                                        format: String::new(),
+                                        args: operands,
+                                    },
+                                ),
+                            });
+                            return Ok(());
+                        }
                         if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span)
                         {
                             let statement = mir::Statement {

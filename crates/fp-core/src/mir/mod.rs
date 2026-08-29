@@ -237,6 +237,9 @@ pub struct SwitchTargets {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rvalue {
     Use(Operand),
+    /// A completed comptime type result used as a `type`-typed value.
+    /// Type values are interpreter-owned handles, not ordinary constants.
+    TypeValue(crate::ast::Ty),
     Query(Query),
     IntrinsicCall {
         kind: IntrinsicKind,
@@ -739,6 +742,7 @@ impl Rvalue {
     pub fn span(&self) -> Span {
         match self {
             Rvalue::Use(operand) => operand.span(),
+            Rvalue::TypeValue(_) => Span::null(),
             Rvalue::Query(query) => query.span,
             Rvalue::IntrinsicCall { args, .. } => Span::union(args.iter().map(Operand::span)),
             Rvalue::Repeat(op, _) => op.span(),

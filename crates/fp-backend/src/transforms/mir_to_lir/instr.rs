@@ -1035,6 +1035,25 @@ impl MirToLirLowerer {
         let mut result_value: Option<lir::LirValue> = None;
 
         match rvalue {
+            mir::Rvalue::TypeValue(value) => {
+                let instr_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind: lir::LirInstructionKind::ComptimeOp(lir::ComptimeOp::TypeValue {
+                        value: value.clone(),
+                    }),
+                    result: destination_lir_ty
+                        .clone()
+                        .map(|ty| lir::LirRegister { id: instr_id, ty }),
+                    debug_info: None,
+                });
+                result_value = Some(lir::LirValue::register(
+                    instr_id,
+                    destination_lir_ty.clone().ok_or_else(|| {
+                        fp_core::error::Error::from("type value has no destination type")
+                    })?,
+                ));
+            }
             mir::Rvalue::Use(operand) => match operand {
                 mir::Operand::Move(op_place) | mir::Operand::Copy(op_place) => {
                     let operand_access = self.resolve_place(op_place)?;

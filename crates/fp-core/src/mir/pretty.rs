@@ -272,6 +272,7 @@ fn summarize_statement(stmt: &Statement, _ctx: &PrettyCtx<'_>) -> String {
 fn summarize_rvalue(rvalue: &Rvalue) -> String {
     match rvalue {
         Rvalue::Use(op) => summarize_operand(op),
+        Rvalue::TypeValue(value) => format!("type_value({value})"),
         Rvalue::Query(query) => {
             let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
             let statement_count = query.ir.statements.len();

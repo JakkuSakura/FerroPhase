@@ -44,6 +44,7 @@ impl MirToLirLowerer {
     ) -> Result<Option<lir::LirConstant>> {
         match rvalue {
             mir::Rvalue::Query(_) => Ok(None),
+            mir::Rvalue::TypeValue(_) => Ok(None),
             mir::Rvalue::Use(operand) => {
                 if let mir::Operand::Constant(constant) = operand {
                     match &constant.literal {

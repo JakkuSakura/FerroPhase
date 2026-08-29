@@ -1867,7 +1867,10 @@ impl HirTypeChecker {
                         let value_ty = value_ty?;
                         self.unify_call_types(&field_ty, &value_ty, &mut substitutions)?;
                     }
-                    self.substitute_param_map(&ty, &substitutions)
+                    let resolved = self.substitute_param_map(&ty, &substitutions);
+                    self.package()
+                        .record_expr_type(expr.hir_id.clone(), resolved.clone());
+                    resolved
                 }
                 hir::ExprKind::If(condition, then_expr, else_expr) => {
                     let condition = self.check_expr(condition).await?;
