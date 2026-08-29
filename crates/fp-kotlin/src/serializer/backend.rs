@@ -11,6 +11,8 @@ struct KotlinScan {
     kotlin_packages: HashMap<String, String>,
 }
 
+const RUNTIME_PROJECT: &str = "fp-kotlin-runtime";
+
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context beyond what `BackendConfig` carries — the
 /// workspace-wide `KotlinScan` is read lazily from `&AstProgram` on
@@ -222,13 +224,15 @@ impl TargetBackend for KotlinBackend {
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
         let root_name = self.config.root_name.replace('-', "_");
-        let settings = format!(
-            "rootProject.name = \"{root_name}\"\n\n{}\n",
+        let mut projects = vec![format!("include(\":{RUNTIME_PROJECT}\")")];
+        projects.extend(
             scan.package_names
                 .iter()
-                .map(|n| format!("include(\":{}\")", n))
-                .collect::<Vec<_>>()
-                .join("\n")
+                .map(|name| format!("include(\":{name}\")")),
+        );
+        let settings = format!(
+            "rootProject.name = \"{root_name}\"\n\n{}\n",
+            projects.join("\n")
         );
         let writer = PackageWriter::new(self.config.workspace_root.clone());
         writer.write_file("settings.gradle.kts", settings)?;
@@ -237,8 +241,45 @@ impl TargetBackend for KotlinBackend {
             "plugins {\n    kotlin(\"jvm\") version \"2.1.0\" apply false\n}\n\n\
              allprojects {\n    repositories { mavenCentral() }\n}\n",
         )?;
+        writer.write_file(
+            &format!("{RUNTIME_PROJECT}/build.gradle.kts"),
+            runtime_build_gradle(),
+        )?;
+        writer.write_file(
+            &format!("{RUNTIME_PROJECT}/src/main/kotlin/runtime.kt"),
+            kotlin_runtime_source(self.config.kotlin_package_prefix.as_deref()),
+        )?;
         Ok(())
     }
+}
+
+fn runtime_build_gradle() -> &'static str {
+    "plugins {\n    kotlin(\"jvm\") version \"2.1.0\"\n    kotlin(\"plugin.serialization\") version \"2.1.0\"\n}\n\n\
+     repositories {\n    mavenCentral()\n}\n\n\
+     dependencies {\n\
+         implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n\
+         implementation(\"org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3\")\n\
+         implementation(\"org.tomlj:tomlj:1.1.1\")\n\
+     }\n\n\
+     kotlin {\n    jvmToolchain(21)\n}\n"
+}
+
+fn kotlin_runtime_source(prefix: Option<&str>) -> String {
+    let package = match prefix
+        .map(|prefix| prefix.trim_end_matches('.'))
+        .filter(|prefix| !prefix.is_empty())
+    {
+        Some(prefix) => format!("{prefix}.runtime"),
+        None => "runtime".to_owned(),
+    };
+    format!(
+        "package {package}\n\n\
+         import java.nio.charset.StandardCharsets\n\n\
+         object RustKotlinRuntime {{\n\
+             fun decodeUtf8(bytes: ByteArray): String = bytes.toString(StandardCharsets.UTF_8)\n\
+             fun encodeUtf8(value: String): ByteArray = value.toByteArray(StandardCharsets.UTF_8)\n\
+         }}\n"
+    )
 }
 
 /// Normalizes Rust type syntax into Kotlin's type model before serialization.

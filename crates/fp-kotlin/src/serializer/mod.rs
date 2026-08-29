@@ -365,14 +365,19 @@ fn build_gradle(name: &str, deps: &[String]) -> String {
             format!("    implementation(project(\":{}\"))\n", dir_name)
         })
         .collect();
+    let runtime_dependency = if name == "fp-kotlin-runtime" {
+        String::new()
+    } else {
+        "    implementation(project(\":fp-kotlin-runtime\"))\n".to_owned()
+    };
     format!(
         "plugins {{\n    kotlin(\"jvm\") version \"2.1.0\"\n}}\n\n\
          group = \"{}\"\n\
          version = \"0.1.0\"\n\n\
          repositories {{\n    mavenCentral()\n}}\n\n\
-         dependencies {{\n    testImplementation(kotlin(\"test\"))\n{}}}\n\n\
+         dependencies {{\n    testImplementation(kotlin(\"test\"))\n{}{}}}\n\n\
          kotlin {{\n    jvmToolchain(21)\n}}\n",
-        group, dep_lines,
+        group, runtime_dependency, dep_lines,
     )
 }
 
