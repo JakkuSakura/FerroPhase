@@ -1,7 +1,7 @@
 use fp_core::ast::Name;
 use fp_core::ast::Pattern;
 use fp_core::error::Result;
-use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer};
+use fp_core::intrinsics::{IntrinsicKind, IntrinsicNormalizer};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
@@ -10,6 +10,7 @@ use fp_core::query::{
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
 use fp_sql::sql_ast::parse_sql_ast;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -76,6 +77,8 @@ pub struct AstToHirLowerer {
     preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
+    type_alias_children: HashMap<String, Vec<String>>,
+    global_symbol_cache: RefCell<HashMap<(String, hir::Namespace, String), Option<hir::Res>>>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
     trait_defs: HashMap<String, ast::ItemDefTrait>,
     /// The module a trait was declared in, keyed the same way as
@@ -322,6 +325,8 @@ impl AstToHirLowerer {
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
+            type_alias_children: HashMap::new(),
+            global_symbol_cache: RefCell::new(HashMap::new()),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
             trait_def_modules: HashMap::new(),
@@ -521,6 +526,7 @@ impl AstToHirLowerer {
         ns: hir::Namespace,
         entry: hir::SymbolEntry,
     ) {
+        self.global_symbol_cache.borrow_mut().clear();
         let mut segments = path.segments.clone();
         let Some(leaf) = segments.pop() else {
             return;
@@ -988,10 +994,23 @@ impl AstToHirLowerer {
         if is_primitive_type_name(name) {
             return None;
         }
+        let cache_key = (
+            self.module_path.to_key(),
+            hir::Namespace::Type,
+            name.to_string(),
+        );
+        if let Some(cached) = self.global_symbol_cache.borrow().get(&cache_key) {
+            return cached.clone();
+        }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
-        self.lookup_symbol(&qualified, hir::Namespace::Type)
+        let resolved = self
+            .lookup_symbol(&qualified, hir::Namespace::Type)
             .or_else(|| self.lookup_prelude_symbol(name, hir::Namespace::Type))
-            .or_else(|| self.lookup_symbol(name, hir::Namespace::Type))
+            .or_else(|| self.lookup_symbol(name, hir::Namespace::Type));
+        self.global_symbol_cache
+            .borrow_mut()
+            .insert(cache_key, resolved.clone());
+        resolved
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -1006,7 +1025,6 @@ impl AstToHirLowerer {
         self.package
             .def_map
             .get(def_id)
-            .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()))
             .is_some_and(|item| matches!(item.kind, hir::ItemKind::Trait(_)))
     }
@@ -1037,24 +1055,15 @@ impl AstToHirLowerer {
             .or_else(|| self.resolve_global_value_symbol(name))
     }
 
-    /// `self.package.op_defs` only ever holds THIS package's own tagged ops until
-    /// `seed_workspace_definitions` merges every workspace dependency's
-    /// `op_defs` into the final output `hir::HirPackage` — which happens only
-    /// at the very end of `transform_package`, after all items/patterns
-    /// have already been lowered. A pattern-lowering decision that needs to
-    /// know whether a cross-package def (e.g. std's `Option::None`) is a
-    /// tagged op can't wait for that; it has to check the dependency's own
-    /// `hir_program.op_defs` directly.
+    /// Tagged operations are owned by the package that declares their
+    /// definition. Foreign operations are queried through the program with
+    /// the definition's package identity, never copied into this package.
     fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
-        if let Some(op) = self.package.op_defs.get(&def_id).cloned() {
-            return Some(op);
-        }
-        for package in self.hir_program.packages.values() {
-            if let Some(op) = package.borrow().op_defs.get(&def_id).cloned() {
-                return Some(op);
-            }
-        }
-        None
+        self.package
+            .op_defs
+            .get(&def_id)
+            .cloned()
+            .or_else(|| self.hir_program.op_def(def_id).cloned())
     }
 
     /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —
@@ -1077,10 +1086,23 @@ impl AstToHirLowerer {
         if is_primitive_type_name(name) {
             return None;
         }
+        let cache_key = (
+            self.module_path.to_key(),
+            hir::Namespace::Value,
+            name.to_string(),
+        );
+        if let Some(cached) = self.global_symbol_cache.borrow().get(&cache_key) {
+            return cached.clone();
+        }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
-        self.lookup_symbol(&qualified, hir::Namespace::Value)
+        let resolved = self
+            .lookup_symbol(&qualified, hir::Namespace::Value)
             .or_else(|| self.lookup_prelude_symbol(name, hir::Namespace::Value))
-            .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
+            .or_else(|| self.lookup_symbol(name, hir::Namespace::Value));
+        self.global_symbol_cache
+            .borrow_mut()
+            .insert(cache_key, resolved.clone());
+        resolved
     }
 
     fn push_value_scope(&mut self) {
@@ -1173,17 +1195,6 @@ impl AstToHirLowerer {
             span: self.create_span(4), // Span for "main" function
         };
 
-        if let hir::ItemKind::Function(function) = &main_item.kind {
-            if let Some(body) = &function.body {
-                for stmt in &body.stmts {
-                    if let hir::StmtKind::Item(nested) = &stmt.kind {
-                        self.program_def_map
-                            .insert(nested.def_id.clone(), nested.clone());
-                    }
-                }
-            }
-        }
-
         hir_program.items.push(main_item);
 
         if !self.synthetic_items.is_empty() {
@@ -1197,21 +1208,6 @@ impl AstToHirLowerer {
             }
             hir_program.items.extend(synthetic.drain(..));
         }
-
-        // Keep block-local materialized declarations in the package index;
-        // their paths are resolved in the enclosing expression body, while
-        // type checking needs the corresponding HIR item by DefId.
-        hir_program.def_map = self.program_def_map.clone();
-        hir_program.def_paths = self.package.def_paths.clone();
-        hir_program.placeholder_defs = self.package.placeholder_defs.clone();
-        hir_program.op_defs.extend(self.package.op_defs.clone());
-        hir_program
-            .intrinsic_defs
-            .extend(self.package.intrinsic_defs.clone());
-        hir_program
-            .type_alias_targets
-            .extend(self.package.type_alias_targets.clone());
-        hir_program.index_derived_lookups();
 
         Ok(hir_program)
     }
@@ -1291,7 +1287,6 @@ impl AstToHirLowerer {
         // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for
         // `.fp`-dialect source) or another package's own tree
-        // (`seed_workspace_definitions`, below) — never *this* package's
         // own module tree when a provider represents it implicitly, one
         // module per source file with no literal `Module` wrapper item at
         // all (e.g. `fp-rust`'s real-std provider). Without this, a bare
@@ -1378,7 +1373,6 @@ impl AstToHirLowerer {
         }
 
         let mut program = hir::HirPackage::new(self.package.id.clone());
-        self.seed_workspace_definitions(&mut program);
 
         // 1: definitions (tolerant — impls whose self-type isn't resolvable
         // yet, because it's only reachable through an import that hasn't
@@ -1410,8 +1404,7 @@ impl AstToHirLowerer {
         // tree for prelude-tagged entries (see its doc comment) — those
         // bindings are only populated by `predeclare_items` (steps 1/3
         // above), so this must run after both, never before. Running it
-        // before predeclare (the previous placement, right after
-        // `seed_workspace_definitions`) meant a package's own prelude
+        // before predeclare meant a package's own prelude
         // module scanned an always-empty tree,
         // silently hiding every one of its own prelude items (`Vec`,
         // `String`, `Option`, `Box`, `Rc`, ...) from its own unqualified
@@ -1458,18 +1451,6 @@ impl AstToHirLowerer {
                 .insert(item.def_id.clone(), item.clone());
             program.items.push(item);
         }
-        for item in &program.items {
-            if let hir::ItemKind::Function(function) = &item.kind {
-                if let Some(body) = &function.body {
-                    for stmt in &body.stmts {
-                        if let hir::StmtKind::Item(nested) = &stmt.kind {
-                            self.program_def_map
-                                .insert(nested.def_id.clone(), nested.clone());
-                        }
-                    }
-                }
-            }
-        }
         program
             .items
             .extend(std::mem::take(&mut self.local_dispatch_items));
@@ -1483,9 +1464,6 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
-        for (def_id, block) in self.package.const_block_defs() {
-            program.record_const_block_def(def_id, block);
-        }
         // Crate metadata must travel with the published HIR snapshot. The
         // consumer lowerer uses this edge set to select the implicit prelude;
         // deriving it again from a transient package workspace makes the
@@ -1803,7 +1781,6 @@ impl AstToHirLowerer {
 
         self.module_path = module_path.clone();
         let mut program = hir::HirPackage::new(self.package.id.clone());
-        self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
         self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
@@ -1940,25 +1917,6 @@ impl AstToHirLowerer {
                     self.program_def_map
                         .insert(hir_item.def_id.clone(), hir_item.clone());
                     program.items.push(hir_item);
-                } else {
-                    let def_id = self.def_id_for_item(item);
-                    let target = self.transform_type_to_hir(&def_type.value)?;
-                    self.package
-                        .type_alias_targets
-                        .insert(def_id.clone(), target.clone());
-                    let alias = hir::Item {
-                        hir_id: self.next_id(),
-                        def_id: def_id.clone(),
-                        visibility: self.map_visibility(&def_type.visibility),
-                        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
-                            name: hir::Symbol::new(def_type.name.name.clone()),
-                            target,
-                        }),
-                        span: item.span(),
-                    };
-                    program.def_map.insert(def_id.clone(), alias.clone());
-                    self.program_def_map.insert(def_id, alias.clone());
-                    program.items.push(alias);
                 }
                 Ok(())
             }
@@ -2068,45 +2026,54 @@ impl AstToHirLowerer {
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item.as_ref(), def_type)? {
-                    // A materialized local type alias is a real HIR struct or
-                    // enum item. Bind its name to that item's DefId in both
-                    // namespaces so later local uses (`Base { ... }` and
-                    // `type(Base)`) resolve to the materialized definition
-                    // instead of falling back to an unresolved type param.
-                    let def_id = hir_item.def_id.clone();
-                    self.program_def_map
-                        .insert(def_id.clone(), hir_item.clone());
-                    self.current_type_scope()
-                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
-                    self.current_value_scope()
-                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Item(hir_item))
-                } else {
-                    // A type declaration always owns a real alias item.
-                    // Whether its target later needs comptime evaluation is
-                    // determined from the target expression itself, not by
-                    // alias lowering.
-                    let def_id = self.def_id_for_item(item.as_ref());
-                    let target = self.transform_type_to_hir(&def_type.value)?;
-                    self.package
-                        .type_alias_targets
-                        .insert(def_id.clone(), target.clone());
-                    let alias = hir::Item {
+                } else if let Some(inner) = comptime_type_alias_rhs(&def_type.value) {
+                    // `type X = const { .. };` / `type X = EXPR;` (where
+                    // `EXPR` needs compile-time evaluation to produce a
+                    // concrete type, e.g. a `TypeBuilder`-constructed
+                    // struct) has no `def_map` entry to give — a real
+                    // struct/enum's shape is known up front, this one only
+                    // once the checker evaluates `inner`. Lower it as an
+                    // ordinary, eagerly-checked expression-position
+                    // `ConstBlock` statement (per Part B: `const { .. }` in
+                    // this position is transparent sugar, so both syntaxes
+                    // collapse to the same node here), and bind `X`'s name
+                    // to that const block's own `DefId` via `Res::Def` —
+                    // scope-local only (like `register_type_generic`'s
+                    // generics binding), not exported through
+                    // `record_value_symbol`/`record_type_symbol`, since this
+                    // name is lexically scoped to this statement, not a real
+                    // module-level definition. `path_ty`/`field_ty` read the
+                    // resolved shape straight out of the package's own
+                    // `const_block_values` by that `DefId` once this
+                    // statement has been checked.
+                    let body = Box::new(self.transform_expr_to_hir(inner)?);
+                    let def_id = self.next_def_id();
+                    let const_block_expr = hir::Expr {
                         hir_id: self.next_id(),
-                        def_id: def_id.clone(),
-                        visibility: self.map_visibility(&def_type.visibility),
-                        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
-                            name: hir::Symbol::new(def_type.name.name.clone()),
-                            target,
+                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock {
+                            def_id: def_id.clone(),
+                            body,
                         }),
                         span: item.span(),
                     };
-                    self.program_def_map.insert(def_id.clone(), alias.clone());
                     self.current_value_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
                     self.current_type_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
-                    Ok(hir::StmtKind::Item(alias))
+                    Ok(hir::StmtKind::Expr(const_block_expr))
+                } else {
+                    let unit_block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    let unit_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::Block(unit_block),
+                        span: self.create_span(1),
+                    };
+                    Ok(hir::StmtKind::Expr(unit_expr))
                 }
             }
             ItemKind::Macro(_) => {
@@ -2453,14 +2420,6 @@ impl AstToHirLowerer {
                 if function_body_is_compiler_intrinsic_marker(&function) {
                     function.body = None;
                 }
-                if let Some(body) = &function.body {
-                    for stmt in &body.stmts {
-                        if let hir::StmtKind::Item(nested) = &stmt.kind {
-                            self.program_def_map
-                                .insert(nested.def_id.clone(), nested.clone());
-                        }
-                    }
-                }
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),
@@ -2610,14 +2569,6 @@ impl AstToHirLowerer {
             let span = this.create_span(1);
             this.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
             let function = this.transform_decl_function_sig(decl, None)?;
-            if let Some(body) = &function.body {
-                for stmt in &body.stmts {
-                    if let hir::StmtKind::Item(nested) = &stmt.kind {
-                        this.program_def_map
-                            .insert(nested.def_id.clone(), nested.clone());
-                    }
-                }
-            }
             Ok(hir::Item {
                 hir_id,
                 def_id,
@@ -3119,31 +3070,34 @@ impl AstToHirLowerer {
                         _ => {}
                     }
                 }
-                // An intrinsic expression in type position is an implicit
-                // const block. This covers formatted string literal types as
-                // well as type-producing macros such as `clone_struct!`;
-                // expression lowering normalizes the latter before their
-                // comptime body is recorded.
-                if matches!(
-                    expr.kind(),
-                    ast::ExprKind::IntrinsicCall(_) | ast::ExprKind::Macro(_)
-                ) {
-                    let body = Box::new(self.transform_expr_to_hir(expr)?);
-                    let def_id = self.next_def_id();
-                    let hir_id = self.next_id();
-                    self.package.record_const_block_def(
-                        def_id.clone(),
-                        hir::Block {
-                            hir_id: hir_id.clone(),
-                            stmts: Vec::new(),
-                            expr: Some(body.clone()),
-                        },
-                    );
-                    return Ok(hir::TypeExpr::new(
-                        hir_id,
-                        hir::TypeExprKind::ConstBlock(def_id, body),
-                        self.normalize_span(ty.span()),
-                    ));
+                // A bare `f"...{...}..."` in type position is an implicit
+                // const block — type position is already a const-eval
+                // context, so there's no need for the explicit `const { }`
+                // wrapper this otherwise mirrors exactly (see the
+                // `ast::Ty::ConstBlock` arm above). Checked explicitly by
+                // shape (an intrinsic call can never be a type path) rather
+                // than folded into the generic path-resolution-failed
+                // fallback below, which exists to produce a real
+                // "unresolved type" error for genuine mistakes.
+                if let ast::ExprKind::IntrinsicCall(call) = expr.kind() {
+                    if call.kind == fp_core::intrinsics::CallKind::Format {
+                        let body = Box::new(self.transform_expr_to_hir(expr)?);
+                        let def_id = self.next_def_id();
+                        let hir_id = self.next_id();
+                        self.package.record_const_block_def(
+                            def_id.clone(),
+                            hir::Block {
+                                hir_id: hir_id.clone(),
+                                stmts: Vec::new(),
+                                expr: Some(body.clone()),
+                            },
+                        );
+                        return Ok(hir::TypeExpr::new(
+                            hir_id,
+                            hir::TypeExprKind::ConstBlock(def_id, body),
+                            self.normalize_span(ty.span()),
+                        ));
+                    }
                 }
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
                     let segments = path
@@ -3731,6 +3685,10 @@ impl AstToHirLowerer {
 
     fn register_type_alias(&mut self, name: &str, ty: &ast::Ty) {
         let qualified = self.qualify_name(name);
+        self.type_alias_children
+            .entry(self.module_path.to_key())
+            .or_default()
+            .push(name.to_string());
         self.type_aliases.insert(qualified, ty.clone());
     }
 

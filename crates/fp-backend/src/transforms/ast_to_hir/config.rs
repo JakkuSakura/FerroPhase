@@ -21,4 +21,9 @@ pub struct ResolvedName {
 #[derive(Clone, Debug, Default)]
 pub struct HirLoweringConfig {
     pub capabilities: fp_core::capabilities::LanguageCapabilities,
+    /// Dependency metadata lowering publishes definitions, signatures, and
+    /// impl headers without constructing executable bodies. This matches
+    /// rustc's crate-metadata boundary: downstream resolution never needs a
+    /// dependency's HIR bodies.
+    pub resolution_only: bool,
 }

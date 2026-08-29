@@ -105,8 +105,14 @@ mod tests {
         let cache = DiskCache::new(dir.path());
         cache.put("rust/core/ast-v1", b"core").unwrap();
         cache.put("rust/alloc/ast-v1", b"alloc").unwrap();
-        assert_eq!(cache.get("rust/core/ast-v1").unwrap(), Some(b"core".to_vec()));
-        assert_eq!(cache.get("rust/alloc/ast-v1").unwrap(), Some(b"alloc".to_vec()));
+        assert_eq!(
+            cache.get("rust/core/ast-v1").unwrap(),
+            Some(b"core".to_vec())
+        );
+        assert_eq!(
+            cache.get("rust/alloc/ast-v1").unwrap(),
+            Some(b"alloc".to_vec())
+        );
         assert_eq!(cache.get("missing").unwrap(), None);
     }
 
@@ -115,7 +121,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = DiskCache::new(dir.path());
         cache.put("artifact", b"valid").unwrap();
-        let path = std::fs::read_dir(dir.path()).unwrap().next().unwrap().unwrap().path();
+        let path = std::fs::read_dir(dir.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         std::fs::write(path, b"corrupt").unwrap();
         assert_eq!(cache.get("artifact").unwrap(), None);
     }

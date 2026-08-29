@@ -313,10 +313,9 @@ pub struct HirToMirLowerer {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     pub(super) lowered_items: HashSet<hir::DefId>,
-    /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
-    /// (local items + every dependency's, via `seed_workspace_definitions`),
-    /// taken once at the top of `lower_program`/`transform`. Lets
-    /// `compute_adt_layout` look up and lazily register a foreign
+    /// Shared snapshot of the whole-workspace package graph, taken once at
+    /// the top of `lower_program`/`transform`. Lets `compute_adt_layout`
+    /// look up and lazily register a foreign
     /// struct/enum on demand (O(1) point lookup) instead of every
     /// dependency's ADTs being eagerly duplicated into `program.items`
     /// whether anything here references them or not.
@@ -519,9 +518,8 @@ impl HirToMirLowerer {
         }
     }
 
-    /// Eagerly registers every struct/enum reachable in `hir_def_map` —
-    /// every previously-compiled workspace package's own items, via
-    /// `seed_workspace_definitions` — before any layout is ever computed.
+    /// Eagerly registers every struct/enum reachable through the shared
+    /// `HirProgram` before any layout is ever computed.
     /// Mirrors rustc's own model: `AdtDef` collection for every reachable
     /// item happens upfront and unconditionally, with layout resolution
     /// staying a separate, later, lazy/memoized query — there is no

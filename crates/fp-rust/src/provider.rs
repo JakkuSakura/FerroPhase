@@ -1029,6 +1029,10 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     let mut items = Vec::new();
     let mut parsed = 0usize;
     let mut cache_hits = 0usize;
+    let mut disk_misses = 0usize;
+    let mut decode_failures = 0usize;
+    let mut encode_failures = 0usize;
+    let mut write_failures = 0usize;
     let mut skipped = 0usize;
     let disk_cache = fp_core::cache::DiskCache::new(
         std::env::var_os("FP_CACHE_DIR")
@@ -1101,12 +1105,17 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             return Ok(cached.clone());
         }
         if dump_path.is_none() {
-            if let Ok(Some(bytes)) = disk_cache.get(&disk_key) {
-                if let Ok(cached) = bincode::deserialize::<Vec<Item>>(&bytes) {
-                    frontend.register_file_only(source, path);
-                    cache_hits += 1;
-                    return Ok(cached);
-                }
+            match disk_cache.get(&disk_key) {
+                Ok(Some(bytes)) => match serde_json::from_slice::<Vec<Item>>(&bytes) {
+                    Ok(cached) => {
+                        frontend.register_file_only(source, path);
+                        cache_hits += 1;
+                        return Ok(cached);
+                    }
+                    Err(_) => decode_failures += 1,
+                },
+                Ok(None) => disk_misses += 1,
+                Err(_) => disk_misses += 1,
             }
         }
         match frontend.parse_file(source, path) {
@@ -1118,8 +1127,13 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
                 }
                 let items = result.ast.items;
                 if dump_path.is_none() {
-                    if let Ok(bytes) = bincode::serialize(&items) {
-                        let _ = disk_cache.put(&disk_key, &bytes);
+                    match serde_json::to_vec(&items) {
+                        Ok(bytes) => {
+                            if disk_cache.put(&disk_key, &bytes).is_err() {
+                                write_failures += 1;
+                            }
+                        }
+                        Err(_) => encode_failures += 1,
                     }
                 }
                 Ok(items)
@@ -1179,7 +1193,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         )?;
     }
     eprintln!(
-        "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {skipped} skipped (parse errors)"
+        "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {disk_misses} disk misses, {decode_failures} decode failures, {encode_failures} encode failures, {write_failures} write failures, {skipped} skipped (parse errors)"
     );
 
     if let Some(dump_path) = dump_path {

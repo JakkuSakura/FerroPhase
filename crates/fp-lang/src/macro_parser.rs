@@ -105,9 +105,19 @@ pub(crate) fn wrap_tokens_in_group(
 ) -> Vec<Token> {
     let (open_span, close_span) = lex_spans_for_group(span);
     let mut out = Vec::with_capacity(inner.len() + 2);
-    out.push(make_token(TokenKind::Symbol, open.to_string(), false, open_span));
+    out.push(make_token(
+        TokenKind::Symbol,
+        open.to_string(),
+        false,
+        open_span,
+    ));
     out.extend_from_slice(inner);
-    out.push(make_token(TokenKind::Symbol, close.to_string(), false, close_span));
+    out.push(make_token(
+        TokenKind::Symbol,
+        close.to_string(),
+        false,
+        close_span,
+    ));
     out
 }
 
@@ -509,15 +519,18 @@ fn consume_fragment(
         // represented by one token followed by an optional already-balanced
         // group, and must not be sent through expression parsing.
         "vis" => match invocation.get(pos) {
-            Some(MacroTokenTree::Token(token)) if token.text == "pub" => {
-                Some(if matches!(invocation.get(pos + 1), Some(MacroTokenTree::Group(_))) {
+            Some(MacroTokenTree::Token(token)) if token.text == "pub" => Some(
+                if matches!(invocation.get(pos + 1), Some(MacroTokenTree::Group(_))) {
                     2
                 } else {
                     1
-                })
-            }
+                },
+            ),
             Some(MacroTokenTree::Token(token))
-                if matches!(token.text.as_str(), "crate" | "self" | "super") => Some(1),
+                if matches!(token.text.as_str(), "crate" | "self" | "super") =>
+            {
+                Some(1)
+            }
             _ => None,
         },
         "ty" => {

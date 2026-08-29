@@ -243,10 +243,7 @@ pub(super) fn shape_and_blanket_candidates<'a>(
         // obligation open; selecting candidates by scanning every impl would
         // be a fallback index with no sound fast-reject key and could commit
         // to a method before inference has established the receiver type.
-        return Box::new(
-            program
-                .blanket_impls(),
-        );
+        return Box::new(program.blanket_impls());
     }
     Box::new(
         ty_shape_keys(receiver_kind)

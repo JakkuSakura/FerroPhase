@@ -2131,7 +2131,11 @@ impl AstToHirLowerer {
         &self,
         def_id: hir::DefId,
     ) -> Option<(Vec<hir::Symbol>, bool)> {
-        let Some(item) = self.program_def_map.get(&def_id) else {
+        let item = self
+            .program_def_map
+            .get(&def_id)
+            .or_else(|| self.hir_program.item(def_id.clone()));
+        let Some(item) = item else {
             return None;
         };
         match &item.kind {
@@ -2196,7 +2200,7 @@ impl AstToHirLowerer {
         // A cross-package export (e.g. `libc::macos::getenv`) is looked up
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into the module tree's own bindings up
-        // front (see `seed_workspace_definitions`).
+        // front. The exported binding stays in its owning package.
         local
             .or_else(|| self.hir_program.find_export(&key))
             .or_else(|| {

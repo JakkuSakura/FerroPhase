@@ -104,8 +104,7 @@ fn package_from_items_with_paths_as(
     // path they see across all loaded files here — including a bare
     // crate-root file's own path (e.g. `alloc/lib.rs` -> `["alloc"]`),
     // which is what makes a *whole-module* import/`extern crate` alias
-    // resolve at all (`module_defs` is seeded straight from this set, see
-    // `transform_package`'s own comment). `AstProgram::begin_package`
+    // resolve at all. `AstProgram::begin_package`
     // copies `source.module_paths` verbatim (`krate.module_paths =
     // source.module_paths;`, never recomputes it from `source.graph`), so
     // setting it here is both correct and sufficient for a test — no need
@@ -219,19 +218,16 @@ fn transform_type_uses_owner_resolved_name_before_expr_wrapper() -> Result<()> {
         hir::PackageId::new("consumer"),
     )
     .with_resolved_names(resolved_names);
-    generator
-        .package
-        .module_tree
-        .bind(
-            generator.package.module_tree.root(),
-            hir::Namespace::Type,
-            "String",
-            hir::SymbolEntry {
-                res: hir::Res::Def(resolved_def.clone()),
-                export: hir::SymbolExport::Public,
-                path: None,
-            },
-        );
+    generator.package.module_tree.bind(
+        generator.package.module_tree.root(),
+        hir::Namespace::Type,
+        "String",
+        hir::SymbolEntry {
+            res: hir::Res::Def(resolved_def.clone()),
+            export: hir::SymbolExport::Public,
+            path: None,
+        },
+    );
 
     let lowered = generator.transform_type_to_hir(&ast::Ty::Expr(Box::new(wrapped)))?;
     let hir::TypeExprKind::Path(path) = lowered.kind else {
@@ -903,7 +899,11 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
     let vec = hir::DefId::new(dependency.id.clone(), 2);
     let string = hir::DefId::new(dependency.id.clone(), 3);
     let prelude = dependency.module_tree.prelude();
-    for (name, def_id) in [("Option", option.clone()), ("Vec", vec.clone()), ("String", string.clone())] {
+    for (name, def_id) in [
+        ("Option", option.clone()),
+        ("Vec", vec.clone()),
+        ("String", string.clone()),
+    ] {
         dependency.module_tree.bind(
             prelude,
             hir::Namespace::Type,
@@ -918,10 +918,8 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
 
     let mut program = hir::HirProgram::new();
     program.add_package(std::rc::Rc::new(dependency));
-    let mut generator = AstToHirLowerer::new(
-        std::rc::Rc::new(program),
-        hir::PackageId::new("consumer"),
-    );
+    let mut generator =
+        AstToHirLowerer::new(std::rc::Rc::new(program), hir::PackageId::new("consumer"));
     generator
         .package
         .dependencies
@@ -1400,10 +1398,8 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
     workspace.add_package(std::rc::Rc::new(dependency));
     let consumer_items = parser.parse_items_ast("pub struct Holder { value: dyn Error }")?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     consumer_lowerer.package.prelude = Some(hir::PackageId::new("dependency"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
@@ -1458,13 +1454,11 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
 
     let mut workspace = hir::HirProgram::new();
     workspace.add_package(std::rc::Rc::new(dependency));
-    let consumer_items = parser
-        .parse_items_ast("pub struct Holder { value: dependency::api::PublicType }")?;
+    let consumer_items =
+        parser.parse_items_ast("pub struct Holder { value: dependency::api::PublicType }")?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1478,10 +1472,14 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         panic!("expected qualified dependency type path");
     };
     assert_eq!(path.res, Some(hir::Res::Def(public_type_id.clone())));
-    assert_eq!(path.segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>(),
-        vec!["dependency", "api", "PublicType"]);
-    assert_eq!(consumer.def_paths.get(&public_type_id).unwrap().to_segments(),
-        vec!["dependency", "api", "PublicType"]);
+    assert_eq!(
+        path.segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["dependency", "api", "PublicType"]
+    );
+    assert!(!consumer.def_paths.contains_key(&public_type_id));
     Ok(())
 }
 
@@ -1493,7 +1491,12 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         PackageId::new("dependency"),
         dependency_items
             .into_iter()
-            .map(|item| (vec!["std".to_string(), "std".to_string(), "fmt".to_string()], item))
+            .map(|item| {
+                (
+                    vec!["std".to_string(), "std".to_string(), "fmt".to_string()],
+                    item,
+                )
+            })
             .collect(),
     )?;
     let mut dependency_lowerer = AstToHirLowerer::new(
@@ -1520,10 +1523,8 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         "pub struct Holder { formatter: std::fmt::Formatter, result: std::fmt::Result }",
     )?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1562,28 +1563,23 @@ fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()>
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Struct(def) if def.name.as_str() == "Arc" => {
-                Some(item.def_id.clone())
-            }
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Arc" => Some(item.def_id.clone()),
             _ => None,
         })
         .expect("alloc::sync::Arc definition");
 
     let mut std = hir::HirPackage::new(hir::PackageId::new("std"));
-    std.hir_exports.insert(
-        "std::sync::Arc".to_string(),
-        hir::Res::Def(arc_id.clone()),
-    );
+    std.hir_exports
+        .insert("std::sync::Arc".to_string(), hir::Res::Def(arc_id.clone()));
     let mut workspace = hir::HirProgram::new();
     workspace.add_package(std::rc::Rc::new(alloc));
     workspace.add_package(std::rc::Rc::new(std));
 
-    let consumer_items = parser.parse_items_ast("pub struct Holder { value: std::sync::Arc<u8> }")?;
+    let consumer_items =
+        parser.parse_items_ast("pub struct Holder { value: std::sync::Arc<u8> }")?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1593,14 +1589,18 @@ fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()>
             _ => None,
         })
         .expect("lowered Holder");
-    assert!(!matches!(holder.fields[0].ty.kind, hir::TypeExprKind::Error));
+    assert!(!matches!(
+        holder.fields[0].ty.kind,
+        hir::TypeExprKind::Error
+    ));
     Ok(())
 }
 
 #[test]
 fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
     let parser = FerroPhaseParser::new();
-    let dependency_items = parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
+    let dependency_items =
+        parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
     let dependency_package = package_from_items_with_paths_as(
         PackageId::new("skln-core"),
         dependency_items
@@ -1629,10 +1629,8 @@ fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
         "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
     )?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1678,10 +1676,8 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
         "pub struct Holder { error: skln_core::CoreError, result: skln_core::types::ChangesResult, node: skln_core::types::RefNode }",
     )?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1691,16 +1687,20 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
             _ => None,
         })
         .expect("lowered Holder");
-    assert!(holder.fields.iter().all(|field| {
-        !matches!(field.ty.kind, hir::TypeExprKind::Error)
-    }));
+    assert!(
+        holder
+            .fields
+            .iter()
+            .all(|field| { !matches!(field.ty.kind, hir::TypeExprKind::Error) })
+    );
     Ok(())
 }
 
 #[test]
 fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<()> {
     let parser = FerroPhaseParser::new();
-    let dependency_items = parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
+    let dependency_items =
+        parser.parse_items_ast("pub struct CoreError; pub struct ChangesResult;")?;
     let dependency_package = package_from_items_with_paths(
         dependency_items
             .into_iter()
@@ -1724,10 +1724,8 @@ fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<(
         "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
     )?;
     let consumer_package = package_from_items(consumer_items)?;
-    let mut consumer_lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(workspace),
-        hir::PackageId::new("consumer"),
-    );
+    let mut consumer_lowerer =
+        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -2161,7 +2159,7 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
 }
 
 #[test]
-fn transform_trait_associated_const_default_is_seeded_across_packages() -> Result<()> {
+fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let dependency_items =
         parser.parse_items_ast("pub trait Layout { const DEFAULTED: bool = true; }")?;
@@ -2183,29 +2181,31 @@ fn transform_trait_associated_const_default_is_seeded_across_packages() -> Resul
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::TraitItemKind::AssocConst(constant) if item.name.as_str() == "DEFAULTED" =>
-                constant.body.as_ref().map(|_| item.def_id.clone()),
+            hir::TraitItemKind::AssocConst(constant) if item.name.as_str() == "DEFAULTED" => {
+                constant.body.as_ref().map(|_| item.def_id.clone())
+            }
             _ => None,
         })
         .expect("dependency trait associated constant");
 
     let mut workspace = hir::HirProgram::new();
     workspace.add_package(std::rc::Rc::new(dependency));
+    let workspace = std::rc::Rc::new(workspace);
     let consumer_items = parser
         .parse_items_ast("use dependency::Layout; fn read<T: Layout>() -> bool { T::DEFAULTED }")?;
     let consumer_package = package_from_items(consumer_items)?;
     let mut consumer_lowerer =
-        AstToHirLowerer::new(std::rc::Rc::new(workspace), hir::PackageId::new("consumer"));
+        AstToHirLowerer::new(workspace.clone(), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
-    let seeded_trait = consumer
-        .def_map
-        .get(&trait_def_id)
+    assert!(!consumer.def_map.contains_key(&trait_def_id));
+    let dependency_trait = workspace
+        .item(trait_def_id)
         .and_then(|item| match &item.kind {
             hir::ItemKind::Trait(trait_def) => Some(trait_def),
             _ => None,
         })
-        .expect("dependency trait seeded into consumer package");
-    let seeded_const = seeded_trait
+        .expect("dependency trait remains in its owning package");
+    let dependency_const = dependency_trait
         .items
         .iter()
         .find_map(|item| match &item.kind {
@@ -2214,8 +2214,8 @@ fn transform_trait_associated_const_default_is_seeded_across_packages() -> Resul
             }
             _ => None,
         })
-        .expect("seeded trait associated constant");
-    assert!(seeded_const.body.is_some());
+        .expect("dependency trait associated constant");
+    assert!(dependency_const.body.is_some());
     Ok(())
 }
 

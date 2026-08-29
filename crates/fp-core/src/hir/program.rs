@@ -23,6 +23,15 @@ pub struct HirProgram {
     /// dependencies, for "current package's own name shadows a
     /// dependency's" priority).
     struct_defs_by_name: HashMap<String, DefId>,
+    /// Canonical extern-prelude export paths owned by published package
+    /// snapshots. This is rebuilt when a package is published, so resolving
+    /// `dep::module::Item` never scans every dependency or copies bindings
+    /// into the consuming package.
+    exports_by_path: HashMap<String, Res>,
+    /// Rust extern-prelude crate names mapped to their owning package. This
+    /// keeps external-path resolution a direct program query rather than a
+    /// scan of every package snapshot.
+    packages_by_crate_name: HashMap<String, PackageId>,
 }
 
 impl HirProgram {
@@ -30,6 +39,8 @@ impl HirProgram {
         Self {
             packages: HashMap::new(),
             struct_defs_by_name: HashMap::new(),
+            exports_by_path: HashMap::new(),
+            packages_by_crate_name: HashMap::new(),
         }
     }
 
@@ -64,14 +75,7 @@ impl HirProgram {
         // authoritative package snapshots so entries from the old snapshot
         // cannot survive under the new package's identity.
         self.packages.insert(package_id, package);
-        self.struct_defs_by_name.clear();
-        for package in self.packages.values() {
-            for (name, def_id) in &package.struct_defs_by_name {
-                self.struct_defs_by_name
-                    .entry(name.clone())
-                    .or_insert_with(|| def_id.clone());
-            }
-        }
+        self.rebuild_indexes();
     }
 
     /// Inserts an already shared package snapshot.  This is retained for
@@ -82,12 +86,33 @@ impl HirProgram {
     pub fn add_package(&mut self, package: std::rc::Rc<HirPackage>) {
         let package_id = package.id.clone();
         self.packages.insert(package_id, package);
+        self.rebuild_indexes();
+    }
+
+    fn rebuild_indexes(&mut self) {
         self.struct_defs_by_name.clear();
-        for package in self.packages.values() {
+        self.exports_by_path.clear();
+        self.packages_by_crate_name.clear();
+        let mut package_ids = self.packages.keys().cloned().collect::<Vec<_>>();
+        package_ids.sort();
+        for package_id in package_ids {
+            let package = &self.packages[&package_id];
+            self.packages_by_crate_name
+                .entry(Self::external_crate_name(&package.id))
+                .or_insert_with(|| package.id.clone());
             for (name, def_id) in &package.struct_defs_by_name {
                 self.struct_defs_by_name
                     .entry(name.clone())
                     .or_insert_with(|| def_id.clone());
+            }
+            for (key, res) in &package.hir_exports {
+                self.exports_by_path
+                    .entry(key.clone())
+                    .or_insert_with(|| res.clone());
+                let canonical = Self::canonical_export_key(&package.id, key);
+                self.exports_by_path
+                    .entry(canonical)
+                    .or_insert_with(|| res.clone());
             }
         }
     }
@@ -453,46 +478,7 @@ impl HirProgram {
     /// somewhat arbitrary — first match on ambiguity, not a real priority
     /// rule).
     pub fn find_export(&self, key: &str) -> Option<Res> {
-        let mut ids: Vec<_> = self.packages.keys().cloned().collect();
-        ids.sort();
-        for id in ids {
-            let package = &self.packages[&id];
-            if let Some(res) = package.hir_exports.get(key) {
-                return Some(res.clone());
-            }
-            let root = format!("{}::", Self::external_crate_name(&id));
-            if let Some(relative_key) = key.strip_prefix(&root) {
-                if let Some(res) = package.hir_exports.get(relative_key) {
-                    return Some(res.clone());
-                }
-            }
-
-            // Export tables can originate from Cargo metadata or from a
-            // package lowered before its Rust crate root was normalized.
-            // Rust source always spells the external root with underscores,
-            // so compare only that first segment while accepting either
-            // `crate::item` and package-relative `item` export keys. This is
-            // the same namespace normalization rustc applies at the extern
-            // prelude boundary, and keeps the resolver independent of which
-            // producer populated `hir_exports`.
-            let Some((requested_root, requested_relative)) = key.split_once("::") else {
-                continue;
-            };
-            if requested_root != Self::external_crate_name(&id) {
-                continue;
-            }
-            let cargo_root = format!("{}::", id.as_str());
-            for export_key in package.hir_exports.keys() {
-                let relative = export_key
-                    .strip_prefix(&cargo_root)
-                    .or_else(|| export_key.strip_prefix(&root))
-                    .unwrap_or(export_key.as_str());
-                if relative == requested_relative {
-                    return package.hir_exports.get(export_key).cloned();
-                }
-            }
-        }
-        None
+        self.exports_by_path.get(key).cloned()
     }
 
     /// `find_export` requires the caller's exact fully-qualified key — but
@@ -584,7 +570,10 @@ impl HirProgram {
             .filter(|segment| !segment.is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        if segments.first().is_none_or(|first| first != &root && first != cargo_root) {
+        if segments
+            .first()
+            .is_none_or(|first| first != &root && first != cargo_root)
+        {
             segments.insert(0, root.clone());
         } else {
             segments[0] = root.clone();
@@ -683,9 +672,10 @@ impl HirProgram {
         ns: resolve::Namespace,
     ) -> Option<&resolve::SymbolEntry> {
         let crate_name = path.head()?;
-        let package = self.packages.values().find(|package| {
-            Self::external_crate_name(&package.id) == crate_name
-        })?;
+        let package = self
+            .packages_by_crate_name
+            .get(crate_name)
+            .and_then(|package_id| self.packages.get(package_id))?;
         package.module_tree.lookup_crate_path(crate_name, path, ns)
     }
 
@@ -696,9 +686,10 @@ impl HirProgram {
         path: &crate::ast::path::QualifiedPath,
     ) -> Option<crate::ast::path::QualifiedPath> {
         let crate_name = path.head()?;
-        let package = self.packages.values().find(|package| {
-            Self::external_crate_name(&package.id) == crate_name
-        })?;
+        let package = self
+            .packages_by_crate_name
+            .get(crate_name)
+            .and_then(|package_id| self.packages.get(package_id))?;
         package
             .module_tree
             .module_exists_crate_path(crate_name, path)
@@ -774,6 +765,32 @@ mod tests {
         assert_eq!(
             program.find_export("skln_core::types::ChangeRange"),
             Some(Res::Def(def_id))
+        );
+    }
+
+    #[test]
+    fn export_index_keeps_definitions_in_their_owning_package() {
+        let dependency_id = PackageId::new("dependency");
+        let def_id = DefId::new(dependency_id.clone(), 4);
+        let mut dependency = HirPackage::new(dependency_id.clone());
+        dependency
+            .hir_exports
+            .insert("api::PublicType".to_string(), Res::Def(def_id.clone()));
+
+        let consumer_id = PackageId::new("consumer");
+        let consumer = HirPackage::new(consumer_id.clone());
+        let mut program = HirProgram::new();
+        program.add_package(std::rc::Rc::new(dependency));
+        program.add_package(std::rc::Rc::new(consumer));
+
+        assert_eq!(
+            program.find_export("dependency::api::PublicType"),
+            Some(Res::Def(def_id.clone()))
+        );
+        assert!(
+            program
+                .package(&consumer_id)
+                .is_some_and(|package| !package.def_map.contains_key(&def_id))
         );
     }
 

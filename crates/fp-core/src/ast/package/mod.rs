@@ -175,8 +175,7 @@ pub struct AstPackage {
     /// Fully-qualified `type X = Y;` aliases exported by this package (e.g.
     /// `libc`'s `pub type char = u8;`) — consulted purely at AST-to-HIR
     /// type-lowering time, before a HIR `Res` even exists, so they need
-    /// their own cross-package export/merge path (see
-    /// `seed_workspace_definitions`).
+    /// their own cross-package export path through `HirProgram`.
     pub type_alias_exports: HashMap<String, crate::ast::Ty>,
 }
 

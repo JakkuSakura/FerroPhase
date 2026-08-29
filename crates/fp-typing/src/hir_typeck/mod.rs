@@ -4632,12 +4632,7 @@ impl HirTypeChecker {
                 }
                 if matches!(candidate_inner.kind, TyKind::Ref(_, _, _)) {
                     let mut trial = substitutions.clone();
-                    if Self::method_receiver_matches(
-                        scope,
-                        candidate_inner,
-                        receiver,
-                        &mut trial,
-                    ) {
+                    if Self::method_receiver_matches(scope, candidate_inner, receiver, &mut trial) {
                         *substitutions = trial;
                         return true;
                     }

@@ -398,10 +398,9 @@ impl AstToHirLowerer {
                     self.module_path.clone()
                 };
                 // `root_modules` is the resolver's extern-prelude/module
-                // source of truth. Dependency roots (including Cargo names
-                // normalized to Rust identifiers such as `skln_core`) are
-                // seeded into this tree before lowering; do not maintain a
-                // second hardcoded list for bundled standard-library roots.
+                // source of truth. Dependency roots are resolved through
+                // `HirProgram`; do not maintain a second hardcoded list for
+                // bundled standard-library roots.
                 let root_modules = self.cached_root_modules();
 
                 if parsed.segments.len() == 1 {

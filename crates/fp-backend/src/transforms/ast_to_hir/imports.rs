@@ -176,7 +176,10 @@ impl AstToHirLowerer {
             let candidate = fp_core::ast::path::QualifiedPath::new(
                 self.module_path.segments[..length].to_vec(),
             );
-            if candidate.segments.first().is_some_and(|segment| segment == &root)
+            if candidate
+                .segments
+                .first()
+                .is_some_and(|segment| segment == &root)
                 && self.package.module_tree.module_exists(&candidate)
             {
                 return candidate.segments;
@@ -228,22 +231,16 @@ impl AstToHirLowerer {
                     is_glob: false,
                 });
             }
-            // `type X = Y;` aliases live in their own table (see
-            // `register_type_alias`), not modeled by `ModuleTree` —
-            // still a scan over that one flat map, filtered by key prefix.
-            for key in self.type_aliases.keys() {
-                let segments: Vec<&str> = key.split("::").collect();
-                if segments.len() != candidate.segments.len() + 1 {
-                    continue;
-                }
-                if !segments
-                    .iter()
-                    .zip(candidate.segments.iter())
-                    .all(|(a, b)| *a == b.as_str())
-                {
-                    continue;
-                }
-                let child = segments[candidate.segments.len()].to_string();
+            // Type aliases have their own table, so use the parent-module
+            // index populated by `register_type_alias` instead of scanning
+            // every alias and splitting every qualified key for each glob.
+            for child in self
+                .type_alias_children
+                .get(&candidate.to_key())
+                .into_iter()
+                .flatten()
+            {
+                let child = child.clone();
                 if !seen.insert(child.clone()) {
                     continue;
                 }
@@ -401,6 +398,10 @@ impl AstToHirLowerer {
             }
             if let Some(alias_ty) = type_alias {
                 let new_key = self.qualify_name(&alias);
+                self.type_alias_children
+                    .entry(self.module_path.to_key())
+                    .or_default()
+                    .push(alias.clone());
                 self.type_aliases.insert(new_key, alias_ty);
             }
             self.resolved_import_aliases.insert(resolved_key);
