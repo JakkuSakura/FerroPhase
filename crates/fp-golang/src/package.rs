@@ -133,6 +133,7 @@ impl GoLangPackageProvider {
             registry: None,
             features: Default::default(),
             dependencies,
+            prelude: None,
         };
         let module_ids = descriptors.iter().map(|module| module.id.clone()).collect();
         let descriptor = PackageDescriptor {

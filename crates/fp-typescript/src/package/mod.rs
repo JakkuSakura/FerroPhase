@@ -210,6 +210,7 @@ impl PackageProvider for TypeScriptPackageProvider {
             registry: None,
             features: BTreeMap::new(),
             dependencies,
+            prelude: None,
         };
 
         let modules = self.collect_modules(&package_id)?;
