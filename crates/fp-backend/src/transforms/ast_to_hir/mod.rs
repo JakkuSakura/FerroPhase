@@ -171,7 +171,7 @@ pub struct AstToHirLowerer {
     /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
     /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
-    hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
+    hir_program: fp_core::hir::SharedHirProgram,
     /// Same idea as `pending_impls`, for a transparent type alias
     /// (`type Result = result::Result<(), Error>;`) whose RHS names a
     /// module-qualified path (`result::Result`) that isn't reachable yet
@@ -294,7 +294,7 @@ impl AstToHirLowerer {
     }
 
     pub fn with_file<P: AsRef<Path>>(
-        hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
+        hir_program: fp_core::hir::SharedHirProgram,
         package_id: hir::PackageId,
         path: P,
     ) -> Self {
@@ -310,10 +310,7 @@ impl AstToHirLowerer {
     /// comment for the bug this class of mistake caused). `hir_program`
     /// is likewise required upfront (the workspace's HIR), so
     /// cross-package name resolution is always available.
-    pub fn new(
-        hir_program: std::rc::Rc<fp_core::hir::HirProgram>,
-        package_id: hir::PackageId,
-    ) -> Self {
+    pub fn new(hir_program: fp_core::hir::SharedHirProgram, package_id: hir::PackageId) -> Self {
         Self {
             package_id: package_id.clone(),
             current_owner: None,

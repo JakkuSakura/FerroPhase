@@ -331,7 +331,7 @@ pub struct HirToMirLowerer {
     /// under the same id — so every lookup method (`hir_item`,
     /// `hir_def_path`, `hir_all_items`) reads straight off this map with no
     /// separate "current package first" fallback.
-    pub(super) hir_program: std::rc::Rc<hir::HirProgram>,
+    pub(super) hir_program: hir::SharedHirProgram,
     /// The id of the package this instance is currently lowering — its HIR
     /// lives in `hir_program.packages` under this id (`new`/`transform`
     /// insert it there), so all HIR access routes through `hir_program`
@@ -384,12 +384,12 @@ impl HirToMirLowerer {
     /// current package is always a member of `hir_program` and the lookup
     /// methods query the already-installed HIR package directly.
     pub fn new(
-        hir_program: std::rc::Rc<hir::HirProgram>,
+        hir_program: hir::SharedHirProgram,
         package_id: hir::PackageId,
         mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     ) -> Self {
         assert!(
-            hir_program.packages.contains_key(&package_id),
+            hir_program.with(|program| program.packages.contains_key(&package_id)),
             "MIR lowering requires installed HIR package `{package_id}`"
         );
         Self {
@@ -469,7 +469,7 @@ impl HirToMirLowerer {
     /// `self.hir_def_map.values()`/`.iter()` full scan (used to build a
     /// one-time reverse index; never a per-lookup cost).
     pub(crate) fn hir_all_items(&self) -> impl Iterator<Item = hir::Item> {
-        self.hir_program.all_items()
+        self.hir_program.all_items().into_iter()
     }
 
     pub fn transform(&mut self, package_id: hir::PackageId) -> Result<mir::MirCodeUnit> {

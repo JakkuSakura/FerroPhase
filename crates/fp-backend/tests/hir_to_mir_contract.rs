@@ -61,12 +61,22 @@ fn program_with_items(items: Vec<Item>) -> HirPackage {
     program
 }
 
-fn mir_lowering() -> HirToMirLowerer {
+fn mir_lowering(package: HirPackage) -> HirToMirLowerer {
+    let package_id = package.id.clone();
+    let mut program = fp_core::hir::HirProgram::new();
+    program.publish_package(package);
     HirToMirLowerer::new(
-        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
-        fp_core::hir::PackageId::new("test"),
+        fp_core::hir::SharedHirProgram::new(program),
+        package_id,
         std::rc::Rc::new(std::cell::RefCell::new(fp_core::mir::MirPackage::default())),
     )
+}
+
+fn transform(program: HirPackage) -> (HirToMirLowerer, fp_core::Result<mir::MirCodeUnit>) {
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
+    let result = lowering.transform(package_id);
+    (lowering, result)
 }
 
 fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {
@@ -147,9 +157,10 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
     let mir_program = lowering
-        .transform(program)
+        .transform(package_id)
         .expect("HIR→MIR lowering should succeed");
     let diagnostics = lowering.take_diagnostics();
     assert!(
@@ -247,9 +258,10 @@ fn lowers_identity_function_with_parameter() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
     let mir_program = lowering
-        .transform(program)
+        .transform(package_id)
         .expect("HIR→MIR lowering should succeed");
     let diagnostics = lowering.take_diagnostics();
     assert!(
@@ -317,10 +329,8 @@ fn rejects_unresolved_value_path_in_function_body() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
-    let err = lowering
-        .transform(program)
-        .expect_err("HIR→MIR lowering should reject unresolved value paths");
+    let (mut lowering, result) = transform(program);
+    let err = result.expect_err("HIR→MIR lowering should reject unresolved value paths");
     let message = err.to_string();
     assert!(
         message.contains("unresolved value path during MIR lowering: `missing_value`"),
@@ -373,10 +383,9 @@ fn rejects_binary_operations_with_unit_operands() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
-    let err = lowering
-        .transform(program)
-        .expect_err("HIR→MIR lowering should reject unit operands in binary operations");
+    let (mut lowering, result) = transform(program);
+    let err =
+        result.expect_err("HIR→MIR lowering should reject unit operands in binary operations");
     let message = err.to_string();
     assert!(
         message.contains("binary operation `Eq` received unit operand(s)"),
@@ -466,10 +475,9 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
 
     let program = program_with_items(vec![enum_item, function_item]);
 
-    let mut lowering = mir_lowering();
-    let err = lowering
-        .transform(program)
-        .expect_err("HIR→MIR lowering should reject missing enum variant payload values");
+    let (mut lowering, result) = transform(program);
+    let err =
+        result.expect_err("HIR→MIR lowering should reject missing enum variant payload values");
     let message = err.to_string();
     assert!(
         message.contains("enum variant expected 1 payload values, got 0"),
@@ -584,10 +592,9 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
 
     let program = program_with_items(vec![payload_struct_item, enum_item, function_item]);
 
-    let mut lowering = mir_lowering();
-    let err = lowering
-        .transform(program)
-        .expect_err("HIR→MIR lowering should reject missing struct-like enum variant fields");
+    let (mut lowering, result) = transform(program);
+    let err =
+        result.expect_err("HIR→MIR lowering should reject missing struct-like enum variant fields");
     let message = err.to_string();
     assert!(
         message.contains("enum variant expected 1 payload values, got 0")
@@ -617,9 +624,10 @@ fn stubs_bodyless_functions_as_unreachable() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
     let mir_program = lowering
-        .transform(program)
+        .transform(package_id)
         .expect("HIR→MIR lowering should succeed for bodyless stubs");
 
     let mir_item = &mir_program.items[0];
@@ -668,9 +676,10 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
     let mir_program = lowering
-        .transform(program)
+        .transform(package_id)
         .expect("HIR→MIR lowering should succeed");
     let diagnostics = lowering.take_diagnostics();
     assert!(diagnostics.get_diagnostics().is_empty());
@@ -793,9 +802,10 @@ fn lowers_index_expression_into_place_projection() {
 
     let program = program_with_items(vec![item]);
 
-    let mut lowering = mir_lowering();
+    let package_id = program.id.clone();
+    let mut lowering = mir_lowering(program);
     let mir_program = lowering
-        .transform(program)
+        .transform(package_id)
         .expect("HIR→MIR lowering should succeed");
 
     let mir_item = &mir_program.items[0];
@@ -881,10 +891,8 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
         span: span(),
     };
 
-    let mut lowering = mir_lowering();
-    let mir_program = lowering
-        .transform(program_with_items(vec![item]))
-        .expect("HIR→MIR lowering should succeed");
+    let (mut lowering, result) = transform(program_with_items(vec![item]));
+    let mir_program = result.expect("HIR→MIR lowering should succeed");
     let diagnostics = lowering.take_diagnostics();
     assert!(
         diagnostics.get_diagnostics().is_empty(),
@@ -902,27 +910,24 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
         .get(&mir_function.body_id)
         .expect("function body present");
     let block = &body.basic_blocks[0];
-    let has_subslice_container_get = block.statements.iter().any(|stmt| match &stmt.kind {
-        StatementKind::Assign(
-            _,
-            Rvalue::ContainerGet {
-                container: Operand::Copy(place),
-                ..
-            },
-        ) => matches!(
-            place.projection.last(),
-            Some(mir::PlaceElem::Subslice {
-                from: 1,
-                to: 3,
-                from_end: false,
-            })
+    let has_subslice_index = block.statements.iter().any(|stmt| match &stmt.kind {
+        StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place))) => matches!(
+            place.projection.as_slice(),
+            [
+                mir::PlaceElem::Subslice {
+                    from: 1,
+                    to: 3,
+                    from_end: false,
+                },
+                mir::PlaceElem::Index(_)
+            ]
         ),
         _ => false,
     });
 
     assert!(
-        has_subslice_container_get,
-        "expected static slice indexing to preserve MIR subslice projection"
+        has_subslice_index,
+        "expected static slice indexing to preserve the constant subslice projection"
     );
 }
 
@@ -1003,10 +1008,8 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         span: span(),
     };
 
-    let mut lowering = mir_lowering();
-    let mir_program = lowering
-        .transform(program_with_items(vec![item]))
-        .expect("HIR→MIR lowering should succeed");
+    let (mut lowering, result) = transform(program_with_items(vec![item]));
+    let mir_program = result.expect("HIR→MIR lowering should succeed");
     let diagnostics = lowering.take_diagnostics();
     assert!(
         diagnostics.get_diagnostics().is_empty(),
@@ -1025,36 +1028,50 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         .expect("function body present");
     let block = &body.basic_blocks[0];
 
-    let slice_value_local = block.statements.iter().find_map(|stmt| match &stmt.kind {
-        StatementKind::Assign(place, Rvalue::IntrinsicCall { kind, .. })
-            if matches!(kind, fp_core::intrinsics::IntrinsicKind::Slice) =>
-        {
-            Some(place.local)
-        }
-        _ => None,
-    });
-    let slice_value_local = slice_value_local.expect("expected MIR slice value intrinsic");
+    let slice_value_locals: Vec<_> = block
+        .statements
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign(place, Rvalue::IntrinsicCall { kind, .. })
+                if matches!(kind, fp_core::intrinsics::IntrinsicKind::Slice) =>
+            {
+                Some(place.local)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !slice_value_locals.is_empty(),
+        "expected MIR slice value intrinsic"
+    );
 
+    let slice_place_locals: Vec<_> = block
+        .statements
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign(place, Rvalue::Use(Operand::Copy(source)))
+                if slice_value_locals.contains(&source.local) && source.projection.is_empty() =>
+            {
+                Some(place.local)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !slice_place_locals.is_empty(),
+        "expected materialized slice place"
+    );
     let has_index_from_slice_value = block.statements.iter().any(|stmt| match &stmt.kind {
-        StatementKind::Assign(
-            _,
-            Rvalue::ContainerGet {
-                container: Operand::Copy(place),
-                ..
-            },
-        ) => {
-            place.local == slice_value_local
-                && !place
-                    .projection
-                    .iter()
-                    .any(|elem| matches!(elem, mir::PlaceElem::Subslice { .. }))
+        StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place))) => {
+            slice_place_locals.contains(&place.local)
+                && matches!(place.projection.last(), Some(mir::PlaceElem::Index(_)))
         }
         _ => false,
     });
 
     assert!(
         has_index_from_slice_value,
-        "expected dynamic slice to lower via explicit slice value, not a subslice place"
+        "expected dynamic slice indexing through its materialized slice value"
     );
 }
 
@@ -1123,10 +1140,8 @@ fn return_value_is_materialized_before_finally_runs() {
         span: span(),
     };
 
-    let mut lowering = mir_lowering();
-    let mir_program = lowering
-        .transform(program_with_items(vec![item]))
-        .expect("HIR→MIR lowering should succeed");
+    let (mut lowering, result) = transform(program_with_items(vec![item]));
+    let mir_program = result.expect("HIR→MIR lowering should succeed");
 
     let mir_function = match &mir_program.items[0].kind {
         MirItemKind::Function(func) => func,
@@ -1244,10 +1259,8 @@ fn break_value_is_materialized_before_finally_runs() {
         span: span(),
     };
 
-    let mut lowering = mir_lowering();
-    let mir_program = lowering
-        .transform(program_with_items(vec![item]))
-        .expect("HIR→MIR lowering should succeed");
+    let (mut lowering, result) = transform(program_with_items(vec![item]));
+    let mir_program = result.expect("HIR→MIR lowering should succeed");
 
     let mir_function = match &mir_program.items[0].kind {
         MirItemKind::Function(func) => func,

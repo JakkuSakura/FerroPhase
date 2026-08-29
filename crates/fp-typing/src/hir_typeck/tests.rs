@@ -21,9 +21,12 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<RefCell<hir::HirPackage>>> {
-    let mut program = hir::HirProgram::new();
-    let current_package = program.add_package(package);
-    let checker = HirTypeChecker::new(Rc::new(program), current_package, None, executor);
+    let checker = HirTypeChecker::new(
+        package,
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        None,
+        executor,
+    );
     let item_ids: Vec<_> = checker
         .borrow()
         .package()
@@ -371,7 +374,9 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
                             name: path_name.into(),
                             args: None,
                         }],
-                        res: None,
+                        res: Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
+                            path_name.to_owned(),
+                        ))),
                     }),
                     span: fp_core::span::Span::null(),
                 }),
@@ -420,11 +425,9 @@ fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
         Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
     let package = hir::HirPackage::new(test_pkg());
-    let mut program = hir::HirProgram::new();
-    let package = program.add_package(package);
     let checker = HirTypeChecker::new(
-        Rc::new(program),
         package,
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         Some(resolver),
         fp_core::executor::CompilerExecutor::new().handle(),
     );

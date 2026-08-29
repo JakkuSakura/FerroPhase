@@ -65,14 +65,15 @@ pub fn roundtrip_items_via_hir(
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
-        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
-    let mut hir_program = fp_core::hir::HirProgram::new();
+    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
     hir_program.publish_package(program.clone());
-    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
+    let workspace = hir_program.borrow();
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
 }
 
 pub fn roundtrip_items_via_hir_target(
@@ -85,15 +86,16 @@ pub fn roundtrip_items_via_hir_target(
     fp_core::cfg::filter_items_in_file(&mut filtered, &target_env);
     let package = package_from_file(&filtered)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
-        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );
     generator.set_target_lang(Some(target_lang));
     generator.set_cfg_filtering(true);
     let program = generator.transform_package(&package)?;
-    let mut hir_program = fp_core::hir::HirProgram::new();
+    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
     hir_program.publish_package(program.clone());
-    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
+    let workspace = hir_program.borrow();
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
 }
 
 pub fn roundtrip_items_via_hir_dce(
@@ -101,15 +103,16 @@ pub fn roundtrip_items_via_hir_dce(
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
-        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);
-    let mut hir_program = fp_core::hir::HirProgram::new();
+    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
     hir_program.publish_package(program.clone());
-    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
+    let workspace = hir_program.borrow();
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
 }
 
 #[cfg(test)]

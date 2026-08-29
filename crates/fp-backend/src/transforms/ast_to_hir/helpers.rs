@@ -323,8 +323,10 @@ impl AstToHirLowerer {
             // consult every dependency when probing an ordinary lexical path;
             // doing so would change shadowing and module-relative lookup.
             let is_extern_crate_root = candidate.segments.first().is_some_and(|root| {
-                self.hir_program.packages.values().any(|package| {
-                    hir::HirProgram::external_crate_name(&package.borrow().id) == root.as_str()
+                self.hir_program.with(|program| {
+                    program.packages.values().any(|package| {
+                        hir::HirProgram::external_crate_name(&package.borrow().id) == root.as_str()
+                    })
                 })
             });
             if is_extern_crate_root
@@ -633,6 +635,35 @@ impl AstToHirLowerer {
                     segments,
                     res: Some(base_res),
                 };
+                let full_path = self.canonicalize_segments(&type_relative.segments);
+                if let Some(hir::Res::Def(variant_id)) =
+                    self.lookup_symbol(&full_path.to_key(), hir::Namespace::Value)
+                {
+                    let predeclared_variant = self
+                        .enum_variant_def_ids
+                        .values()
+                        .any(|candidate| candidate == &variant_id);
+                    let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res
+                    {
+                        self
+                            .package
+                            .def_map
+                            .get(enum_id)
+                            .cloned()
+                            .or_else(|| self.hir_program.item(enum_id.clone()))
+                            .is_some_and(|item| matches!(
+                                item.kind,
+                                hir::ItemKind::Enum(ref enum_def)
+                                    if enum_def.variants.iter().any(|variant| variant.def_id == variant_id)
+                            ))
+                    } else {
+                        false
+                    };
+                    if predeclared_variant || declared_variant {
+                        type_relative.res = Some(hir::Res::Def(variant_id));
+                        return Ok(type_relative);
+                    }
+                }
                 if let Some(res) = self.lookup_enum_variant(
                     &type_relative,
                     &type_relative
@@ -901,7 +932,10 @@ impl AstToHirLowerer {
                         // scanning those when the local map has nothing.
                         if type_paths.is_empty() {
                             {
-                                for package in self.hir_program.packages.values() {
+                                let packages = self.hir_program.with(|program| {
+                                    program.packages.values().cloned().collect::<Vec<_>>()
+                                });
+                                for package in packages {
                                     if let Some(def_path) =
                                         package.borrow().def_paths.get(&type_def_id)
                                     {

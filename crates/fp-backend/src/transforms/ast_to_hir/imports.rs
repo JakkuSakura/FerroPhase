@@ -532,8 +532,10 @@ impl AstToHirLowerer {
                 }
             }
             if current.segments.is_empty()
-                && self.hir_program.packages.values().any(|package| {
-                    hir::HirProgram::external_crate_name(&package.borrow().id) == *segment
+                && self.hir_program.with(|program| {
+                    program.packages.values().any(|package| {
+                        hir::HirProgram::external_crate_name(&package.borrow().id) == *segment
+                    })
                 })
             {
                 current.segments.push(segment.clone());

@@ -20,7 +20,7 @@ pub struct CompilerState {
     /// so callers that need their own handle onto the whole program
     /// (`HirToMirLowerer::new`, `hir_program_rc`) get a cheap pointer clone
     /// instead of deep-cloning every published package's HIR on every call.
-    hir_program: Rc<hir::HirProgram>,
+    hir_program: hir::SharedHirProgram,
     /// Every package's MIR content produced so far this session, one
     /// `mir::MirCodeUnit` per top-level `DefId` (see `mir::MirPackage`'s
     /// own doc comment) — replaces the old `BTreeMap<MirId, MirModule>`,
@@ -107,7 +107,7 @@ impl CompilerState {
         workspace: Rc<AstProgram>,
     ) -> Self {
         Self {
-            hir_program: Rc::new(hir::HirProgram::new()),
+            hir_program: hir::SharedHirProgram::new(hir::HirProgram::new()),
             mir_program: Rc::new(mir::MirProgram::new()),
             lir_program: Rc::new(lir::LirProgram::new()),
             runtime_programs: std::collections::HashMap::new(),
@@ -141,13 +141,13 @@ impl CompilerState {
     /// owned publication path also rebuilds the package's derived indexes
     /// before it becomes visible to cross-package lookups.
     pub fn insert_hir(&mut self, package: hir::HirPackage) {
-        Rc::make_mut(&mut self.hir_program).publish_package(package);
+        self.hir_program.publish_package(package);
     }
 
     /// Publishes an already shared typed package without discarding the
     /// `Rc<RefCell<_>>` through which its type checker recorded results.
     pub fn insert_hir_shared(&mut self, package: Rc<RefCell<hir::HirPackage>>) {
-        Rc::make_mut(&mut self.hir_program).add_package(package);
+        self.hir_program.add_package(package);
     }
 
     /// Records `def_id`'s own lowered content — the only way `mir_program`
@@ -253,15 +253,15 @@ impl CompilerState {
     /// cross-package HIR lookups (`find_export`, `find_hir_impl_method`,
     /// `find_hir_enum_for_variant`, ...), now that `AstProgram` no longer
     /// carries HIR content itself.
-    pub fn hir_program(&self) -> &hir::HirProgram {
-        &self.hir_program
+    pub fn hir_program(&self) -> hir::SharedHirProgram {
+        self.hir_program.clone()
     }
 
     /// Cheap `Rc` clone of the whole session's `hir::HirProgram` — what
     /// `HirToMirLowerer::new`/`AstToHirLowerer::new` need their own handle
     /// onto (both resolve the current package straight out of it), instead
     /// of deep-cloning every published package's HIR on every lowering call.
-    pub fn hir_program_rc(&self) -> Rc<hir::HirProgram> {
+    pub fn hir_program_rc(&self) -> hir::SharedHirProgram {
         self.hir_program.clone()
     }
 
@@ -304,7 +304,7 @@ impl CompilerState {
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {
         self.hir_program
             .package(&package_id)
-            .map(|package| package.clone())
+            .map(|package| package.borrow().clone())
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
@@ -328,7 +328,8 @@ impl CompilerState {
     /// report typing diagnostics, which live directly on each package
     /// (see `hir::HirPackage::diagnostics`'s doc comment), not on the
     /// driver's scratch, per-package `TypingShared`.
-    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<RefCell<hir::HirPackage>>> {
-        self.hir_program.packages.values()
+    pub fn all_packages(&self) -> Vec<Rc<RefCell<hir::HirPackage>>> {
+        self.hir_program
+            .with(|program| program.packages.values().cloned().collect())
     }
 }

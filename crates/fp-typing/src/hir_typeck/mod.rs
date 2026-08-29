@@ -18,23 +18,6 @@ mod intrinsics;
 mod literals;
 mod type_shapes;
 use type_shapes::*;
-// TODO: do not publish here. just make the input inside Rc
-/// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
-/// runs against, by cloning `dependency_program` (a cheap `Rc`-map clone,
-/// not a deep one — see `hir::HirProgram`'s own `packages` field) and adding
-/// `current_package` (still in progress, not yet published) into it last,
-/// via `HirProgram::add_package`.
-pub fn build_typing_program(
-    current_package: hir::HirPackage,
-    dependency_program: Option<Rc<hir::HirProgram>>,
-) -> Rc<hir::HirProgram> {
-    let mut program = dependency_program.as_deref().cloned().unwrap_or_default();
-    // The current package is still owned by this construction call. Publish
-    // it through the same snapshot boundary as the compiler state so its
-    // derived nominal/impl indexes are complete before type checking starts.
-    program.publish_package(current_package);
-    Rc::new(program)
-}
 
 /// One `HirTypeChecker` instance plays one of two roles, distinguished by
 /// `root`:
@@ -80,7 +63,8 @@ pub struct HirTypeChecker {
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
     /// or cross-package alike — routes through this one `HirProgram` via
     /// `HirProgram::item`/`def_path`/etc.
-    program: Rc<hir::HirProgram>,
+    program: hir::SharedHirProgram,
+    current_package_handle: Rc<RefCell<hir::HirPackage>>,
     /// Which entry in `program` is the package actually being checked —
     /// needed for iterating just this package's own items (the initial
     /// per-item spawn loop) and for snapshotting the package's own,
@@ -179,21 +163,24 @@ impl HirTypeChecker {
         }
     }
 
-    /// Builds the unified `program: Rc<hir::HirProgram>` (via
-    /// `build_typing_program`) and wraps the whole package-level state in
+    /// Uses the compiler's one shared HIR program and wraps the whole package-level state in
     /// one `Rc<RefCell<_>>` root handle, spawned against by every item's
     /// task (see `spawn_item_task`).
     pub fn new(
         current_package: hir::HirPackage,
-        dependency_program: Option<Rc<hir::HirProgram>>,
+        program: hir::SharedHirProgram,
         comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<RefCell<Self>> {
         let package_id = current_package.id.clone();
-        let program = build_typing_program(current_package, dependency_program);
+        program.publish_package(current_package);
+        let current_package_handle = program
+            .package_rc(&package_id)
+            .expect("published current package must be available");
         Rc::new(RefCell::new(Self {
             program,
             current_package: package_id,
+            current_package_handle,
             comptime_resolver,
             executor,
             root: None,
@@ -222,6 +209,7 @@ impl HirTypeChecker {
         Self {
             program: shared.program.clone(),
             current_package: shared.current_package.clone(),
+            current_package_handle: shared.current_package_handle.clone(),
             comptime_resolver: shared.comptime_resolver.clone(),
             executor: shared.executor.clone(),
             root: Some(Rc::downgrade(root)),
@@ -446,15 +434,13 @@ impl HirTypeChecker {
     /// cell; this scoped read borrow preserves direct package access without
     /// cloning its compiler state.
     pub fn package(&self) -> std::cell::Ref<'_, hir::HirPackage> {
-        self.program
-            .package(&self.current_package)
-            .expect("current_package is always inserted into program at construction")
+        self.current_package_handle.borrow()
     }
 
     /// The whole workspace `HirProgram`, for cross-package lookups that
     /// `package()`'s single-package view can't answer.
-    fn program_rc(&self) -> Rc<hir::HirProgram> {
-        self.program.clone()
+    fn program_rc(&self) -> std::cell::Ref<'_, hir::HirProgram> {
+        self.program.borrow()
     }
 
     /// The whole workspace `HirProgram` this package is being checked
@@ -462,8 +448,8 @@ impl HirTypeChecker {
     /// own still-in-progress HIR) — handed to `CompilerState` for the
     /// duration of this package's typecheck so a mid-typecheck
     /// `ComptimeRequest` can resolve its own package by id.
-    pub fn program_handle(&self) -> Rc<hir::HirProgram> {
-        self.program_rc()
+    pub fn program_handle(&self) -> hir::SharedHirProgram {
+        self.program.clone()
     }
 
     /// The `PackageId` `ComptimeRequest`s built while checking this package
@@ -2953,10 +2939,12 @@ impl HirTypeChecker {
         // `hir::HirPackage::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
-        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()) {
+        let type_alias_target = self.program_rc().type_alias_target(def_id.clone());
+        if let Some(target) = type_alias_target {
             return self.check_type_expr(&target).await;
         }
-        let Some(item) = self.program_rc().item(def_id.clone()) else {
+        let resolved_item = self.program_rc().item(def_id.clone());
+        let Some(item) = resolved_item else {
             // A resolved definition without a published HIR item is a
             // broken identity boundary. Returning a name-keyed parameter
             // here would hide the publication error and lose the `DefId`
@@ -3621,14 +3609,8 @@ impl HirTypeChecker {
             }
         }
         let Some(item) = self.program_rc().item(def_id.clone()) else {
-            // `program` is an owned `Rc` clone (cheap — it's the same
-            // `Rc<HirProgram>` `self.program` already is), not a borrow
-            // of `self` — so `item`/`impl_item` below can stay borrowed
-            // from it across the `self.with_generics(..)` call afterward
-            // (which needs `&mut self`) with no conflict, and this whole
-            // fallback no longer needs to clone the owning impl's
-            // `generics`/`self_ty`/`items`/`function` just to escape a
-            // borrow of `self` that was never actually necessary.
+            // Query the shared program through a short-lived borrow before
+            // recursively checking the candidate impl below.
             let program = self.program_rc();
             let owner_id = program
                 .package(&self.current_package())
@@ -3650,6 +3632,7 @@ impl HirTypeChecker {
                         impl_member.kind.clone(),
                     ))
                 });
+            drop(program);
             if let Some((generics, self_ty, impl_items, hir::ImplItemKind::Method(function))) =
                 found
             {
@@ -3743,11 +3726,13 @@ impl HirTypeChecker {
                     _ => {}
                 }
             }
-            let matched_enum_item = self
-                .program_rc()
-                .member_owner(def_id.clone())
-                .and_then(|owner_id| self.program_rc().item(owner_id))
-                .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)));
+            let matched_enum_item = {
+                let program = self.program_rc();
+                program
+                    .member_owner(def_id.clone())
+                    .and_then(|owner_id| program.item(owner_id))
+                    .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
+            };
             if let Some(enum_item) = matched_enum_item {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
                     unreachable!("matched_enum_item only holds ItemKind::Enum items")
@@ -4487,10 +4472,12 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
             _ => None,
         };
-        let program = self.program_rc();
-        let candidates: Box<dyn Iterator<Item = hir::Item> + '_> = match receiver_def {
-            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
-            None => shape_and_blanket_candidates(&program, &target_ty.kind),
+        let candidates: Vec<_> = {
+            let program = self.program_rc();
+            match receiver_def {
+                Some(def_id) => program.impls_for_adt(def_id).collect(),
+                None => shape_and_blanket_candidates(&program, &target_ty.kind).collect(),
+            }
         };
         let result: Result<Option<Ty>> = 'search: {
             for item in candidates {
@@ -5399,6 +5386,7 @@ impl HirTypeChecker {
         self.program
             .package(&variant_id.package_id)
             .and_then(|package| {
+                let package = package.borrow();
                 let enum_def_id = package.enum_variant_item_index.get(&variant_id)?;
                 package.def_map.get(enum_def_id).cloned()
             })

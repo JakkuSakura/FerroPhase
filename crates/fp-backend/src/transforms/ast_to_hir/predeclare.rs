@@ -114,6 +114,7 @@ impl AstToHirLowerer {
                     let Some(hir_package) = self.hir_program.package(&dependency_id) else {
                         continue;
                     };
+                    let hir_package = hir_package.borrow();
                     hir_package
                         .module_tree
                         .prelude_bindings(namespace)

@@ -107,7 +107,9 @@ impl AstToHirLowerer {
                 .collect(),
         );
         let namespace = scope.namespace();
-        let mut packages: Vec<_> = self.hir_program.packages.values().collect();
+        let mut packages = self
+            .hir_program
+            .with(|program| program.packages.values().cloned().collect::<Vec<_>>());
         packages.sort_by(|left, right| left.borrow().id.cmp(&right.borrow().id));
 
         for package in packages {

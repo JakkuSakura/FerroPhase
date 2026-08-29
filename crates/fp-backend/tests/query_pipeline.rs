@@ -17,11 +17,23 @@ fn test_layout() -> LirDataLayout {
     .expect("valid test layout")
 }
 
+fn lower_to_mir(program: hir::HirPackage) -> fp_core::Result<mir::MirCodeUnit> {
+    let package_id = program.id.clone();
+    let mut hir_program = hir::HirProgram::new();
+    hir_program.publish_package(program);
+    let mut lowering = HirToMirLowerer::new(
+        hir::SharedHirProgram::new(hir_program),
+        package_id.clone(),
+        std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())),
+    );
+    lowering.transform(package_id)
+}
+
 #[test]
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
     let query = QueryDocument::sql("SELECT 42", SqlDialect::Generic).with_name("query.sql");
     let mut hir_generator = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator
@@ -46,18 +58,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
-        hir::PackageId::new("test"),
-        std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())),
-    );
-    let mir_program = mir_lowering.transform(hir_program).expect("mir program");
-    let diagnostics = mir_lowering.take_diagnostics();
-    assert!(
-        !diagnostics.has_errors(),
-        "{:?}",
-        diagnostics.get_diagnostics()
-    );
+    let mir_program = lower_to_mir(hir_program).expect("mir program");
     assert_eq!(mir_program.items.len(), 1);
     let mir_query = match &mir_program.items[0].kind {
         mir::ItemKind::Query(query) => query,
@@ -107,7 +108,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         .collect(),
     });
     let mut hir_generator = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator
@@ -130,18 +131,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
-        hir::PackageId::new("test"),
-        std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())),
-    );
-    let mir_program = mir_lowering.transform(hir_program).expect("mir program");
-    let diagnostics = mir_lowering.take_diagnostics();
-    assert!(
-        !diagnostics.has_errors(),
-        "{:?}",
-        diagnostics.get_diagnostics()
-    );
+    let mir_program = lower_to_mir(hir_program).expect("mir program");
     let mir_query = match &mir_program.items[0].kind {
         mir::ItemKind::Query(query) => query,
         other => panic!("expected MIR query item, got {other:?}"),
@@ -183,7 +173,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         .expect("expected a single top-level expression");
 
     let mut hir_generator = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator.transform_expr(expr).expect("hir program");
@@ -196,18 +186,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
-        hir::PackageId::new("test"),
-        std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())),
-    );
-    let mir_program = mir_lowering.transform(hir_program).expect("mir program");
-    let diagnostics = mir_lowering.take_diagnostics();
-    assert!(
-        !diagnostics.has_errors(),
-        "{:?}",
-        diagnostics.get_diagnostics()
-    );
+    let mir_program = lower_to_mir(hir_program).expect("mir program");
     let mir_query = match &mir_program.items[0].kind {
         mir::ItemKind::Query(query) => query,
         other => panic!("expected MIR query item, got {other:?}"),

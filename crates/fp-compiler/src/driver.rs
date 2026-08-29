@@ -676,6 +676,7 @@ impl CompilerDriver {
             .hir_program()
             .package(&hir_package_id)
             .map(|hir_package| {
+                let hir_package = hir_package.borrow();
                 (
                     hir_package.module_tree.all_paths().count(),
                     hir_package.hir_exports.len(),
@@ -708,7 +709,10 @@ impl CompilerDriver {
             .borrow()
             .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| (hir_package.const_values(), hir_package.const_block_values()));
+            .map(|hir_package| {
+                let hir_package = hir_package.borrow();
+                (hir_package.const_values(), hir_package.const_block_values())
+            });
         let (hir_program, package_exports, type_alias_exports) =
             self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
         package
@@ -830,7 +834,9 @@ impl CompilerDriver {
         let (lifted_items_by_path, referenced_paths_by_path) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
-            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program());
+            let shared_program = state.hir_program();
+            let program = shared_program.borrow();
+            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, &program);
             // `lift_items_by_path` treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from
@@ -932,14 +938,10 @@ impl CompilerDriver {
         package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
-        let dependency_program = self.state.borrow().hir_program_rc();
+        let hir_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
-        let checker = fp_typing::HirTypeChecker::new(
-            program,
-            Some(dependency_program),
-            comptime_resolver,
-            executor,
-        );
+        let checker =
+            fp_typing::HirTypeChecker::new(program, hir_program, comptime_resolver, executor);
         let item_ids: Vec<_> = checker
             .borrow()
             .package()

@@ -353,6 +353,7 @@ pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
         .state
         .borrow()
         .all_packages()
+        .into_iter()
         .flat_map(|package| package.borrow().diagnostics.get_diagnostics())
         .collect();
     let result = emit_typing_diagnostics(&diagnostics);
