@@ -31,3 +31,10 @@ pub fn resolve_call_kind(
     // them directly (temporarily, by name) instead.
     intrinsic_defs.get(&def_id).cloned()
 }
+
+pub fn resolve_portable_op(
+    op_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::PortableOp>,
+    def_id: &fp_core::hir::DefId,
+) -> Option<fp_core::intrinsics::PortableOp> {
+    op_defs.get(def_id).cloned()
+}

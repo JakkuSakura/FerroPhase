@@ -150,6 +150,7 @@ impl PackageProvider for RustPackageProvider {
                 .collect()
         };
         let mut metadata = PackageMetadata::default();
+        metadata.prelude = Some(PackageId::new(STD_PACKAGE_NAME));
         metadata.dependencies.extend(implicit_rust_dependencies());
         if let MemberRoot::Dir(dir) = member_root {
             metadata
@@ -554,6 +555,13 @@ impl PackageProvider for RustStdProvider {
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
+        metadata.prelude = match id.as_str() {
+            CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(id.clone()),
+            ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
+            TEST_PACKAGE_NAME => Some(PackageId::new(STD_PACKAGE_NAME)),
+            LIBC_PACKAGE_NAME => None,
+            _ => None,
+        };
         for dependency in Self::dependencies_of(id.as_str()) {
             metadata.dependencies.push(DependencyDescriptor {
                 package: dependency.to_string(),
@@ -1107,6 +1115,13 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
 
     let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let mut metadata = PackageMetadata::default();
+    metadata.prelude = match crate_name {
+        CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(PackageId::new(crate_name)),
+        ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
+        TEST_PACKAGE_NAME => Some(PackageId::new(STD_PACKAGE_NAME)),
+        LIBC_PACKAGE_NAME => None,
+        _ => None,
+    };
     for dependency in RustStdProvider::dependencies_of(crate_name) {
         metadata.dependencies.push(DependencyDescriptor {
             package: dependency.to_string(),

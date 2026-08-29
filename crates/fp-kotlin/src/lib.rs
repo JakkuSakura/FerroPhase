@@ -23,6 +23,7 @@ pub use serializer::{
 /// `fp-cli` reads it there before compiling.
 pub const CAPABILITIES: fp_core::capabilities::LanguageCapabilities =
     fp_core::capabilities::LanguageCapabilities {
+        portable_operations: true,
         first_class_closures: true,
         first_class_for_loops: true,
     };

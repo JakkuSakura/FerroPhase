@@ -87,6 +87,13 @@ impl<'a> HirToAstLifter<'a> {
         ast::extend_resolved_expr_types(self.resolved_expr_types.borrow().clone());
     }
 
+    fn portable_op_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
+        crate::transforms::resolve_portable_op(&self.program.op_defs, def_id).or_else(|| {
+            self.hir_program
+                .and_then(|program| program.op_def(def_id.clone()).cloned())
+        })
+    }
+
     /// Declares `name` (for the binding identified by `hir_id`) in the
     /// innermost open scope, returning the name to actually emit — `name`
     /// itself if this is the first declaration of it in this scope, or a
@@ -531,37 +538,89 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
             hir::ExprKind::Call(callee, args) => {
-                Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
-                    span: expr.span,
-                    target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
-                    args: self.lift_positional_args(args)?,
-                    kwargs: self.lift_keyword_args(args)?,
-                }))
+                let lifted_args = self.lift_positional_args(args)?;
+                let lifted_kwargs = self.lift_keyword_args(args)?;
+                let portable_op = match &callee.kind {
+                    hir::ExprKind::Path(path) => match path.res {
+                        Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(op) = portable_op {
+                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
+                        span: expr.span,
+                        op,
+                        args: lifted_args,
+                        kwargs: lifted_kwargs,
+                    }))
+                } else if let Some(kind) = match &callee.kind {
+                    hir::ExprKind::Path(path) => match path.res {
+                        Some(hir::Res::Def(ref def_id)) => crate::transforms::resolve_call_kind(
+                            &self.program.op_defs,
+                            &self.program.intrinsic_defs,
+                            def_id.clone(),
+                        ),
+                        _ => None,
+                    },
+                    _ => None,
+                } {
+                    Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
+                        span: expr.span,
+                        kind,
+                        args: lifted_args,
+                        kwargs: lifted_kwargs,
+                    }))
+                } else {
+                    Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                        span: expr.span,
+                        target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
+                        args: lifted_args,
+                        kwargs: lifted_kwargs,
+                    }))
+                }
             }
             hir::ExprKind::MethodCall(receiver, name, generic_args, args) => {
-                Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
-                    span: expr.span,
-                    target: ast::ExprInvokeTarget::Method(ExprSelect {
+                let lifted_args = self.lift_positional_args(args)?;
+                let lifted_kwargs = self.lift_keyword_args(args)?;
+                if let Some(op) = self
+                    .hir_program
+                    .and_then(|program| program.method_resolution(expr.hir_id.clone()))
+                    .and_then(|def_id| self.portable_op_for_def(&def_id))
+                {
+                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
                         span: expr.span,
-                        obj: Box::new(self.lift_expr(receiver)?),
-                        field: Ident::new(name.as_str()),
-                        generic_args: generic_args
-                            .as_ref()
-                            .map(|args| {
-                                args.args
-                                    .iter()
-                                    .filter_map(|arg| match arg {
-                                        hir::GenericArg::Type(ty) => self.lift_type(ty).ok(),
-                                        hir::GenericArg::Const(_) => None,
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        select: ExprSelectType::Method,
-                    }),
-                    args: self.lift_positional_args(args)?,
-                    kwargs: self.lift_keyword_args(args)?,
-                }))
+                        op,
+                        args: std::iter::once(self.lift_expr(receiver)?)
+                            .chain(lifted_args)
+                            .collect(),
+                        kwargs: lifted_kwargs,
+                    }))
+                } else {
+                    Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                        span: expr.span,
+                        target: ast::ExprInvokeTarget::Method(ExprSelect {
+                            span: expr.span,
+                            obj: Box::new(self.lift_expr(receiver)?),
+                            field: Ident::new(name.as_str()),
+                            generic_args: generic_args
+                                .as_ref()
+                                .map(|args| {
+                                    args.args
+                                        .iter()
+                                        .filter_map(|arg| match arg {
+                                            hir::GenericArg::Type(ty) => self.lift_type(ty).ok(),
+                                            hir::GenericArg::Const(_) => None,
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            select: ExprSelectType::Method,
+                        }),
+                        args: lifted_args,
+                        kwargs: lifted_kwargs,
+                    }))
+                }
             }
             hir::ExprKind::FieldAccess(base, field) => {
                 Expr::new(ast::ExprKind::Select(ExprSelect {
@@ -1304,6 +1363,10 @@ impl<'a> HirToAstLifter<'a> {
             // already guarded against on the resolved-`Ty` side, in
             // `resolved_ty_source_name`).
             hir::TypeExprKind::Ref(inner) => self.type_expr_source_name(inner),
+            hir::TypeExprKind::Dynamic(bounds) => bounds
+                .first()
+                .and_then(|bound| bound.segments.last())
+                .map(|segment| format!("dyn {}", segment.name.as_str())),
             _ => None,
         }
     }

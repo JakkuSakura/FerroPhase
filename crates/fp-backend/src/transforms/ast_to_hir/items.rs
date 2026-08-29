@@ -377,11 +377,7 @@ impl AstToHirLowerer {
         if path.segments.is_empty()
             || matches!(
                 path.res.as_ref(),
-                Some(
-                    hir::Res::Def(_)
-                        | hir::Res::Builtin(_)
-                        | hir::Res::SelfTy
-                )
+                Some(hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy)
             )
         {
             return self_ty;
@@ -397,18 +393,15 @@ impl AstToHirLowerer {
             self.resolve_type_symbol(&names[0])
         } else {
             self.hir_program
-                    .resolve_external_path(&qualified, hir::Namespace::Type)
+                .resolve_external_path(&qualified, hir::Namespace::Type)
                 .or_else(|| self.lookup_symbol(&qualified.to_key(), hir::Namespace::Type))
                 .or_else(|| {
-                    let prefix = self
-                        .module_path
-                        .join(&names[..names.len() - 1]);
+                    let prefix = self.module_path.join(&names[..names.len() - 1]);
                     let module = self.package.module_tree.module_id(&prefix)?;
-                    self.package.module_tree.lookup_res(
-                        module,
-                        hir::Namespace::Type,
-                        names.last()?,
-                    ).cloned()
+                    self.package
+                        .module_tree
+                        .lookup_res(module, hir::Namespace::Type, names.last()?)
+                        .cloned()
                 })
         };
         if let Some(resolved) = resolved {

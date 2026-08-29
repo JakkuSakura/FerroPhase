@@ -264,6 +264,11 @@ impl IntrinsicNormalizer for Box<dyn IntrinsicNormalizer> {
 
 /// Strategy interface for backend-specific intrinsic materialisation.
 pub trait IntrinsicMaterializer {
+    /// Target features that govern framework-level AST materialization.
+    fn capabilities(&self) -> crate::capabilities::LanguageCapabilities {
+        crate::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn prepare_file(&self, _file: &mut File) {}
 
     fn materialize_invoke(
@@ -277,6 +282,14 @@ pub trait IntrinsicMaterializer {
     fn materialize_call(
         &self,
         _call: &mut ExprIntrinsicCall,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_portable_op(
+        &self,
+        _call: &mut crate::ast::ExprPortableOpCall,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)

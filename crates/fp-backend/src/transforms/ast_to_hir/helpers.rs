@@ -132,10 +132,7 @@ impl AstToHirLowerer {
     /// result before HIR construction.  This is the AST-to-HIR equivalent of
     /// rustc carrying the resolved `Res` on the path node rather than
     /// reconstructing it from the spelling later.
-    pub(super) fn resolved_type_path(
-        &mut self,
-        expr: &ast::Expr,
-    ) -> Result<Option<hir::Path>> {
+    pub(super) fn resolved_type_path(&mut self, expr: &ast::Expr) -> Result<Option<hir::Path>> {
         let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() else {
             return Ok(None);
         };
@@ -1181,10 +1178,8 @@ impl AstToHirLowerer {
                 // `Vec::from` must resolve `Vec` as a type, never as a value
                 // constructor or a same-named lexical binding. Keep a value
                 // lookup only as the module-qualified constant fallback below.
-                let type_base = self.ast_expr_to_hir_path(
-                    &select.obj,
-                    PathResolutionScope::Type,
-                )?;
+                let type_base =
+                    self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
                 let value_base = if matches!(select.select, ast::ExprSelectType::Const) {
                     Some(self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?)
                 } else {

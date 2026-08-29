@@ -450,7 +450,11 @@ impl AstToHirLowerer {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
                     continue;
                 }
-                if self.package.module_tree.module_exists(&local_base.with_segment(segment.clone())) {
+                if self
+                    .package
+                    .module_tree
+                    .module_exists(&local_base.with_segment(segment.clone()))
+                {
                     current = local_base.with_segment(segment.clone());
                     continue;
                 }

@@ -149,6 +149,12 @@ impl PackageProvider for FerroPhaseProvider {
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
+        metadata.prelude = match id.as_str() {
+            CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(id.clone()),
+            ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
+            LIBC_PACKAGE_NAME => None,
+            _ => None,
+        };
         for dependency in match id.as_str() {
             CORE_PACKAGE_NAME => &[][..],
             ALLOC_PACKAGE_NAME => &[CORE_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
@@ -219,6 +225,7 @@ impl InputPackageProvider {
             manifest_path: VirtualPath::from_path(&source.path),
             root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
             metadata: PackageMetadata {
+                prelude: Some(PackageId::new(STD_PACKAGE_NAME)),
                 dependencies: vec![std_dependency()],
                 ..Default::default()
             },

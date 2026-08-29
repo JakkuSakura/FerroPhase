@@ -85,12 +85,10 @@ impl TargetBackend for KotlinBackend {
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
-        // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
-        // Kotlin's real shape (`Some(x)` -> `x`, `Vec::new()` -> an empty
-        // list literal, ...) directly on the compiled package's items in
-        // place, immediately before reading `package_source` below —
-        // `package_source` derives from the same `compiled_package`, so
-        // the mutation is visible to the read that follows.
+        // Materialize the central portable-operation representation into
+        // Kotlin constructs before serialization. `package_source` derives
+        // from this compiled package, so the materialized AST is what the
+        // serializer consumes.
         {
             let compiled = workspace.compiled_package(package_id).ok_or_else(|| {
                 fp_core::error::Error::from(format!(

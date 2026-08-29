@@ -18,6 +18,9 @@
 /// behavior via `LanguageCapabilities::NATIVE`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LanguageCapabilities {
+    /// The target provides a materializer for central portable operations
+    /// (`#[op(...)]` declarations) before its serializer runs.
+    pub portable_operations: bool,
     /// A closure literal can be emitted/lowered directly as the target's
     /// own lambda syntax, rather than needing defunctionalization
     /// (decomposition into an ordinary struct + function pair) before HIR
@@ -37,6 +40,7 @@ impl LanguageCapabilities {
     /// that hasn't opted into anything more (in particular
     /// `PipelineMode::Native`).
     pub const NATIVE: Self = Self {
+        portable_operations: false,
         first_class_closures: false,
         first_class_for_loops: false,
     };

@@ -364,6 +364,27 @@ pub fn materialize_expr(
                 ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
             }
         }
+        ast::ExprKind::PortableOpCall(mut call) => {
+            let mut args = Vec::with_capacity(call.args.len());
+            for arg in call.args.drain(..) {
+                args.push(materialize_expr(arg, strategy)?);
+            }
+            call.args = args;
+            for kwarg in &mut call.kwargs {
+                let value =
+                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
+                kwarg.value = materialize_expr(value, strategy)?;
+            }
+            if strategy.capabilities().portable_operations {
+                if let Some(expr) = strategy.materialize_portable_op(&mut call, &expr_ty)? {
+                    materialize_expr(expr, strategy)?
+                } else {
+                    ast::Expr::new(ast::ExprKind::PortableOpCall(call))
+                }
+            } else {
+                ast::Expr::new(ast::ExprKind::PortableOpCall(call))
+            }
+        }
         ast::ExprKind::IntrinsicContainer(mut collection) => {
             match &mut collection {
                 ast::ExprIntrinsicContainer::VecElements { elements } => {

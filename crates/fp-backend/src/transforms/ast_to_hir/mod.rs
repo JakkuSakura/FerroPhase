@@ -377,10 +377,8 @@ impl AstToHirLowerer {
             .public_bindings()
             .into_iter()
             .map(|(path, _namespace, entry)| {
-                let key = hir::HirProgram::canonical_external_path(
-                    &self.package.id,
-                    &path.to_key(),
-                );
+                let key =
+                    hir::HirProgram::canonical_external_path(&self.package.id, &path.to_key());
                 (key, entry.res)
             })
             .collect()
@@ -538,7 +536,7 @@ impl AstToHirLowerer {
             // populated from the `prelude::<edition>::<name>` suffix, so
             // passing only `prefix` would discard the leaf and leave crate
             // metadata with an empty implicit prelude.
-            .bind_implicit_prelude(&prefix, &leaf, ns, entry);
+            .bind_prelude(&prefix, &leaf, ns, entry);
     }
 
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {

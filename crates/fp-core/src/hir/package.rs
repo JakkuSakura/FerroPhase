@@ -39,6 +39,11 @@ pub enum ImplBucketKey {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirPackage {
     pub id: PackageId,
+    /// The package whose reserved prelude bindings are imported while this
+    /// package is resolved. Copied from provider metadata at the AST-to-HIR
+    /// boundary so later lowering never infers a prelude from package names
+    /// or dependency contents.
+    pub prelude: Option<PackageId>,
     /// Resolved direct dependencies visible from this crate's extern prelude.
     /// This is the HIR equivalent of rustc's crate metadata edge: name
     /// resolution must consult only crates reachable through this list, not
@@ -453,6 +458,7 @@ impl HirPackage {
     pub fn new(id: PackageId) -> Self {
         Self {
             id,
+            prelude: None,
             dependencies: Vec::new(),
             module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),

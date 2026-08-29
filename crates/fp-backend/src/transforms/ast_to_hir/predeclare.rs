@@ -8,15 +8,29 @@ impl AstToHirLowerer {
         namespace: hir::Namespace,
         entry: hir::SymbolEntry,
     ) {
-        package.module_tree.bind(
-            prelude_module,
-            namespace,
-            name,
-            entry,
-        );
+        package
+            .module_tree
+            .bind(prelude_module, namespace, name, entry);
     }
 
     pub(super) fn prepare_lowering_state(&mut self) {
+        let provider_prelude = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| {
+                workspace
+                    .crates()
+                    .iter()
+                    .find_map(|(package_id, package)| {
+                        (package.borrow().hir_package_id == self.package_id).then(|| package_id)
+                    })
+                    .and_then(|package_id| workspace.package_metadata(package_id))
+                    .and_then(|metadata| metadata.prelude)
+            })
+            .map(|package_id| hir::PackageId::new(package_id.as_str()));
+        if provider_prelude.is_some() {
+            self.package.prelude = provider_prelude;
+        }
         self.type_scopes.clear();
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
@@ -42,9 +56,7 @@ impl AstToHirLowerer {
                 workspace
                     .crates()
                     .iter()
-                    .find(|(_, package)| {
-                        package.borrow().hir_package_id == self.package_id
-                    })
+                    .find(|(_, package)| package.borrow().hir_package_id == self.package_id)
                     .map(|(_, package)| {
                         let package = package.borrow();
                         package
@@ -85,44 +97,26 @@ impl AstToHirLowerer {
         // unrelated sysroot packages happen to be loaded: `libc`, for
         // example, is not a Rust crate with a core prelude merely because
         // core is present in the shared HIR program.
-        let selected_prelude = match self.package_id.as_str() {
-            // A sysroot crate has the same implicit prelude while its own
-            // source is being resolved. In particular, core and alloc have
-            // no dependency edge advertising their own prelude, and std must
-            // not accidentally select core merely because core is one of
-            // std's dependencies. The source crate's prelude is already in
-            // this lowerer's module tree; it is not published in the shared
-            // HIR program until transform_package returns.
-            "core" | "std" => Some(self.package_id.clone()),
-            _ => self
-                .package
-                .dependencies
-                .iter()
-                .find(|dependency| dependency.as_str() == "std")
-                .cloned(),
-        };
+        let selected_prelude = self.package.prelude.clone();
         if let Some(dependency_id) = selected_prelude {
-            if dependency_id == self.package.id {
-                return;
-            }
-            let Some(hir_package) = self.hir_program.package(&dependency_id) else {
-                return;
-            };
             let prelude_module = self.package.module_tree.prelude();
-
-            // This is the HIR equivalent of rustc's crate metadata for the
-            // selected prelude. The reserved prelude node carries the
-            // namespace and resolved DefId of every binding, including
-            // re-exports and enum constructors. Consume it directly instead
-            // of reconstructing namespaces from flattened export keys or
-            // looking up the defining item, both of which lose information at
-            // the crate boundary.
             for namespace in [hir::Namespace::Type, hir::Namespace::Value] {
-                let bindings = hir_package
-                    .module_tree
-                    .prelude_bindings(namespace)
-                    .map(|(name, entry)| (name.to_owned(), entry.clone()))
-                    .collect::<Vec<_>>();
+                let bindings = if dependency_id == self.package.id {
+                    self.package
+                        .module_tree
+                        .prelude_bindings(namespace)
+                        .map(|(name, entry)| (name.to_owned(), entry.clone()))
+                        .collect::<Vec<_>>()
+                } else {
+                    let Some(hir_package) = self.hir_program.package(&dependency_id) else {
+                        continue;
+                    };
+                    hir_package
+                        .module_tree
+                        .prelude_bindings(namespace)
+                        .map(|(name, entry)| (name.to_owned(), entry.clone()))
+                        .collect::<Vec<_>>()
+                };
                 for (name, entry) in bindings {
                     if self
                         .package
@@ -157,13 +151,10 @@ impl AstToHirLowerer {
             package_id: &hir::PackageId,
             segments: Vec<String>,
         ) -> Vec<String> {
-            hir::HirProgram::canonical_external_path(
-                package_id,
-                &segments.join("::"),
-            )
-            .split("::")
-            .map(str::to_owned)
-            .collect()
+            hir::HirProgram::canonical_external_path(package_id, &segments.join("::"))
+                .split("::")
+                .map(str::to_owned)
+                .collect()
         }
 
         for hir_program in self.hir_program.packages.values() {
@@ -179,9 +170,8 @@ impl AstToHirLowerer {
                     .map(|segment| segment.as_str().to_owned())
                     .collect::<Vec<_>>();
                 let segments = normalize_external_path(&hir_program.id, segments);
-                let normalized = hir::DefPath::new(
-                    segments.into_iter().map(hir::Symbol::new).collect(),
-                );
+                let normalized =
+                    hir::DefPath::new(segments.into_iter().map(hir::Symbol::new).collect());
                 program.def_paths.insert(def_id.clone(), normalized.clone());
                 self.package.def_paths.insert(def_id.clone(), normalized);
             }
@@ -226,10 +216,7 @@ impl AstToHirLowerer {
             // one record.  Do not infer a namespace from a DefId's item kind;
             // re-exports and definition namespaces do not preserve that
             // correspondence.
-            for (source_path, namespace, mut entry) in hir_package
-                .module_tree
-                .public_bindings()
-            {
+            for (source_path, namespace, mut entry) in hir_package.module_tree.public_bindings() {
                 let segments = source_path
                     .segments
                     .iter()
@@ -240,9 +227,9 @@ impl AstToHirLowerer {
                     continue;
                 };
                 let res = match entry.res {
-                    hir::Res::Module(module_path) => hir::Res::Module(
-                        normalize_external_path(&hir_package.id, module_path),
-                    ),
+                    hir::Res::Module(module_path) => {
+                        hir::Res::Module(normalize_external_path(&hir_package.id, module_path))
+                    }
                     res => res,
                 };
                 entry.res = res.clone();
@@ -290,12 +277,9 @@ impl AstToHirLowerer {
                     .lookup(module, namespace, &leaf)
                     .is_none()
                 {
-                    self.package.module_tree.bind(
-                        module,
-                        namespace,
-                        &leaf,
-                        entry,
-                    );
+                    self.package
+                        .module_tree
+                        .bind(module, namespace, &leaf, entry);
                 }
             }
         }

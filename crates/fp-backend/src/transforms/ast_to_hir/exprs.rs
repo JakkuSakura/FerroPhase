@@ -123,16 +123,12 @@ impl AstToHirLowerer {
             // suffix relation is structural and keeps the final binding
             // lookup in the requested namespace.
             let mut module_paths = vec![prefix.clone()];
-            if prefix.segments.first().map(String::as_str)
-                != Some(external_root.as_str())
-            {
+            if prefix.segments.first().map(String::as_str) != Some(external_root.as_str()) {
                 let mut rooted = vec![external_root.clone()];
                 rooted.extend(prefix.segments.iter().cloned());
                 module_paths.push(QualifiedPath::new(rooted));
             }
-            if prefix.segments.first().map(String::as_str)
-                == Some(external_root.as_str())
-            {
+            if prefix.segments.first().map(String::as_str) == Some(external_root.as_str()) {
                 let mut bundled = vec![external_root.clone(), external_root.clone()];
                 bundled.extend(prefix.segments.iter().skip(1).cloned());
                 module_paths.push(QualifiedPath::new(bundled));
@@ -924,10 +920,8 @@ impl AstToHirLowerer {
                         // keeps those arguments on the resolved QPath head,
                         // and type-directed associated-item lookup needs them
                         // for `Vec::<T>::from`, `Arc::<T>::new`, and the like.
-                        let base_path = self.ast_expr_to_hir_path(
-                            &select.obj,
-                            PathResolutionScope::Type,
-                        )?;
+                        let base_path =
+                            self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
                         if matches!(
                             base_path.res,
                             Some(hir::Res::Def(_))
@@ -948,13 +942,9 @@ impl AstToHirLowerer {
                             } else {
                                 Some(self.convert_generic_args(&select.generic_args)?)
                             };
-                            path.segments.push(
-                                self.make_path_segment(&select.field.name, member_args),
-                            );
-                            if let Some(res) = self.lookup_enum_variant(
-                                &path,
-                                &select.field.name,
-                            ) {
+                            path.segments
+                                .push(self.make_path_segment(&select.field.name, member_args));
+                            if let Some(res) = self.lookup_enum_variant(&path, &select.field.name) {
                                 path.res = Some(res);
                             }
                             let func_expr = hir::Expr {
@@ -1026,7 +1016,8 @@ impl AstToHirLowerer {
                     }
                 }
 
-                let mut path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+                let mut path =
+                    self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
                 if path.res.is_none() {
                     let base_name = match name {
                         ast::Name::Path(source) if source.segments.len() > 1 => {
@@ -1043,10 +1034,7 @@ impl AstToHirLowerer {
                     };
                     if let Some(base_name) = base_name {
                         path.res = self
-                            .name_to_hir_path_with_scope(
-                                &base_name,
-                                PathResolutionScope::Type,
-                            )?
+                            .name_to_hir_path_with_scope(&base_name, PathResolutionScope::Type)?
                             .res;
                     }
                 }
@@ -1301,12 +1289,35 @@ impl AstToHirLowerer {
 
         let (name, fields) = match (&range.start, &range.end, range.limit.clone()) {
             (None, None, ast::ExprRangeLimit::Exclusive) => ("RangeFull", Vec::new()),
-            (Some(start), None, ast::ExprRangeLimit::Exclusive) => ("RangeFrom", vec![("start", self.transform_expr_to_hir(start)?)]),
-            (None, Some(end), ast::ExprRangeLimit::Exclusive) => ("RangeTo", vec![("end", self.transform_expr_to_hir(end)?)]),
-            (None, Some(end), ast::ExprRangeLimit::Inclusive) => ("RangeToInclusive", vec![("end", self.transform_expr_to_hir(end)?)]),
-            (Some(start), Some(end), ast::ExprRangeLimit::Exclusive) => ("Range", vec![("start", self.transform_expr_to_hir(start)?), ("end", self.transform_expr_to_hir(end)?)]),
-            (Some(start), Some(end), ast::ExprRangeLimit::Inclusive) => ("RangeInclusive", vec![("start", self.transform_expr_to_hir(start)?), ("end", self.transform_expr_to_hir(end)?)]),
-            (None, None, ast::ExprRangeLimit::Inclusive) | (Some(_), None, ast::ExprRangeLimit::Inclusive) => return Err(eyre::eyre!("inclusive range requires an end bound").into()),
+            (Some(start), None, ast::ExprRangeLimit::Exclusive) => (
+                "RangeFrom",
+                vec![("start", self.transform_expr_to_hir(start)?)],
+            ),
+            (None, Some(end), ast::ExprRangeLimit::Exclusive) => {
+                ("RangeTo", vec![("end", self.transform_expr_to_hir(end)?)])
+            }
+            (None, Some(end), ast::ExprRangeLimit::Inclusive) => (
+                "RangeToInclusive",
+                vec![("end", self.transform_expr_to_hir(end)?)],
+            ),
+            (Some(start), Some(end), ast::ExprRangeLimit::Exclusive) => (
+                "Range",
+                vec![
+                    ("start", self.transform_expr_to_hir(start)?),
+                    ("end", self.transform_expr_to_hir(end)?),
+                ],
+            ),
+            (Some(start), Some(end), ast::ExprRangeLimit::Inclusive) => (
+                "RangeInclusive",
+                vec![
+                    ("start", self.transform_expr_to_hir(start)?),
+                    ("end", self.transform_expr_to_hir(end)?),
+                ],
+            ),
+            (None, None, ast::ExprRangeLimit::Inclusive)
+            | (Some(_), None, ast::ExprRangeLimit::Inclusive) => {
+                return Err(eyre::eyre!("inclusive range requires an end bound").into());
+            }
         };
         let path = self.name_to_hir_path_with_scope(
             &ast::Name::path(ast::Path {
@@ -1315,11 +1326,14 @@ impl AstToHirLowerer {
             }),
             PathResolutionScope::Value,
         )?;
-        let fields = fields.into_iter().map(|(name, expr)| hir::StructExprField {
-            hir_id: self.next_id(),
-            name: hir::Symbol::new(name),
-            expr,
-        }).collect();
+        let fields = fields
+            .into_iter()
+            .map(|(name, expr)| hir::StructExprField {
+                hir_id: self.next_id(),
+                name: hir::Symbol::new(name),
+                expr,
+            })
+            .collect();
         Ok(hir::ExprKind::Struct(path, fields))
     }
 

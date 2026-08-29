@@ -64,6 +64,12 @@ common_enum! {
         ConstBlock(ExprConstBlock),
         IntrinsicContainer(ExprIntrinsicContainer),
         IntrinsicCall(ExprIntrinsicCall),
+        /// A source-language operation with a target-independent identity.
+        ///
+        /// Unlike `IntrinsicCall`, this is never a native compiler
+        /// intrinsic. Target backends materialize it using their declared
+        /// language capabilities before serialization.
+        PortableOpCall(ExprPortableOpCall),
         /// quote keyword – capture code as data at compile time
         Quote(ExprQuote),
         /// splice keyword – insert previously quoted code
@@ -225,6 +231,7 @@ impl ExprKind {
             ExprKind::ConstBlock(block) => block.expr.span(),
             ExprKind::IntrinsicContainer(container) => container.span(),
             ExprKind::IntrinsicCall(call) => call.span(),
+            ExprKind::PortableOpCall(call) => call.span(),
             ExprKind::Quote(quote) => quote.span(),
             ExprKind::Splice(splice) => splice.span(),
             ExprKind::SplicePending(pending) => pending.span(),

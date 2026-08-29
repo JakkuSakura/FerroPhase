@@ -189,9 +189,9 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
 #[test]
 fn transform_type_uses_owner_resolved_name_before_expr_wrapper() -> Result<()> {
     let inner = ast::Expr::name(ast::Name::from_ident(ident("String")));
-    let wrapped = ast::Expr::new(ast::ExprKind::Value(
-        ast::Value::Expr(Box::new(inner)),
-    ));
+    let wrapped = ast::Expr::new(ast::ExprKind::Value(Box::new(ast::Value::Expr(Box::new(
+        inner,
+    )))));
     let resolved_def = hir::DefId::new(hir::PackageId::new("consumer"), 7);
     let mut resolved_names = ResolvedNameTable::new();
     resolved_names.insert(
@@ -936,6 +936,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
         .package
         .dependencies
         .push(hir::PackageId::new("std"));
+    generator.package.prelude = Some(hir::PackageId::new("std"));
     generator.load_default_prelude_defs();
 
     let prelude = generator.package.module_tree.prelude();

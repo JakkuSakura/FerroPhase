@@ -1,7 +1,7 @@
 // ── Compiled workspace context (typer lookup) ────────────────────
 
 use crate::ast::package::provider::PackageProvider;
-use crate::ast::package::{AstPackage, PackageId};
+use crate::ast::package::{AstPackage, PackageId, PackageMetadata};
 use crate::ast::path::QualifiedPath;
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
@@ -176,6 +176,19 @@ impl AstProgram {
 
     pub fn compiled_package(&self, package_id: &PackageId) -> Option<Rc<RefCell<AstPackage>>> {
         self.crates.borrow().get(package_id).cloned()
+    }
+
+    /// Provider-owned metadata for a package already loaded into this
+    /// compilation session. Consumers such as name resolution use this
+    /// rather than inspecting an `AstPackage`'s storage directly.
+    pub fn package_metadata(&self, package_id: &PackageId) -> Option<PackageMetadata> {
+        self.compiled_package(package_id).and_then(|package| {
+            package
+                .borrow()
+                .graph
+                .package(package_id)
+                .map(|descriptor| descriptor.metadata.clone())
+        })
     }
 
     /// Routes straight to the one package that could own `def_id`

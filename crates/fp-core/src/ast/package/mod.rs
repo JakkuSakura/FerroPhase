@@ -37,6 +37,10 @@ pub struct DependencyDescriptor {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageMetadata {
+    /// The package whose implicit prelude is imported for this package.
+    /// Providers resolve this per downstream package instead of leaving the
+    /// compiler to infer a language- or package-name-specific policy.
+    pub prelude: Option<PackageId>,
     pub edition: Option<String>,
     pub authors: Vec<String>,
     pub description: Option<String>,
@@ -50,6 +54,7 @@ pub struct PackageMetadata {
 impl Default for PackageMetadata {
     fn default() -> Self {
         Self {
+            prelude: None,
             edition: None,
             authors: Vec::new(),
             description: None,

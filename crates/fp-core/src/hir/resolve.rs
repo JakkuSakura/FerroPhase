@@ -226,9 +226,7 @@ impl ModuleTree {
             QualifiedPath::new(path.segments.iter().skip(1).cloned().collect())
         };
         let leaf = internal.segments.last()?;
-        let prefix = QualifiedPath::new(
-            internal.segments[..internal.segments.len() - 1].to_vec(),
-        );
+        let prefix = QualifiedPath::new(internal.segments[..internal.segments.len() - 1].to_vec());
         let module = self.module_id(&prefix)?;
         self.lookup(module, ns, leaf)
     }
@@ -270,7 +268,7 @@ impl ModuleTree {
     /// prelude when its final two segments are `prelude::<edition>`; this
     /// covers `v1` and edition-specific preludes such as `rust_2024` without
     /// making the reserved node depend on a particular crate-root depth.
-    pub fn bind_implicit_prelude(
+    pub fn bind_prelude(
         &mut self,
         module_path: &QualifiedPath,
         name: &str,
@@ -316,10 +314,7 @@ impl ModuleTree {
     /// Bindings installed by AST->HIR as the package's implicit prelude.
     /// These live in a reserved node rather than `by_path`, so callers that
     /// publish a package's public namespace must include them explicitly.
-    pub fn prelude_bindings(
-        &self,
-        ns: Namespace,
-    ) -> impl Iterator<Item = (&str, &SymbolEntry)> {
+    pub fn prelude_bindings(&self, ns: Namespace) -> impl Iterator<Item = (&str, &SymbolEntry)> {
         self.nodes[self.prelude().0 as usize].bindings[ns as usize]
             .iter()
             .map(|(name, entry)| (name.as_str(), entry))
