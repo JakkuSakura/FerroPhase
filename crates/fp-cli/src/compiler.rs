@@ -299,8 +299,8 @@ fn resolve_input_package(
 /// Resolves a real on-disk `path` to `(provider, package_id, module_path)` —
 /// the real enclosing package if discoverable, else a single-member
 /// package — for callers outside this module (`commands::compile`'s
-/// `--target` pipeline) that need the same resolution `compile_source_file`
-/// uses, instead of maintaining a second implementation.
+/// `--target` pipeline) that need the shared provider/package resolution,
+/// instead of maintaining a second implementation.
 pub fn resolve_source_package(
     path: &Path,
     language: &str,
@@ -308,40 +308,6 @@ pub fn resolve_source_package(
 ) -> Result<(Arc<dyn PackageProvider>, PackageId, QualifiedPath)> {
     let identity = CompilerIdentity::for_file(package, path);
     resolve_input_package(SourceInput::Path(path.to_path_buf()), language, &identity)
-}
-
-fn compile_source_file(
-    input: SourceInput,
-    language: &str,
-    identity: &CompilerIdentity,
-    executor: &CompilerExecutor,
-    pipeline: PipelineMode,
-) -> Result<CompilerDriver> {
-    let (input_provider, package_id, module_path) =
-        resolve_input_package(input, language, identity)?;
-
-    let std_provider = std_provider_for(language);
-    let provider = Arc::new(fp_core::ast::package::provider::CompositeProvider::new(
-        vec![std_provider],
-        input_provider,
-    ));
-    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(provider));
-    let mut session = CompilerSession::new(data_layout(), executor, workspace);
-    session.driver().pipeline = pipeline;
-    executor
-        .run(session.driver().compile_package(&package_id))
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-    // Only evaluate comptime LIR for full native compilation
-    if pipeline == PipelineMode::Native {
-        executor
-            .run(
-                session
-                    .driver()
-                    .compile_package_module_native(&package_id, &module_path, "main"),
-            )
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
-    }
-    Ok(session.into_driver())
 }
 
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
@@ -402,20 +368,27 @@ pub fn compile_file_to_lir_bundle(
 ) -> Result<LirBundle> {
     let language = resolve_source_language(path, source_language)?;
     let identity = CompilerIdentity::for_file(package, path);
-    let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(
-        SourceInput::Path(path.to_path_buf()),
+    let (provider, package_id, _) =
+        resolve_input_package(SourceInput::Path(path.to_path_buf()), &language, &identity)?;
+    let (executor, mut session) = build_workspace_session(
+        provider,
         &language,
-        &identity,
-        &executor,
-        PipelineMode::Native,
-    )?;
+        fp_core::capabilities::LanguageCapabilities::NATIVE,
+    );
+    session.driver().pipeline = PipelineMode::Native;
+    let root_id = PackageId::new(format!("{package_id}::__workspace_root__"));
+    executor
+        .run(
+            session
+                .driver()
+                .compile_workspace(&root_id, &[package_id.clone()]),
+        )
+        .map_err(|error| CliError::Compilation(error.to_string()))?;
+    let mut driver = session.into_driver();
     drain_driver(&mut driver)?;
     let lowered = LoweredProgram {
         driver,
-        package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
-            CliError::Compilation("source file has no package identity".to_string())
-        })?),
+        package_id,
         executor,
     };
     Ok(LirBundle {

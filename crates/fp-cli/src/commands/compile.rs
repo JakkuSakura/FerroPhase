@@ -225,7 +225,7 @@ async fn compile_workspace_entrypoint(
 /// one if `input` belongs to a discoverable multi-file package; otherwise
 /// wrap it as a synthetic single-member package. Delegates to
 /// `compiler::resolve_source_package`, the same resolution
-/// `compile_source_file` uses, instead of maintaining a second
+/// the shared source-package resolver uses, instead of maintaining a second
 /// independent implementation of "find (or synthesize) input's package".
 fn provider_and_package_for_input(
     input: &Path,
@@ -601,11 +601,13 @@ async fn run_compile_pipeline(
     let (executor, mut session) =
         compiler::build_workspace_session(provider.clone(), lang, backend_capabilities);
     // Source serializers consume lifted HIR, while native IR backends need
-    // the HIR -> MIR -> LIR stages populated before emission.
-    if matches!(
+    // the HIR -> MIR -> LIR stages populated before emission. Select that
+    // pipeline before compilation so the typed HIR is lowered exactly once.
+    let needs_native_pipeline = matches!(
         target_name,
-        "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
-    ) {
+        "native" | "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
+    );
+    if needs_native_pipeline {
         session.driver().pipeline = fp_compiler::PipelineMode::Native;
     }
     executor
@@ -618,16 +620,6 @@ async fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(session.driver())?;
-    if matches!(
-        target_name,
-        "native" | "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
-    ) {
-        for package_id in &packages {
-            executor
-                .run(session.driver().lower_package_native_lir(package_id))
-                .map_err(|error| CliError::Compilation(error.to_string()))?;
-        }
-    }
     if matches!(target_name, "bytecode" | "text-bytecode") {
         session.driver().pipeline = fp_compiler::PipelineMode::Native;
         session

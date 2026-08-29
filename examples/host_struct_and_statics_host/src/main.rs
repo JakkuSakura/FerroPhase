@@ -40,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace,
     );
     executor.run(session.driver().compile_package(&package_id))?;
-    executor.run(session.driver().compile_package_module_native(
+    session.driver().select_entrypoint(
         &package_id,
         &QualifiedPath::new(vec![package_id.as_str().to_owned()]),
         "main",
-    ))?;
+    )?;
 
     let mut interpreter = LirInterpreter::new();
     interpreter.set_host_globals(host_globals()?);

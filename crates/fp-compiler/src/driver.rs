@@ -55,7 +55,7 @@ pub struct CompilerDriver {
     /// `CompilerState::comptime_resolver`, `type_check_program`) needs to
     /// reach the same HIR/MIR/LIR state independently of whatever `&mut
     /// self`-holding future is already driving `compile_package`/
-    /// `compile_native` at the time — that future's `&mut self` borrow
+    /// `compile_package` at the time — that future's `&mut self` borrow
     /// lasts for its entire lifetime (how `async fn` desugars), so a
     /// `'static` task closure cannot also borrow `self` directly. Sharing
     /// just `state` this way (not `interpreter`, `building_packages`, etc.
@@ -127,34 +127,6 @@ impl CompilerDriver {
             completed_roots: HashSet::new(),
             pipeline: PipelineMode::Native,
         }
-    }
-
-    pub async fn compile_native(
-        &mut self,
-        package_id: &PackageId,
-    ) -> Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> {
-        self.compile_package(package_id).await
-    }
-
-    /// Lowers one already typechecked workspace member through the native
-    /// MIR/LIR path. Workspace compilation initially runs in transpile mode
-    /// so vendored std packages are not forced to lower every public API;
-    /// native backends then request this only for the package they emit.
-    pub async fn lower_package_native_lir(
-        &mut self,
-        package_id: &PackageId,
-    ) -> Result<(), CompilerDriverError> {
-        let package = self
-            .state
-            .borrow()
-            .workspace
-            .compiled_package(package_id)
-            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let previous_pipeline = self.pipeline;
-        self.pipeline = PipelineMode::Native;
-        let result = self.compile_items_to_lir_units(&package).await;
-        self.pipeline = previous_pipeline;
-        result
     }
 
     pub async fn compile_bytecode(
@@ -296,9 +268,8 @@ impl CompilerDriver {
     /// in `package_id`'s published HIR — package-based, not module-based
     /// (see `fp_core::ast::package::resolve_entrypoint_def_id`'s doc comment).
     /// `module_path` isn't used for this resolution itself; it's taken here
-    /// only because every caller already has one on hand for the sibling
-    /// LIR-lookup/comptime-path purposes `select_entrypoint`/
-    /// `compile_package_module_native` need it for.
+    /// only because callers also use it to name the runtime LIR unit selected
+    /// by `select_entrypoint`.
     pub fn resolve_entrypoint_def_id(
         &self,
         package_id: &PackageId,
@@ -371,20 +342,6 @@ impl CompilerDriver {
         Ok(lir_path)
     }
 
-    pub async fn compile_package_module_native(
-        &mut self,
-        package_id: &PackageId,
-        module_path: &QualifiedPath,
-        function_name: &str,
-    ) -> Result<(), CompilerDriverError> {
-        // Selecting an executable entrypoint must only build and register
-        // its runtime LIR. Executing it here as a compile-time function is
-        // incorrect: `main` may perform I/O or call `extern "host"` symbols,
-        // whose registrations belong to the eventual runtime embedding.
-        self.select_entrypoint(package_id, module_path, function_name)?;
-        Ok(())
-    }
-
     /// Compile a package after recursively compiling its declared
     /// dependencies. Dependency resolution and version selection happen in
     /// the provider; the driver only consumes the concrete package IDs it is
@@ -400,8 +357,9 @@ impl CompilerDriver {
     /// mode dependencies need their HIR definitions and exports available to
     /// resolve the root package, but they are not compilation roots: checking
     /// and backend lowering every dependency would make the transpiler process
-    /// the entire sysroot. Native compilation preserves the historical
-    /// dependency behavior and still lowers dependencies fully.
+    /// the entire sysroot. The same rule applies to native roots: dependencies
+    /// publish typed HIR for identity-based resolution while only requested
+    /// workspace members enter MIR/LIR lowering.
     async fn compile_package_with_scope(
         &mut self,
         package_id: &PackageId,
@@ -410,26 +368,20 @@ impl CompilerDriver {
         let parent_workspace = self.state.borrow().workspace.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_workspace.import_package(package_id.clone(), package.clone());
-            if self.pipeline == PipelineMode::Transpile && !is_root {
+            if !is_root {
                 self.ensure_hir_for_resolution(&package)?;
             }
-            if is_root
-                && self.pipeline == PipelineMode::Transpile
-                && !self.completed_roots.contains(package_id)
-            {
+            if is_root && !self.completed_roots.contains(package_id) {
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
             return Ok(package);
         }
         if let Some(package) = parent_workspace.compiled_package(package_id) {
-            if self.pipeline == PipelineMode::Transpile && !is_root {
+            if !is_root {
                 self.ensure_hir_for_resolution(&package)?;
             }
-            if is_root
-                && self.pipeline == PipelineMode::Transpile
-                && !self.completed_roots.contains(package_id)
-            {
+            if is_root && !self.completed_roots.contains(package_id) {
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
@@ -502,10 +454,10 @@ impl CompilerDriver {
                 );
                 if !precompiled_lir_blobs.is_empty() {
                     Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_blobs)?;
-                    if self.pipeline == PipelineMode::Transpile && !is_root {
+                    if !is_root {
                         self.ensure_hir_for_resolution(&package)?;
                     }
-                } else if self.pipeline == PipelineMode::Transpile && !is_root {
+                } else if !is_root {
                     self.ensure_hir_for_resolution(&package)?;
                 } else if matches!(
                     self.pipeline,
@@ -525,7 +477,7 @@ impl CompilerDriver {
         let package = result?;
         self.compiled_packages
             .insert(package_id.clone(), package.clone());
-        if is_root || self.pipeline == PipelineMode::Native {
+        if is_root {
             self.completed_roots.insert(package_id.clone());
         }
         parent_workspace.import_package(package_id.clone(), package.clone());
@@ -1221,7 +1173,7 @@ impl CompilerDriver {
     /// `LirInterpreter` (`CompilerState::interpreter_mut`) for real and
     /// returns its resolved value directly — a bare `Rc<RefCell<
     /// CompilerState>>`, not `&mut self`, since this is reached both from
-    /// `compile_package_module_native` and from
+    /// runtime entrypoint selection and from
     /// `resolve_comptime_request_with`'s free-standing, mid-typing-pass
     /// context.
     fn evaluate_comptime_lir(
