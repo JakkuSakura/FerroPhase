@@ -39,6 +39,10 @@ pub struct HirToAstLifter<'a> {
     /// Authoritative workspace-wide declaration metadata. Every resolved
     /// `DefId`, including one owned by `package`, is queried through here.
     hir_program: &'a hir::HirProgram,
+    /// Controls whether lifting may recognize declaration-tagged portable
+    /// operations. HIR always preserves ordinary calls; this is the single
+    /// point where a target-facing AST may introduce `PortableOpCall`.
+    capabilities: fp_core::capabilities::LanguageCapabilities,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -74,10 +78,19 @@ impl<'a> HirToAstLifter<'a> {
         Self {
             package,
             hir_program,
+            capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
             resolved_expr_types: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn with_capabilities(
+        mut self,
+        capabilities: fp_core::capabilities::LanguageCapabilities,
+    ) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 
     /// Publishes every `ExprId` -> resolved `Ty` pair collected while
@@ -90,6 +103,9 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn portable_op_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
+        if !self.capabilities.portable_operations {
+            return None;
+        }
         self.hir_program.op_def(def_id.clone())
     }
 

@@ -55,7 +55,7 @@ pub struct CompilerDriver {
     /// `CompilerState::comptime_resolver`, `type_check_program`) needs to
     /// reach the same HIR/MIR/LIR state independently of whatever `&mut
     /// self`-holding future is already driving `compile_package`/
-    /// `compile_package` at the time — that future's `&mut self` borrow
+    /// `compile_native` at the time — that future's `&mut self` borrow
     /// lasts for its entire lifetime (how `async fn` desugars), so a
     /// `'static` task closure cannot also borrow `self` directly. Sharing
     /// just `state` this way (not `interpreter`, `building_packages`, etc.
@@ -129,6 +129,34 @@ impl CompilerDriver {
         }
     }
 
+    pub async fn compile_native(
+        &mut self,
+        package_id: &PackageId,
+    ) -> Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> {
+        self.compile_package(package_id).await
+    }
+
+    /// Lowers one already typechecked workspace member through the native
+    /// MIR/LIR path. Workspace compilation initially runs in transpile mode
+    /// so vendored std packages are not forced to lower every public API;
+    /// native backends then request this only for the package they emit.
+    pub async fn lower_package_native_lir(
+        &mut self,
+        package_id: &PackageId,
+    ) -> Result<(), CompilerDriverError> {
+        let package = self
+            .state
+            .borrow()
+            .workspace
+            .compiled_package(package_id)
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        let previous_pipeline = self.pipeline;
+        self.pipeline = PipelineMode::Native;
+        let result = self.compile_items_to_lir_units(&package).await;
+        self.pipeline = previous_pipeline;
+        result
+    }
+
     pub async fn compile_bytecode(
         &mut self,
         package_id: &PackageId,
@@ -165,37 +193,42 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<(), CompilerDriverError> {
-        let entries = {
+        let (mir, entries) = {
             let state = self.state.borrow();
             let package_rc = state
                 .mir_program()
                 .package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
             let package = package_rc.borrow();
-            package
+            let mut mir = mir::MirCodeUnit::new();
+            mir.items.extend(package.items().cloned());
+            mir.bodies
+                .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+            let entries = package
                 .executable_consts
                 .iter()
                 .map(|(def_id, (function_name, _))| {
                     (def_id.clone(), function_name.as_str().to_string())
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (mir, entries)
         };
+        let bytecode =
+            if self.state.borrow().bytecode_comptime() {
+                Some(fp_bytecode::lower_program(&mir).map_err(|error| {
+                    CompilerDriverError::InternalCompilerError(error.to_string())
+                })?)
+            } else {
+                None
+            };
         let mut resolved_entries = Vec::with_capacity(entries.len());
-        for (def_id, _function_name) in entries {
-            // Lower the requested entry itself before interpreting it. The
-            // package root pass registers executable-const metadata, but the
-            // synthetic const-block function is intentionally demand-driven.
-            // Reuse the same shared HIR/MIR/LIR path used by type checking;
-            // this keeps one DefId and one cache instead of interpreting a
-            // stale package snapshot.
-            let value = Self::resolve_comptime_request_with(
-                &self.state,
-                fp_typing::ComptimeRequest {
-                    package_id: def_id.package_id.clone(),
-                    def_id: def_id.clone(),
-                },
-            )
-            .await?;
+        for (def_id, function_name) in entries {
+            let value = if let Some(bytecode) = bytecode.clone() {
+                fp_stackcode::interpret_const(bytecode, &function_name)
+                    .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))?
+            } else {
+                Self::evaluate_comptime_lir(&self.state, &def_id)?
+            };
             let hir_package_id = self
                 .state
                 .borrow()
@@ -263,8 +296,9 @@ impl CompilerDriver {
     /// in `package_id`'s published HIR — package-based, not module-based
     /// (see `fp_core::ast::package::resolve_entrypoint_def_id`'s doc comment).
     /// `module_path` isn't used for this resolution itself; it's taken here
-    /// only because callers also use it to name the runtime LIR unit selected
-    /// by `select_entrypoint`.
+    /// only because every caller already has one on hand for the sibling
+    /// LIR-lookup/comptime-path purposes `select_entrypoint`/
+    /// `compile_package_module_native` need it for.
     pub fn resolve_entrypoint_def_id(
         &self,
         package_id: &PackageId,
@@ -337,6 +371,20 @@ impl CompilerDriver {
         Ok(lir_path)
     }
 
+    pub async fn compile_package_module_native(
+        &mut self,
+        package_id: &PackageId,
+        module_path: &QualifiedPath,
+        function_name: &str,
+    ) -> Result<(), CompilerDriverError> {
+        // Selecting an executable entrypoint must only build and register
+        // its runtime LIR. Executing it here as a compile-time function is
+        // incorrect: `main` may perform I/O or call `extern "host"` symbols,
+        // whose registrations belong to the eventual runtime embedding.
+        self.select_entrypoint(package_id, module_path, function_name)?;
+        Ok(())
+    }
+
     /// Compile a package after recursively compiling its declared
     /// dependencies. Dependency resolution and version selection happen in
     /// the provider; the driver only consumes the concrete package IDs it is
@@ -352,9 +400,8 @@ impl CompilerDriver {
     /// mode dependencies need their HIR definitions and exports available to
     /// resolve the root package, but they are not compilation roots: checking
     /// and backend lowering every dependency would make the transpiler process
-    /// the entire sysroot. The same rule applies to native roots: dependencies
-    /// publish typed HIR for identity-based resolution while only requested
-    /// workspace members enter MIR/LIR lowering.
+    /// the entire sysroot. Native compilation preserves the historical
+    /// dependency behavior and still lowers dependencies fully.
     async fn compile_package_with_scope(
         &mut self,
         package_id: &PackageId,
@@ -363,22 +410,26 @@ impl CompilerDriver {
         let parent_workspace = self.state.borrow().workspace.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_workspace.import_package(package_id.clone(), package.clone());
-            if !is_root {
-                self.ensure_hir_for_package(&package)?;
+            if self.pipeline == PipelineMode::Transpile && !is_root {
+                self.ensure_hir_for_resolution(&package)?;
             }
-            if is_root && !self.completed_roots.contains(package_id) {
-                self.ensure_hir_for_compilation(&package)?;
+            if is_root
+                && self.pipeline == PipelineMode::Transpile
+                && !self.completed_roots.contains(package_id)
+            {
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
             return Ok(package);
         }
         if let Some(package) = parent_workspace.compiled_package(package_id) {
-            if !is_root {
-                self.ensure_hir_for_package(&package)?;
+            if self.pipeline == PipelineMode::Transpile && !is_root {
+                self.ensure_hir_for_resolution(&package)?;
             }
-            if is_root && !self.completed_roots.contains(package_id) {
-                self.ensure_hir_for_compilation(&package)?;
+            if is_root
+                && self.pipeline == PipelineMode::Transpile
+                && !self.completed_roots.contains(package_id)
+            {
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
@@ -451,16 +502,15 @@ impl CompilerDriver {
                 );
                 if !precompiled_lir_blobs.is_empty() {
                     Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_blobs)?;
-                    if !is_root {
-                        self.ensure_hir_for_package(&package)?;
+                    if self.pipeline == PipelineMode::Transpile && !is_root {
+                        self.ensure_hir_for_resolution(&package)?;
                     }
-                } else if !is_root {
-                    self.ensure_hir_for_package(&package)?;
+                } else if self.pipeline == PipelineMode::Transpile && !is_root {
+                    self.ensure_hir_for_resolution(&package)?;
                 } else if matches!(
                     self.pipeline,
                     PipelineMode::Native | PipelineMode::Transpile
                 ) {
-                    self.ensure_hir_for_compilation(&package)?;
                     self.compile_items_to_lir_units(&package).await?;
                 }
                 Ok(package)
@@ -475,7 +525,7 @@ impl CompilerDriver {
         let package = result?;
         self.compiled_packages
             .insert(package_id.clone(), package.clone());
-        if is_root {
+        if is_root || self.pipeline == PipelineMode::Native {
             self.completed_roots.insert(package_id.clone());
         }
         parent_workspace.import_package(package_id.clone(), package.clone());
@@ -563,6 +613,7 @@ impl CompilerDriver {
         &mut self,
         package_source: &fp_core::ast::package::AstPackage,
         hir_package_id: hir::PackageId,
+        resolution_only: bool,
     ) -> Result<
         (
             hir::HirPackage,
@@ -582,6 +633,7 @@ impl CompilerDriver {
                 .with_intrinsic_normalizer(normalizer)
                 .with_lowering_config(HirLoweringConfig {
                     capabilities: self.state.borrow().backend_capabilities(),
+                    resolution_only,
                 })
                 .with_workspace(self.state.borrow().workspace.clone());
         let hir_package = generator.transform_package(package_source)?;
@@ -592,26 +644,28 @@ impl CompilerDriver {
         ))
     }
 
-    fn lower_package_hir_for_package(
+    fn lower_package_hir_for_resolution(
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let package_source = package.borrow().clone();
         let (mut hir_package, exports, type_aliases) =
-            self.lower_package_hir(&package_source, hir_package_id)?;
+            self.lower_package_hir(&package_source, hir_package_id, true)?;
         hir_package.hir_exports.extend(exports);
         package.borrow_mut().type_alias_exports.extend(type_aliases);
         self.state.borrow_mut().insert_hir(hir_package);
         Ok(())
     }
 
-    /// Ensure a package has its owner-side HIR published before a consumer or
-    /// backend query uses it. A package can already be present in the AST
+    /// Ensure a transpile dependency has a published HIR package before a
+    /// consumer is lowered. A package can already be present in the AST
     /// workspace when it was compiled through another scope, or it can have
     /// taken the precompiled-LIR branch above; neither fact implies that its
-    /// HIR is in the session-wide program.
-    fn ensure_hir_for_package(
+    /// public HIR exports are in the session-wide program. This is the
+    /// dependency equivalent of rustc's crate metadata loading: publish once,
+    /// then let every later lowerer resolve through the same program.
+    fn ensure_hir_for_resolution(
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
@@ -622,7 +676,6 @@ impl CompilerDriver {
             .hir_program()
             .package(&hir_package_id)
             .map(|hir_package| {
-                let hir_package = hir_package.borrow();
                 (
                     hir_package.module_tree.all_paths().count(),
                     hir_package.hir_exports.len(),
@@ -631,34 +684,7 @@ impl CompilerDriver {
         if existing.is_some() {
             return Ok(());
         }
-        self.lower_package_hir_for_package(package)
-    }
-
-    /// Type-check const functions in a dependency package before a comptime
-    /// query needs their owner-side MIR. The package's HIR is complete and
-    /// shared; this is only a demand-driven semantic/artifact step, not a
-    /// second HIR representation.
-    fn ensure_hir_for_compilation(
-        &mut self,
-        package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
-    ) -> Result<(), CompilerDriverError> {
-        let hir_package_id = package.borrow().hir_package_id.clone();
-        if self
-            .state
-            .borrow()
-            .hir_program()
-            .package(&hir_package_id)
-            .is_some()
-        {
-            return Ok(());
-        }
-        let package_source = package.borrow().clone();
-        let (mut hir_package, exports, type_aliases) =
-            self.lower_package_hir(&package_source, hir_package_id)?;
-        hir_package.hir_exports.extend(exports);
-        package.borrow_mut().type_alias_exports.extend(type_aliases);
-        self.state.borrow_mut().insert_hir(hir_package);
-        Ok(())
+        self.lower_package_hir_for_resolution(package)
     }
 
     /// Runs a whole package's HIR generation + typing, then per-`DefId`
@@ -673,6 +699,7 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
+        let package_source = package.borrow().clone();
         // Re-lowering after comptime evaluation rebuilds HIR from the same
         // source. Preserve values recorded on the previous package so the
         // new MIR pass can replace executable entries with static data.
@@ -681,50 +708,20 @@ impl CompilerDriver {
             .borrow()
             .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| {
-                let hir_package = hir_package.borrow();
-                (hir_package.const_values(), hir_package.const_block_values())
-            });
-        let _hir_package = self
-            .state
-            .borrow()
-            .hir_program()
-            .package(&hir_package_id)
-            .ok_or_else(|| {
-                CompilerDriverError::InternalCompilerError(format!(
-                    "package {hir_package_id} has no established HIR package"
-                ))
-            })?;
-        self.type_check_program(hir_package_id.clone())
+            .map(|hir_package| (hir_package.const_values(), hir_package.const_block_values()));
+        let (hir_program, package_exports, type_alias_exports) =
+            self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
+        package
+            .borrow_mut()
+            .type_alias_exports
+            .extend(type_alias_exports);
+        self.type_check_program(hir_program, package_exports)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
                     "package HIR type checking failed: {error}"
                 ))
             })?;
-
-        // Type checking a root resolves the dependency methods that its HIR
-        // actually selects. Type-check those method bodies in their owning
-        // packages before MIR lowering asks for their cached expression
-        // types, matching rustc's use of typed dependency metadata without
-        // checking unrelated dependency items.
-        let dependency_methods = self
-            .state
-            .borrow()
-            .hir_program()
-            .package(&hir_package_id)
-            .map(|package| {
-                package
-                    .borrow()
-                    .method_resolutions()
-                    .into_values()
-                    .filter(|def_id| def_id.package_id != hir_package_id)
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
-        for def_id in dependency_methods {
-            Self::typecheck_dependency_item(&self.state, &def_id).await?;
-        }
         if let Some((const_values, const_block_values)) = prior_const_values {
             let hir_package = self.state.borrow().hir_package_rc(hir_package_id.clone())?;
             for (def_id, value) in const_values {
@@ -764,6 +761,7 @@ impl CompilerDriver {
             .borrow()
             .items
             .iter()
+            .filter(|item| item.def_id.package_id == hir_package_id)
             .filter(|item| Self::is_lowering_root(item))
             .map(|item| item.def_id.clone())
             .collect::<Vec<_>>();
@@ -832,9 +830,8 @@ impl CompilerDriver {
         let (lifted_items_by_path, referenced_paths_by_path) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
-            let shared_program = state.hir_program();
-            let program = shared_program.borrow();
-            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, &program);
+            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program())
+                .with_capabilities(state.backend_capabilities());
             // `lift_items_by_path` treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from
@@ -930,17 +927,20 @@ impl CompilerDriver {
     /// (impossible to make progress on) surfaces as the ambient
     /// `CompilerExecutor::run` driving this whole call stalling, not as a
     /// return from here.
-    async fn type_check_program(&mut self, package_id: hir::PackageId) -> fp_core::Result<()> {
+    async fn type_check_program(
+        &mut self,
+        program: hir::HirPackage,
+        package_exports: std::collections::HashMap<String, hir::Res>,
+    ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
-        let hir_program = self.state.borrow().hir_program_rc();
+        let dependency_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
-        let package = hir_program.package_rc(&package_id).ok_or_else(|| {
-            fp_core::error::Error::from(format!(
-                "typechecking package `{package_id}` without published HIR"
-            ))
-        })?;
-        let checker =
-            fp_typing::HirTypeChecker::new(package, hir_program, comptime_resolver, executor);
+        let checker = fp_typing::HirTypeChecker::new(
+            program,
+            Some(dependency_program),
+            comptime_resolver,
+            executor,
+        );
         let item_ids: Vec<_> = checker
             .borrow()
             .package()
@@ -981,197 +981,10 @@ impl CompilerDriver {
                 ));
             }
         }
-        // The checker has been operating on the package handle already
-        // installed by `compile_items_to_lir_units`. Keep that one shared
-        // package as the authoritative HIR; publishing the checker handle
-        // again would obscure the ownership/lifetime boundary and risks
-        // replacing state that later comptime queries have recorded.
-        let _package = checker.borrow().finish();
+        let package = checker.borrow().finish();
+        package.borrow_mut().hir_exports.extend(package_exports);
+        self.state.borrow_mut().insert_hir_shared(package);
         Ok(())
-    }
-
-    /// Type-check one dependency owner before its MIR is requested by a
-    /// comptime entry. The request carries a member `DefId` for an impl
-    /// method, but type checking is owned by the containing impl item; this
-    /// mirrors rustc's query routing from an externally decoded `DefId` to
-    /// the local crate item that owns its body.
-    async fn typecheck_dependency_item(
-        state: &Rc<RefCell<CompilerState>>,
-        def_id: &hir::DefId,
-    ) -> Result<(), CompilerDriverError> {
-        let (owner_def_id, package, is_member) = {
-            let hir_program = state.borrow().hir_program();
-            let is_member = hir_program.item(def_id.clone()).is_none();
-            let owner_def_id = if !is_member {
-                def_id.clone()
-            } else {
-                hir_program.member_owner(def_id.clone()).ok_or_else(|| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "dependency definition {def_id} has no owning HIR item"
-                    ))
-                })?
-            };
-            let package = hir_program
-                .package_rc(&owner_def_id.package_id)
-                .ok_or_else(|| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "dependency definition {def_id} belongs to unpublished HIR package {}",
-                        owner_def_id.package_id
-                    ))
-                })?;
-            (owner_def_id, package, is_member)
-        };
-        let comptime_resolver = state.borrow().comptime_resolver.clone();
-        let hir_program = state.borrow().hir_program_rc();
-        let executor = state.borrow().tasks.clone();
-        let checker = fp_typing::HirTypeChecker::new(
-            package.clone(),
-            hir_program,
-            comptime_resolver,
-            executor,
-        );
-        if is_member {
-            let diagnostics_before = package.borrow().diagnostics.get_diagnostics().len();
-            fp_typing::HirTypeChecker::typecheck_method(&checker, def_id.clone())
-                .await
-                .map_err(|error| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "dependency method type checking failed for {def_id}: {error}"
-                    ))
-                })?;
-            let package_ref = package.borrow();
-            let new_errors = package_ref
-                .diagnostics
-                .get_diagnostics()
-                .into_iter()
-                .skip(diagnostics_before)
-                .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>();
-            if !new_errors.is_empty() {
-                return Err(CompilerDriverError::InternalCompilerError(format!(
-                    "dependency method type checking failed for {def_id}: {}",
-                    new_errors.join("\n")
-                )));
-            }
-        } else {
-            let handle = fp_typing::HirTypeChecker::spawn_item_task(&checker, owner_def_id);
-            handle.await;
-            if checker.borrow().has_typing_errors() {
-                let package = checker.borrow().finish();
-                let package = package.borrow();
-                Self::emit_typing_diagnostics_to_stderr(&package);
-                let details = package
-                    .diagnostics
-                    .get_diagnostics()
-                    .iter()
-                    .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
-                    .map(|diagnostic| diagnostic.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                return Err(CompilerDriverError::InternalCompilerError(format!(
-                    "dependency item type checking failed for {def_id}: {details}"
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    /// Materialize one dependency definition in its owning package. This is
-    /// the local equivalent of rustc loading a dependency's serialized MIR:
-    /// the consumer supplies only a resolved `DefId`, and the owner package
-    /// produces and caches the MIR/LIR unit under that same identity. No
-    /// consumer lowerer is allowed to build a foreign body with its own
-    /// package state.
-    async fn ensure_dependency_mir_artifact(
-        state: &Rc<RefCell<CompilerState>>,
-        def_id: &hir::DefId,
-    ) -> Result<hir::DefId, CompilerDriverError> {
-        let (owner_def_id, artifact_def_id, owner_package_id) = {
-            let hir_program = state.borrow().hir_program();
-            let owner_def_id = if hir_program.item(def_id.clone()).is_some() {
-                def_id.clone()
-            } else {
-                hir_program.member_owner(def_id.clone()).ok_or_else(|| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "dependency definition {def_id} has no owning HIR item"
-                    ))
-                })?
-            };
-            let artifact_def_id = if owner_def_id == *def_id {
-                owner_def_id.clone()
-            } else {
-                def_id.clone()
-            };
-            (
-                owner_def_id.clone(),
-                artifact_def_id,
-                owner_def_id.package_id.clone(),
-            )
-        };
-
-        let already_lowered = state
-            .borrow()
-            .mir_program()
-            .package(&owner_package_id)
-            .is_some_and(|package| package.borrow().units.contains_key(&artifact_def_id));
-        if already_lowered {
-            return Ok(artifact_def_id);
-        }
-
-        Self::typecheck_dependency_item(state, def_id).await?;
-
-        let hir_program = state.borrow().hir_program_rc();
-        let mir_package = state.borrow_mut().mir_package_rc(&owner_package_id);
-        let mut lowering = HirToMirLowerer::new(hir_program, owner_package_id.clone(), mir_package);
-        lowering.register_package_items();
-        if owner_def_id == *def_id {
-            lowering
-                .ensure_item_lowered(owner_def_id.clone())
-                .map_err(|error| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "MIR lowering failed for dependency {def_id}: {error}"
-                    ))
-                })?;
-        } else {
-            lowering
-                .ensure_method_lowered(def_id.clone())
-                .map_err(|error| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "MIR lowering failed for dependency method {def_id}: {error}"
-                    ))
-                })?;
-        }
-        let unit = lowering.take_unit();
-        if unit.items.is_empty() {
-            return Err(CompilerDriverError::InternalCompilerError(format!(
-                "dependency definition {def_id} produced no MIR unit"
-            )));
-        }
-        lowering.walk_program_types_for_layouts(&unit);
-        state
-            .borrow_mut()
-            .insert_mir_unit(&owner_package_id, artifact_def_id.clone(), unit);
-        lowering.sync_layout_exports();
-
-        let mut lir_gen = {
-            let state_ref = state.borrow();
-            MirToLirLowerer::new(
-                state_ref.data_layout.clone(),
-                state_ref.mir_program_rc(),
-                state_ref.lir_program_rc(),
-            )
-            .with_package_id(owner_package_id.clone())
-        };
-        lir_gen.prepare_package(&owner_package_id);
-        Self::lower_package_to_lir_with(
-            state,
-            &owner_package_id,
-            &mut lir_gen,
-            artifact_def_id.clone(),
-        )
-        .await?;
-        Ok(artifact_def_id)
     }
 
     /// Prints every diagnostic accumulated on `package` so far to stderr, one
@@ -1255,46 +1068,8 @@ impl CompilerDriver {
             )
             .with_package_id(package_id.clone())
         };
-        lir_gen.prepare_package(&package_id);
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone())
             .await?;
-
-        // Follow only the resolved MIR call targets. This is the owner-side
-        // equivalent of rustc's `mir_for_ctfe` query: an unrelated method in
-        // a dependency must not become part of this request merely because a
-        // lowerer happened to register its signature.
-        let mut pending = state
-            .borrow()
-            .mir_program()
-            .package(&package_id)
-            .and_then(|package| package.borrow().units.get(&request.def_id).cloned())
-            .map(|unit| unit.referenced_function_def_ids())
-            .ok_or_else(|| {
-                CompilerDriverError::InternalCompilerError(format!(
-                    "comptime request {def_id} has no MIR unit after lowering",
-                    def_id = request.def_id
-                ))
-            })?;
-        let mut visited = HashSet::new();
-        while let Some(callee_def_id) = pending.pop() {
-            if callee_def_id.package_id == package_id || !visited.insert(callee_def_id.clone()) {
-                continue;
-            }
-            let artifact_def_id =
-                Self::ensure_dependency_mir_artifact(&state, &callee_def_id).await?;
-            let owner_package_id = artifact_def_id.package_id.clone();
-            let owner_unit = state
-                .borrow()
-                .mir_program()
-                .package(&owner_package_id)
-                .and_then(|package| package.borrow().units.get(&artifact_def_id).cloned())
-                .ok_or_else(|| {
-                    CompilerDriverError::InternalCompilerError(format!(
-                        "dependency definition {callee_def_id} has no cached MIR unit"
-                    ))
-                })?;
-            pending.extend(owner_unit.referenced_function_def_ids());
-        }
 
         if state.borrow().bytecode_comptime() {
             Self::evaluate_comptime_bytecode(state, &request.def_id)
@@ -1445,7 +1220,7 @@ impl CompilerDriver {
     /// `LirInterpreter` (`CompilerState::interpreter_mut`) for real and
     /// returns its resolved value directly — a bare `Rc<RefCell<
     /// CompilerState>>`, not `&mut self`, since this is reached both from
-    /// runtime entrypoint selection and from
+    /// `compile_package_module_native` and from
     /// `resolve_comptime_request_with`'s free-standing, mid-typing-pass
     /// context.
     fn evaluate_comptime_lir(
@@ -1471,9 +1246,9 @@ impl CompilerDriver {
         let interpreter = state_mut.interpreter_mut();
         interpreter.load_program(program)?;
         let mut value = interpreter.run_entrypoint(&package_id, def_id)?;
-        let result_ty = return_ty
-            .unwrap_or_else(|| fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::Void)));
-        value = interpreter.read_typed_const_value(value, &result_ty)?;
+        if let Some(ty) = return_ty {
+            value = interpreter.read_typed_const_value(value, &ty)?;
+        }
         Ok(value)
     }
 }
