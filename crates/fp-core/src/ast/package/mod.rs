@@ -85,7 +85,7 @@ use crate::ast::path::QualifiedPath;
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PackageItem {
     /// The *file's* module path — computed once per source file and shared
     /// identically by every item parsed from it (see

@@ -58,14 +58,33 @@ impl MemberRoot {
 pub struct RustPackageProvider {
     members: Vec<(String, MemberRoot)>,
     cache: RwLock<HashMap<String, Vec<PackageItem>>>,
+    disk_cache: fp_core::cache::DiskCache,
 }
 
 impl RustPackageProvider {
+    fn source_fingerprint(member_root: &MemberRoot) -> String {
+        let path = member_root.root_path();
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return "missing".to_string();
+        };
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        format!("{}-{modified}-{}", path.display(), metadata.len())
+    }
+
     pub fn new(root: PathBuf) -> Self {
         // A standalone file (no enclosing Cargo project) is its own
         // one-member package, named after itself — the degenerate case of
         // "package", not a separate code path.
         if root.is_file() {
+            let cache_root = root
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("target/fp-cache");
             let name = root
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -74,6 +93,7 @@ impl RustPackageProvider {
             return Self {
                 members: vec![(name, MemberRoot::File(root))],
                 cache: RwLock::new(HashMap::new()),
+                disk_cache: fp_core::cache::DiskCache::new(cache_root),
             };
         }
         // `list_cargo_members`, not `list_members`: this provider is
@@ -97,6 +117,7 @@ impl RustPackageProvider {
         Self {
             members,
             cache: RwLock::new(HashMap::new()),
+            disk_cache: fp_core::cache::DiskCache::new(root.join("target/fp-cache")),
         }
     }
 
@@ -199,9 +220,21 @@ impl RustPackageProvider {
         id: &PackageId,
         member_root: &MemberRoot,
     ) -> ProviderResult<Vec<PackageItem>> {
+        let cache_key = format!(
+            "rust/package-source/{id}/{}",
+            Self::source_fingerprint(member_root)
+        );
         if let Ok(c) = self.cache.read() {
             if let Some(items) = c.get(id.as_str()) {
                 return Ok(items.clone());
+            }
+        }
+        if let Ok(Some(bytes)) = self.disk_cache.get(&cache_key) {
+            if let Ok(items) = bincode::deserialize::<Vec<PackageItem>>(&bytes) {
+                if let Ok(mut c) = self.cache.write() {
+                    c.insert(id.as_str().to_string(), items.clone());
+                }
+                return Ok(items);
             }
         }
 
@@ -257,6 +290,9 @@ impl RustPackageProvider {
 
         if let Ok(mut c) = self.cache.write() {
             c.insert(id.as_str().to_string(), items.clone());
+        }
+        if let Ok(bytes) = bincode::serialize(&items) {
+            let _ = self.disk_cache.put(&cache_key, &bytes);
         }
         Ok(items)
     }
@@ -973,6 +1009,11 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     let mut parsed = 0usize;
     let mut cache_hits = 0usize;
     let mut skipped = 0usize;
+    let disk_cache = fp_core::cache::DiskCache::new(
+        std::env::var_os("FP_CACHE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/fp-cache")),
+    );
 
     let dump_path = std::env::var("FP_STD_CACHE_DUMP").ok();
     let cache = if dump_path.is_some() {
@@ -1016,6 +1057,13 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             .and_then(|p| p.to_str())
             .unwrap_or_default()
             .to_string();
+        let fingerprint = std::fs::metadata(path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos().to_string())
+            .unwrap_or_else(|| source.len().to_string());
+        let disk_key = format!("rust/std-source/{crate_name}/{relative}/{fingerprint}");
         // A fresh frontend per file, not one shared across the whole
         // walk — each `.rs` file is its own independent translation
         // unit, and a parser is free to accumulate internal
@@ -1031,6 +1079,15 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             cache_hits += 1;
             return Ok(cached.clone());
         }
+        if dump_path.is_none() {
+            if let Ok(Some(bytes)) = disk_cache.get(&disk_key) {
+                if let Ok(cached) = bincode::deserialize::<Vec<Item>>(&bytes) {
+                    frontend.register_file_only(source, path);
+                    cache_hits += 1;
+                    return Ok(cached);
+                }
+            }
+        }
         match frontend.parse_file(source, path) {
             Ok(result) => {
                 register_threadlocal_serializer(result.serializer.clone());
@@ -1038,7 +1095,13 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
                 if dump_path.is_some() {
                     fresh_cache.insert(relative, result.ast.items.clone());
                 }
-                Ok(result.ast.items)
+                let items = result.ast.items;
+                if dump_path.is_none() {
+                    if let Ok(bytes) = bincode::serialize(&items) {
+                        let _ = disk_cache.put(&disk_key, &bytes);
+                    }
+                }
+                Ok(items)
             }
             Err(err) => {
                 skipped += 1;
