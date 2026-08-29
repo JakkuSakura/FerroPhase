@@ -325,11 +325,6 @@ impl LirInterpreter {
             self.state.regs.set_sp(addr);
             self.state.set_local_addr(local.id, addr);
         }
-        let argument_locals: Vec<&LirLocal> = func
-            .locals
-            .iter()
-            .filter(|local| local.is_argument)
-            .collect();
         for (i, arg) in args.iter().enumerate() {
             let reg = i as RegisterId + 1;
             let ty =
@@ -341,8 +336,24 @@ impl LirInterpreter {
                 value: arg.clone(),
             };
             self.write_typed_register(reg, typed.clone())?;
-            if let Some(local) = argument_locals.get(i) {
-                self.store_value_at(self.state.local_addr(local.id)?, &typed.ty, &typed.value)?;
+            // MIR reserves local 0 for the return place and assigns function
+            // parameters consecutive IDs starting at 1. `func.locals` is an
+            // allocation list, not an ABI ordering; bind by that stable ID.
+            let local_id = reg;
+            if let Some(local) = func.locals.iter().find(|local| local.id == local_id) {
+                if !local.is_argument {
+                    return Err(VmError::Runtime(format!(
+                        "function {} local {local_id} is not marked as an argument",
+                        func.name
+                    )));
+                }
+                if local.ty != typed.ty {
+                    return Err(VmError::TypeMismatch {
+                        expected: format!("{:?}", local.ty),
+                        found: format!("{:?}", typed.ty),
+                    });
+                }
+                self.store_value_at(self.state.local_addr(local_id)?, &typed.ty, &typed.value)?;
             }
         }
         let mut current = func.basic_blocks.first().map(|b| b.id).unwrap_or(0);
@@ -728,11 +739,17 @@ impl LirInterpreter {
                 } => {
                     let struct_val = self.object_value_operand(struct_handle)?;
                     let field_name_str = self.render_str_argument(field_name)?;
-                    let field_ty = match self
-                        .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
-                    {
-                        Ok(Value::Type(ty)) => ty,
-                        _ => Ty::Unknown(TypeUnknown),
+                    let field_ty = match self.resolve_operand(field_type)? {
+                        TypedValue {
+                            ty: LirType::Ptr(pointee),
+                            value: Value::Type(ty),
+                        } if matches!(pointee.as_ref(), LirType::Void) => ty,
+                        value => {
+                            return Err(VmError::TypeMismatch {
+                                expected: "type value (Ptr(Void))".into(),
+                                found: format!("{:?} carrying {:?}", value.ty, value.value),
+                            });
+                        }
                     };
                     let mut new_val = struct_val;
                     if let Value::Type(ref mut ty) = new_val {
@@ -749,19 +766,19 @@ impl LirInterpreter {
                 }
                 ComptimeOp::IntoType { value } => {
                     let struct_val = self.object_value_operand(value)?;
-                    let struct_ty = match struct_val {
-                        Value::Type(Ty::Struct(s)) => s.clone(),
+                    let completed_type = match struct_val {
+                        Value::Type(Ty::Struct(s)) => Ty::Struct(s),
                         _ => {
                             return Err(VmError::Runtime(
                                 "expected struct type in IntoType".into(),
                             ));
                         }
                     };
-                    let wrapped = Value::Type(Ty::Type(TypeType {
-                        span: fp_core::span::Span::null(),
-                        inner: Some(Box::new(Ty::Struct(struct_ty))),
-                    }));
-                    self.write_typed_result(dst, self.result_type(instr)?, wrapped)
+                    self.write_typed_result(
+                        dst,
+                        self.result_type(instr)?,
+                        Value::Type(completed_type),
+                    )
                 }
                 ComptimeOp::CompileWarning { message } => {
                     let text = self.render_str_argument(message)?;
@@ -1336,6 +1353,11 @@ impl LirInterpreter {
                 expected: format!("bitcast-compatible type of {source_bits} bits"),
                 found: format!("{destination:?}"),
             });
+        }
+        if matches!(value.ty, LirType::Ptr(ref pointee) if matches!(pointee.as_ref(), LirType::Void))
+            && matches!(destination, LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void))
+        {
+            return Ok(value.value.clone());
         }
         match (&value.value, destination) {
             (Value::Decimal(value), LirType::I32) => Ok(integer_value(

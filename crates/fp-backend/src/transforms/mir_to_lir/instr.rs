@@ -1213,6 +1213,32 @@ impl MirToLirLowerer {
                         })?,
                     ));
                     instructions.append(&mut intrinsic_instructions);
+
+                    // These comptime intrinsics used to return before the
+                    // common assignment epilogue below. A temporary result
+                    // therefore received an instruction result but never a
+                    // store, so its next use loaded uninitialized stack
+                    // memory. Preserve the ordinary assignment contract.
+                    let result_value = result_value.expect("comptime intrinsic result is set");
+                    match target_access {
+                        PlaceAccess::Address(addr) => {
+                            let store_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: store_id,
+                                kind: lir::LirInstructionKind::Store {
+                                    value: result_value,
+                                    address: addr.ptr,
+                                    alignment: Some(addr.alignment),
+                                    volatile: false,
+                                },
+                                result: None,
+                                debug_info: None,
+                            });
+                        }
+                        PlaceAccess::Value { .. } => {
+                            self.register_map.insert(place.local, result_value);
+                        }
+                    }
                     return Ok(instructions);
                 }
 

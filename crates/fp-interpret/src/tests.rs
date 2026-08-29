@@ -113,6 +113,116 @@ fn i(id: u32, k: LirInstructionKind) -> LirInstruction {
 }
 
 #[test]
+fn binds_arguments_by_local_id_not_local_vector_order() {
+    let f = LirFunction {
+        def_id: None,
+        name: Name::new("ordered_arguments"),
+        signature: sig(&[LirType::I64, LirType::I64], LirType::I64),
+        basic_blocks: vec![bb(0, vec![], ret(LirValue::local(1, LirType::I64)))],
+        // Allocation order is deliberately not ABI order. MIR parameter IDs
+        // remain 1 and 2 regardless of this representation order.
+        locals: vec![
+            fp_core::lir::LirLocal {
+                id: 2,
+                ty: LirType::I64,
+                name: None,
+                is_argument: true,
+            },
+            fp_core::lir::LirLocal {
+                id: 1,
+                ty: LirType::I64,
+                name: None,
+                is_argument: true,
+            },
+        ],
+        stack_slots: vec![],
+        calling_convention: CallingConvention::C,
+        linkage: fp_core::lir::Linkage::Internal,
+        is_declaration: false,
+    };
+
+    assert_eq!(
+        LirInterpreter::new()
+            .run_function(&f, &[Value::int(11), Value::int(22)])
+            .expect("arguments bind by local ID"),
+        Value::int(11)
+    );
+}
+
+#[test]
+fn preserves_type_handle_argument_after_aggregate_arguments() {
+    use fp_core::ast::{Ty, TypePrimitive, ValuePointer, ValueTuple};
+
+    let type_handle_ty = LirType::Ptr(Box::new(LirType::Void));
+    let builder_ty = LirType::Struct {
+        fields: vec![type_handle_ty.clone()],
+        packed: false,
+        name: Some("TypeBuilder".into()),
+    };
+    let str_ty = LirType::Struct {
+        fields: vec![LirType::Ptr(Box::new(LirType::I8)), LirType::I64],
+        packed: false,
+        name: Some("__slice".into()),
+    };
+    let f = LirFunction {
+        def_id: None,
+        name: Name::new("with_field_shape"),
+        signature: sig(
+            &[builder_ty.clone(), str_ty.clone(), type_handle_ty.clone()],
+            type_handle_ty.clone(),
+        ),
+        basic_blocks: vec![bb(0, vec![], ret(LirValue::local(3, type_handle_ty.clone())))],
+        locals: vec![
+            fp_core::lir::LirLocal {
+                id: 0,
+                ty: type_handle_ty.clone(),
+                name: None,
+                is_argument: false,
+            },
+            fp_core::lir::LirLocal {
+                id: 1,
+                ty: builder_ty,
+                name: None,
+                is_argument: true,
+            },
+            fp_core::lir::LirLocal {
+                id: 2,
+                ty: str_ty,
+                name: None,
+                is_argument: true,
+            },
+            fp_core::lir::LirLocal {
+                id: 3,
+                ty: type_handle_ty,
+                name: None,
+                is_argument: true,
+            },
+        ],
+        stack_slots: vec![],
+        calling_convention: CallingConvention::C,
+        linkage: fp_core::lir::Linkage::Internal,
+        is_declaration: false,
+    };
+
+    assert_eq!(
+        LirInterpreter::new()
+            .run_function(
+                &f,
+                &[
+                    Value::Tuple(ValueTuple::new(vec![Value::Pointer(ValuePointer::managed(0))])),
+                    Value::Tuple(ValueTuple::new(vec![
+                        Value::Pointer(ValuePointer::managed(4096)),
+                        Value::int(2),
+                    ])),
+                    Value::Type(Ty::Primitive(TypePrimitive::i64())),
+                ],
+            )
+            .expect("type handle survives aggregate parameters"),
+        Value::Type(Ty::Primitive(TypePrimitive::i64()))
+    );
+}
+
+#[test]
 fn constant() {
     let f = LirFunction {
         def_id: None,
