@@ -70,7 +70,9 @@ pub fn roundtrip_items_via_hir(
     );
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
-    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
+    let mut hir_program = fp_core::hir::HirProgram::new();
+    hir_program.publish_package(program.clone());
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
 }
 
 pub fn roundtrip_items_via_hir_target(
@@ -89,7 +91,9 @@ pub fn roundtrip_items_via_hir_target(
     generator.set_target_lang(Some(target_lang));
     generator.set_cfg_filtering(true);
     let program = generator.transform_package(&package)?;
-    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
+    let mut hir_program = fp_core::hir::HirProgram::new();
+    hir_program.publish_package(program.clone());
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
 }
 
 pub fn roundtrip_items_via_hir_dce(
@@ -103,7 +107,9 @@ pub fn roundtrip_items_via_hir_dce(
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);
-    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
+    let mut hir_program = fp_core::hir::HirProgram::new();
+    hir_program.publish_package(program.clone());
+    transforms::hir_to_ast::HirToAstLifter::new(&program, &hir_program).lift_items()
 }
 
 #[cfg(test)]

@@ -830,8 +830,7 @@ impl CompilerDriver {
         let (lifted_items_by_path, referenced_paths_by_path) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
-            let lifter =
-                fp_backend::transforms::HirToAstLifter::new(&hir, Some(state.hir_program()));
+            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program());
             // `lift_items_by_path` treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from

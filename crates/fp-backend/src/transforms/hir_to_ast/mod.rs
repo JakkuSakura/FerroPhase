@@ -24,20 +24,21 @@ use fp_core::span::Span;
 /// how to consume, so `PipelineMode::Transpile` can reuse those
 /// serializers unchanged rather than each needing its own HIR-consuming path.
 ///
-/// Carries the source `&hir::HirPackage` (needed for a couple of program-wide
-/// lookups: the single-`Query`-item check, closure-signature reconstruction,
-/// `DefId` → path resolution via `program.def_paths`, and now the typer's
+/// Carries the source `&hir::HirPackage` for package-local item traversal and
+/// type facts, plus the workspace `HirProgram` for every `DefId` lookup. The
+/// workspace is authoritative for declaration identity, including the current
+/// package; this avoids a separate local-then-global resolution policy.
+///
+/// The package also provides the typer's
 /// own resolved types directly — `expr_type`/`pat_type` naturally return
 /// `None` for the two of three call sites that never run the typer at all
 /// (`fp-backend`'s own roundtrip helpers), so there's no separate `Option`
 /// to thread for that case anymore).
 pub struct HirToAstLifter<'a> {
-    program: &'a hir::HirPackage,
-    /// Cross-package lookup for a resolved `DefId`'s real identity (e.g.
-    /// `AstProgram::find_hir_enum_for_variant`, consulted by
-    /// `lift_path`) — `None` for the roundtrip/test call sites that never
-    /// go through a real multi-package workspace.
-    hir_program: Option<&'a hir::HirProgram>,
+    package: &'a hir::HirPackage,
+    /// Authoritative workspace-wide declaration metadata. Every resolved
+    /// `DefId`, including one owned by `package`, is queried through here.
+    hir_program: &'a hir::HirProgram,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -69,9 +70,9 @@ pub struct HirToAstLifter<'a> {
 }
 
 impl<'a> HirToAstLifter<'a> {
-    pub fn new(program: &'a hir::HirPackage, hir_program: Option<&'a hir::HirProgram>) -> Self {
+    pub fn new(package: &'a hir::HirPackage, hir_program: &'a hir::HirProgram) -> Self {
         Self {
-            program,
+            package,
             hir_program,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
@@ -89,10 +90,7 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn portable_op_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
-        crate::transforms::resolve_portable_op(&self.program.op_defs, def_id).or_else(|| {
-            self.hir_program
-                .and_then(|program| program.op_def(def_id.clone()))
-        })
+        self.hir_program.op_def(def_id.clone())
     }
 
     /// Resolve a declaration-tagged call through the definition's owning
@@ -100,15 +98,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `std::fs::read_to_string`, for example, carries std's `DefId` and its
     /// intrinsic declaration metadata lives in the published std snapshot.
     fn intrinsic_call_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::CallKind> {
-        crate::transforms::resolve_call_kind(
-            &self.program.op_defs,
-            &self.program.intrinsic_defs,
-            def_id.clone(),
-        )
-        .or_else(|| {
-            self.hir_program
-                .and_then(|program| program.intrinsic_def(def_id.clone()))
-        })
+        self.hir_program.intrinsic_def(def_id.clone())
     }
 
     /// Declares `name` (for the binding identified by `hir_id`) in the
@@ -141,15 +131,15 @@ impl<'a> HirToAstLifter<'a> {
     /// typed-splice pipeline) — appropriate for a correctness-oriented
     /// roundtrip/test, where a silently-dropped item would hide a real bug.
     pub fn lift_items(&self) -> Result<Vec<Item>> {
-        if let [item] = self.program.items.as_slice() {
+        if let [item] = self.package.items.as_slice() {
             if let hir::ItemKind::Query(_query) = &item.kind {
                 // A whole program that's just one query document has no
                 // items to lift for now.
                 return Ok(Vec::new());
             }
         }
-        let mut items = Vec::with_capacity(self.program.items.len());
-        for item in &self.program.items {
+        let mut items = Vec::with_capacity(self.package.items.len());
+        for item in &self.package.items {
             items.push(self.lift_item(item)?);
         }
         // Reconstruct closure expressions with typed params from lowered closure pairs
@@ -159,7 +149,7 @@ impl<'a> HirToAstLifter<'a> {
     /// Best-effort variant of [`lift_program`](Self::lift_program) for
     /// splicing typed content back onto an existing source AST
     /// (`fp-cli::compiler::typecheck_package`), keyed by each item's own
-    /// qualified name (`program.def_paths`) rather than list position.
+    /// qualified name (`HirProgram::def_path`) rather than list position.
     ///
     /// Unlike `lift_program`, a single item that fails to lift (e.g. a
     /// nested `hir::ExprKind::Query`, or any other not-yet-supported
@@ -173,8 +163,8 @@ impl<'a> HirToAstLifter<'a> {
     /// and are likewise omitted.
     pub fn lift_items_by_path(&self) -> HashMap<hir::DefPath, Item> {
         let mut lifted = Vec::new();
-        for item in &self.program.items {
-            let Some(path) = self.program.def_paths.get(&item.def_id) else {
+        for item in &self.package.items {
+            let Some(path) = self.def_path_for(&item.def_id) else {
                 continue;
             };
             // A synthetic placeholder `ast_to_hir` fabricated because HIR
@@ -182,13 +172,13 @@ impl<'a> HirToAstLifter<'a> {
             // construct (currently: trait declarations) — skip it so
             // typed-splice (`typecheck_package`) falls back to the real
             // source item instead of overwriting it with this stand-in.
-            if self.program.placeholder_defs.contains(&item.def_id) {
+            if self.package.placeholder_defs.contains(&item.def_id) {
                 continue;
             }
             let Ok(ast_item) = self.lift_item(item) else {
                 continue;
             };
-            lifted.push((path.clone(), ast_item));
+            lifted.push((path, ast_item));
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
         let items = self.reconstruct_closures(items.clone()).unwrap_or(items);
@@ -222,7 +212,7 @@ impl<'a> HirToAstLifter<'a> {
     /// incorrectly-hidden one would).
     pub fn lift_impl_methods_by_path(&self) -> HashMap<hir::DefPath, Item> {
         let mut lifted = Vec::new();
-        for item in &self.program.items {
+        for item in &self.package.items {
             let hir::ItemKind::Impl(imp) = &item.kind else {
                 continue;
             };
@@ -230,7 +220,7 @@ impl<'a> HirToAstLifter<'a> {
                 let hir::ImplItemKind::Method(function) = &impl_item.kind else {
                     continue;
                 };
-                let Some(path) = self.program.def_paths.get(&impl_item.def_id) else {
+                let Some(path) = self.def_path_for(&impl_item.def_id) else {
                     continue;
                 };
                 let synthetic_item = hir::Item {
@@ -243,7 +233,7 @@ impl<'a> HirToAstLifter<'a> {
                 let Ok(ast_item) = self.lift_function_item(&synthetic_item, function) else {
                     continue;
                 };
-                lifted.push((path.clone(), ast_item));
+                lifted.push((path, ast_item));
             }
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
@@ -263,8 +253,8 @@ impl<'a> HirToAstLifter<'a> {
     pub fn referenced_paths_by_path(&self) -> HashMap<hir::DefPath, Vec<hir::DefPath>> {
         let empty_tail_map = HashMap::new();
         let mut result = HashMap::new();
-        for item in &self.program.items {
-            let Some(path) = self.program.def_paths.get(&item.def_id) else {
+        for item in &self.package.items {
+            let Some(path) = self.def_path_for(&item.def_id) else {
                 continue;
             };
             let mut work = std::collections::VecDeque::new();
@@ -274,7 +264,7 @@ impl<'a> HirToAstLifter<'a> {
                 .filter(|def_id| *def_id != item.def_id)
                 .filter_map(|def_id| self.def_path_for(&def_id))
                 .collect::<Vec<_>>();
-            result.insert(path.clone(), referenced);
+            result.insert(path, referenced);
         }
         result
     }
@@ -603,7 +593,7 @@ impl<'a> HirToAstLifter<'a> {
                 let lifted_kwargs = self.lift_keyword_args(args)?;
                 if let Some(op) = self
                     .hir_program
-                    .and_then(|program| program.method_resolution(expr.hir_id.clone()))
+                    .method_resolution(expr.hir_id.clone())
                     .and_then(|def_id| self.portable_op_for_def(&def_id))
                 {
                     Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
@@ -926,7 +916,7 @@ impl<'a> HirToAstLifter<'a> {
                             return Ok(pattern);
                         }
                         if let Some(ty) = self
-                            .program
+                            .package
                             .pat_type(param.pat.hir_id.clone())
                             .and_then(|ty| self.hir_ty_to_ast(&ty))
                         {
@@ -957,7 +947,7 @@ impl<'a> HirToAstLifter<'a> {
         // the type into. `None` just means nothing gets recorded for this
         // expr id, same net effect as before this existed.
         if let Some(ty) = self
-            .program
+            .package
             .expr_type(expr.hir_id.clone())
             .and_then(|ty| self.hir_ty_to_ast(&ty))
         {
@@ -1094,7 +1084,7 @@ impl<'a> HirToAstLifter<'a> {
                 let ty_ann = match &local.ty {
                     Some(ty) if !type_expr_contains_infer(ty) => Some(self.lift_type(ty)?),
                     _ => self
-                        .program
+                        .package
                         .pat_type(local.pat.hir_id.clone())
                         .and_then(|ty| self.hir_ty_to_ast(&ty)),
                 };
@@ -1331,7 +1321,7 @@ impl<'a> HirToAstLifter<'a> {
         let Some(hir::Res::Def(def_id)) = &path.res else {
             return Ok(None);
         };
-        let Some(item) = self.program.def_map.get(def_id) else {
+        let Some(item) = self.hir_program.item(def_id.clone()) else {
             return Ok(None);
         };
         let hir::ItemKind::Struct(def) = &item.kind else {
@@ -1392,7 +1382,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `lower_hir_ty`, targets `mir::ty::Ty`, a different `DefId`-keyed
     /// sibling — useful only as a shape reference for which `TyKind`
     /// variants exist). `DefId`-keyed variants (`Adt`/`FnDef`/`Closure`)
-    /// resolve through `self.program.def_paths`; anything not resolvable
+    /// resolve through `self.hir_program`; anything not resolvable
     /// there, or too exotic to matter for real code (`Dynamic`/
     /// `Generator`/`Projection`/etc.), falls back to `None` rather than a
     /// wrong guess — same principle as this file's existing `Infer`/`Error`
@@ -1605,14 +1595,10 @@ impl<'a> HirToAstLifter<'a> {
         Some(Ty::path(path.to_ast_path()))
     }
 
-    /// Dependency HIR may intentionally contain only exported metadata. A
-    /// lifted root item still needs those `DefPath`s to spell inferred types
-    /// and collect imports, but it must not require dependency bodies.
+    /// The workspace owns authoritative `DefId` paths for both the current
+    /// package and dependencies.
     fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
-        self.program.def_paths.get(def_id).cloned().or_else(|| {
-            self.hir_program
-                .and_then(|program| program.def_path(def_id.clone()))
-        })
+        self.hir_program.def_path(def_id.clone())
     }
 
     /// After HIR→AST lifting, closures have been lowered to `__Closure{N}`
@@ -1622,7 +1608,7 @@ impl<'a> HirToAstLifter<'a> {
     fn reconstruct_closures(&self, mut items: Vec<Item>) -> Result<Vec<Item>> {
         let mut closure_types: HashMap<String, Vec<Ty>> = HashMap::new();
 
-        for hir_item in &self.program.items {
+        for hir_item in &self.package.items {
             if let hir::ItemKind::Function(func) = &hir_item.kind {
                 let name = &func.sig.name;
                 if let Some(rest) = name.strip_prefix("__closure") {
@@ -1703,9 +1689,7 @@ impl<'a> HirToAstLifter<'a> {
                 .map(|s| matches!(s.name.as_str(), "Some" | "None" | "Ok" | "Err"))
                 .unwrap_or(false);
             if !is_monadic_wrapper {
-                if let Some(enum_name) = self
-                    .hir_program
-                    .and_then(|hir_program| hir_program.find_hir_enum_for_variant(def_id.clone()))
+                if let Some(enum_name) = self.hir_program.find_hir_enum_for_variant(def_id.clone())
                 {
                     if let Some(variant_name) = path.segments.last() {
                         return Path::plain(vec![
@@ -2006,9 +1990,10 @@ mod tests {
         );
 
         let mut workspace = hir::HirProgram::new();
-        workspace.add_package(Rc::new(dependency));
+        workspace.add_package(Rc::new(RefCell::new(dependency)));
         let root = hir::HirPackage::new(root_id);
-        let lifter = HirToAstLifter::new(&root, Some(&workspace));
+        workspace.publish_package(root.clone());
+        let lifter = HirToAstLifter::new(&root, &workspace);
 
         let lifted = lifter
             .def_id_to_ty(&dependency_def)

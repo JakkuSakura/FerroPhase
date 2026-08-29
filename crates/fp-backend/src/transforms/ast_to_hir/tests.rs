@@ -278,7 +278,7 @@ fn canonical_type_path_uses_foreign_owner_def_path() {
     );
 
     let mut program = hir::HirProgram::new();
-    program.add_package(std::rc::Rc::new(dependency));
+    program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let mut generator =
         AstToHirLowerer::new(std::rc::Rc::new(program), hir::PackageId::new("alloc"));
     generator.module_path = QualifiedPath::new(vec!["alloc".to_string(), "vec".to_string()]);
@@ -918,7 +918,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
     }
 
     let mut program = hir::HirProgram::new();
-    program.add_package(std::rc::Rc::new(dependency));
+    program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let mut generator =
         AstToHirLowerer::new(std::rc::Rc::new(program), hir::PackageId::new("consumer"));
     generator
@@ -1396,7 +1396,7 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
     );
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items = parser.parse_items_ast("pub struct Holder { value: dyn Error }")?;
     let consumer_package = package_from_items(consumer_items)?;
     let mut consumer_lowerer =
@@ -1452,7 +1452,9 @@ fn enum_attributes_survive_hir_roundtrip() -> Result<()> {
         )
     }));
 
-    let lifted = HirToAstLifter::new(&hir, None).lift_items()?;
+    let mut workspace = hir::HirProgram::new();
+    workspace.publish_package(hir.clone());
+    let lifted = HirToAstLifter::new(&hir, &workspace).lift_items()?;
     let ast::ItemKind::DefEnum(def) = lifted[0].kind() else {
         panic!("expected lifted enum");
     };
@@ -1506,7 +1508,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
         .expect("core Ok definition");
 
     let mut core_workspace = hir::HirProgram::new();
-    core_workspace.add_package(std::rc::Rc::new(core));
+    core_workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(core)));
     let std_items = parser.parse_items_ast("pub use core::prelude::rust_2024::*;")?;
     let std_source = package_from_items_with_paths_as(
         PackageId::new("std"),
@@ -1537,7 +1539,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     );
 
     let mut workspace = (*std_lowerer.hir_program).clone();
-    workspace.add_package(std::rc::Rc::new(std));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(std)));
     let consumer_items = parser.parse_items_ast("pub struct Holder { value: Ok }")?;
     let consumer_source = package_from_items_as(PackageId::new("consumer"), consumer_items)?;
     let mut consumer_lowerer =
@@ -1677,7 +1679,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         .expect("dependency type");
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items =
         parser.parse_items_ast("pub struct Holder { value: dependency::api::PublicType }")?;
     let consumer_package = package_from_items(consumer_items)?;
@@ -1728,7 +1730,7 @@ fn lift_cross_package_intrinsic_call_from_its_resolved_definition() -> Result<()
     dependency.hir_exports = dependency_lowerer.exported_symbols();
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items = parser.parse_items_ast(
         "pub fn load(path: String) -> String { dependency::fs::read_to_string(path) }",
     )?;
@@ -1739,7 +1741,8 @@ fn lift_cross_package_intrinsic_call_from_its_resolved_definition() -> Result<()
     );
     let consumer = consumer_lowerer.transform_package(&consumer_source)?;
 
-    let lifted = HirToAstLifter::new(&consumer, Some(&workspace)).lift_items()?;
+    workspace.publish_package(consumer.clone());
+    let lifted = HirToAstLifter::new(&consumer, &workspace).lift_items()?;
     let ast::ItemKind::DefFunction(function) = lifted[0].kind() else {
         panic!("expected consumer function");
     };
@@ -1787,7 +1790,7 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         })
         .expect("bundled std Formatter");
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
 
     let consumer_items = parser.parse_items_ast(
         "pub struct Holder { formatter: std::fmt::Formatter, result: std::fmt::Result }",
@@ -1842,8 +1845,8 @@ fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()>
     std.hir_exports
         .insert("std::sync::Arc".to_string(), hir::Res::Def(arc_id.clone()));
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(alloc));
-    workspace.add_package(std::rc::Rc::new(std));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(alloc)));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(std)));
 
     let consumer_items =
         parser.parse_items_ast("pub struct Holder { value: std::sync::Arc<u8> }")?;
@@ -1894,7 +1897,7 @@ fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
     dependency.hir_exports = dependency_exports;
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items = parser.parse_items_ast(
         "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
     )?;
@@ -1941,7 +1944,7 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
     dependency.hir_exports = dependency_exports;
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items = parser.parse_items_ast(
         "pub struct Holder { error: skln_core::CoreError, result: skln_core::types::ChangesResult, node: skln_core::types::RefNode }",
     )?;
@@ -1989,7 +1992,7 @@ fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<(
     dependency.hir_exports = dependency_lowerer.exported_symbols();
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let consumer_items = parser.parse_items_ast(
         "pub struct Holder { error: skln_core::error::CoreError, result: skln_core::types::ChangesResult }",
     )?;
@@ -2459,7 +2462,7 @@ fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> 
         .expect("dependency trait associated constant");
 
     let mut workspace = hir::HirProgram::new();
-    workspace.add_package(std::rc::Rc::new(dependency));
+    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
     let workspace = std::rc::Rc::new(workspace);
     let consumer_items = parser
         .parse_items_ast("use dependency::Layout; fn read<T: Layout>() -> bool { T::DEFAULTED }")?;
@@ -2468,13 +2471,12 @@ fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> 
         AstToHirLowerer::new(workspace.clone(), hir::PackageId::new("consumer"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     assert!(!consumer.def_map.contains_key(&trait_def_id));
-    let dependency_trait = workspace
+    let dependency_item = workspace
         .item(trait_def_id)
-        .and_then(|item| match &item.kind {
-            hir::ItemKind::Trait(trait_def) => Some(trait_def),
-            _ => None,
-        })
         .expect("dependency trait remains in its owning package");
+    let hir::ItemKind::Trait(dependency_trait) = &dependency_item.kind else {
+        panic!("dependency definition is not a trait");
+    };
     let dependency_const = dependency_trait
         .items
         .iter()
@@ -3286,7 +3288,10 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             }
             hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => collect_paths(expr, out),
-            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::Trait(_) => {}
+            hir::ItemKind::Struct(_)
+            | hir::ItemKind::Enum(_)
+            | hir::ItemKind::Trait(_)
+            | hir::ItemKind::TypeAlias(_) => {}
         }
     }
 
