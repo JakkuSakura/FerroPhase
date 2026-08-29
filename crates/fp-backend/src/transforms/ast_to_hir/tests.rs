@@ -2520,7 +2520,6 @@ fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Res
         "bare `Foo` return type in a sibling module must resolve via the \
          prelude re-export — got unresolved path {ret_path:?}"
     );
-
     Ok(())
 }
 

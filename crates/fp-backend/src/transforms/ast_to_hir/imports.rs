@@ -171,15 +171,18 @@ impl AstToHirLowerer {
     }
 
     fn package_crate_root(&self) -> Vec<String> {
-        let package_root =
-            fp_core::ast::path::QualifiedPath::new(vec![hir::HirProgram::external_crate_name(
-                &self.package_id,
-            )]);
-        if self.package.module_tree.module_exists(&package_root) {
-            package_root.segments
-        } else {
-            Vec::new()
+        let root = hir::HirProgram::external_crate_name(&self.package_id);
+        for length in (1..=self.module_path.segments.len().min(2)).rev() {
+            let candidate = fp_core::ast::path::QualifiedPath::new(
+                self.module_path.segments[..length].to_vec(),
+            );
+            if candidate.segments.first().is_some_and(|segment| segment == &root)
+                && self.package.module_tree.module_exists(&candidate)
+            {
+                return candidate.segments;
+            }
         }
+        Vec::new()
     }
 
     /// Expand `use <prefix>::*;` into one `ImportBinding` per direct member
