@@ -188,6 +188,7 @@ impl PackageProvider for RustPackageProvider {
             metadata
                 .dependencies
                 .extend(workspace_path_dependencies(dir, &self.members));
+            metadata.dependencies.extend(registry_api_dependencies(dir));
         }
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
@@ -387,6 +388,49 @@ fn workspace_path_dependencies(
     result
 }
 
+/// Registry dependencies which have a declared portability surface. They are
+/// loaded as ordinary typed packages so calls resolve by definition identity
+/// before a target backend materializes them.
+fn external_api_dependency(name: &str, kind: DependencyKind) -> Option<DependencyDescriptor> {
+    matches!(name, "serde_json" | "toml" | "tokio").then(|| DependencyDescriptor {
+        package: name.to_owned(),
+        resolved_package_id: Some(PackageId::new(name)),
+        constraint: None,
+        kind,
+        features: Vec::new(),
+        optional: false,
+        target: Default::default(),
+    })
+}
+
+fn registry_api_dependencies(package_dir: &Path) -> Vec<DependencyDescriptor> {
+    let Ok(content) = std::fs::read_to_string(package_dir.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    [
+        ("dependencies", DependencyKind::Normal),
+        ("dev-dependencies", DependencyKind::Development),
+        ("build-dependencies", DependencyKind::Build),
+    ]
+    .into_iter()
+    .flat_map(|(table_name, kind)| {
+        manifest
+            .get(table_name)
+            .and_then(toml::Value::as_table)
+            .into_iter()
+            .flat_map(move |dependencies| {
+                let kind = kind.clone();
+                dependencies
+                    .keys()
+                    .filter_map(move |name| external_api_dependency(name, kind.clone()))
+            })
+    })
+    .collect()
+}
+
 fn cargo_package_name(package_dir: &Path) -> Option<String> {
     let content = std::fs::read_to_string(package_dir.join("Cargo.toml")).ok()?;
     let manifest = content.parse::<toml::Value>().ok()?;
@@ -565,6 +609,119 @@ fn implicit_rust_dependencies() -> Vec<DependencyDescriptor> {
 /// that fail to parse are skipped with a warning rather than failing the
 /// whole package load, so whatever subset *does* parse is still usable.
 pub struct RustStdProvider;
+
+/// Minimal typed declarations for registry crates whose calls are supported
+/// by target runtimes. This is metadata, not an emulation of the crates:
+/// their bodies are never lowered and the intrinsic identity carries the
+/// semantic contract to a backend.
+pub struct RustExternalApiProvider;
+
+const EXTERNAL_API_SOURCES: &[(&str, &str)] = &[
+    (
+        "serde_json",
+        r#"
+            pub struct Error;
+            #[intrinsic = "serde_json_from_str"]
+            pub fn from_str<T>(input: &str) -> Result<T, Error> { unreachable!() }
+            #[intrinsic = "serde_json_to_string"]
+            pub fn to_string<T>(value: &T) -> Result<String, Error> { unreachable!() }
+        "#,
+    ),
+    (
+        "toml",
+        r#"
+            pub mod de { pub struct Error; }
+            #[intrinsic = "toml_from_str"]
+            pub fn from_str<T>(input: &str) -> Result<T, de::Error> { unreachable!() }
+        "#,
+    ),
+    (
+        "tokio",
+        r#"
+            pub mod net {
+                pub struct TcpStream;
+                impl TcpStream {
+                    #[intrinsic = "tokio_tcp_connect"]
+                    pub async fn connect<A>(address: A) -> Result<TcpStream, std::io::Error> { unreachable!() }
+                    #[intrinsic = "tokio_tcp_write_all"]
+                    pub async fn write_all(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> { unreachable!() }
+                }
+            }
+            pub mod time {
+                #[intrinsic = "sleep"]
+                pub async fn sleep(duration: std::time::Duration) { unreachable!() }
+            }
+        "#,
+    ),
+];
+
+impl RustExternalApiProvider {
+    fn source_for(id: &PackageId) -> ProviderResult<&'static str> {
+        EXTERNAL_API_SOURCES
+            .iter()
+            .find_map(|(name, source)| (*name == id.as_str()).then_some(*source))
+            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+    }
+
+    fn package_source(id: &PackageId) -> ProviderResult<AstPackage> {
+        let source = Self::source_for(id)?;
+        let path = PathBuf::from(format!("<rust-external-api>/{}.rs", id.as_str()));
+        let parsed = RustFrontend::new()
+            .parse_file(source, &path)
+            .map_err(|error| {
+                ProviderError::other(format!("failed to parse {} API: {error}", id))
+            })?;
+        let mut items = Vec::new();
+        flatten_items(
+            &QualifiedPath::new(vec![id.as_str().to_owned()]),
+            &parsed.ast.items,
+            &mut items,
+        );
+        Ok(package_source_from_items(
+            id,
+            &items,
+            PackageMetadata::default(),
+        ))
+    }
+}
+
+impl PackageProvider for RustExternalApiProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(EXTERNAL_API_SOURCES
+            .iter()
+            .map(|(name, _)| PackageId::new(*name))
+            .collect())
+    }
+
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(Vec::new())
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        Self::source_for(id)?;
+        Ok(Arc::new(PackageDescriptor {
+            id: id.clone(),
+            name: id.as_str().to_owned(),
+            version: None,
+            manifest_path: VirtualPath::from_path(Path::new("<rust-external-api>/Cargo.toml")),
+            root: VirtualPath::from_path(Path::new("<rust-external-api>")),
+            metadata: PackageMetadata::default(),
+            modules: Vec::new(),
+        }))
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        Ok(())
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
+        Self::package_source(id)
+    }
+
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
+    }
+}
 
 impl RustStdProvider {
     fn dependencies_of(crate_name: &str) -> Vec<&'static str> {
@@ -1493,6 +1650,20 @@ mod provider_tests {
         assert_eq!(second.items[0].module_path, first.items[0].module_path);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_api_provider_declares_supported_registry_crates() {
+        let provider = RustExternalApiProvider;
+        for package in ["serde_json", "toml", "tokio"] {
+            let source = provider
+                .load_package_source(&PackageId::new(package))
+                .expect("supported registry API package");
+            assert!(
+                !source.items.is_empty(),
+                "{package} must expose typed portability declarations"
+            );
+        }
     }
 }
 

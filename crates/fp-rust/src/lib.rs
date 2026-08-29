@@ -5,4 +5,4 @@ pub mod provider;
 
 pub use frontend::RustFrontend;
 pub use normalizer::RustIntrinsicNormalizer;
-pub use provider::{RustPackageProvider, RustStdProvider};
+pub use provider::{RustExternalApiProvider, RustPackageProvider, RustStdProvider};

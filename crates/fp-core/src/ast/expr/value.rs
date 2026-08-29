@@ -1025,6 +1025,36 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
                 invoke.kwargs.clone(),
             ))
         }
+        CallKind::SerdeJsonFromStr | CallKind::SerdeJsonToString | CallKind::TomlFromStr => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                invoke.kwargs.clone(),
+            ))
+        }
+        CallKind::TokioTcpConnect => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                invoke.kwargs.clone(),
+            ))
+        }
+        CallKind::TokioTcpWriteAll => {
+            if invoke.args.len() != 2 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                invoke.args.clone(),
+                invoke.kwargs.clone(),
+            ))
+        }
         CallKind::Spawn => {
             if invoke.args.len() != 1 {
                 return None;

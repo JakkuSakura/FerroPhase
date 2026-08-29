@@ -186,6 +186,12 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 args,
             )),
             CallKind::FsRemoveDirAll => run_catching(runtime_method("deleteRecursively", args)),
+            CallKind::SerdeJsonFromStr => runtime_method("jsonFromString", args),
+            CallKind::SerdeJsonToString => runtime_method("jsonToString", args),
+            CallKind::TomlFromStr => runtime_method("tomlFromString", args),
+            CallKind::TokioTcpConnect => runtime_method("tcpConnect", args),
+            CallKind::TokioTcpWriteAll => runtime_method("tcpWriteAll", args),
+            CallKind::Sleep => runtime_method("sleep", args),
             _ => return Ok(None),
         };
         Ok(Some(replacement))

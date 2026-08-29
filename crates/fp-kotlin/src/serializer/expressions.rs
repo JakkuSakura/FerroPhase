@@ -300,16 +300,6 @@ impl KotlinEmitter {
                         if name == "std::env::current_dir" && inv.args.is_empty() {
                             return Ok("System.getProperty(\"user.dir\")".to_string());
                         }
-                        // Crates with no safe target-language equivalent (toml, serde_json,
-                        // tokio, ...) — render as an explicit stub instead of a broken
-                        // identifier reference. `TODO()` is typed `Nothing`, so it compiles
-                        // in any expression position.
-                        if let Some(pos) = name.rfind("::") {
-                            let prefix = name[..pos].replace("::", ".");
-                            if known_package(&prefix) == KnownPackage::Unsupported {
-                                return Ok(format!("TODO(\"unsupported: {}\")", name));
-                            }
-                        }
                         // Rewrite type prefix in function paths like `PathBuf::from` → `Path.of`
                         let mapped = map_kt_path(&name);
                         let args: Vec<String> = inv

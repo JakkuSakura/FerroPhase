@@ -431,9 +431,6 @@ fn collect_deps_from_item(item: &Item, deps: &mut BTreeSet<String>) {
                 && !path.starts_with("tracing")
                 && !path.starts_with("async_trait")
                 && !path.starts_with("anyhow")
-                && !path.starts_with("toml")
-                && !path.starts_with("serde_json")
-                && !path.starts_with("tokio")
             {
                 let pkg = path.split('.').next().unwrap_or(&path);
                 deps.insert(pkg.to_string());
@@ -1437,16 +1434,12 @@ fn known_package(path: &str) -> KnownPackage {
         p if p.starts_with("std.str") => StdStr,
         p if p.starts_with("std.option") => StdOption,
         p if p.starts_with("std.time") => StdSync, // skip Duration/Instant in expressions
-        // Dot-boundary match so "serde_json" isn't misclassified as the "serde" derive crate.
         p if p == "serde" || p.starts_with("serde.") => Serde,
         p if p.starts_with("winnow") => Winnow,
         p if p.starts_with("thiserror") => ThisError,
         p if p.starts_with("tracing") => Tracing,
         p if p.starts_with("async_trait") => AsyncTrait,
         p if p.starts_with("anyhow") => Anyhow,
-        p if p.starts_with("toml") || p.starts_with("serde_json") || p.starts_with("tokio") => {
-            Unsupported
-        }
         _ => Other,
     }
 }

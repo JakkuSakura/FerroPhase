@@ -163,6 +163,20 @@ mod tests {
         };
         assert_eq!(path.segments.last().expect("Result segment").args.len(), 1);
     }
+
+    #[test]
+    fn backend_materializes_process_types_to_runtime_types() {
+        let mut ty = Ty::name(Name::path(Path::plain(vec![Ident::new("Command")])));
+        materialize_kotlin_ty(&mut ty);
+
+        let Ty::Expr(expr) = ty else {
+            panic!("expected expression type");
+        };
+        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+            panic!("expected runtime-qualified type");
+        };
+        assert_eq!(path.join("."), "RustKotlinRuntime.Command");
+    }
 }
 
 impl TargetBackend for KotlinBackend {

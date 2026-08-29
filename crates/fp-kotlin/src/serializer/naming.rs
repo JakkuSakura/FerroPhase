@@ -171,8 +171,7 @@ pub(super) fn map_name_to_kt(name: &str) -> String {
         | KnownPackage::ThisError
         | KnownPackage::Tracing
         | KnownPackage::AsyncTrait
-        | KnownPackage::Anyhow
-        | KnownPackage::Unsupported => return "Any".into(),
+        | KnownPackage::Anyhow => return "Any".into(),
         _ => {}
     }
 
