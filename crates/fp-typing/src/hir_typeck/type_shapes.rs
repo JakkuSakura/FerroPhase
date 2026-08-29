@@ -146,13 +146,12 @@ fn const_contains_error(constant: &ty::ConstKind) -> bool {
     }
 }
 
-/// The same erased shape a plain `str`/string literal already resolves to
-/// (`literal_ty`'s `Lit::Str` arm) — used by literal/union string type
-/// resolution so every one of those erases identically.
+/// The primitive `str` type shared by string literals and literal-string
+/// annotations. It remains distinct from `[u8]` despite their similar
+/// runtime representation, so inherent method lookup sees the same method
+/// sets as rustc.
 pub(super) fn str_ty() -> Ty {
-    Ty {
-        kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
-    }
+    Ty { kind: TyKind::Str }
 }
 
 /// The `hir::HirPackage::impls_by_shape` bucket key(s) a *checked* receiver
@@ -161,14 +160,6 @@ pub(super) fn str_ty() -> Ty {
 /// impl's own (unchecked) self-type `TypeExprKind`. Both sides must agree
 /// on the same key for a given shape, or a real impl silently becomes
 /// unreachable from method/associated-item candidate search.
-///
-/// Returns more than one key only for the one representational collision
-/// in this compiler's checked-`Ty` system: `str` and `[u8]`-ish slices
-/// both check to the identical `TyKind::Slice(Box::new(Ty::uint(U8)))`
-/// shape (see `primitive_ty`'s own `TypePrimitive::String` arm) — there is
-/// no way to tell them apart once a value has reached this checked `Ty`
-/// form, so both the `"[]"` and `"str"` buckets are checked rather than
-/// risking one of them going silently unreachable.
 ///
 /// Returns `None` for receiver kinds this compiler has no concrete-impl
 /// dispatch shape for at all (closures, generators, trait objects, `dyn`
@@ -205,7 +196,8 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
             ty::FloatTy::F64 => "f64",
             ty::FloatTy::F128 => "f128",
         }],
-        TyKind::Slice(_) => vec!["[]", "str"],
+        TyKind::Str => vec!["str"],
+        TyKind::Slice(_) => vec!["[]"],
         // An array reaches slice methods through the explicit built-in
         // array-to-slice adjustment in the method lookup chain. Keep the
         // index faithful to the receiver's actual simplified type so an
@@ -295,9 +287,7 @@ pub(super) fn primitive_path_ty(name: &str) -> Option<Ty> {
         "f32" => Ty::float(ty::FloatTy::F32),
         "f64" => Ty::float(ty::FloatTy::F64),
         "f128" => Ty::float(ty::FloatTy::F128),
-        "str" => Ty {
-            kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
-        },
+        "str" => str_ty(),
         _ => return None,
     })
 }
@@ -341,9 +331,7 @@ pub(super) fn primitive_ty(primitive: TypePrimitive) -> Ty {
             DecimalType::F32 => ty::FloatTy::F32,
             _ => ty::FloatTy::F64,
         }),
-        TypePrimitive::String => Ty {
-            kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
-        },
+        TypePrimitive::String => str_ty(),
         TypePrimitive::List => Ty {
             kind: TyKind::Slice(Box::new(Ty::never())),
         },

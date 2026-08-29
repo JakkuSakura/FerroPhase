@@ -223,9 +223,19 @@ fn records_binding_pattern_type() {
 }
 
 fn str_shaped_ty() -> Ty {
-    Ty {
-        kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
-    }
+    Ty { kind: TyKind::Str }
+}
+
+#[test]
+fn string_and_byte_slice_use_distinct_method_lookup_buckets() {
+    let string_keys =
+        type_shapes::ty_shape_keys(&TyKind::Str).expect("str has a method lookup shape");
+    let byte_slice_keys =
+        type_shapes::ty_shape_keys(&TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))))
+            .expect("[u8] has a method lookup shape");
+
+    assert_eq!(string_keys, vec!["str"]);
+    assert_eq!(byte_slice_keys, vec!["[]"]);
 }
 
 /// Wraps a bare `hir::TypeExpr` in `let value: <ty>;` (no initializer)

@@ -27,6 +27,14 @@ pub enum TyKind {
     /// A primitive floating-point type. For example, `f64`.
     Float(FloatTy),
 
+    /// The UTF-8 string slice primitive, written as `str`.
+    ///
+    /// `str` is a distinct dynamically sized type, not a `[u8]` slice.
+    /// Keeping that distinction in checked HIR is required for inherent
+    /// method lookup: the two types share a representation but expose
+    /// different standard-library method sets.
+    Str,
+
     /// Algebraic data types (ADT). For example: structures, enumerations and unions.
     Adt(AdtDef, SubstsRef),
 
@@ -757,6 +765,7 @@ impl fmt::Display for Ty {
             TyKind::Int(int_ty) => write!(f, "{}", int_ty),
             TyKind::Uint(uint_ty) => write!(f, "{}", uint_ty),
             TyKind::Float(float_ty) => write!(f, "{}", float_ty),
+            TyKind::Str => write!(f, "str"),
             TyKind::Never => write!(f, "!"),
             TyKind::Tuple(tys) => {
                 write!(f, "(")?;
