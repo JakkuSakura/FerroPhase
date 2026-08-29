@@ -935,9 +935,12 @@ impl<'a> BodyBuilder<'a> {
         let resolved_call_def = self
             .lowering
             .typeck_method_resolution(expr.hir_id.clone())
-            .or_else(|| self.lowering.typeck_method_resolution(callee.hir_id.clone()));
+            .or_else(|| {
+                self.lowering
+                    .typeck_method_resolution(callee.hir_id.clone())
+            });
         if let Some(def_id) = resolved_call_def {
-            if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id).copied() {
+            if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id) {
                 if self.lower_resolved_intrinsic_call(
                     expr,
                     kind,
@@ -950,8 +953,7 @@ impl<'a> BodyBuilder<'a> {
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(hir::Res::Def(def_id)) = &path.res {
-                if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()).copied()
-                {
+                if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
                     if self.lower_resolved_intrinsic_call(
                         expr,
                         kind,
@@ -3227,11 +3229,10 @@ impl<'a> BodyBuilder<'a> {
                         .lowering
                         .hir_program
                         .type_alias_target(def_id.clone())
-                        .map(|target| &target.kind)
+                        .map(|target| target.kind)
                     {
-                        if let Some(Value::Type(value)) = self
-                            .lowering
-                            .typeck_const_block_value(const_def_id.clone())
+                        if let Some(Value::Type(value)) =
+                            self.lowering.typeck_const_block_value(const_def_id.clone())
                         {
                             let ty = HirToMirLowerer::type_ty();
                             let local_id = self.allocate_temp(ty.clone(), expr.span);

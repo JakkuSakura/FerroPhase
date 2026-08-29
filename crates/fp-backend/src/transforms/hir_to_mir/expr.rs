@@ -383,16 +383,16 @@ impl HirToMirLowerer {
     /// derived from them immediately; if the package isn't already in
     /// `hir_program` it is inserted as a fresh empty package, so the
     /// current package is always a member of `hir_program` and the lookup
-    /// methods can query `hir_program` alone.
+    /// methods query the already-installed HIR package directly.
     pub fn new(
-        mut hir_program: std::rc::Rc<hir::HirProgram>,
+        hir_program: std::rc::Rc<hir::HirProgram>,
         package_id: hir::PackageId,
         mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     ) -> Self {
-        if !hir_program.packages.contains_key(&package_id) {
-            let fresh = std::rc::Rc::new(hir::HirPackage::new(package_id.clone()));
-            std::rc::Rc::make_mut(&mut hir_program).add_package(fresh);
-        }
+        assert!(
+            hir_program.packages.contains_key(&package_id),
+            "MIR lowering requires installed HIR package `{package_id}`"
+        );
         Self {
             diagnostics: DiagnosticManager::new(),
             mir_package,
@@ -454,14 +454,14 @@ impl HirToMirLowerer {
     /// which both insert it), so there is no separate "current package
     /// first" fallback anymore. Replaces every old direct
     /// `self.hir_def_map.get(def_id)` read.
-    pub(crate) fn hir_item(&self, def_id: hir::DefId) -> Option<&hir::Item> {
+    pub(crate) fn hir_item(&self, def_id: hir::DefId) -> Option<hir::Item> {
         self.hir_program.item(def_id)
     }
 
     /// Same dispatch as `hir_item`, for `def_paths` — used by
     /// `def_path_str`, which every `register_struct`/`register_enum` call
     /// now goes through instead of being handed a whole `def_paths` map.
-    pub(crate) fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
+    pub(crate) fn hir_def_path(&self, def_id: hir::DefId) -> Option<hir::DefPath> {
         self.hir_program.def_path(def_id)
     }
 
@@ -469,18 +469,18 @@ impl HirToMirLowerer {
     /// the current package itself) — replaces every old
     /// `self.hir_def_map.values()`/`.iter()` full scan (used to build a
     /// one-time reverse index; never a per-lookup cost).
-    pub(crate) fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
-        self.hir_program
-            .packages
-            .values()
-            .flat_map(|package| package.all_defs())
+    pub(crate) fn hir_all_items(&self) -> impl Iterator<Item = hir::Item> {
+        self.hir_program.all_items()
     }
 
-    pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
-        let hir_program = std::rc::Rc::new(hir_program);
-        self.current_package_id = hir_program.id.clone();
-        std::rc::Rc::make_mut(&mut self.hir_program).add_package(hir_program.clone());
-        let program = self.lower_program(&hir_program)?;
+    pub fn transform(&mut self, package_id: hir::PackageId) -> Result<mir::MirCodeUnit> {
+        self.current_package_id = package_id.clone();
+        let hir_package = self
+            .hir_program
+            .package_rc(&package_id)
+            .expect("MIR lowering requires installed HIR package");
+        let hir_package = hir_package.borrow().clone();
+        let program = self.lower_program(&hir_package)?;
         if self.diagnostics.has_errors() {
             return Err(fp_core::error::Error::from(
                 "internal compiler error: HIR-to-MIR lowering reported an error",
@@ -497,9 +497,9 @@ impl HirToMirLowerer {
     /// every recursive expression operation an artificial future.
     pub async fn transform_async(
         &mut self,
-        hir_program: hir::HirPackage,
+        package_id: hir::PackageId,
     ) -> Result<mir::MirCodeUnit> {
-        self.transform(hir_program)
+        self.transform(package_id)
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
@@ -571,15 +571,14 @@ impl HirToMirLowerer {
                     hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
                 )
             })
-            .cloned()
             .collect();
         for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id.clone(), def, item.span);
+                    self.register_struct(item.def_id.clone(), &def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id.clone(), def, item.span);
+                    self.register_enum(item.def_id.clone(), &def, item.span);
                 }
                 _ => {}
             }
@@ -591,15 +590,15 @@ impl HirToMirLowerer {
     /// `register_all_dependency_adts`'s eager sweep — reached only when a
     /// `def_id` isn't already registered locally.
     pub(crate) fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
-        let Some(item) = self.hir_item(def_id.clone()).cloned() else {
+        let Some(item) = self.hir_item(def_id.clone()) else {
             return;
         };
         match &item.kind {
             hir::ItemKind::Struct(strukt) => {
-                self.register_struct(def_id, strukt, span);
+                self.register_struct(def_id, &strukt, span);
             }
             hir::ItemKind::Enum(enm) => {
-                self.register_enum(def_id, enm, span);
+                self.register_enum(def_id, &enm, span);
             }
             _ => {}
         }
@@ -981,7 +980,8 @@ impl HirToMirLowerer {
 
         for item in &items {
             match &item.kind {
-                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {}
+                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {
+                }
                 hir::ItemKind::Const(const_item) => {
                     let ty = self.lower_type_expr(&const_item.ty);
                     if const_item.is_host {
@@ -1082,7 +1082,7 @@ impl HirToMirLowerer {
     /// calling `&mut self` methods (`ensure_item_lowered`) can hold this
     /// handle instead of re-fetching/cloning a whole `HirPackage` out of
     /// `CompilerState` separately.
-    pub fn current_package_handle(&self) -> std::rc::Rc<hir::HirPackage> {
+    pub fn current_package_handle(&self) -> std::rc::Rc<std::cell::RefCell<hir::HirPackage>> {
         self.hir_program
             .package_rc(&self.current_package_id)
             .expect("current package is always a member of hir_program")
@@ -1107,6 +1107,7 @@ impl HirToMirLowerer {
     /// site, lazily triggers `ensure_item_lowered` on a cache miss.
     pub fn register_package_items(&mut self) {
         let current_package = self.current_package_handle();
+        let current_package = current_package.borrow().clone();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `lower_program`/`transform_comptime_request`.
         self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
@@ -1153,7 +1154,7 @@ impl HirToMirLowerer {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }
-        let Some(item) = self.hir_item(def_id.clone()).cloned() else {
+        let Some(item) = self.hir_item(def_id.clone()) else {
             // Not a top-level item at all — check whether it's a
             // `const { .. }` block's own synthetic `DefId` instead (see
             // `ensure_const_block_lowered`'s doc comment). Nothing else
@@ -1196,14 +1197,14 @@ impl HirToMirLowerer {
                     // as inline constants — already registered by
                     // `register_package_items`.
                 } else {
-                    let mir_item = self.lower_const(def_id, const_item)?;
+                    let mir_item = self.lower_const(def_id, &const_item)?;
                     self.extra_items.push(mir_item);
                 }
             }
             hir::ItemKind::Function(function) => {
                 if !function.sig.generics.params.is_empty() {
                     self.lowered_items.insert(def_id.clone());
-                    self.register_generic_function(def_id, function);
+                    self.register_generic_function(def_id, &function);
                 } else {
                     self.ensure_function_lowered(def_id)?;
                 }
@@ -1218,7 +1219,7 @@ impl HirToMirLowerer {
             }
             hir::ItemKind::Query(query) => {
                 self.lowered_items.insert(def_id);
-                let mir_item = self.lower_query(&item, query);
+                let mir_item = self.lower_query(&item, &query);
                 self.extra_items.push(mir_item);
             }
         }
@@ -1244,8 +1245,9 @@ impl HirToMirLowerer {
         }
         let Some(block) = self
             .hir_program
-            .package(&def_id.package_id)
+            .package_rc(&def_id.package_id)
             .ok_or_else(|| crate::error::optimization_error("missing HIR package"))?
+            .borrow()
             .const_block_def(def_id.clone())
         else {
             return Ok(());
@@ -1259,7 +1261,8 @@ impl HirToMirLowerer {
         };
         let name = hir::Symbol::new(format!(
             "__const_block_{}_{}",
-            def_id.package_id.as_str(), def_id.index
+            def_id.package_id.as_str(),
+            def_id.index
         ));
         let konst = hir::Const {
             name: name.clone(),
@@ -3406,7 +3409,7 @@ impl HirToMirLowerer {
         let Some(owning_def_id) = self.hir_program.member_owner(def_id.clone()) else {
             return;
         };
-        let Some(owning_item) = self.hir_program.item(owning_def_id).cloned() else {
+        let Some(owning_item) = self.hir_program.item(owning_def_id) else {
             return;
         };
         let hir::ItemKind::Impl(impl_block) = &owning_item.kind else {
@@ -3428,7 +3431,7 @@ impl HirToMirLowerer {
         self.register_impl_signature_for_item(
             struct_name.as_deref(),
             method_context.as_ref(),
-            impl_block,
+            &impl_block,
             &impl_item,
         );
     }

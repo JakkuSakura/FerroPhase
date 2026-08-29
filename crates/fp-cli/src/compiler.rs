@@ -340,13 +340,6 @@ fn compile_source_file(
                     .compile_package_module_native(&package_id, &module_path, "main"),
             )
             .map_err(|err| CliError::Compilation(err.to_string()))?;
-        executor
-            .run(
-                session
-                    .driver()
-                    .evaluate_package_comptime_constants(&package_id),
-            )
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     Ok(session.into_driver())
 }
@@ -360,7 +353,7 @@ pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
         .state
         .borrow()
         .all_packages()
-        .flat_map(|package| package.diagnostics.get_diagnostics())
+        .flat_map(|package| package.borrow().diagnostics.get_diagnostics())
         .collect();
     emit_typing_diagnostics(&diagnostics)
 }
@@ -412,13 +405,6 @@ pub fn compile_file_to_lir_bundle(
         &executor,
         PipelineMode::Native,
     )?;
-    executor
-        .run(driver.evaluate_package_comptime_constants(&PackageId::new(
-            identity.path.path().head().ok_or_else(|| {
-                CliError::Compilation("source file has no package identity".to_string())
-            })?,
-        )))
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
     drain_driver(&mut driver)?;
     let lowered = LoweredProgram {
         driver,

@@ -10,6 +10,7 @@ impl AstToHirLowerer {
             .package
             .def_map
             .get(def_id)
+            .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()))?;
         let hir::ItemKind::Enum(enum_def) = &item.kind else {
             return None;
@@ -263,7 +264,7 @@ impl AstToHirLowerer {
             // doing so would change shadowing and module-relative lookup.
             let is_extern_crate_root = candidate.segments.first().is_some_and(|root| {
                 self.hir_program.packages.values().any(|package| {
-                    hir::HirProgram::external_crate_name(&package.id) == root.as_str()
+                    hir::HirProgram::external_crate_name(&package.borrow().id) == root.as_str()
                 })
             });
             if is_extern_crate_root
@@ -797,7 +798,9 @@ impl AstToHirLowerer {
                         if type_paths.is_empty() {
                             {
                                 for package in self.hir_program.packages.values() {
-                                    if let Some(def_path) = package.def_paths.get(&type_def_id) {
+                                    if let Some(def_path) =
+                                        package.borrow().def_paths.get(&type_def_id)
+                                    {
                                         type_paths.push(def_path.join("::"));
                                     }
                                 }

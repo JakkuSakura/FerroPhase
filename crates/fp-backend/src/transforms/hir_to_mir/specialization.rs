@@ -21,7 +21,7 @@ impl HirToMirLowerer {
         // marking it here on a miss would permanently block
         // `ensure_method_lowered` from ever getting a real chance at the
         // same `def_id` afterwards.
-        let Some(item) = self.hir_item(def_id.clone()).cloned() else {
+        let Some(item) = self.hir_item(def_id.clone()) else {
             return Ok(());
         };
         let hir::ItemKind::Function(function) = &item.kind else {

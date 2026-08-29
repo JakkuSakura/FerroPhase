@@ -20,10 +20,9 @@ fn hid(index: u32) -> hir::HirId {
 async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
-) -> Result<Rc<hir::HirPackage>> {
-    let current_package = Rc::new(package);
+) -> Result<Rc<RefCell<hir::HirPackage>>> {
     let mut program = hir::HirProgram::new();
-    program.add_package(current_package.clone());
+    let current_package = program.add_package(package);
     let checker = HirTypeChecker::new(Rc::new(program), current_package, None, executor);
     let item_ids: Vec<_> = checker
         .borrow()
@@ -136,11 +135,14 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
     assert_eq!(
-        results.const_type(a_def_id),
+        results.borrow().const_type(a_def_id),
         Some(Ty::int(ty::IntTy::I64)),
         "forward-referenced const B's type must resolve, not fall back to error_ty"
     );
-    assert_eq!(results.const_type(b_def_id), Some(Ty::int(ty::IntTy::I64)));
+    assert_eq!(
+        results.borrow().const_type(b_def_id),
+        Some(Ty::int(ty::IntTy::I64))
+    );
 }
 
 #[test]
@@ -171,7 +173,10 @@ fn records_literal_type_by_hir_id() {
     let results = executor
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
-    assert_eq!(results.expr_type(hid(7)), Some(Ty::int(ty::IntTy::I64)));
+    assert_eq!(
+        results.borrow().expr_type(hid(7)),
+        Some(Ty::int(ty::IntTy::I64))
+    );
 }
 
 #[test]
@@ -211,7 +216,10 @@ fn records_binding_pattern_type() {
     let results = executor
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
-    assert_eq!(results.pat_type(hid(8)), Some(Ty::int(ty::IntTy::I64)));
+    assert_eq!(
+        results.borrow().pat_type(hid(8)),
+        Some(Ty::int(ty::IntTy::I64))
+    );
 }
 
 fn str_shaped_ty() -> Ty {
@@ -265,7 +273,7 @@ fn string_literal_type_resolves_to_str() {
     let results = executor
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
-    assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
+    assert_eq!(results.borrow().pat_type(hid(8)), Some(str_shaped_ty()));
 }
 
 #[test]
@@ -287,7 +295,7 @@ fn union_of_string_literal_types_resolves_to_str() {
     let results = executor
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
-    assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
+    assert_eq!(results.borrow().pat_type(hid(8)), Some(str_shaped_ty()));
 }
 
 /// A union of two *non*-literal types (e.g. two primitives) must keep
@@ -313,7 +321,7 @@ fn union_of_non_literal_types_still_errors() {
     let results = executor
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
-    assert_eq!(results.pat_type(hid(8)), Some(Ty::error()));
+    assert_eq!(results.borrow().pat_type(hid(8)), Some(Ty::error()));
 }
 
 /// `f16`/`f128` are real, stabilized Rust primitive float types (same
@@ -386,12 +394,12 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
         .run(typecheck_program(program, executor.clone()))
         .expect("HIR type check");
     assert_eq!(
-        results.pat_type(hid(11)),
+        results.borrow().pat_type(hid(11)),
         Some(Ty::float(ty::FloatTy::F16)),
         "bare `f16` type path must resolve to the f16 primitive, not an unresolved-path error type"
     );
     assert_eq!(
-        results.pat_type(hid(21)),
+        results.borrow().pat_type(hid(21)),
         Some(Ty::float(ty::FloatTy::F128)),
         "bare `f128` type path must resolve to the f128 primitive, not an unresolved-path error type"
     );
@@ -401,9 +409,9 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
 fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
         Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
-    let package = Rc::new(hir::HirPackage::new(test_pkg()));
+    let package = hir::HirPackage::new(test_pkg());
     let mut program = hir::HirProgram::new();
-    program.add_package(package.clone());
+    let package = program.add_package(package);
     let checker = HirTypeChecker::new(
         Rc::new(program),
         package,

@@ -1017,6 +1017,7 @@ impl AstToHirLowerer {
         self.package
             .def_map
             .get(def_id)
+            .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()))
             .is_some_and(|item| matches!(item.kind, hir::ItemKind::Trait(_)))
     }
@@ -1060,7 +1061,7 @@ impl AstToHirLowerer {
             return Some(op);
         }
         for package in self.hir_program.packages.values() {
-            if let Some(op) = package.op_defs.get(&def_id).cloned() {
+            if let Some(op) = package.borrow().op_defs.get(&def_id).cloned() {
                 return Some(op);
             }
         }
@@ -2111,8 +2112,7 @@ impl AstToHirLowerer {
                         }),
                         span: item.span(),
                     };
-                    self.program_def_map
-                        .insert(def_id.clone(), alias.clone());
+                    self.program_def_map.insert(def_id.clone(), alias.clone());
                     self.current_value_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
                     self.current_type_scope()
@@ -3123,7 +3123,10 @@ impl AstToHirLowerer {
                 // well as type-producing macros such as `clone_struct!`;
                 // expression lowering normalizes the latter before their
                 // comptime body is recorded.
-                if matches!(expr.kind(), ast::ExprKind::IntrinsicCall(_) | ast::ExprKind::Macro(_)) {
+                if matches!(
+                    expr.kind(),
+                    ast::ExprKind::IntrinsicCall(_) | ast::ExprKind::Macro(_)
+                ) {
                     let body = Box::new(self.transform_expr_to_hir(expr)?);
                     let def_id = self.next_def_id();
                     let hir_id = self.next_id();

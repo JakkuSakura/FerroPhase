@@ -966,7 +966,9 @@ impl<'a> BodyBuilder<'a> {
                             let operands = call
                                 .callargs
                                 .iter()
-                                .map(|arg| self.lower_operand(&arg.value, None).map(|arg| arg.operand))
+                                .map(|arg| {
+                                    self.lower_operand(&arg.value, None).map(|arg| arg.operand)
+                                })
                                 .collect::<Result<Vec<_>>>()?;
                             self.push_statement(mir::Statement {
                                 source_info: expr.span,
@@ -1022,8 +1024,7 @@ impl<'a> BodyBuilder<'a> {
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
-                    if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()).copied()
-                    {
+                    if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
                         let mut intrinsic_args = Vec::with_capacity(arg_values.len() + 1);
                         intrinsic_args.push(receiver.as_ref());
                         intrinsic_args.extend(arg_values.iter().copied());
@@ -2141,9 +2142,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                let Some(def_id) = self
-                    .lowering
-                    .typeck_method_resolution(expr.hir_id.clone())
+                let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone())
                 else {
                     self.lowering
                         .emit_error(expr.span, "method call has no resolved definition");

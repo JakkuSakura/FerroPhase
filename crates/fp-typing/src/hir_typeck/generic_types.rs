@@ -239,8 +239,9 @@ impl HirTypeChecker {
             // carries its owning `package_id`.
             None => self
                 .program_rc()
-                .package(&def_id.package_id)
+                .package_rc(&def_id.package_id)
                 .and_then(|package| {
+                    let package = package.borrow();
                     let impl_def_id = package.impl_method_item_index.get(&def_id)?;
                     let item = package.def_map.get(impl_def_id)?;
                     let hir::ItemKind::Impl(impl_item) = &item.kind else {
@@ -1306,7 +1307,7 @@ impl HirTypeChecker {
                         },
                         _ => None,
                     })
-                    .and_then(|item| match &item.kind {
+                    .and_then(|item| match item.kind {
                         hir::ItemKind::Trait(trait_def) => Some(trait_def),
                         _ => None,
                     })

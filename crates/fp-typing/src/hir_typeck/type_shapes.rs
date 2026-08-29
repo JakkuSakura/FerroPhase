@@ -234,7 +234,7 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
 pub(super) fn shape_and_blanket_candidates<'a>(
     program: &'a hir::HirProgram,
     receiver_kind: &TyKind,
-) -> Box<dyn Iterator<Item = &'a hir::Item> + 'a> {
+) -> Box<dyn Iterator<Item = hir::Item> + 'a> {
     if matches!(receiver_kind, TyKind::Infer(_)) {
         // An inference variable has no dispatch shape yet. Keep the
         // obligation open and let the structural receiver matcher reject
@@ -264,7 +264,7 @@ pub(super) fn shape_and_blanket_candidates<'a>(
 pub(super) fn method_candidates<'a>(
     program: &'a hir::HirProgram,
     receiver_kind: &TyKind,
-) -> Box<dyn Iterator<Item = &'a hir::Item> + 'a> {
+) -> Box<dyn Iterator<Item = hir::Item> + 'a> {
     match receiver_kind {
         TyKind::Adt(receiver, _) => Box::new(
             program

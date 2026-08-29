@@ -10,16 +10,16 @@ use fp_typing::ComptimeResolver;
 use crate::error::CompilerDriverError;
 
 pub struct CompilerState {
-    /// Every package's own HIR published so far this session — mirrors
+    /// Every package's own installed HIR in this session — mirrors
     /// `mir_program`/`lir_program` below; keyed internally by `hir::PackageId`
     /// (see `HirProgram`'s own shape), not the compiler's surface
     /// `ast::package::PackageId`, since a `hir::Package`'s identity is
     /// always the former. Typed results (expr/pat types, resolutions,
-    /// diagnostics, ...) live directly on each published `HirPackage` —
+    /// diagnostics, ...) live directly on each installed `HirPackage` —
     /// there's no separate typed-results table to keep in sync. `Rc`-wrapped
     /// so callers that need their own handle onto the whole program
     /// (`HirToMirLowerer::new`, `hir_program_rc`) get a cheap pointer clone
-    /// instead of deep-cloning every published package's HIR on every call.
+    /// instead of deep-cloning every installed package's HIR on every call.
     hir_program: Rc<hir::HirProgram>,
     /// Every package's MIR content produced so far this session, one
     /// `mir::MirCodeUnit` per top-level `DefId` (see `mir::MirPackage`'s
@@ -136,10 +136,14 @@ impl CompilerState {
         self.bytecode_comptime
     }
 
-    /// Publishes `package` under its own `id` — `HirProgram::add_package`
-    /// already keys by that, so no separate id parameter is needed.
-    pub fn insert_hir(&mut self, package: Rc<hir::HirPackage>) {
-        Rc::make_mut(&mut self.hir_program).add_package(package);
+    /// Installs source HIR once before resolution and type checking begin.
+    /// Later stages mutate this same package cell; they never install a
+    /// replacement package.
+    pub fn install_hir_package(
+        &mut self,
+        package: hir::HirPackage,
+    ) -> Rc<RefCell<hir::HirPackage>> {
+        Rc::make_mut(&mut self.hir_program).add_package(package)
     }
 
     /// Records `def_id`'s own lowered content — the only way `mir_program`
@@ -252,7 +256,7 @@ impl CompilerState {
     /// Cheap `Rc` clone of the whole session's `hir::HirProgram` — what
     /// `HirToMirLowerer::new`/`AstToHirLowerer::new` need their own handle
     /// onto (both resolve the current package straight out of it), instead
-    /// of deep-cloning every published package's HIR on every lowering call.
+    /// of deep-cloning every installed package's HIR on every lowering call.
     pub fn hir_program_rc(&self) -> Rc<hir::HirProgram> {
         self.hir_program.clone()
     }
@@ -295,22 +299,17 @@ impl CompilerState {
 
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {
         self.hir_program
-            .package(&package_id)
-            .cloned()
+            .package_rc(&package_id)
+            .map(|package| package.borrow().clone())
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
-    /// Same package `hir` reads, but the same shared `Rc<hir::HirPackage>`
-    /// already published in `hir_program` — not a deep clone of it. A
-    /// caller that only needs to record something onto one of `HirPackage`'s
-    /// own interior-mutable fields (e.g. `record_const_block_value`) can
-    /// just call straight through this `Rc`; the change is visible to
-    /// everyone already holding it, with no separate write-back
-    /// (`insert_hir`) step needed afterward.
+    /// The installed mutable HIR package. Every semantic cache is
+    /// recorded through this cell; no stage writes a replacement package.
     pub fn hir_package_rc(
         &self,
         package_id: hir::PackageId,
-    ) -> Result<Rc<hir::HirPackage>, CompilerDriverError> {
+    ) -> Result<Rc<RefCell<hir::HirPackage>>, CompilerDriverError> {
         self.hir_program
             .package_rc(&package_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
@@ -320,7 +319,7 @@ impl CompilerState {
     /// report typing diagnostics, which live directly on each package
     /// (see `hir::HirPackage::diagnostics`'s doc comment), not on the
     /// driver's scratch, per-package `TypingShared`.
-    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<hir::HirPackage>> {
+    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<RefCell<hir::HirPackage>>> {
         self.hir_program.packages.values()
     }
 }

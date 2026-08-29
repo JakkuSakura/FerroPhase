@@ -7,10 +7,10 @@ use fp_core::ast::{
     ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect,
     ExprSelectType, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
     ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemDefType, ItemKind, Name, Path, Pattern,
-    PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct,
-    PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference,
-    TypeSlice, TypeStruct, TypeTuple, Value,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemDefType, ItemKind, Name, Path,
+    Pattern, PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple,
+    PatternTupleStruct, PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum,
+    TypeFunction, TypeReference, TypeSlice, TypeStruct, TypeTuple, Value,
 };
 use fp_core::error::Result;
 use fp_core::hir;
@@ -259,7 +259,7 @@ impl<'a> HirToAstLifter<'a> {
             let referenced = work
                 .into_iter()
                 .filter(|def_id| *def_id != item.def_id)
-                .filter_map(|def_id| self.def_path_for(&def_id).cloned())
+                .filter_map(|def_id| self.def_path_for(&def_id))
                 .collect::<Vec<_>>();
             result.insert(path.clone(), referenced);
         }
@@ -1416,11 +1416,8 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let name = self
-                        .def_path_for(&adt.did)?
-                        .segments
-                        .last()?
-                        .as_str();
+                    let def_path = self.def_path_for(&adt.did)?;
+                    let name = def_path.segments.last()?.as_str();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
                         Ident::new(format!("{}<{}>", name, args.join(", "))),
                     ])))))
@@ -1463,11 +1460,8 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let name = self
-                    .def_path_for(&adt.did)?
-                    .segments
-                    .last()?
-                    .as_str();
+                let def_path = self.def_path_for(&adt.did)?;
+                let name = def_path.segments.last()?.as_str();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1527,8 +1521,7 @@ impl<'a> HirToAstLifter<'a> {
             TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
                 hir::ty::ExistentialPredicate::Trait(trait_ref) => self
                     .def_path_for(&trait_ref.def_id)
-                    .and_then(|path| path.segments.last())
-                    .map(|s| s.as_str().to_string()),
+                    .and_then(|path| path.segments.last().map(|s| s.as_str().to_string())),
                 _ => None,
             }),
             _ => None,
@@ -1546,8 +1539,8 @@ impl<'a> HirToAstLifter<'a> {
     /// Dependency HIR may intentionally contain only exported metadata. A
     /// lifted root item still needs those `DefPath`s to spell inferred types
     /// and collect imports, but it must not require dependency bodies.
-    fn def_path_for(&self, def_id: &DefId) -> Option<&hir::DefPath> {
-        self.program.def_paths.get(def_id).or_else(|| {
+    fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
+        self.program.def_paths.get(def_id).cloned().or_else(|| {
             self.hir_program
                 .and_then(|program| program.def_path(def_id.clone()))
         })

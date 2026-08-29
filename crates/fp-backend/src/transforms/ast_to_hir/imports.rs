@@ -171,9 +171,10 @@ impl AstToHirLowerer {
     }
 
     fn package_crate_root(&self) -> Vec<String> {
-        let package_root = fp_core::ast::path::QualifiedPath::new(vec![
-            hir::HirProgram::external_crate_name(&self.package_id),
-        ]);
+        let package_root =
+            fp_core::ast::path::QualifiedPath::new(vec![hir::HirProgram::external_crate_name(
+                &self.package_id,
+            )]);
         if self.package.module_tree.module_exists(&package_root) {
             package_root.segments
         } else {
@@ -336,7 +337,8 @@ impl AstToHirLowerer {
             let candidate_value = self.lookup_symbol(&candidate_key, hir::Namespace::Value);
             let candidate_type = self.lookup_symbol(&candidate_key, hir::Namespace::Type);
             let candidate_alias = self.type_aliases.get(&candidate_key).cloned();
-            let dependency_value = self.lookup_dependency_binding(&candidate, hir::Namespace::Value);
+            let dependency_value =
+                self.lookup_dependency_binding(&candidate, hir::Namespace::Value);
             let dependency_type = self.lookup_dependency_binding(&candidate, hir::Namespace::Type);
             if self.package.module_tree.module_exists(&candidate)
                 && candidate_value.is_none()
@@ -457,11 +459,9 @@ impl AstToHirLowerer {
                 }
             }
             if current.segments.is_empty()
-                && self
-                    .hir_program
-                    .packages
-                    .values()
-                    .any(|package| hir::HirProgram::external_crate_name(&package.id) == *segment)
+                && self.hir_program.packages.values().any(|package| {
+                    hir::HirProgram::external_crate_name(&package.borrow().id) == *segment
+                })
             {
                 current.segments.push(segment.clone());
                 continue;
@@ -477,12 +477,8 @@ impl AstToHirLowerer {
             let module_alias = self
                 .lookup_symbol(&key, hir::Namespace::Value)
                 .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type))
-                .or_else(|| {
-                    self.lookup_dependency_binding(&candidate, hir::Namespace::Value)
-                })
-                .or_else(|| {
-                    self.lookup_dependency_binding(&candidate, hir::Namespace::Type)
-                });
+                .or_else(|| self.lookup_dependency_binding(&candidate, hir::Namespace::Value))
+                .or_else(|| self.lookup_dependency_binding(&candidate, hir::Namespace::Type));
             match module_alias {
                 Some(hir::Res::Module(real_path)) => {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
@@ -531,10 +527,7 @@ impl AstToHirLowerer {
     /// variants are the important case here, but using the item kind keeps
     /// this aligned with rustc's definition namespace rather than encoding
     /// individual constructor names in the resolver.
-    fn path_is_definition_namespace(
-        &self,
-        path: &fp_core::ast::path::QualifiedPath,
-    ) -> bool {
+    fn path_is_definition_namespace(&self, path: &fp_core::ast::path::QualifiedPath) -> bool {
         if self.package.module_tree.namespace_exists(path) {
             return true;
         }
@@ -547,13 +540,12 @@ impl AstToHirLowerer {
         self.package
             .def_map
             .get(&def_id)
+            .cloned()
             .or_else(|| self.hir_program.item(def_id))
             .is_some_and(|item| {
                 matches!(
                     item.kind,
-                    hir::ItemKind::Struct(_)
-                        | hir::ItemKind::Enum(_)
-                        | hir::ItemKind::Trait(_)
+                    hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::Trait(_)
                 )
             })
     }
