@@ -205,8 +205,14 @@ pub(super) fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
         TyKind::Array(_, _) => vec!["[;N]"],
         TyKind::Tuple(elements) if elements.is_empty() => vec!["()"],
         TyKind::Tuple(_) => vec!["(,)"],
-        TyKind::Ref(_, _, ty::Mutability::Not) => vec!["&"],
-        TyKind::Ref(_, _, ty::Mutability::Mut) => vec!["&mut"],
+        // HIR's `TypeExprKind::Ref` intentionally stores only the referent;
+        // mutability is represented on the checked `Ty`, not on the impl
+        // header shape.  The index therefore has one reference bucket, as
+        // rustc's simplified type does before receiver mutability is checked
+        // during candidate matching.  Querying an `&mut` bucket here would
+        // make every reference impl unreachable because no such bucket can
+        // be produced by the HIR indexer.
+        TyKind::Ref(_, _, _) => vec!["&"],
         TyKind::RawPtr(pointee) => vec![match pointee.mutbl {
             ty::Mutability::Not => "*const",
             ty::Mutability::Mut => "*mut",

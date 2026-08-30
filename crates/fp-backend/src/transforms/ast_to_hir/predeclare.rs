@@ -323,14 +323,19 @@ impl AstToHirLowerer {
                     }
                 }
                 ItemKind::DefType(def_type) => {
+                    // Every Rust type alias has a definition identity, even
+                    // when its target is transparent.  Keep the AST alias
+                    // table for substitution, but also publish the normal
+                    // type binding so dependent crates resolve it through
+                    // the HIR definition graph like rustc does.
+                    let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_alias(&def_type.name.name, &def_type.value);
+                    self.register_type_def(
+                        &def_type.name.name,
+                        def_id.clone(),
+                        &def_type.visibility,
+                    );
                     if let Some(materialized) = self.materialized_type_alias(def_type) {
-                        let def_id = self.allocate_def_id_for_item(item);
-                        self.register_type_def(
-                            &def_type.name.name,
-                            def_id.clone(),
-                            &def_type.visibility,
-                        );
                         if attrs_has_name(&def_type.attrs, "unimplemented") {
                             self.unimplemented_type_def_ids.insert(def_id.clone());
                         }

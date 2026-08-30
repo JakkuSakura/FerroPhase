@@ -392,8 +392,17 @@ impl AstToHirLowerer {
         let resolved = if names.len() == 1 {
             self.resolve_type_symbol(&names[0])
         } else {
-            self.hir_program
-                .resolve_external_path(&qualified, hir::Namespace::Type)
+            // Consume the same exact namespace result used by ordinary HIR
+            // paths before consulting the external-package table. Impl
+            // indexing runs immediately after lowering this header; leaving
+            // a nominal self path unresolved at that point turns a valid
+            // impl into an unclassified dispatch shape and makes every
+            // method on it unreachable.
+            self.lookup_global_res(&qualified, PathResolutionScope::Type)
+                .or_else(|| {
+                    self.hir_program
+                        .resolve_external_path(&qualified, hir::Namespace::Type)
+                })
                 .or_else(|| self.lookup_symbol(&qualified.to_key(), hir::Namespace::Type))
                 .or_else(|| {
                     let prefix = self.module_path.join(&names[..names.len() - 1]);
@@ -411,6 +420,7 @@ impl AstToHirLowerer {
     }
 
     pub(super) fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::Impl> {
+        let saved_impl_self_ty = self.current_impl_self_ty.clone();
         self.push_type_scope();
         self.current_type_scope()
             .insert("Self".to_string(), hir::Res::SelfTy);
@@ -429,6 +439,7 @@ impl AstToHirLowerer {
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let lowered_self_ty = self.transform_type_to_hir(&self_ty_ast)?;
             let self_ty = self.resolve_impl_self_type(lowered_self_ty);
+            self.current_impl_self_ty = Some(self_ty.clone());
             // Publish associated members from the completed impl header as
             // soon as the header has a resolved self type. This is needed for
             // impls whose source header was deferred until imports were
@@ -719,6 +730,7 @@ impl AstToHirLowerer {
 
         self.pop_value_scope();
         self.pop_type_scope();
+        self.current_impl_self_ty = saved_impl_self_ty;
 
         result
     }

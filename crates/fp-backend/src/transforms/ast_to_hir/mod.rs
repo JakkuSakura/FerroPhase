@@ -54,6 +54,10 @@ pub struct AstToHirLowerer {
     /// every `HirId` minted while lowering it (see `HirId`'s doc comment).
     /// `None` outside any item (root owner used instead).
     current_owner: Option<hir::DefId>,
+    /// Concrete nominal self type while lowering an inherent impl body.
+    /// `Res::SelfTy` remains the lexical representation in type positions,
+    /// but enum constructors need the enclosing type's real identity.
+    current_impl_self_ty: Option<hir::TypeExpr>,
     /// Per-owner `HirId` counter, reset to zero on entering each owner.
     local_id: u32,
     current_file: FileId,
@@ -316,6 +320,7 @@ impl AstToHirLowerer {
         Self {
             package_id: package_id.clone(),
             current_owner: None,
+            current_impl_self_ty: None,
             local_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
@@ -4254,12 +4259,27 @@ impl AstToHirLowerer {
                     self.map_visibility(&def_type.visibility),
                 )
             }
-            // `Ty::ConstBlock` (`type X = const { ... };`) and `Ty::Expr`
-            // (bare name-as-type aliases) don't materialize into a HIR item:
-            // uses of `X` are resolved by substituting `type_aliases[X]`
-            // directly (see `lookup_type_alias`), so no item — real or
-            // synthetic — is needed for either to work.
-            None => return Ok(None),
+            None if comptime_type_alias_rhs(&def_type.value).is_some() => {
+                // A const-block alias is an expression-backed local shape,
+                // not an ordinary nominal type definition.  Its existing
+                // AST-side evaluation path remains authoritative.
+                return Ok(None);
+            }
+            None => {
+                // Transparent aliases still have a rustc definition identity
+                // and must be present in HIR so exports from std/core/alloc
+                // resolve by DefId.  Type checking may inspect the target;
+                // resolution must not replace the alias with a spelling-based
+                // special case.
+                let target = self.transform_type_to_hir(&def_type.value)?;
+                (
+                    hir::ItemKind::TypeAlias(hir::TypeAlias {
+                        name: hir::Symbol::new(def_type.name.name.clone()),
+                        target,
+                    }),
+                    self.map_visibility(&def_type.visibility),
+                )
+            }
         };
 
         Ok(Some(hir::Item {

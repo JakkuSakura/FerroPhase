@@ -188,8 +188,6 @@ impl AstToHirLowerer {
         for_expr: &ast::ExprFor,
         spec: EnumerateLoopSpec,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicKind;
-
         let mut stmts = Vec::new();
 
         let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
@@ -256,13 +254,12 @@ impl AstToHirLowerer {
         } else {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
-                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicKind::Len,
-                    callargs: vec![hir::CallArg {
-                        name: hir::Symbol::new("arg0"),
-                        value: base_expr.clone(),
-                    }],
-                }),
+                kind: hir::ExprKind::MethodCall(
+                    Box::new(base_expr.clone()),
+                    hir::Symbol::new("len"),
+                    None,
+                    Vec::new(),
+                ),
                 span: Span::new(self.current_file, 0, 0),
             };
             hir::Expr {
@@ -396,8 +393,6 @@ impl AstToHirLowerer {
         for_expr: &ast::ExprFor,
         spec: IterLoopSpec,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicKind;
-
         let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
         let base_name = ast::Name::path(base_path);
         let base_expr = hir::Expr {
@@ -417,13 +412,12 @@ impl AstToHirLowerer {
         } else {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
-                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicKind::Len,
-                    callargs: vec![hir::CallArg {
-                        name: hir::Symbol::new("arg0"),
-                        value: base_expr.clone(),
-                    }],
-                }),
+                kind: hir::ExprKind::MethodCall(
+                    Box::new(base_expr.clone()),
+                    hir::Symbol::new("len"),
+                    None,
+                    Vec::new(),
+                ),
                 span: Span::new(self.current_file, 0, 0),
             };
             hir::Expr {
@@ -449,8 +443,6 @@ impl AstToHirLowerer {
         &mut self,
         for_expr: &ast::ExprFor,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicKind;
-
         let value_pat = (*for_expr.pat).clone();
 
         let base_lowered = self.transform_expr_to_hir(&for_expr.iter)?;
@@ -488,13 +480,12 @@ impl AstToHirLowerer {
 
         let len_call = hir::Expr {
             hir_id: self.next_id(),
-            kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                kind: IntrinsicKind::Len,
-                callargs: vec![hir::CallArg {
-                    name: hir::Symbol::new("arg0"),
-                    value: base_expr.clone(),
-                }],
-            }),
+            kind: hir::ExprKind::MethodCall(
+                Box::new(base_expr.clone()),
+                hir::Symbol::new("len"),
+                None,
+                Vec::new(),
+            ),
             span: Span::new(self.current_file, 0, 0),
         };
         let len_expr = hir::Expr {

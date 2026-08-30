@@ -236,6 +236,59 @@ fn string_and_byte_slice_use_distinct_method_lookup_buckets() {
     assert_eq!(byte_slice_keys, vec!["[]"]);
 }
 
+#[test]
+fn error_types_are_invalid_for_lookup_even_when_nested() {
+    let invalid = Ty {
+        kind: TyKind::Ref(
+            ty::Region::ReStatic,
+            Box::new(Ty {
+                kind: TyKind::Tuple(vec![Box::new(Ty::error())]),
+            }),
+            ty::Mutability::Not,
+        ),
+    };
+
+    assert!(ty_contains_error(&invalid));
+    assert!(!ty_contains_error(&Ty {
+        kind: TyKind::Param(ty::ParamTy {
+            index: 0,
+            name: "T".into(),
+        }),
+    }));
+}
+
+#[test]
+fn impl_header_obligation_is_keyed_by_impl_def_id() {
+    let package_id = test_pkg();
+    let shared_self_ty = hir::TypeExpr {
+        hir_id: hid(901),
+        kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        span: fp_core::span::Span::null(),
+    };
+    let first_impl = hir::DefId::new(package_id.clone(), 901);
+    let second_impl = hir::DefId::new(package_id.clone(), 902);
+    let executor = fp_core::executor::CompilerExecutor::new().handle();
+    let checker = HirTypeChecker::new(
+        hir::HirPackage::new(package_id),
+        None,
+        None,
+        executor.clone(),
+    );
+    executor.run(async move {
+        let mut checker = checker.borrow_mut();
+        let first = checker
+            .checked_impl_self_ty(&first_impl, &shared_self_ty)
+            .await
+            .expect("first impl header should resolve");
+        let second = checker
+            .checked_impl_self_ty(&second_impl, &shared_self_ty)
+            .await
+            .expect("distinct impl header should resolve");
+        assert_eq!(first, second);
+        assert!(checker.resolving_impl_headers.is_empty());
+    });
+}
+
 /// Wraps a bare `hir::TypeExpr` in `let value: <ty>;` (no initializer)
 /// the same way `f16_and_f128_type_paths_resolve_as_primitive_floats`
 /// does, so `check_type_expr`'s handling of a single `TypeExprKind` can

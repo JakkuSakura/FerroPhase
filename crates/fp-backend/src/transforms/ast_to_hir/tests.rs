@@ -1478,6 +1478,164 @@ fn enum_attributes_survive_hir_roundtrip() -> Result<()> {
 }
 
 #[test]
+fn enum_constructor_keeps_variant_identity_with_generic_arguments() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "enum Boxed<T> { Value(T) } fn make() -> Boxed<i64> { Boxed::Value(1) }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = lowerer.transform_package(&package)?;
+    let (enum_id, variant_id) = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Enum(def) => Some((item.def_id.clone(), def.variants[0].def_id.clone())),
+            _ => None,
+        })
+        .expect("generic enum and variant are present");
+    let make = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "make" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("constructor function is present");
+    let body = make.body.as_ref().expect("constructor has a body");
+    let hir::ExprKind::Call(callee, _) = &body.expr.as_ref().expect("body expression").kind else {
+        panic!("expected enum variant constructor call");
+    };
+    let hir::ExprKind::Path(path) = &callee.kind else {
+        panic!("expected path callee");
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(variant_id.clone())));
+    assert_ne!(variant_id, enum_id);
+    Ok(())
+}
+
+#[test]
+fn enum_constructor_through_alias_keeps_nominal_variant_identity() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "enum Original { Value(i64) } type Alias = Original; fn make() -> Alias { Alias::Value(1) }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = lowerer.transform_package(&package)?;
+    let variant_id = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Enum(def) => Some(def.variants[0].def_id.clone()),
+            _ => None,
+        })
+        .expect("enum variant is present");
+    let make = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "make" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("constructor function is present");
+    let body = make.body.as_ref().expect("constructor has a body");
+    let hir::ExprKind::Call(callee, _) = &body.expr.as_ref().expect("body expression").kind else {
+        panic!("expected enum variant constructor call");
+    };
+    let hir::ExprKind::Path(path) = &callee.kind else {
+        panic!("expected path callee");
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(variant_id)));
+    Ok(())
+}
+
+#[test]
+fn self_enum_constructor_preserves_type_relative_identity() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "enum Message { Text(i64) } impl Message { fn make() -> Self { Self::Text(1) } }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = lowerer.transform_package(&package)?;
+    let variant_id = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Enum(def) => Some(def.variants[0].def_id.clone()),
+            _ => None,
+        })
+        .expect("enum variant is present");
+    let method = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Impl(imp) => imp.items.iter().find_map(|member| match &member.kind {
+                hir::ImplItemKind::Method(function) if function.sig.name.as_str() == "make" => {
+                    Some(function)
+                }
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("lowered constructor method");
+    let body = method.body.as_ref().expect("constructor body");
+    let hir::ExprKind::Call(callee, _) = &body.expr.as_ref().expect("body expression").kind else {
+        panic!("expected constructor call");
+    };
+    let hir::ExprKind::Path(path) = &callee.kind else {
+        panic!("expected type-relative constructor path");
+    };
+    assert_eq!(path.res, Some(hir::Res::Def(variant_id)));
+    assert_eq!(
+        path.segments.last().map(|segment| segment.name.as_str()),
+        Some("Text")
+    );
+    Ok(())
+}
+
+#[test]
+fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items =
+        parser.parse_items_ast("type Alias = i64; fn read(value: Alias) -> Alias { value }")?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = lowerer.transform_package(&package)?;
+    let alias = program
+        .items
+        .iter()
+        .find(|item| matches!(item.kind, hir::ItemKind::TypeAlias(_)))
+        .expect("ordinary aliases must be published as HIR items");
+    assert_eq!(alias.def_id.package_id.as_str(), "test");
+    assert!(program.def_paths.contains_key(&alias.def_id));
+    assert!(
+        program
+            .module_tree
+            .lookup(program.module_tree.root(), hir::Namespace::Type, "Alias",)
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
 fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -> Result<()> {
     let parser = FerroPhaseParser::new();
 

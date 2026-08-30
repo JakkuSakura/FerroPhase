@@ -972,15 +972,8 @@ impl CompilerDriver {
             let package = checker.borrow().finish();
             let package = package.borrow();
             Self::emit_typing_diagnostics_to_stderr(&package);
-            let combined = package
-                .diagnostics
-                .get_diagnostics()
-                .iter()
-                .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
             if self.pipeline != PipelineMode::Transpile {
+                let combined = diagnostics_summary(&package.diagnostics.get_diagnostics());
                 return Err(fp_core::error::Error::diagnostic(
                     fp_core::diagnostics::Diagnostic::error(combined),
                 ));
@@ -998,6 +991,7 @@ impl CompilerDriver {
     /// unified `diagnostics` manager), since either category can be the
     /// real lead on why a package's typecheck ultimately failed or stalled.
     fn emit_typing_diagnostics_to_stderr(package: &hir::HirPackage) {
+        const MAX_SHOWN: usize = 20;
         let diagnostics = package.diagnostics.get_diagnostics();
         if diagnostics.is_empty() {
             return;
@@ -1006,8 +1000,14 @@ impl CompilerDriver {
             "fp-compiler: {} typing diagnostic(s) recorded before failure:",
             diagnostics.len()
         );
-        for diagnostic in &diagnostics {
+        for diagnostic in diagnostics.iter().take(MAX_SHOWN) {
             eprintln!("  {}", diagnostic);
+        }
+        if diagnostics.len() > MAX_SHOWN {
+            eprintln!(
+                "  ... and {} more diagnostic(s) suppressed",
+                diagnostics.len() - MAX_SHOWN
+            );
         }
     }
 

@@ -857,7 +857,6 @@ impl str {
     #[must_use]
     #[stable(feature = "str_split_at", since = "1.4.0")]
     #[rustc_const_stable(feature = "const_str_split_at", since = "1.86.0")]
-    #[op(method = "split_at")]
     pub const fn split_at(&self, mid: usize) -> (&str, &str) {
         match self.split_at_checked(mid) {
             None => slice_error_fail(self, 0, mid),
@@ -1134,7 +1133,6 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    #[op(method = "char_indices")]
     pub fn char_indices(&self) -> CharIndices<'_> {
         CharIndices { front_offset: 0, iter: self.chars() }
     }
@@ -1210,7 +1208,6 @@ impl str {
     #[stable(feature = "split_whitespace", since = "1.1.0")]
     #[rustc_diagnostic_item = "str_split_whitespace"]
     #[inline]
-    #[op(method = "split_whitespace")]
     pub fn split_whitespace(&self) -> SplitWhitespace<'_> {
         SplitWhitespace { inner: self.split(IsWhitespace).filter(IsNotEmpty) }
     }
@@ -1327,30 +1324,10 @@ impl str {
     ///
     /// assert_eq!(lines.next(), None);
     /// ```
-    // Simplified stub signature: the real `Lines<'_>` return type
-    // (`Map<SplitInclusive<'_, char>, LinesMap>`) is a real iterator-adapter
-    // chain that doesn't resolve through this compiler's type-checker (its
-    // constituent generic adapter/closure-struct types aren't modeled deeply
-    // enough), which silently degraded every caller's element type to `Any`
-    // instead of erroring. `Vec<&str>` is a deliberately simplified,
-    // reliably-resolvable stand-in for typing purposes only — the standard
-    // "shadow the real stub with a simplified one" technique (see e.g.
-    // typeshed/pytype's practice of loosening a stdlib stub's precision when
-    // the exact real type isn't useful to the tool consuming it). The body
-    // below never actually runs — `.lines()` calls are rendered directly by
-    // each backend's own name mapping (self.g. `map_kt_method`) — matching
-    // the `compile_error!("compiler intrinsic")` stub convention this
-    // compiler's OWN native stdlib (`fp-lang/src/std`) already uses
-    // throughout for real-but-backend-special-cased methods; this is the
-    // first use of that convention within this vendored-rustc-source tree,
-    // where sibling methods on this same `impl` (`starts_with`, `contains`)
-    // instead keep their real generic `Pattern`-trait-dispatched bodies,
-    // which happen to already resolve fine on their own.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    #[op(method = "lines")]
-    pub fn lines(&self) -> alloc::vec::Vec<&str> {
-        compile_error!("compiler intrinsic")
+    pub fn lines(&self) -> Lines<'_> {
+        Lines(self.split_inclusive('\n').map(LinesMap))
     }
 
     /// Returns an iterator over the lines of a string.
@@ -1441,7 +1418,6 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_starts_with"]
-    #[op(method = "starts_with")]
     pub fn starts_with<P: Pattern>(&self, pat: P) -> bool {
         pat.is_prefix_of(self)
     }
@@ -1467,7 +1443,6 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_ends_with"]
-    #[op(method = "ends_with")]
     pub fn ends_with<P: Pattern>(&self, pat: P) -> bool
     where
         for<'a> P::Searcher<'a>: ReverseSearcher<'a>,
@@ -1693,7 +1668,6 @@ impl str {
     /// [`split_whitespace`]: str::split_whitespace
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    #[op(method = "split")]
     pub fn split<P: Pattern>(&self, pat: P) -> Split<'_, P> {
         Split(SplitInternal {
             start: 0,
@@ -2210,7 +2184,6 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_trim"]
-    #[op(method = "trim")]
     pub fn trim(&self) -> &str {
         self.trim_matches(char::is_whitespace)
     }
@@ -2250,7 +2223,6 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_start"]
-    #[op(method = "trim_start")]
     pub fn trim_start(&self) -> &str {
         self.trim_start_matches(char::is_whitespace)
     }
@@ -2290,7 +2262,6 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_end"]
-    #[op(method = "trim_end")]
     pub fn trim_end(&self) -> &str {
         self.trim_end_matches(char::is_whitespace)
     }
@@ -2485,7 +2456,6 @@ impl str {
     #[must_use = "this returns the remaining substring as a new slice, \
                   without modifying the original"]
     #[stable(feature = "str_strip", since = "1.45.0")]
-    #[op(method = "strip_prefix")]
     pub fn strip_prefix<P: Pattern>(&self, prefix: P) -> Option<&str> {
         prefix.strip_prefix_of(self)
     }

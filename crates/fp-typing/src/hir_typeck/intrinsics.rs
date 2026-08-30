@@ -26,17 +26,6 @@ impl HirTypeChecker {
             IntrinsicKind::Format => Ty {
                 kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
-            IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
-            IntrinsicKind::Slice => match arg_types.first() {
-                None => self.error_ty_with_span("slice intrinsic requires a base expression", span),
-                Some(base) => match &base.kind {
-                    TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty {
-                        kind: TyKind::Slice(inner.clone()),
-                    },
-                    _ => self
-                        .error_ty_with_span("slice intrinsic base must be an array or slice", span),
-                },
-            },
             IntrinsicKind::DebugAssertions
             | IntrinsicKind::FsExists
             | IntrinsicKind::FsIsDir

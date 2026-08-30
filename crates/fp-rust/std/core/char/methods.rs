@@ -2050,7 +2050,6 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
-    #[op(method = "is_ascii_alphabetic")]
     pub const fn is_ascii_alphabetic(&self) -> bool {
         matches!(*self, 'a'..='z' | 'A'..='Z')
     }
@@ -2190,7 +2189,6 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
-    #[op(method = "is_ascii_digit")]
     pub const fn is_ascii_digit(&self) -> bool {
         matches!(*self, '0'..='9')
     }
@@ -2259,7 +2257,6 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
-    #[op(method = "is_ascii_hexdigit")]
     pub const fn is_ascii_hexdigit(&self) -> bool {
         matches!(*self, '0'..='9') | matches!(*self, 'A'..='F') | matches!(*self, 'a'..='f')
     }

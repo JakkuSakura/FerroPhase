@@ -1,5 +1,30 @@
 use super::*;
 
+pub(super) fn obligation_shape_key(ty: &Ty) -> String {
+    match &ty.kind {
+        TyKind::Adt(def, _) => format!("adt:{}:{}", def.did.package_id, def.did.index),
+        TyKind::Projection(projection) => format!(
+            "projection:{}:{}",
+            projection.item_def_id.package_id, projection.item_def_id.index
+        ),
+        TyKind::FnDef(def, _) => format!("fn:{}:{}", def.package_id, def.index),
+        TyKind::Closure(def, _) => format!("closure:{}:{}", def.package_id, def.index),
+        TyKind::Generator(def, _, _) => format!("generator:{}:{}", def.package_id, def.index),
+        TyKind::Opaque(def, _) => format!("opaque:{}:{}", def.package_id, def.index),
+        kind => ty_shape_keys(kind)
+            .and_then(|keys| keys.first().copied())
+            .map(str::to_owned)
+            .unwrap_or_else(|| match kind {
+                TyKind::Param(param) => format!("param:{}", param.name),
+                TyKind::Infer(_) => "infer".to_owned(),
+                TyKind::Error(_) => "error".to_owned(),
+                TyKind::Any => "any".to_owned(),
+                TyKind::Type => "type".to_owned(),
+                _ => "opaque-kind".to_owned(),
+            }),
+    }
+}
+
 impl HirTypeChecker {
     pub(super) fn method_call_actuals(&self, signature: &Ty, actuals: &[Ty]) -> Vec<Ty> {
         let TyKind::FnPtr(signature) = &signature.kind else {
@@ -413,13 +438,26 @@ impl HirTypeChecker {
     /// still happens via `unify_call_types` afterward, once this confirms
     /// the two are the same kind of type.
     pub(super) fn ty_shapes_compatible(a: &TyKind, b: &TyKind) -> bool {
-        match (a, b) {
+        let mut active = HashSet::new();
+        Self::ty_shapes_compatible_inner(a, b, &mut active)
+    }
+
+    fn ty_shapes_compatible_inner(
+        a: &TyKind,
+        b: &TyKind,
+        active: &mut HashSet<(*const TyKind, *const TyKind)>,
+    ) -> bool {
+        let pair = (a as *const TyKind, b as *const TyKind);
+        if !active.insert(pair) {
+            return true;
+        }
+        let result = match (a, b) {
             (TyKind::Param(_), _) | (_, TyKind::Param(_)) => true,
             (TyKind::Ref(_, a, _), TyKind::Ref(_, b, _)) => {
-                Self::ty_shapes_compatible(&a.kind, &b.kind)
+                Self::ty_shapes_compatible_inner(&a.kind, &b.kind, active)
             }
-            (TyKind::Ref(_, a, _), b) => Self::ty_shapes_compatible(&a.kind, b),
-            (a, TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(a, &b.kind),
+            (TyKind::Ref(_, a, _), b) => Self::ty_shapes_compatible_inner(&a.kind, b, active),
+            (a, TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible_inner(a, &b.kind, active),
             (TyKind::Slice(_), TyKind::Slice(_)) => true,
             (TyKind::Array(_, _), TyKind::Array(_, _)) => true,
             (TyKind::Tuple(a), TyKind::Tuple(b)) => a.len() == b.len(),
@@ -442,7 +480,9 @@ impl HirTypeChecker {
             | (TyKind::Any, TyKind::Any)
             | (TyKind::Type, TyKind::Type) => true,
             _ => a == b,
-        }
+        };
+        active.remove(&pair);
+        result
     }
 
     pub(super) fn unify_call_types(
@@ -1263,6 +1303,32 @@ impl HirTypeChecker {
         receiver_ty: &Ty,
         method: &hir::Symbol,
     ) -> Result<Option<Ty>> {
+        // Keep recursive candidate probing finite.  In rustc this is an
+        // active trait-selection obligation; revisiting the same receiver
+        // and method while probing an impl is a cycle, not a new candidate.
+        let key = (
+            format!("method-declared:{}", obligation_shape_key(receiver_ty)),
+            method.clone(),
+        );
+        if self.resolving_assoc_projections.contains(&key) {
+            return Ok(None);
+        }
+        self.resolving_assoc_projections.push(key.clone());
+        let result = self
+            .method_declared_signature_at_inner(receiver_ty, method)
+            .await;
+        self.resolving_assoc_projections.pop();
+        result
+    }
+
+    async fn method_declared_signature_at_inner(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        if ty_contains_error(receiver_ty) {
+            return Ok(None);
+        }
         // A still-generic receiver (`self: T` inside a default trait
         // method body) has no impl to search at all — `T` is abstract,
         // not a concrete type any impl's self-type could ever unify
@@ -1336,7 +1402,15 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = self.with_generics(&impl_item.generics);
-            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
+            let Ok(checked_self_ty) = scope
+                .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                .await
+            else {
+                continue;
+            };
+            if ty_contains_error(&checked_self_ty) {
+                continue;
+            }
             let mut receiver_substitutions = HashMap::new();
             if !Self::method_receiver_matches(
                 &scope,
@@ -1351,9 +1425,7 @@ impl HirTypeChecker {
                 scope.substitute_param_map(&checked_self_ty, &receiver_substitutions);
             let impl_self_ty = checked_self_ty.clone();
             let mut scope = scope.with_self_type(checked_self_ty);
-            let assoc_types = scope
-                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                .await?;
+            let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
             let assoc_types = assoc_types
                 .into_iter()
                 .map(|(name, ty)| {

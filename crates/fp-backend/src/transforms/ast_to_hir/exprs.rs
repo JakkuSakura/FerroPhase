@@ -17,7 +17,7 @@ impl AstToHirLowerer {
     /// resolver has to follow the alias target before doing the final member
     /// lookup. This is especially important for `ascii::Char`, which is a
     /// public alias of `ascii_char::AsciiChar`.
-    fn enum_variant_through_type_path(
+    pub(super) fn enum_variant_through_type_path(
         &self,
         type_path: &fp_core::ast::path::QualifiedPath,
         variant_name: &str,
@@ -36,6 +36,16 @@ impl AstToHirLowerer {
         }?;
         let mut def_id = match type_res {
             hir::Res::Def(def_id) => def_id,
+            hir::Res::SelfTy => {
+                let self_ty = self.current_impl_self_ty.as_ref()?;
+                let hir::TypeExprKind::Path(path) = &self_ty.kind else {
+                    return None;
+                };
+                let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                    return None;
+                };
+                def_id.clone()
+            }
             _ => return None,
         };
 
@@ -107,9 +117,7 @@ impl AstToHirLowerer {
                 .collect(),
         );
         let namespace = scope.namespace();
-        let mut packages = self
-            .hir_program
-            .with(|program| program.packages.values().cloned().collect::<Vec<_>>());
+        let mut packages: Vec<_> = self.hir_program.packages.values().collect();
         packages.sort_by(|left, right| left.borrow().id.cmp(&right.borrow().id));
 
         for package in packages {
@@ -287,20 +295,9 @@ impl AstToHirLowerer {
                 format!("unresolved expression id {expr_id} during AST→HIR lowering"),
                 expr_span,
             ),
-            ExprKind::Name(_) => {
-                let value_path = self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?;
-                if matches!(value_path.res, Some(hir::Res::Def(_))) {
-                    hir::ExprKind::Path(value_path)
-                } else {
-                    let type_path =
-                        self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Type)?;
-                    if matches!(type_path.res, Some(hir::Res::Def(_))) {
-                        hir::ExprKind::Path(type_path)
-                    } else {
-                        hir::ExprKind::Path(value_path)
-                    }
-                }
-            }
+            ExprKind::Name(_) => hir::ExprKind::Path(
+                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
+            ),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
             ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
@@ -604,7 +601,7 @@ impl AstToHirLowerer {
         // Recorded once, unconditionally, right here — not lazily by the
         // type checker each time it happens to encounter this node (see
         // `hir::HirPackage::const_block_defs`'s doc comment).
-        self.package.add_anonymous_const(
+        self.package.record_const_block_def(
             def_id.clone(),
             hir::Block {
                 hir_id,
@@ -1021,24 +1018,7 @@ impl AstToHirLowerer {
                         && invoke.args.len() == 1
                         && invoke.kwargs.is_empty()
                     {
-                        let mut value = self.transform_expr_to_hir(&invoke.args[0])?;
-                        // `type(Alias)` consumes a type-position path. A
-                        // local comptime type alias may intentionally have
-                        // no value-namespace binding, so preserve the
-                        // resolver's type identity instead of passing an
-                        // unresolved value path into MIR.
-                        if matches!(value.kind, hir::ExprKind::Path(hir::Path { res: None, .. })) {
-                            if let ast::ExprKind::Name(_) = invoke.args[0].kind() {
-                                value = hir::Expr {
-                                    hir_id: self.next_id(),
-                                    kind: hir::ExprKind::Path(self.ast_expr_to_hir_path(
-                                        &invoke.args[0],
-                                        PathResolutionScope::Type,
-                                    )?),
-                                    span: self.create_span(1),
-                                };
-                            }
-                        }
+                        let value = self.transform_expr_to_hir(&invoke.args[0])?;
                         return Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                             kind: CallKind::TypeOf,
                             callargs: vec![hir::CallArg {
@@ -1051,60 +1031,23 @@ impl AstToHirLowerer {
 
                 let mut path =
                     self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
-                if let Some(hir::Res::Module(module_path)) = path.res.as_ref() {
-                    if let Some(leaf) = path.segments.last() {
-                        let mut candidates = vec![QualifiedPath::new(module_path.clone())];
-                        if !self.module_path.segments.is_empty()
-                            && !module_path.starts_with(&self.module_path.segments)
-                        {
-                            let mut rooted = self.module_path.segments.clone();
-                            rooted.extend(module_path.iter().cloned());
-                            candidates.push(QualifiedPath::new(rooted));
-                        }
-                        // A file-backed package can store an inline module
-                        // below its package root while the resolver exposes
-                        // the import alias relative to the crate. Follow the
-                        // actual module-tree path rather than reconstructing
-                        // a symbol key from the spelling.
-                        candidates.extend(
-                            self.package
-                                .module_tree
-                                .all_paths()
-                                .filter(|candidate| candidate.segments.ends_with(module_path))
-                                .cloned(),
-                        );
-                        for candidate in candidates {
-                            let Some(module) = self.package.module_tree.module_id(&candidate)
-                            else {
-                                continue;
-                            };
-                            if let Some(member) = self.package.module_tree.lookup(
-                                module,
-                                hir::Namespace::Value,
-                                leaf.name.as_str(),
-                            ) {
-                                path.res = Some(member.res.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-                if matches!(path.res, Some(hir::Res::Module(_))) {
-                    let complete = QualifiedPath::new(
+                // A function-position qualified enum constructor must carry
+                // the variant's constructor identity into HIR.  The value
+                // resolver may intentionally retain the type head for a
+                // type-relative path; resolve the final segment in the enum
+                // variant namespace before type checking sees the callee.
+                if path.res.is_some() && path.segments.len() > 1 {
+                    let prefix = hir::Path {
+                        segments: path.segments[..path.segments.len() - 1].to_vec(),
+                        res: path.res.clone(),
+                    };
+                    if let Some(res) = self.lookup_enum_variant(
+                        &prefix,
                         path.segments
-                            .iter()
-                            .map(|segment| segment.name.as_str().to_string())
-                            .collect(),
-                    );
-                    let mut package_relative = vec![self.package.id.as_str().to_owned()];
-                    package_relative.extend(complete.segments.iter().cloned());
-                    let package_relative = QualifiedPath::new(package_relative);
-                    if let Some(res) = self
-                        .lookup_symbol(&complete.to_key(), hir::Namespace::Value)
-                        .or_else(|| {
-                            self.lookup_symbol(&package_relative.to_key(), hir::Namespace::Value)
-                        })
-                    {
+                            .last()
+                            .map(|segment| segment.name.as_str())
+                            .unwrap_or(""),
+                    ) {
                         path.res = Some(res);
                     }
                 }
@@ -1209,28 +1152,9 @@ impl AstToHirLowerer {
                     .map(|segment| segment.name.as_str().to_string())
                     .collect(),
             );
-            path.res = match path.res.as_ref() {
-                Some(hir::Res::Module(module_path)) => {
-                    let module = self
-                        .package
-                        .module_tree
-                        .module_id(&QualifiedPath::new(module_path.clone()));
-                    module
-                        .and_then(|module| {
-                            self.package.module_tree.lookup(
-                                module,
-                                hir::Namespace::Value,
-                                select.field.name.as_str(),
-                            )
-                        })
-                        .map(|entry| entry.res.clone())
-                        .or_else(|| self.lookup_global_res(&full_path, PathResolutionScope::Value))
-                        .or_else(|| path.res.clone())
-                }
-                _ => self
-                    .lookup_global_res(&full_path, PathResolutionScope::Value)
-                    .or(path.res),
-            };
+            path.res = self
+                .lookup_global_res(&full_path, PathResolutionScope::Value)
+                .or(path.res);
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -1244,15 +1168,8 @@ impl AstToHirLowerer {
         &mut self,
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::ExprKind> {
-        let mut path =
+        let path =
             self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Value)?;
-        if !matches!(path.res, Some(hir::Res::Def(_))) {
-            let type_path =
-                self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
-            if matches!(type_path.res, Some(hir::Res::Def(_))) {
-                path.res = type_path.res;
-            }
-        }
         let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();
@@ -1705,22 +1622,7 @@ impl AstToHirLowerer {
         let local = hir::Local {
             hir_id: self.next_id(),
             pat: pat.clone(),
-            // Range loops are used as index-producing loops throughout the
-            // standard library and examples. Their binding has the same
-            // concrete type as an array/slice index.
-            ty: Some(hir::TypeExpr {
-                hir_id: self.next_id(),
-                kind: hir::TypeExprKind::Path(hir::Path {
-                    segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new("usize"),
-                        args: None,
-                    }],
-                    res: Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
-                        "usize".to_string(),
-                    ))),
-                }),
-                span: Span::new(self.current_file, 0, 0),
-            }),
+            ty: None,
             init: Some(init_expr),
         };
         self.register_pattern_bindings(&local.pat);
@@ -2065,6 +1967,44 @@ impl AstToHirLowerer {
             });
         }
 
+        // `len` and `slice` are language operations, not compiler
+        // intrinsics. Lower them to their ordinary HIR forms here so
+        // typeck resolves the receiver and the backend sees the same
+        // operations as source-written `.len()` and range slicing. Keeping
+        // these as IntrinsicCall nodes would make every type checker and
+        // backend carry a second, weaker type rule for operations that the
+        // language already defines.
+        match call.kind {
+            CallKind::Len => {
+                let [receiver] = callargs.as_slice() else {
+                    return Err(fp_core::error::Error::from(
+                        "len expects exactly one argument",
+                    ));
+                };
+                return Ok(hir::ExprKind::MethodCall(
+                    Box::new(receiver.value.clone()),
+                    hir::Symbol::new("len"),
+                    None,
+                    Vec::new(),
+                ));
+            }
+            CallKind::Slice => {
+                let [base, start, end] = callargs.as_slice() else {
+                    return Err(fp_core::error::Error::from(
+                        "slice expects base, start, and end arguments",
+                    ));
+                };
+                return Ok(hir::ExprKind::Slice(hir::SliceExpr {
+                    hir_id: self.next_id(),
+                    base: Box::new(base.value.clone()),
+                    start: Some(Box::new(start.value.clone())),
+                    end: Some(Box::new(end.value.clone())),
+                    inclusive: false,
+                }));
+            }
+            _ => {}
+        }
+
         if matches!(
             call.kind,
             CallKind::Print | CallKind::Println | CallKind::Format
@@ -2333,10 +2273,15 @@ impl AstToHirLowerer {
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
-        local.or_else(|| self.hir_program.find_export(&key))
-        // Keep value and type namespaces distinct. A value-position path
-        // must not silently resolve to a type merely because the value
-        // lookup failed; callers need an unresolved-name/namespace error.
+        local
+            .or_else(|| self.hir_program.find_export(&key))
+            .or_else(|| {
+                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
+                    self.lookup_symbol(&key, hir::Namespace::Type)
+                } else {
+                    None
+                }
+            })
     }
 
     // make_path_segment moved to helpers.rs
@@ -2361,11 +2306,8 @@ impl AstToHirLowerer {
         let_expr: &ast::ExprLet,
     ) -> Result<hir::ExprKind> {
         let (pat, explicit_ty, _) = self.transform_pattern_with_metadata(&let_expr.pat)?;
-        let init = self.transform_expr_to_hir(&let_expr.expr)?;
-        // A binding enters scope only after its initializer has been
-        // resolved. This prevents `let x = x` from resolving the RHS to the
-        // binding being declared instead of an enclosing `x`.
         self.register_pattern_bindings(&pat);
+        let init = self.transform_expr_to_hir(&let_expr.expr)?;
         let ty = explicit_ty.unwrap_or_else(|| self.create_unit_type());
 
         Ok(hir::ExprKind::Let(pat, Box::new(ty), Some(Box::new(init))))

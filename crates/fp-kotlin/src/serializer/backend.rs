@@ -386,9 +386,10 @@ mod tests {
         for helper in [
             "fun <T> resultIsSuccess(result: Result<T>): Boolean = result.exceptionOrNull() == null",
             "fun <T> resultIsFailure(result: Result<T>): Boolean = result.exceptionOrNull() != null",
+            "fun <T> resultSuccess(value: T): Result<T> = when (value)",
             "fun <T> resultUnwrap(result: Result<T>): T = result.getOrNull() ?: throw resultException(result)",
-            "fun <T> resultDefault(result: Result<T>, defaultValue: T): T = result.getOrNull() ?: defaultValue",
-            "fun ioError(error: Any?): java.io.IOException = java.io.IOException(error.toString())",
+            "fun <T> resultDefault(result: Result<T>, defaultValue: T): T = result.getOrElse { defaultValue }",
+            "fun ioError(error: Any?): java.io.IOException = when (error)",
             "fun normalizeError(error: Any?): Throwable = error as? Throwable ?: IllegalStateException(error?.toString() ?: \"unknown error\")",
             "fun createDirectory(path: java.nio.file.Path): Result<Unit> = runCatching<Unit>",
             "fun createDirectories(path: java.nio.file.Path): Result<Unit> = runCatching<Unit>",
@@ -904,10 +905,18 @@ fn kotlin_runtime_source(prefix: Option<&str>) -> String {
              suspend fun tcpWriteAll(stream: Socket, bytes: ByteArray): Result<Unit> = runCatching<Unit> {{ withContext(Dispatchers.IO) {{ stream.getOutputStream().write(bytes); Unit }} }}\n\
              suspend fun sleep(duration: java.time.Duration) {{ delay(duration.toMillis()) }}\n\
              fun normalizeError(error: Any?): Throwable = error as? Throwable ?: IllegalStateException(error?.toString() ?: \"unknown error\")\n\
-             fun ioError(error: Any?): java.io.IOException = java.io.IOException(error.toString())\n\
+             fun ioError(error: Any?): java.io.IOException = when (error) {{\n\
+                 is java.io.IOException -> error\n\
+                 is Throwable -> java.io.IOException(error.message, error)\n\
+                 else -> java.io.IOException(error?.toString() ?: \"unknown I/O error\")\n\
+             }}\n\
              fun <T : Any> optionUnwrap(value: T?): T = requireNotNull(value)\n\
-             fun <T> resultSuccess(value: T): Result<T> = Result.success(value)\n\
-             fun <T> resultFailure(error: Throwable): Result<T> = Result.failure(error)\n\
+             @Suppress(\"UNCHECKED_CAST\")\n\
+             fun <T> resultSuccess(value: T): Result<T> = when (value) {{\n\
+                 is Result<*> -> value as Result<T>\n\
+                 else -> Result.success(value)\n\
+             }}\n\
+             fun <T> resultFailure(error: Any?): Result<T> = Result.failure(normalizeError(error))\n\
              fun <T, R> mapResult(result: Result<T>, transform: (T) -> R): Result<R> = result.map(transform)\n\
              fun <T> resultIsSuccess(result: Result<T>): Boolean = result.exceptionOrNull() == null\n\
              fun <T> resultIsFailure(result: Result<T>): Boolean = result.exceptionOrNull() != null\n\
@@ -915,7 +924,7 @@ fn kotlin_runtime_source(prefix: Option<&str>) -> String {
              fun <T> resultErrValue(result: Result<T>): Throwable? = result.exceptionOrNull()\n\
              fun <T> resultException(result: Result<T>): Throwable = requireNotNull(result.exceptionOrNull())\n\
              fun <T> resultUnwrap(result: Result<T>): T = result.getOrNull() ?: throw resultException(result)\n\
-             fun <T> resultDefault(result: Result<T>, defaultValue: T): T = result.getOrNull() ?: defaultValue\n\
+             fun <T> resultDefault(result: Result<T>, defaultValue: T): T = result.getOrElse {{ defaultValue }}\n\
              inline fun <reified T> parse(input: String): Result<T> = runCatching {{ when (T::class) {{ Int::class -> input.toInt(); Long::class -> input.toLong(); Short::class -> input.toShort(); Byte::class -> input.toByte(); Double::class -> input.toDouble(); Float::class -> input.toFloat(); Boolean::class -> input.toBooleanStrict(); String::class -> input; else -> error(\"unsupported Rust FromStr target: ${{T::class.qualifiedName}}\") }} as T }}\n\
              fun <T> unwrapOr(value: T?, defaultValue: T): T = value ?: defaultValue\n\
              fun <T, R> mapOr(value: T?, defaultValue: R, transform: (T) -> R): R = value?.let(transform) ?: defaultValue\n\
@@ -1540,6 +1549,12 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
             "Option",
             args.into_iter().next().unwrap_or(Ty::ANY),
         )),
+        "Error" if is_std_io_error(name) => Some(Ty::path(Path::plain(vec![
+            Ident::new("java"),
+            Ident::new("io"),
+            Ident::new("IOException"),
+        ]))),
+        "Error" => Some(Ty::path(Path::plain(vec![Ident::new("Throwable")]))),
         // `to_vec_in` is the allocator-aware slice-clone implementation name
         // that can survive Rust desugaring in an inferred annotation.
         "Vec" | "to_vec" | "to_vec_in" | "slice_to_vec" | "slice_to_vec_in" => Some(
@@ -1547,6 +1562,22 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
         ),
         _ => None,
     }
+}
+
+fn is_std_io_error(name: &Name) -> bool {
+    let segments: Vec<&str> = match name {
+        Name::Path(path) => path.segments.iter().map(Ident::as_str).collect(),
+        Name::ParameterPath(path) => path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.as_str())
+            .collect(),
+        Name::Ident(_) => return false,
+    };
+    segments.len() >= 3
+        && segments[segments.len() - 3] == "std"
+        && segments[segments.len() - 2] == "io"
+        && segments[segments.len() - 1] == "Error"
 }
 
 fn kotlin_type_name(name: &Name) -> Option<&str> {

@@ -1,9 +1,9 @@
 use eyre::Result;
 use fp_core::ast::package::{AstPackage, PackageItem};
 use fp_core::ast::{
-    BExpr, BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, FormatArgRef, FormatTemplatePart,
-    Item, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind, Pattern, PatternKind,
-    Ty, TypeInt, TypePrimitive, Value,
+    AttrMeta, BExpr, BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, FormatArgRef,
+    FormatTemplatePart, Item, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind,
+    Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
@@ -167,6 +167,8 @@ struct KotlinEmitter {
     split_iter_vars: HashSet<String>,
     /// Per-variable consumed-index counter for the `split_iter_vars` rewrite.
     next_call_counters: HashMap<String, usize>,
+    /// Locals whose initializer is a nullable Kotlin operation.
+    nullable_vars: HashSet<String>,
     /// Stack of currently-open block scopes (only pushed around match-arm body
     /// rendering, where Rust's `let`-shadowing shows up) — used to detect a
     /// same-scope re-`let` of a name, which Kotlin doesn't allow as a flat
@@ -218,6 +220,7 @@ impl KotlinEmitter {
             pending_assert_long: false,
             split_iter_vars: HashSet::new(),
             next_call_counters: HashMap::new(),
+            nullable_vars: HashSet::new(),
             field_element_types: HashMap::new(),
             string_field_names: HashSet::new(),
             enum_field_names: HashSet::new(),
@@ -943,6 +946,12 @@ impl KotlinEmitter {
         let variants = &en.value.variants;
         let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
         let implemented_traits = implemented_trait_names(traits);
+        let is_error = en.attrs.iter().any(|attr| match &attr.meta {
+            AttrMeta::List(list) if list.name.last().as_str() == "derive" => list.items.iter().any(
+                |item| matches!(item, AttrMeta::Path(path) if path.last().as_str() == "Error"),
+            ),
+            _ => false,
+        });
         let header_suffix = if implemented_traits.is_empty() {
             String::new()
         } else {
@@ -950,8 +959,15 @@ impl KotlinEmitter {
         };
 
         if has_data {
-            self.writer
-                .write_line(format!("sealed class {}{} {{", name, header_suffix));
+            if is_error {
+                self.writer.write_line(format!(
+                    "sealed class {}(message: String = \"{}\", cause: Throwable? = null) : Exception(message, cause){} {{",
+                    name, name, header_suffix
+                ));
+            } else {
+                self.writer
+                    .write_line(format!("sealed class {}{} {{", name, header_suffix));
+            }
             for (i, variant) in variants.iter().enumerate() {
                 // Faithful to the Rust source name — Kotlin class/object names
                 // are conventionally PascalCase anyway (matching a variant's
@@ -1055,6 +1071,20 @@ impl KotlinEmitter {
             }
             Ok(())
         } else {
+            if is_error {
+                self.writer.write_line(format!(
+                    "sealed class {}(message: String = \"{}\", cause: Throwable? = null) : Exception(message, cause){} {{",
+                    name, name, header_suffix
+                ));
+                for variant in variants {
+                    self.writer.write_line(format!(
+                        "    object {} : {}(\"{}\")",
+                        variant.name.name, name, variant.name.name
+                    ));
+                }
+                self.writer.write_line("}\n");
+                return Ok(());
+            }
             self.writer
                 .write_line(format!("enum class {}{} {{", name, header_suffix));
             for (i, variant) in variants.iter().enumerate() {
@@ -1647,6 +1677,14 @@ impl KotlinEmitter {
                 if var_name != "_" {
                     self.declare_name(&var_name);
                 }
+                if let Some(init) = &l.init {
+                    if method_chain_contains(init, "find_map")
+                        || method_chain_contains(init, "then_some")
+                        || method_chain_contains(init, "take")
+                    {
+                        self.nullable_vars.insert(var_name.clone());
+                    }
+                }
                 // `.len()` needs `.size` on a List but `.length` on a String — record
                 // this name as list-typed (reusing `field_element_types`, which the
                 // `.len()` call site below checks by name) so it renders correctly.
@@ -2086,6 +2124,7 @@ impl KotlinEmitter {
         self.writer.increase_indent();
         self.push_scope();
         if let Some(binding) = stripped_tuple_binding(&ok_case.pat) {
+            let binding = kotlin_binding_name(&binding);
             self.declare_name(&binding);
             self.writer
                 .write_line(&format!("val {} = {}.getOrThrow()", binding, scrutinee));
@@ -2097,7 +2136,7 @@ impl KotlinEmitter {
         self.writer.increase_indent();
         self.push_scope();
         if let Some(binding) = stripped_tuple_binding(&err_case.pat) {
-            self.declare_name(&binding);
+            let binding = kotlin_binding_name(&binding);
             self.writer.write_line(&format!(
                 "val {} = {}.exceptionOrNull()!!",
                 binding, scrutinee
@@ -2138,7 +2177,10 @@ fn ident_from_pattern(pat: &Pattern) -> String {
     match &pat.kind {
         PatternKind::Ident(id) => {
             let name = id.ident.name.as_str();
-            if matches!(name, "else" | "when" | "in" | "is" | "as" | "object") {
+            if matches!(
+                name,
+                "else" | "when" | "in" | "is" | "as" | "object" | "out"
+            ) {
                 format!("`{}`", name)
             } else if name == "_" {
                 "__p".to_string()
@@ -2153,6 +2195,99 @@ fn ident_from_pattern(pat: &Pattern) -> String {
         }
         PatternKind::Ref(r) => ident_from_pattern(&r.pattern),
         _ => "_".to_string(),
+    }
+}
+
+fn kotlin_binding_name(name: &str) -> String {
+    if let Some(inner) = name.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        return format!(
+            "({})",
+            inner
+                .split(", ")
+                .map(kotlin_binding_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if matches!(
+        name,
+        "as" | "break"
+            | "class"
+            | "continue"
+            | "do"
+            | "else"
+            | "false"
+            | "for"
+            | "fun"
+            | "if"
+            | "in"
+            | "interface"
+            | "is"
+            | "null"
+            | "object"
+            | "package"
+            | "return"
+            | "super"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typealias"
+            | "typeof"
+            | "val"
+            | "var"
+            | "when"
+            | "while"
+            | "by"
+            | "catch"
+            | "constructor"
+            | "delegate"
+            | "dynamic"
+            | "field"
+            | "file"
+            | "finally"
+            | "get"
+            | "import"
+            | "init"
+            | "param"
+            | "property"
+            | "receiver"
+            | "set"
+            | "setparam"
+            | "where"
+            | "actual"
+            | "abstract"
+            | "annotation"
+            | "companion"
+            | "const"
+            | "crossinline"
+            | "data"
+            | "enum"
+            | "expect"
+            | "external"
+            | "final"
+            | "infix"
+            | "inline"
+            | "inner"
+            | "internal"
+            | "lateinit"
+            | "noinline"
+            | "open"
+            | "operator"
+            | "out"
+            | "override"
+            | "private"
+            | "protected"
+            | "public"
+            | "reified"
+            | "sealed"
+            | "suspend"
+            | "tailrec"
+            | "vararg"
+    ) {
+        format!("`{}`", name)
+    } else {
+        name.to_string()
     }
 }
 
@@ -2214,6 +2349,22 @@ fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.field_element_types.contains_key(&n))
+}
+
+fn is_nullable_expr(expr: &Expr) -> bool {
+    fn ty_is_nullable(ty: &Ty) -> bool {
+        match ty {
+            Ty::Reference(reference) => ty_is_nullable(&reference.ty),
+            Ty::Expr(expr) => {
+                let name = expr_to_name(expr).replace("::", ".");
+                name.rsplit('.')
+                    .next()
+                    .is_some_and(|name| name.starts_with("Option<") || name.ends_with('?'))
+            }
+            _ => false,
+        }
+    }
+    fp_core::ast::resolved_expr_type(expr.id()).is_some_and(|ty| ty_is_nullable(&ty))
 }
 
 /// True if `expr` is a known `String` — checks the real inferred type
@@ -2339,7 +2490,29 @@ impl KotlinEmitter {
             Ty::Struct(s) => s.name.name.clone(),
             Ty::Enum(en) => en.name.name.clone(),
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
-            Ty::Expr(expr) => map_name_to_kt(&expr_to_name(expr)),
+            Ty::Expr(expr) => {
+                let name = expr_to_name(expr);
+                // `to_vec_in<T>` is an internal Rust helper type emitted by
+                // collection materialization. It is not a Kotlin declaration;
+                // preserve the element type while lowering it to the mutable
+                // collection used by Rust Vec values.
+                let name = name.replace("::", ".");
+                let bare = name.rsplit('.').next().unwrap_or(&name);
+                if let Some(inner) = bare
+                    .strip_prefix("to_vec_in<")
+                    .and_then(|rest| rest.strip_suffix('>'))
+                {
+                    let element = split_top_level(inner, ',')
+                        .first()
+                        .map(|part| map_name_to_kt(part.trim()))
+                        .unwrap_or_else(|| "Any".to_string());
+                    format!("MutableList<{}>", element)
+                } else if bare.starts_with("Split<") {
+                    "List<String>".to_string()
+                } else {
+                    map_name_to_kt(&name)
+                }
+            }
             Ty::Unit(_) => "Unit".into(),
             Ty::Slice(sl) => format!("List<{}>", self.kotlin_type_from_ty(&sl.elem)),
             Ty::Any(_) | Ty::Unknown(_) => "Any".into(),
@@ -2411,8 +2584,8 @@ mod tests {
         let rendered = KotlinSerializer
             .serialize_file(&file)
             .expect("serialize error enum");
-        assert!(rendered.contains("enum class Problem"));
-        assert!(!rendered.contains("Exception()"));
+        assert!(rendered.contains("sealed class Problem"));
+        assert!(rendered.contains(": Exception("));
         assert!(rendered.contains("Broken"));
     }
 
@@ -2748,5 +2921,69 @@ mod tests {
         assert!(rendered.contains("input = remaining"));
         assert!(!rendered.contains("*(input)"));
         assert!(!rendered.contains(".split_at("));
+    }
+
+    #[test]
+    fn rust_collection_spellings_have_kotlin_serializer_mappings() {
+        assert_eq!(map_kt_method("split_terminator"), "split");
+        assert_eq!(map_kt_method("split_whitespace"), "split");
+        assert_eq!(map_kt_method("file_type"), "fileType");
+        assert_eq!(map_kt_method("is_dir"), "isDirectory");
+        assert_eq!(map_kt_method("is_ascii_hexdigit"), "isDigit(16)");
+        assert_eq!(map_kt_method("as_str"), "");
+    }
+
+    #[test]
+    fn native_option_operation_does_not_require_runtime_helper() {
+        let call = Expr::new(ExprKind::Invoke(ExprInvoke {
+            span: fp_core::span::Span::null(),
+            target: ExprInvokeTarget::Method(fp_core::ast::ExprSelect {
+                span: fp_core::span::Span::null(),
+                obj: Expr::value(Value::bool(true)).into(),
+                field: Ident::new("then_some"),
+                generic_args: Vec::new(),
+                select: fp_core::ast::ExprSelectType::Method,
+            }),
+            args: vec![Expr::value(Value::int(1))],
+            kwargs: Vec::new(),
+        }));
+        let body = ExprBlock::new_stmts(vec![BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(
+            call,
+        ))]);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefFunction(
+                ItemDefFunction::new_simple(Ident::new("native_option"), body),
+            ))],
+        };
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize native option operation");
+        assert!(rendered.contains("if (true) 1 else null"));
+        assert!(!rendered.contains("thenSome"));
+        assert!(!rendered.contains("RustKotlinRuntime"));
+    }
+
+    #[test]
+    fn internal_vec_helper_type_is_never_emitted_as_kotlin_type() {
+        let emitter = KotlinEmitter::new();
+        let ty = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
+            "to_vec_in<str>",
+        ))));
+        assert_eq!(emitter.kotlin_type_from_ty(&ty), "MutableList<Any>");
+        let split = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
+            "Split<str>",
+        ))));
+        assert_eq!(emitter.kotlin_type_from_ty(&split), "List<String>");
+    }
+
+    #[test]
+    fn nullable_search_result_is_unwrapped_in_numeric_positions() {
+        let mut emitter = KotlinEmitter::new();
+        emitter.nullable_vars.insert("index".to_string());
+        let index = Expr::ident(Ident::new("index"));
+        assert_eq!(emitter.render_numeric_expr(&index).unwrap(), "index!!");
     }
 }

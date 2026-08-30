@@ -718,7 +718,6 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
-    #[op(method = "is_none")]
     pub const fn is_none(&self) -> bool {
         !self.is_some()
     }
@@ -779,7 +778,6 @@ impl<T> Option<T> {
     #[inline]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[op(method = "as_ref")]
     pub const fn as_ref(&self) -> Option<&T> {
         match *self {
             Some(ref x) => Some(x),
@@ -1074,7 +1072,6 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    #[op(method = "unwrap_or")]
     pub const fn unwrap_or(self, default: T) -> T
     where
         T: Destruct,
@@ -1261,7 +1258,6 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[must_use = "if you don't need the returned value, use `if let` instead"]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    #[op(method = "map_or")]
     pub const fn map_or<U, F>(self, default: U, f: F) -> U
     where
         F: FnOnce(T) -> U + Destruct,
@@ -1426,7 +1422,6 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "option_deref", since = "1.40.0")]
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-    #[op(method = "as_deref")]
     pub const fn as_deref(&self) -> Option<&T::Target>
     where
         T: Deref,
@@ -1475,7 +1470,6 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[op(method = "iter")]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter { inner: Item { opt: self.as_ref() } }
     }
@@ -1579,7 +1573,6 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_confusables("flat_map", "flatmap")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    #[op(method = "and_then")]
     pub const fn and_then<U, F>(self, f: F) -> Option<U>
     where
         F: FnOnce(T) -> Option<U> + Destruct,
@@ -1617,7 +1610,6 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "option_filter", since = "1.27.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    #[op(method = "filter")]
     pub const fn filter<P>(self, predicate: P) -> Self
     where
         P: FnOnce(&T) -> bool + Destruct,
@@ -1924,7 +1916,6 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
-    #[op(method = "take")]
     pub const fn take(&mut self) -> Option<T> {
         // FIXME(const-hack) replace `mem::replace` by `mem::take` when the latter is const ready
         mem::replace(self, None)
@@ -2303,7 +2294,6 @@ where
     T: Clone + Destruct,
 {
     #[inline]
-    #[op(method = "clone")]
     fn clone(&self) -> Self {
         match self {
             Some(x) => Some(x.clone()),

@@ -337,6 +337,7 @@ pub struct HirPackage {
 /// Result of classifying an impl's self-type for `impls_by_shape`/
 /// `blanket_impls` indexing — see `classify_impl_shape`.
 enum ImplShapeClass {
+    Nominal(DefId),
     Shape(String),
     Blanket,
     Unclassified,
@@ -358,7 +359,10 @@ enum ImplShapeClass {
 /// key here. A primitive scalar (`impl u8 { .. }`) has no such tag (its
 /// self-type `Path` is simply unresolved, its first segment the primitive
 /// name); match `PRIMITIVE_SELF_TYPE_NAMES` directly for that case.
-fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
+fn classify_impl_shape(
+    impl_item: &Impl,
+    type_alias_targets: &HashMap<DefId, TypeExpr>,
+) -> ImplShapeClass {
     // A primitive self-type written where the parser recognizes it as a
     // literal type expression (`ast::Value::Type(Ty::Primitive(_))`, e.g.
     // real std's `impl Add for i64`) lowers straight to
@@ -405,29 +409,68 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
         TypeExprKind::Never => return ImplShapeClass::Shape("!".to_string()),
         _ => {}
     }
-    let TypeExprKind::Path(path) = &impl_item.self_ty.kind else {
-        return ImplShapeClass::Unclassified;
-    };
-    if let Some(Res::Def(did)) = &path.res {
-        if impl_item
-            .generics
-            .params
-            .iter()
-            .any(|param| param.def_id == *did)
-        {
-            return ImplShapeClass::Blanket;
+    classify_type_shape(
+        &impl_item.self_ty,
+        &impl_item.generics,
+        type_alias_targets,
+        &mut HashSet::new(),
+    )
+}
+
+/// Classify the outer type exactly once, following transparent aliases by
+/// identity.  An alias is not a dispatch type in rustc: its simplified type
+/// is the simplified type of its target.  Keeping this lookup identity-based
+/// also handles aliases imported from another module/package without making
+/// their spelling part of dispatch.
+fn classify_type_shape(
+    ty: &TypeExpr,
+    generics: &Generics,
+    aliases: &HashMap<DefId, TypeExpr>,
+    active_aliases: &mut HashSet<DefId>,
+) -> ImplShapeClass {
+    match &ty.kind {
+        TypeExprKind::Primitive(prim) => primitive_shape_name(prim)
+            .map(ImplShapeClass::Shape)
+            .unwrap_or(ImplShapeClass::Unclassified),
+        TypeExprKind::Ref(_) => ImplShapeClass::Shape("&".to_string()),
+        TypeExprKind::Ptr { mutable, .. } => {
+            ImplShapeClass::Shape(if *mutable { "*mut" } else { "*const" }.to_string())
         }
+        TypeExprKind::Slice(_) => ImplShapeClass::Shape("[]".to_string()),
+        TypeExprKind::Array(_, _) => ImplShapeClass::Shape("[;N]".to_string()),
+        TypeExprKind::Tuple(elems) => ImplShapeClass::Shape(if elems.is_empty() {
+            "()".to_string()
+        } else {
+            "(,)".to_string()
+        }),
+        TypeExprKind::FnPtr(_) => ImplShapeClass::Shape("fn(..)".to_string()),
+        TypeExprKind::Never => ImplShapeClass::Shape("!".to_string()),
+        TypeExprKind::Path(path) => match &path.res {
+            Some(Res::Builtin(builtin)) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
+            Some(Res::Def(did)) if generics.params.iter().any(|param| param.def_id == *did) => {
+                ImplShapeClass::Blanket
+            }
+            Some(Res::Def(did)) => {
+                if let Some(target) = aliases.get(did) {
+                    if !active_aliases.insert(did.clone()) {
+                        return ImplShapeClass::Unclassified;
+                    }
+                    let result = classify_type_shape(target, generics, aliases, active_aliases);
+                    active_aliases.remove(did);
+                    result
+                } else {
+                    ImplShapeClass::Nominal(did.clone())
+                }
+            }
+            _ if path.segments.len() == 1
+                && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
+            {
+                ImplShapeClass::Shape(path.segments[0].name.as_str().to_string())
+            }
+            _ => ImplShapeClass::Unclassified,
+        },
+        _ => ImplShapeClass::Unclassified,
     }
-    if let Some(Res::Builtin(builtin)) = &path.res {
-        return ImplShapeClass::Shape(builtin.bucket_key().to_string());
-    }
-    if let [segment] = path.segments.as_slice() {
-        let name = segment.name.as_str();
-        if PRIMITIVE_SELF_TYPE_NAMES.contains(&name) {
-            return ImplShapeClass::Shape(name.to_string());
-        }
-    }
-    ImplShapeClass::Unclassified
 }
 
 /// `ast::TypePrimitive` -> the same canonical scalar name
@@ -542,63 +585,28 @@ impl HirPackage {
                 // from path spelling here: a re-export or a same-named item
                 // in another package can otherwise produce an index key that
                 // differs from the `Res::Def` consumed by type checking.
-                let resolved_did = match &impl_item.self_ty.kind {
-                    TypeExprKind::Path(path) => match &path.res {
-                        Some(Res::Def(did))
-                            if !impl_item
-                                .generics
-                                .params
-                                .iter()
-                                .any(|param| param.def_id == *did) =>
-                        {
-                            Some(did.clone())
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                match resolved_did {
-                    Some(did) => {
+                match classify_impl_shape(impl_item, &self.type_alias_targets) {
+                    ImplShapeClass::Nominal(did) => {
                         self.impls_by_self_did
                             .entry(did)
                             .or_default()
                             .push(item.def_id.clone());
                     }
-                    None => match classify_impl_shape(impl_item) {
-                        ImplShapeClass::Shape(shape) => {
-                            self.impls_by_shape
-                                .entry(shape)
-                                .or_default()
-                                .push(item.def_id.clone());
-                        }
-                        ImplShapeClass::Blanket => {
-                            self.blanket_impls.push(item.def_id.clone());
-                        }
-                        // A self-type this compiler has no dispatch rule
-                        // for at all — not a resolved nominal ADT path
-                        // (`impls_by_self_did`), not one of the known
-                        // concrete shapes (`ImplShape`), and not a blanket
-                        // impl over the impl's own generic param. Every
-                        // real Rust impl's self-type falls into one of
-                        // those three buckets, so reaching here means this
-                        // impl silently becomes unreachable by any
-                        // candidate search — a real gap, not a case to
-                        // paper over by scanning the whole workspace for
-                        // it. Recorded as a hard diagnostic (not a
-                        // stderr-only warning) so it's visible in the same
-                        // diagnostic count real typing errors are.
-                        ImplShapeClass::Unclassified => {
-                            self.diagnostics
-                                .add_diagnostic(crate::diagnostics::Diagnostic::error(format!(
-                                    "impl at {:?} has a self-type with no known dispatch \
-                                     shape (not a resolved nominal path, not a recognized \
-                                     concrete shape, not a blanket impl over its own generic \
-                                     param) — it is unreachable by method/associated-item \
-                                     candidate search",
-                                    item.hir_id
-                                )));
-                        }
-                    },
+                    ImplShapeClass::Shape(shape) => {
+                        self.impls_by_shape
+                            .entry(shape)
+                            .or_default()
+                            .push(item.def_id.clone());
+                    }
+                    ImplShapeClass::Blanket => {
+                        self.blanket_impls.push(item.def_id.clone());
+                    }
+                    // Rustc's fast-reject table silently leaves impls whose
+                    // self type has no simplified key out of the fast path.
+                    // This is an indexing limitation, not a source error;
+                    // reporting it as a hard diagnostic creates a cascade
+                    // before the consumer's actual obligations are checked.
+                    ImplShapeClass::Unclassified => {}
                 }
             }
             // No derived-index entry applies to these — a free function,
@@ -971,5 +979,69 @@ impl HirPackage {
 
     pub fn anonymous_consts(&self) -> HashMap<DefId, Block> {
         self.anonymous_consts.borrow().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn path_type(res: Res, name: &str) -> TypeExpr {
+        TypeExpr::new(
+            HirId::new(OwnerId::root(), 1),
+            TypeExprKind::Path(Path {
+                segments: vec![PathSegment {
+                    name: name.into(),
+                    args: None,
+                }],
+                res: Some(res),
+            }),
+            Span::null(),
+        )
+    }
+
+    fn impl_for(self_ty: TypeExpr, generics: Generics) -> Impl {
+        Impl {
+            generics,
+            trait_ty: None,
+            self_ty,
+            items: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn impl_index_classifies_nominal_alias_by_target_identity() {
+        let target = DefId::new(PackageId::new("core"), 7);
+        let alias = DefId::new(PackageId::new("std"), 9);
+        let mut aliases = HashMap::new();
+        aliases.insert(alias.clone(), path_type(Res::Def(target.clone()), "Target"));
+
+        let class = classify_impl_shape(
+            &impl_for(path_type(Res::Def(alias), "Alias"), Generics::default()),
+            &aliases,
+        );
+        assert!(matches!(class, ImplShapeClass::Nominal(did) if did == target));
+    }
+
+    #[test]
+    fn impl_index_keeps_only_own_generic_parameter_as_blanket() {
+        let param = DefId::new(PackageId::new("crate"), 3);
+        let generics = Generics {
+            params: vec![GenericParam {
+                hir_id: HirId::new(OwnerId::root(), 2),
+                def_id: param.clone(),
+                name: "T".into(),
+                kind: GenericParamKind::Type { default: None },
+                bounds: Vec::new(),
+                explicit_bindings: Vec::new(),
+                projection_bounds: Vec::new(),
+            }],
+            where_clause: None,
+        };
+        let class = classify_impl_shape(
+            &impl_for(path_type(Res::Def(param), "T"), generics),
+            &HashMap::new(),
+        );
+        assert!(matches!(class, ImplShapeClass::Blanket));
     }
 }

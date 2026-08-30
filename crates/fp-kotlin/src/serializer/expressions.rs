@@ -2,6 +2,21 @@ use super::*;
 
 /// nested snippets self-consistent no matter how deep they end up embedded.
 impl KotlinEmitter {
+    /// Kotlin does not propagate Rust's flow-sensitive `Option<T>` knowledge
+    /// through a value returned by an iterator search. Numeric uses therefore
+    /// need an explicit unwrap at the use site (`x!!`) when the AST still
+    /// carries an Option-shaped type.
+    pub(super) fn render_numeric_expr(&mut self, expr: &Expr) -> Result<String> {
+        let rendered = self.render_expr(expr)?;
+        let tracked_nullable =
+            expr_receiver_name(expr).is_some_and(|name| self.nullable_vars.contains(&name));
+        if (is_nullable_expr(expr) || tracked_nullable) && !rendered.ends_with("!!") {
+            Ok(format!("{}!!", rendered))
+        } else {
+            Ok(rendered)
+        }
+    }
+
     pub(super) fn render_expr(&mut self, expr: &Expr) -> Result<String> {
         match expr.kind() {
             ExprKind::Value(val) => {
@@ -147,7 +162,32 @@ impl KotlinEmitter {
                                 obj, index
                             ));
                         }
-                        let obj = self.render_expr(&sel.obj)?;
+                        let mut obj = self.render_expr(&sel.obj)?;
+                        if expr_receiver_name(&sel.obj)
+                            .is_some_and(|name| self.nullable_vars.contains(&name))
+                        {
+                            obj.push_str("!!");
+                        }
+                        // These operations have direct Kotlin forms. Keep their
+                        // lowering local to expression emission so this path does
+                        // not create a dependency on a synthetic runtime intrinsic.
+                        if sel.field.name.as_str() == "then_some" && inv.args.len() == 1 {
+                            return Ok(format!(
+                                "if ({}) {} else null",
+                                obj,
+                                self.render_expr(&inv.args[0])?
+                            ));
+                        }
+                        if sel.field.name.as_str() == "find_map" && inv.args.len() == 1 {
+                            return Ok(format!(
+                                "{}.firstNotNullOfOrNull({})",
+                                obj,
+                                self.render_expr(&inv.args[0])?
+                            ));
+                        }
+                        if sel.field.name.as_str() == "split_whitespace" && inv.args.is_empty() {
+                            return Ok(format!("{}.trim().split(Regex(\"\\\\s+\"))", obj));
+                        }
                         // `round`/`log2` have no Kotlin member-method equivalent — both are
                         // top-level `kotlin.math` functions taking the receiver as an
                         // argument (`kotlin.math.round(x)`, not `x.round()`).
@@ -274,7 +314,11 @@ impl KotlinEmitter {
                                         }
                                     }
                                 }
-                                self.render_expr(a)
+                                if sel.field.name.as_str() == "contains" {
+                                    self.render_numeric_expr(a)
+                                } else {
+                                    self.render_expr(a)
+                                }
                             })
                             .collect::<Result<Vec<_>>>()?;
                         if method_name.is_empty() {
@@ -345,7 +389,7 @@ impl KotlinEmitter {
                     let is_list = is_known_list_receiver(&idx.obj, self);
                     let obj = self.render_expr(&idx.obj)?;
                     let start = match &r.start {
-                        Some(s) => self.render_expr(s)?,
+                        Some(s) => self.render_numeric_expr(s)?,
                         None => "0".to_string(),
                     };
                     if !is_list && r.end.is_none() {
@@ -353,7 +397,7 @@ impl KotlinEmitter {
                     }
                     let end = match &r.end {
                         Some(end) => {
-                            let end = self.render_expr(end)?;
+                            let end = self.render_numeric_expr(end)?;
                             if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
                                 format!("({} + 1)", end)
                             } else {
@@ -371,13 +415,13 @@ impl KotlinEmitter {
                 Ok(format!(
                     "{}[{}]",
                     self.render_expr(&idx.obj)?,
-                    self.render_expr(&idx.index)?
+                    self.render_numeric_expr(&idx.index)?
                 ))
             }
 
             ExprKind::BinOp(bin) => {
-                let mut lhs = self.render_expr(&bin.lhs)?;
-                let mut rhs = self.render_expr(&bin.rhs)?;
+                let mut lhs = self.render_numeric_expr(&bin.lhs)?;
+                let mut rhs = self.render_numeric_expr(&bin.rhs)?;
                 // Kotlin's `==`/`!=` (unlike `<`/`>`, which have cross-type
                 // `compareTo` overloads) require matching numeric types — a
                 // `.len()`-derived `Long` (see `is_len_on_list`'s `.toLong()`)
@@ -819,6 +863,9 @@ pub(super) fn map_kt_path(name: &str) -> String {
         // resolvable as a static-interface-method call in this position; use
         // `Paths.get(...)` instead (kt_import_for's StdPath arm imports both).
         let prefix_last = prefix.rsplit("::").next().unwrap_or(prefix);
+        if prefix_last == "Split" && method == "str" {
+            return "toString".to_string();
+        }
         if matches!(method, "from" | "new")
             && KnownClass::from_source_type(prefix_last) == Some(KnownClass::Path)
         {
@@ -909,6 +956,8 @@ pub(super) fn map_kt_method(name: &str) -> String {
         "insert" => "add".into(),
         "len" => "length".into(),
         "lines" => "lines()".into(),
+        "split_terminator" => "split".into(),
+        "split_whitespace" => "split".into(),
         "split" => "split".into(),
         "contains" => "contains".into(),
         "replace" => "replace".into(),
@@ -943,8 +992,10 @@ pub(super) fn map_kt_method(name: &str) -> String {
         // nullable types don't need one — so drop the call entirely.
         "as_ref" => "".into(),
         "as_bytes" => "toByteArray()".into(),
+        "as_str" => "".into(),
         "map" => "let".into(),
         "is_ascii_alphanumeric" => "isLetterOrDigit()".into(),
+        "is_ascii_hexdigit" => "isDigit(16)".into(),
         "is_whitespace" => "isWhitespace()".into(),
         "all" => "all".into(),
         // Kotlin's `CharSequence` already has `.all { c: Char -> ... }`, `.map`, etc.
@@ -970,6 +1021,8 @@ pub(super) fn map_kt_method(name: &str) -> String {
         "read_to_string" => "readText".into(),
         "remove_file" => "delete".into(),
         "is_alive" => "isAlive".into(),
+        "file_type" => "fileType".into(),
+        "is_dir" => "isDirectory".into(),
         "kill_process" => "destroy".into(),
         "sleep" => "Thread.sleep".into(),
         "next" => "".into(),

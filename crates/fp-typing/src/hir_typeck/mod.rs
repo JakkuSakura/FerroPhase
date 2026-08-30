@@ -17,6 +17,7 @@ mod generic_types;
 mod intrinsics;
 mod literals;
 mod type_shapes;
+use generic_types::obligation_shape_key;
 use type_shapes::*;
 // TODO: do not publish here. just make the input inside Rc
 /// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
@@ -150,6 +151,26 @@ pub struct HirTypeChecker {
     /// carries over unchanged through every `with_*` child the same way
     /// `#[derive(Clone)]` already carries every other field.
     resolving_assoc_projections: Vec<(String, hir::Symbol)>,
+    /// Impl candidates currently being evaluated for an associated-type
+    /// projection.  Projection keys alone are insufficient for cycles that
+    /// alternate between different target types before returning to the same
+    /// impl declaration; the impl's stable HIR owner closes that cycle.
+    resolving_impl_projections: HashSet<(hir::HirId, hir::Symbol)>,
+    /// Generic associated-type projections currently being expanded.  This
+    /// is separate from `resolving_assoc_projections` because `path_ty`
+    /// resolves these directly from a parameter's bounds and therefore does
+    /// not enter `assoc_type_for_self` first.
+    resolving_generic_projections: Vec<(ty::ParamTy, hir::Symbol)>,
+    /// Transparent aliases are expanded during type checking.  Keep the
+    /// definition identity in the cycle key; aliases can be mutually
+    /// recursive even when their source spellings differ.
+    resolving_type_aliases: Vec<hir::DefId>,
+    /// Impl headers and associated-type bindings may refer to projections
+    /// whose candidate search reaches the same impl again. Track those
+    /// definition identities separately from projection names so recursive
+    /// impl evaluation terminates before the Rust stack is exhausted.
+    resolving_impl_headers: HashSet<hir::DefId>,
+    resolving_impl_assoc_types: Vec<hir::HirId>,
     /// Fully-qualified path of the item currently being checked, if
     /// known — purely diagnostic (see `typecheck_item`'s own doc comment
     /// on why: an otherwise file/line-less error like `path_ty`'s
@@ -158,6 +179,10 @@ pub struct HirTypeChecker {
     /// large real corpus).
     current_item_path: Option<String>,
     infer_vars: Rc<RefCell<HashMap<ty::InferTy, Ty>>>,
+    /// Diagnostics are emitted from cloned candidate scopes. Share the
+    /// identity set so one source failure is recorded once even when the
+    /// same definition is revisited through several resolution paths.
+    emitted_diagnostic_ids: Rc<RefCell<HashSet<String>>>,
 }
 
 impl HirTypeChecker {
@@ -207,8 +232,14 @@ impl HirTypeChecker {
             expected_expr_type: None,
             return_type_hint: None,
             resolving_assoc_projections: Vec::new(),
+            resolving_impl_projections: HashSet::new(),
+            resolving_generic_projections: Vec::new(),
+            resolving_type_aliases: Vec::new(),
+            resolving_impl_headers: HashSet::new(),
+            resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
+            emitted_diagnostic_ids: Rc::new(RefCell::new(HashSet::new())),
         }))
     }
 
@@ -235,8 +266,14 @@ impl HirTypeChecker {
             expected_expr_type: None,
             return_type_hint: None,
             resolving_assoc_projections: Vec::new(),
+            resolving_impl_projections: HashSet::new(),
+            resolving_generic_projections: Vec::new(),
+            resolving_type_aliases: Vec::new(),
+            resolving_impl_headers: HashSet::new(),
+            resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
+            emitted_diagnostic_ids: shared.emitted_diagnostic_ids.clone(),
         }
     }
 
@@ -524,6 +561,10 @@ impl HirTypeChecker {
     /// pass finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
+        let message = message.into();
+        if !self.try_claim_diagnostic(&message, None, None) {
+            return;
+        }
         self.package()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, None));
@@ -541,6 +582,10 @@ impl HirTypeChecker {
     /// offending expression's span in scope, so the diagnostic is
     /// locatable instead of a bare, file/line-less message.
     fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
+        let message = message.into();
+        if !self.try_claim_diagnostic(&message, Some(&span), None) {
+            return;
+        }
         self.package()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, Some(span)));
@@ -563,9 +608,29 @@ impl HirTypeChecker {
     /// stages on real gaps without also tripping on every recovered,
     /// harmless mismatch also sitting in the same manager.
     fn record_item_check_failure(&self, message: impl Into<String>) {
+        let message = message.into();
+        if !self.try_claim_diagnostic(&message, None, Some(ITEM_CHECK_FAILURE_CODE)) {
+            return;
+        }
         let diagnostic = crate::types::typing_diagnostic(message, None)
             .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
         self.package().diagnostics.add_diagnostic(diagnostic);
+    }
+
+    fn try_claim_diagnostic(
+        &self,
+        message: &str,
+        span: Option<&fp_core::span::Span>,
+        code: Option<&str>,
+    ) -> bool {
+        let key = format!(
+            "{}\0{}\0{}\0{}",
+            self.current_item_path.as_deref().unwrap_or_default(),
+            span.map(|value| format!("{value:?}")).unwrap_or_default(),
+            code.unwrap_or_default(),
+            message
+        );
+        self.emitted_diagnostic_ids.borrow_mut().insert(key)
     }
 }
 
@@ -666,25 +731,35 @@ impl HirTypeChecker {
     async fn impl_assoc_types(
         &mut self,
         impl_items: &[hir::ImplItem],
-        cache_key: hir::HirId,
     ) -> Result<HashMap<hir::Symbol, Ty>> {
-        if let Some(cached) = self.package().impl_assoc_types(cache_key.clone()) {
-            return Ok(cached);
+        let Some(key) = impl_items.first().map(|item| item.hir_id.clone()) else {
+            return Ok(HashMap::new());
+        };
+        if self.resolving_impl_assoc_types.contains(&key) {
+            return Err(Error::from("recursive associated-type evaluation"));
         }
+        self.resolving_impl_assoc_types.push(key.clone());
         let mut out = HashMap::new();
-        for item in impl_items {
-            if let hir::ImplItemKind::AssocType(assoc) = &item.kind {
-                let ty = self.check_type_expr(&assoc.ty).await?;
-                out.insert(assoc.name.clone(), ty);
+        let result = async {
+            for item in impl_items {
+                if let hir::ImplItemKind::AssocType(assoc) = &item.kind {
+                    let ty = self.check_type_expr(&assoc.ty).await?;
+                    out.insert(assoc.name.clone(), ty);
+                }
             }
+            Ok::<_, Error>(out)
         }
-        self.package()
-            .cache_impl_assoc_types(cache_key, out.clone());
-        Ok(out)
+        .await;
+        self.resolving_impl_assoc_types.pop();
+        result
     }
 
     fn check_item<'a>(&'a mut self, item: &'a hir::Item) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
+            // Use the resolved definition identity as the diagnostic owner.
+            // Candidate scopes are cloned below, so source text alone cannot
+            // distinguish repeated reports from distinct items.
+            self.current_item_path = Some(item.def_id.to_string());
             match &item.kind {
                 hir::ItemKind::Function(function) => {
                     self.check_function(function).await?;
@@ -706,7 +781,9 @@ impl HirTypeChecker {
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.with_generics(&impl_item.generics);
-                    let self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
+                    let self_ty = scope
+                        .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                        .await?;
                     let mut scope = scope.with_self_type(self_ty);
                     // `impl_item.trait_ty`, when present, names the trait
                     // being implemented — a reference to a trait
@@ -721,9 +798,7 @@ impl HirTypeChecker {
                     // "definition `{def_id}` is not a type" — this
                     // position was never meant to type-check as a
                     // concrete type in the first place.
-                    let assoc_types = scope
-                        .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                        .await?;
+                    let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
                     let mut scope = scope.with_assoc_types(assoc_types);
                     for item in &impl_item.items {
                         match &item.kind {
@@ -988,7 +1063,30 @@ impl HirTypeChecker {
             hir::ExprKind::Unary(op, value) => self.check_unary_expr(op, value, expr.span),
             hir::ExprKind::Reference(reference) => self.check_reference_expr(reference),
             hir::ExprKind::Call(callee, args) => Box::pin(async {
-                let mut callee_ty = self.check_expr(callee).await?;
+                let mut callee = callee.clone();
+                // AST->HIR keeps the type head on a qualified constructor
+                // path when name resolution cannot inspect the owning enum
+                // yet.  Complete the value-namespace lookup here, before
+                // checking the callee: a constructor path denotes the
+                // variant's callable identity, never the enum ADT itself.
+                if let hir::ExprKind::Path(path) = &mut callee.kind {
+                    if path.segments.len() > 1 {
+                        if let Some(hir::Res::Def(owner_id)) = path.res.clone() {
+                            if let Some(item) = self.program_rc().item(owner_id) {
+                                if let hir::ItemKind::Enum(def) = &item.kind {
+                                    if let Some(variant) = def.variants.iter().find(|variant| {
+                                        path.segments
+                                            .last()
+                                            .is_some_and(|segment| variant.name == segment.name)
+                                    }) {
+                                        path.res = Some(hir::Res::Def(variant.def_id.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut callee_ty = self.check_expr(&callee).await?;
                 // Rust's call-trait lookup autodereferences callable
                 // references (`&F`/`&mut F`) before selecting `Fn` or
                 // `FnMut`. This is a call-site adjustment, not a general
@@ -1162,21 +1260,13 @@ impl HirTypeChecker {
                                 // instead, exactly like `T::method(..)`
                                 // does when the base segment itself
                                 // names the parameter.
-                                let sig = if method_name == "default" {
-                                    Some(Ty {
-                                        kind: TyKind::FnPtr(ty::PolyFnSig {
-                                            binder: ty::Binder {
-                                                value: ty::FnSig {
-                                                    inputs: Vec::new(),
-                                                    output: Box::new(receiver_ty.clone()),
-                                                    c_variadic: false,
-                                                    unsafety: ty::Unsafety::Normal,
-                                                    abi: ty::Abi::Rust,
-                                                },
-                                                bound_vars: Vec::new(),
-                                            },
-                                        }),
-                                    })
+                                let sig = if let Some(hir::Res::Def(trait_id)) = path.res.as_ref() {
+                                    self.trait_qualified_method_signature(
+                                        trait_id,
+                                        &method_name,
+                                        receiver_ty.clone(),
+                                    )
+                                    .await?
                                 } else if let TyKind::Param(param) = &receiver_ty.kind {
                                     self.generic_param_bound_method_signature(
                                         &param.name,
@@ -1228,21 +1318,13 @@ impl HirTypeChecker {
                                 .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
                             if let Some(receiver_ty) = expected {
                                 let method_name = path.segments.last().unwrap().name.clone();
-                                let sig = if method_name == "default" {
-                                    Some(Ty {
-                                        kind: TyKind::FnPtr(ty::PolyFnSig {
-                                            binder: ty::Binder {
-                                                value: ty::FnSig {
-                                                    inputs: Vec::new(),
-                                                    output: Box::new(receiver_ty.clone()),
-                                                    c_variadic: false,
-                                                    unsafety: ty::Unsafety::Normal,
-                                                    abi: ty::Abi::Rust,
-                                                },
-                                                bound_vars: Vec::new(),
-                                            },
-                                        }),
-                                    })
+                                let sig = if let Some(hir::Res::Def(trait_id)) = path.res.as_ref() {
+                                    self.trait_qualified_method_signature(
+                                        trait_id,
+                                        &method_name,
+                                        receiver_ty.clone(),
+                                    )
+                                    .await?
                                 } else if let TyKind::Param(param) = &receiver_ty.kind {
                                     self.generic_param_bound_method_signature(
                                         &param.name,
@@ -1888,6 +1970,12 @@ impl HirTypeChecker {
             }),
             hir::ExprKind::Try(value) => Box::pin(async {
                 let input_ty = self.check_expr(&value.expr).await?;
+                // Do not derive a second trait obligation from an operand
+                // that already failed resolution. The operand's diagnostic
+                // is the authoritative rustc-style error.
+                if ty_contains_error(&input_ty) {
+                    return Ok(input_ty);
+                }
                 // A postfix `?` yields the carrier's declared `Try::Output`.
                 // Resolve that associated type through the normal impl
                 // search so each Try implementation defines its own
@@ -2927,6 +3015,17 @@ impl HirTypeChecker {
             Some(hir::Res::Def(ref def_id)) => Some(def_id),
             _ => None,
         }) else {
+            // A bare primitive type can arrive without the AST->HIR
+            // builtin tag when HIR is constructed directly (and when a
+            // cached/downstream path has not gone through the ordinary
+            // type-name resolver).  Resolve it through the same canonical
+            // table used by builtin-tagged paths; do not treat `f16`/`f128`
+            // or the other primitives as ordinary unresolved definitions.
+            if path.segments.len() == 1 {
+                if let Some(primitive) = primitive_path_ty(path.segments[0].name.as_str()) {
+                    return Ok(primitive);
+                }
+            }
             // `<usize as Add>::Output`-style UFCS paths lower to a flat
             // `usize::Output` (`parse_qualified_path_type` in fp-lang
             // intentionally drops the `as Trait` disambiguator — its own
@@ -2986,7 +3085,13 @@ impl HirTypeChecker {
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
         if let Some(target) = self.program_rc().type_alias_target(def_id.clone()) {
-            return self.check_type_expr(&target).await;
+            if self.resolving_type_aliases.contains(def_id) {
+                return Ok(self.error_ty(format!("recursive type alias `{def_id}`")));
+            }
+            self.resolving_type_aliases.push(def_id.clone());
+            let result = self.check_type_expr(&target).await;
+            self.resolving_type_aliases.pop();
+            return result;
         }
         let Some(item) = self.program_rc().item(def_id.clone()) else {
             // A resolved definition without a published HIR item is a
@@ -3346,6 +3451,12 @@ impl HirTypeChecker {
                     1 => return Ok(self_ty),
                     2 => {
                         let method_segment = &path.segments[1];
+                        if let Some(ctor) = self
+                            .self_enum_variant_constructor(&self_ty, &method_segment.name)
+                            .await?
+                        {
+                            return Ok(ctor);
+                        }
                         let found = self
                             .method_declared_signature_at(&self_ty, &method_segment.name)
                             .await?;
@@ -3689,7 +3800,7 @@ impl HirTypeChecker {
                 let self_ty_hir_id = self_ty.hir_id.clone();
                 let self_ty = scope.check_type_expr(&self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
-                let assoc_types = scope.impl_assoc_types(&impl_items, self_ty_hir_id).await?;
+                let assoc_types = scope.impl_assoc_types(&impl_items).await?;
                 let mut scope = scope.with_assoc_types(assoc_types);
                 return scope.function_signature(&function).await;
             }
@@ -3761,8 +3872,7 @@ impl HirTypeChecker {
                         let mut scope = self.with_generics(&generics);
                         let self_ty = scope.check_type_expr(&self_ty).await?;
                         let mut scope = scope.with_self_type(self_ty);
-                        let assoc_types =
-                            scope.impl_assoc_types(&impl_items, self_ty_hir_id).await?;
+                        let assoc_types = scope.impl_assoc_types(&impl_items).await?;
                         let mut scope = scope.with_assoc_types(assoc_types);
                         return scope.function_signature(&function).await;
                     }
@@ -3794,6 +3904,12 @@ impl HirTypeChecker {
                     let mut scope = self.with_generics(&enum_def.generics);
                     let payload_result = scope.check_type_expr(payload).await;
                     let payload_ty = payload_result?;
+                    let payload_ty = match &enum_ty.kind {
+                        TyKind::Adt(_, args) => {
+                            scope.substitute_params(payload_ty, args, &enum_def.generics.params)
+                        }
+                        _ => payload_ty,
+                    };
                     let inputs = match payload_ty.kind {
                         TyKind::Tuple(fields) => fields,
                         _ => vec![Box::new(payload_ty)],
@@ -3910,6 +4026,58 @@ impl HirTypeChecker {
             hir::ItemKind::Function(function) => self.function_signature(&function).await,
             _ => Ok(self.error_ty("resolved path is not a value")),
         }
+    }
+
+    /// Resolve `Self::Variant` using the enclosing ADT identity.  Rustc keeps
+    /// the `Self` head as a type-relative path and resolves the variant in the
+    /// enum's value namespace; the HIR used here has no separate QPath node,
+    /// so this is the corresponding typeck step.  The lookup is entirely by
+    /// the concrete enum `DefId`, including dependency packages.
+    async fn self_enum_variant_constructor(
+        &mut self,
+        self_ty: &Ty,
+        variant_name: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        let TyKind::Adt(adt, args) = &self_ty.kind else {
+            return Ok(None);
+        };
+        let Some(item) = self.program_rc().item(adt.did.clone()) else {
+            return Ok(None);
+        };
+        let hir::ItemKind::Enum(enum_def) = &item.kind else {
+            return Ok(None);
+        };
+        let Some(variant) = enum_def
+            .variants
+            .iter()
+            .find(|variant| variant.name == *variant_name)
+        else {
+            return Ok(None);
+        };
+        let Some(payload) = &variant.payload else {
+            return Ok(Some(self_ty.clone()));
+        };
+        let mut scope = self.with_generics(&enum_def.generics);
+        let payload_ty = scope.check_type_expr(payload).await?;
+        let payload_ty = scope.substitute_params(payload_ty, args, &enum_def.generics.params);
+        let inputs = match payload_ty.kind {
+            TyKind::Tuple(fields) => fields,
+            _ => vec![Box::new(payload_ty)],
+        };
+        Ok(Some(Ty {
+            kind: TyKind::FnPtr(ty::PolyFnSig {
+                binder: ty::Binder {
+                    value: ty::FnSig {
+                        inputs,
+                        output: Box::new(self_ty.clone()),
+                        c_variadic: false,
+                        unsafety: ty::Unsafety::Normal,
+                        abi: ty::Abi::Rust,
+                    },
+                    bound_vars: Vec::new(),
+                },
+            }),
+        }))
     }
 
     async fn enum_item_ty(&mut self, item: &hir::Item, path: &hir::Path) -> Result<Ty> {
@@ -4061,12 +4229,23 @@ impl HirTypeChecker {
     /// doc comment) — same caching shape as `function_signature`, just for
     /// the self-type check `method_output_at`/`method_declared_signature_at`
     /// both do before ever looking at a call site's actual receiver.
-    async fn checked_impl_self_ty(&mut self, self_ty: &hir::TypeExpr) -> Result<Ty> {
+    async fn checked_impl_self_ty(
+        &mut self,
+        impl_def_id: &hir::DefId,
+        self_ty: &hir::TypeExpr,
+    ) -> Result<Ty> {
         let cache_key = self_ty.hir_id.clone();
         if let Some(cached) = self.program_rc().checked_impl_self_ty(cache_key.clone()) {
             return Ok(cached);
         }
-        let checked = self.check_type_expr(self_ty).await?;
+        if !self.resolving_impl_headers.insert(impl_def_id.clone()) {
+            return Err(Error::from(format!(
+                "recursive impl self-type evaluation for `{impl_def_id}`"
+            )));
+        }
+        let checked = self.check_type_expr(self_ty).await;
+        self.resolving_impl_headers.remove(impl_def_id);
+        let checked = checked?;
         self.program_rc()
             .cache_checked_impl_self_ty(cache_key, checked.clone());
         Ok(checked)
@@ -4139,54 +4318,71 @@ impl HirTypeChecker {
         param_name: &hir::Symbol,
         assoc_name: &hir::Symbol,
     ) -> Result<Option<Ty>> {
-        if let Some(bound_ty) = self
-            .generic_param_bindings(param_name)
-            .and_then(|bindings| bindings.iter().find(|(name, _)| name == assoc_name))
-            .map(|(_, ty)| ty.clone())
-        {
-            return Ok(Some(self.check_type_expr(&bound_ty).await?));
-        }
-        let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
+        let projection_key = (
+            ty::ParamTy {
+                index: u32::MAX,
+                name: param_name.clone(),
+            },
+            assoc_name.clone(),
+        );
+        if self.resolving_generic_projections.contains(&projection_key) {
             return Ok(None);
-        };
-        if assoc_name.as_str() == "Output" {
-            if let Some(fn_ptr) = bounds.iter().find_map(|bound| match &bound.kind {
-                hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
-                _ => None,
-            }) {
-                return Ok(Some(self.check_type_expr(&fn_ptr.output).await?));
-            }
         }
-        for bound in &bounds {
-            let hir::TypeExprKind::Path(path) = &bound.kind else {
-                continue;
+        self.resolving_generic_projections
+            .push(projection_key.clone());
+        let result = async {
+            if let Some(bound_ty) = self
+                .generic_param_bindings(param_name)
+                .and_then(|bindings| bindings.iter().find(|(name, _)| name == assoc_name))
+                .map(|(_, ty)| ty.clone())
+            {
+                return Ok(Some(self.check_type_expr(&bound_ty).await?));
+            }
+            let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
+                return Ok(None);
             };
-            let Some(hir::Res::Def(trait_def_id)) = &path.res else {
-                continue;
-            };
-            let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
-                continue;
-            };
-            let hir::ItemKind::Trait(trait_def) = &item.kind else {
-                continue;
-            };
-            let mut seen = HashSet::new();
-            if let Some(assoc_type) = self.trait_assoc_type(&trait_def, assoc_name, &mut seen) {
-                if !assoc_type.bounds.is_empty() {
-                    self.generic_param_bounds
-                        .entry(assoc_name.clone())
-                        .or_default()
-                        .extend(assoc_type.bounds);
+            if assoc_name.as_str() == "Output" {
+                if let Some(fn_ptr) = bounds.iter().find_map(|bound| match &bound.kind {
+                    hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
+                    _ => None,
+                }) {
+                    return Ok(Some(self.check_type_expr(&fn_ptr.output).await?));
                 }
-                return Ok(Some(Ty {
-                    kind: TyKind::Param(ty::ParamTy {
-                        index: u32::MAX,
-                        name: assoc_name.clone(),
-                    }),
-                }));
             }
+            for bound in &bounds {
+                let hir::TypeExprKind::Path(path) = &bound.kind else {
+                    continue;
+                };
+                let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                    continue;
+                };
+                let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
+                    continue;
+                };
+                let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                    continue;
+                };
+                let mut seen = HashSet::new();
+                if let Some(assoc_type) = self.trait_assoc_type(&trait_def, assoc_name, &mut seen) {
+                    if !assoc_type.bounds.is_empty() {
+                        self.generic_param_bounds
+                            .entry(assoc_name.clone())
+                            .or_default()
+                            .extend(assoc_type.bounds);
+                    }
+                    return Ok(Some(Ty {
+                        kind: TyKind::Param(ty::ParamTy {
+                            index: u32::MAX,
+                            name: assoc_name.clone(),
+                        }),
+                    }));
+                }
+            }
+            Ok(None)
         }
-        Ok(None)
+        .await;
+        self.resolving_generic_projections.pop();
+        result
     }
 
     /// Resolves `T::CONST` for an abstract `T` from the trait bounds in
@@ -4320,6 +4516,45 @@ impl HirTypeChecker {
     /// fallback does, since the call is only checked against the trait's
     /// abstract signature (real dispatch happens at monomorphization,
     /// which this checker doesn't perform).
+    async fn trait_qualified_method_signature(
+        &mut self,
+        trait_id: &hir::DefId,
+        method_name: &hir::Symbol,
+        self_ty: Ty,
+    ) -> Result<Option<Ty>> {
+        let Some(item) = self.program_rc().item(trait_id.clone()) else {
+            return Ok(None);
+        };
+        let hir::ItemKind::Trait(trait_def) = item.kind else {
+            return Ok(None);
+        };
+        let Some(function) = trait_def.items.into_iter().find_map(|item| {
+            if item.name != *method_name {
+                return None;
+            }
+            match item.kind {
+                hir::TraitItemKind::Method(function) => Some(function),
+                _ => None,
+            }
+        }) else {
+            return Ok(None);
+        };
+        let mut scope = self
+            .with_generics(&trait_def.generics)
+            .with_self_type(self_ty);
+        // `function_signature` is cached only by the declaration HirId.
+        // Trait-qualified calls instantiate `Self` from their call site, so
+        // reusing that cache would leak an earlier unresolved `Self` into a
+        // concrete `Result`/`Option`/user-enum call. Rustc's query key
+        // includes the substitution environment; use the equivalent
+        // uncached path here.
+        Ok(Some(
+            scope
+                .function_signature_uncached(&function, function.sig.output.hir_id.clone())
+                .await?,
+        ))
+    }
+
     async fn generic_param_bound_method_signature(
         &mut self,
         param_name: &hir::Symbol,
@@ -4490,7 +4725,10 @@ impl HirTypeChecker {
         target_ty: &Ty,
         assoc_name: &hir::Symbol,
     ) -> Result<Option<Ty>> {
-        let key = (format!("{:?}", target_ty.kind), assoc_name.clone());
+        if ty_contains_error(target_ty) {
+            return Ok(None);
+        }
+        let key = (obligation_shape_key(target_ty), assoc_name.clone());
         if let Some(cached) = self.package().assoc_type_for_self(&key) {
             return Ok(cached);
         }
@@ -4529,49 +4767,49 @@ impl HirTypeChecker {
                 let hir::ItemKind::Impl(impl_item) = &item.kind else {
                     continue;
                 };
-                let mut scope = self.with_generics(&impl_item.generics);
-                // A candidate whose *own* self-type fails to check at all
-                // is not this projection's answer — skip it and keep
-                // searching, the same "a rejected candidate is not a real
-                // error" principle `unify_call_types_probe` already
-                // applies to the compatibility check just below. Without
-                // this, a `?` here would let one broken/irrelevant impl
-                // elsewhere in the workspace (e.g. one whose own `type
-                // Item = S::Item;` binding fails to resolve for unrelated
-                // reasons) hard-fail *every other* unrelated item's own
-                // typecheck the first time this search happens to reach
-                // it, misattributing that impl's real problem to whatever
-                // completely unrelated item triggered this search first.
-                let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty).await
-                else {
-                    continue;
-                };
-                let self_ty = match &checked_self_ty.kind {
-                    TyKind::Ref(_, inner, _) => inner.as_ref(),
-                    _ => &checked_self_ty,
-                };
-                let mut substitutions = HashMap::new();
-                let matches = Self::ty_shapes_compatible(&self_ty.kind, &target_ty.kind)
-                    && scope
-                        .unify_call_types_probe(self_ty, target_ty, &mut substitutions)
-                        .is_ok();
-                if !matches {
+                let candidate_key = (impl_item.self_ty.hir_id.clone(), assoc_name.clone());
+                if !self
+                    .resolving_impl_projections
+                    .insert(candidate_key.clone())
+                {
                     continue;
                 }
-                // Same reasoning as `checked_impl_self_ty` above — a
-                // matching candidate whose own associated-type bindings
-                // fail to check isn't necessarily *this* projection's
-                // fault; move on rather than hard-failing the whole
-                // search (and misattributing the failure to whatever
-                // unrelated item happened to trigger it).
-                let Ok(assoc_types) = scope
-                    .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                    .await
-                else {
-                    continue;
-                };
-                if let Some(ty) = assoc_types.get(assoc_name) {
-                    break 'search Ok(Some(scope.substitute_param_map(ty, &substitutions)));
+                let mut scope = self.with_generics(&impl_item.generics);
+                let candidate_result = async {
+                    // A candidate whose *own* self-type fails to check at all
+                    // is not this projection's answer. Rejected candidates
+                    // stay local to the search, as in rustc's probe phase.
+                    let checked_self_ty = scope
+                        .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                        .await
+                        .map_err(|_| ())?;
+                    if ty_contains_error(&checked_self_ty) {
+                        return Err(());
+                    }
+                    let self_ty = match &checked_self_ty.kind {
+                        TyKind::Ref(_, inner, _) => inner.as_ref(),
+                        _ => &checked_self_ty,
+                    };
+                    let mut substitutions = HashMap::new();
+                    let matches = Self::ty_shapes_compatible(&self_ty.kind, &target_ty.kind)
+                        && scope
+                            .unify_call_types_probe(self_ty, target_ty, &mut substitutions)
+                            .is_ok();
+                    if !matches {
+                        return Err(());
+                    }
+                    let assoc_types = scope
+                        .impl_assoc_types(&impl_item.items)
+                        .await
+                        .map_err(|_| ())?;
+                    Ok(assoc_types
+                        .get(assoc_name)
+                        .map(|ty| scope.substitute_param_map(ty, &substitutions)))
+                }
+                .await;
+                self.resolving_impl_projections.remove(&candidate_key);
+                if let Ok(Some(ty)) = candidate_result {
+                    break 'search Ok(Some(ty));
                 }
             }
             Ok(None)
@@ -4646,6 +4884,9 @@ impl HirTypeChecker {
         receiver_ty: &Ty,
         method: &hir::Symbol,
     ) -> Result<Option<hir::DefId>> {
+        if ty_contains_error(receiver_ty) {
+            return Ok(None);
+        }
         let program = self.program_rc();
         let candidates = method_candidates(&program, &receiver_ty.kind);
         for item in candidates {
@@ -4668,7 +4909,15 @@ impl HirTypeChecker {
                 continue;
             };
             let mut scope = self.with_generics(&impl_item.generics);
-            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
+            let Ok(checked_self_ty) = scope
+                .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                .await
+            else {
+                continue;
+            };
+            if ty_contains_error(&checked_self_ty) {
+                continue;
+            }
             let mut substitutions = HashMap::new();
             if Self::method_receiver_matches(
                 &scope,
@@ -4705,6 +4954,9 @@ impl HirTypeChecker {
         receiver: &Ty,
         substitutions: &mut HashMap<ty::ParamTy, Ty>,
     ) -> bool {
+        if ty_contains_error(candidate) || ty_contains_error(receiver) {
+            return false;
+        }
         match (&candidate.kind, &receiver.kind) {
             (
                 TyKind::Ref(_, candidate_inner, candidate_mutability),
@@ -4760,6 +5012,39 @@ impl HirTypeChecker {
         actuals: &[Ty],
         explicit_generic_args: Option<&[Ty]>,
     ) -> Result<Option<(hir::DefId, Option<Vec<Ty>>, Ty)>> {
+        // Method probing is an obligation computation.  A candidate's
+        // self-type or signature can ask for the same method obligation
+        // again through an associated projection.  rustc's probe tables
+        // recognize that active obligation and return an unresolved result;
+        // recursively probing it would grow the stack indefinitely.
+        let key = (
+            format!(
+                "method:{:?}:{:?}:{:?}",
+                receiver_ty.kind, actuals, explicit_generic_args
+            ),
+            method.clone(),
+        );
+        if !self.resolving_assoc_projections.contains(&key) {
+            self.resolving_assoc_projections.push(key.clone());
+            let result = self
+                .method_output_at_inner(receiver_ty, method, actuals, explicit_generic_args)
+                .await;
+            self.resolving_assoc_projections.pop();
+            return result;
+        }
+        Ok(None)
+    }
+
+    async fn method_output_at_inner(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+        actuals: &[Ty],
+        explicit_generic_args: Option<&[Ty]>,
+    ) -> Result<Option<(hir::DefId, Option<Vec<Ty>>, Ty)>> {
+        if ty_contains_error(receiver_ty) || actuals.iter().any(ty_contains_error) {
+            return Ok(None);
+        }
         // A still-generic receiver (`self: T`, e.g. a default trait
         // method's own body calling `self.other_method()`) has no impl to
         // search — by far the most common non-ADT receiver shape in a
@@ -4903,7 +5188,15 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = self.with_generics(&impl_item.generics);
-            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
+            let Ok(checked_self_ty) = scope
+                .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                .await
+            else {
+                continue;
+            };
+            if ty_contains_error(&checked_self_ty) {
+                continue;
+            }
             let self_ty = &checked_self_ty;
             // Candidate selection follows one structural rule for every
             // receiver shape.  The indexed candidate list has already
@@ -4937,9 +5230,7 @@ impl HirTypeChecker {
             let checked_self_ty =
                 scope.substitute_param_map(&checked_self_ty, &receiver_substitutions);
             let mut scope = scope.with_self_type(checked_self_ty);
-            let assoc_types = scope
-                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                .await?;
+            let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
             let assoc_types = assoc_types
                 .into_iter()
                 .map(|(name, ty)| {
@@ -5120,6 +5411,9 @@ impl HirTypeChecker {
     /// exists (a non-ADT receiver, or an ADT with no `Deref` impl), which
     /// is exactly where real dereferencing stops too.
     async fn deref_target(&mut self, receiver_ty: &Ty) -> Option<Ty> {
+        if ty_contains_error(receiver_ty) {
+            return None;
+        }
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => receiver.did.clone(),
             _ => return None,
@@ -5140,10 +5434,16 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = self.with_generics(&impl_item.generics);
-            let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty).await else {
+            let Ok(checked_self_ty) = scope
+                .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                .await
+            else {
                 continue;
             };
             let self_ty = &checked_self_ty;
+            if ty_contains_error(self_ty) {
+                continue;
+            }
             let mut substitutions = HashMap::new();
             if scope
                 .unify_call_types_probe(self_ty, receiver_ty, &mut substitutions)
@@ -5151,15 +5451,15 @@ impl HirTypeChecker {
             {
                 continue;
             }
-            let Ok(assoc_types) = scope
-                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id.clone())
-                .await
-            else {
+            let Ok(assoc_types) = scope.impl_assoc_types(&impl_item.items).await else {
                 continue;
             };
             let Some(target) = assoc_types.get(&hir::Symbol::new("Target")) else {
                 continue;
             };
+            if ty_contains_error(target) {
+                continue;
+            }
             return Some(scope.substitute_param_map(target, &substitutions));
         }
         None
@@ -5599,16 +5899,6 @@ impl HirTypeChecker {
             IntrinsicKind::Format => Ty {
                 kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
             },
-            IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
-            IntrinsicKind::Slice => match arg_types.first() {
-                None => self.error_ty("slice intrinsic requires a base expression"),
-                Some(base) => match &base.kind {
-                    TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty {
-                        kind: TyKind::Slice(inner.clone()),
-                    },
-                    _ => self.error_ty("slice intrinsic base must be an array or slice"),
-                },
-            },
             IntrinsicKind::DebugAssertions
             | IntrinsicKind::FsExists
             | IntrinsicKind::FsIsDir
@@ -5892,7 +6182,9 @@ impl HirTypeChecker {
                             break;
                         }
                         let mut scope = self.with_generics(&impl_item.generics);
-                        let Ok(impl_self) = scope.checked_impl_self_ty(&impl_item.self_ty).await
+                        let Ok(impl_self) = scope
+                            .checked_impl_self_ty(&item.def_id, &impl_item.self_ty)
+                            .await
                         else {
                             continue;
                         };

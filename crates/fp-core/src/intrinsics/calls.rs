@@ -224,14 +224,8 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         def("as_str", true, 1, SameAsArg(0)),
         def("to_string", true, 1, TargetNativeString),
         def("and_then", true, 2, NotStaticallyKnowable),
-        def("trim_end", true, 1, SameAsArg(0)),
-        def("trim_start", true, 1, SameAsArg(0)),
-        def("trim", true, 1, SameAsArg(0)),
         def("split_whitespace", true, 1, NotStaticallyKnowable),
         def("split", true, 2, NotStaticallyKnowable),
-        def("lines", true, 1, NotStaticallyKnowable),
-        def("starts_with", true, 2, AlwaysBool),
-        def("ends_with", true, 2, AlwaysBool),
         def("str_parse", true, 1, NotStaticallyKnowable),
         def("str_char_indices", true, 1, NotStaticallyKnowable),
         def("str_split_at", true, 2, NotStaticallyKnowable),
@@ -241,9 +235,7 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         def("bool_then_some", true, 2, NotStaticallyKnowable),
         def("range_inclusive_contains", true, 2, AlwaysBool),
         def("as_deref", true, 1, SameAsArg(0)),
-        def("position", true, 2, NotStaticallyKnowable),
         def("find_map", true, 2, NotStaticallyKnowable),
-        def("is_none", true, 1, AlwaysBool),
         def("char_is_digit", true, 2, AlwaysBool),
         def("char_is_alphabetic", true, 1, AlwaysBool),
         def("char_is_whitespace", true, 1, AlwaysBool),
@@ -311,6 +303,31 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         def("process_status", true, 1, NotStaticallyKnowable),
         def("tcp_stream_write", true, 2, NotStaticallyKnowable),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PortableOpRegistry;
+
+    #[test]
+    fn kotlin_native_operations_are_not_portable_intrinsics() {
+        let registry = PortableOpRegistry::builtin();
+        for name in [
+            "trim",
+            "trim_start",
+            "trim_end",
+            "lines",
+            "starts_with",
+            "ends_with",
+            "is_none",
+            "position",
+        ] {
+            assert!(
+                !registry.contains(name),
+                "Kotlin-native operation {name} must not be an intrinsic"
+            );
+        }
+    }
 }
 
 /// Known type descriptors that serializers map to target-ecosystem equivalents.

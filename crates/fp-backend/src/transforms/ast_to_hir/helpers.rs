@@ -13,7 +13,13 @@ impl AstToHirLowerer {
             .cloned()
             .or_else(|| self.hir_program.item(def_id.clone()))?;
         let hir::ItemKind::Enum(enum_def) = &item.kind else {
-            return None;
+            let prefix = QualifiedPath::new(
+                base.segments
+                    .iter()
+                    .map(|segment| segment.name.as_str().to_owned())
+                    .collect(),
+            );
+            return self.enum_variant_through_type_path(&prefix, name);
         };
         enum_def
             .variants
@@ -667,8 +673,19 @@ impl AstToHirLowerer {
             && segments.len() > 1
             && path_prefix == PathPrefix::Plain
         {
-            if let Some(base_res @ (hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy)) =
+            let base_res = if segments.len() == 2 {
                 self.resolve_type_symbol(segments[0].name.as_str())
+            } else {
+                let base_path = QualifiedPath::new(
+                    segments[..segments.len() - 1]
+                        .iter()
+                        .map(|segment| segment.name.as_str().to_owned())
+                        .collect(),
+                );
+                self.lookup_global_res(&base_path, PathResolutionScope::Type)
+            };
+            if let Some(base_res @ (hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy)) =
+                base_res
             {
                 let mut type_relative = hir::Path {
                     segments,

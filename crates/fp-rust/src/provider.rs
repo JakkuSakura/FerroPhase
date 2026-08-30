@@ -792,6 +792,57 @@ impl RustStdProvider {
             _ => vec![],
         }
     }
+
+    /// Return the ordinary Rust module identities known to the embedded
+    /// sysroot crate. Metadata is loaded before package source, so leaving
+    /// this index empty makes valid definitions unreachable during name
+    /// resolution even though the parser can publish them later.
+    fn module_ids_of(crate_name: &str) -> Vec<ModuleId> {
+        let prefix = format!("{crate_name}/");
+        let mut module_ids: Vec<_> = crate::embedded_std::module_paths()
+            .iter()
+            .filter_map(|relative| {
+                let relative = relative.strip_prefix(&prefix)?;
+                let module_path = if relative == "lib.rs" {
+                    vec![crate_name.to_string()]
+                } else {
+                    let mut segments: Vec<_> = relative
+                        .trim_end_matches(".rs")
+                        .split('/')
+                        .map(str::to_owned)
+                        .collect();
+                    if segments.last().map(String::as_str) == Some("mod") {
+                        segments.pop();
+                    }
+                    let mut path = vec![crate_name.to_string()];
+                    path.extend(segments);
+                    path
+                };
+                Some(ModuleId::new(&module_path.join("::")))
+            })
+            .collect();
+        module_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        module_ids.dedup();
+        module_ids
+    }
+
+    /// The `std` crate is a facade: a number of its public modules are
+    /// `pub use` aliases to `core` or `alloc`, so they have no backing
+    /// `std/<name>.rs` file.  They are nevertheless real modules in the
+    /// crate namespace and must be present in crate metadata before a
+    /// dependent package is lowered.  The definitions remain owned by the
+    /// source crate reached by the re-export, matching rustc's crate
+    /// metadata model.
+    fn public_facade_module_ids(crate_name: &str) -> &'static [&'static str] {
+        match crate_name {
+            STD_PACKAGE_NAME => &[
+                "any", "array", "cell", "char", "clone", "cmp", "convert", "default", "future",
+                "hint", "iter", "marker", "mem", "ops", "option", "pin", "ptr", "range", "result",
+                "slice", "str", "string", "vec",
+            ],
+            _ => &[],
+        }
+    }
 }
 
 impl PackageProvider for RustStdProvider {
@@ -851,7 +902,24 @@ impl PackageProvider for RustStdProvider {
             manifest_path: VirtualPath::from_path(&root.join("Cargo.toml")),
             root: VirtualPath::from_path(&root),
             metadata,
-            modules: Vec::new(),
+            modules: if id.as_str() == LIBC_PACKAGE_NAME {
+                fp_lang::embedded_libc::module_paths()
+                    .iter()
+                    .map(|relative| {
+                        ModuleId::new(
+                            &fp_relative_to_module_segments(LIBC_PACKAGE_NAME, relative).join("::"),
+                        )
+                    })
+                    .collect()
+            } else {
+                let mut modules = Self::module_ids_of(id.as_str());
+                for module in Self::public_facade_module_ids(id.as_str()) {
+                    modules.push(ModuleId::new(format!("{}::{module}", id.as_str())));
+                }
+                modules.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+                modules.dedup();
+                modules
+            },
         }))
     }
 
@@ -1507,6 +1575,30 @@ mod provider_tests {
             .collect()
     }
 
+    fn method_has_no_operation_tag(relative_path: &str, class: &str, method: &str) -> bool {
+        let path = crate::embedded_std::root_dir().join(relative_path);
+        let source = crate::embedded_std::read(&path).expect("vendored std source");
+        let parsed = RustFrontend::new()
+            .parse_file(source, &path)
+            .expect("parse vendored std source");
+
+        parsed.ast.items.iter().any(|item| {
+            let (attrs, members) = match item.kind() {
+                ItemKind::Impl(impl_block) => (&impl_block.attrs, &impl_block.items),
+                ItemKind::DefTrait(trait_def) => (&trait_def.attrs, &trait_def.items),
+                _ => return false,
+            };
+            extract_op_attr(attrs, "class").as_deref() == Some(class)
+                && members.iter().any(|member| {
+                    let ItemKind::DefFunction(function) = member.kind() else {
+                        return false;
+                    };
+                    function.name.as_str() == method
+                        && extract_op_attr(&function.attrs, "method").is_none()
+                })
+        })
+    }
+
     fn repository_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1549,15 +1641,47 @@ mod provider_tests {
     }
 
     #[test]
+    fn rust_sysroot_metadata_indexes_ordinary_definition_modules() {
+        let provider = RustStdProvider;
+        for (crate_name, expected_modules) in [
+            (
+                "core",
+                &["core::io", "core::iter", "core::iter::traits"] as &[&str],
+            ),
+            ("alloc", &["alloc::string"] as &[&str]),
+            (
+                "std",
+                &[
+                    "std::io",
+                    "std::path",
+                    "std::process",
+                    "std::option",
+                    "std::result",
+                    "std::iter",
+                    "std::string",
+                    "std::vec",
+                ] as &[&str],
+            ),
+        ] {
+            let metadata = provider
+                .load_package_metadata(&PackageId::new(crate_name))
+                .expect("sysroot metadata");
+            for expected in expected_modules {
+                assert!(
+                    metadata
+                        .modules
+                        .iter()
+                        .any(|module| module.as_str() == *expected),
+                    "{crate_name} metadata must expose ordinary module {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn vendored_std_exposes_requested_portable_operation_metadata() {
         let expected = [
-            ("core/str/mod.rs", "str", "char_indices"),
-            ("core/str/mod.rs", "str", "split_at"),
-            ("core/str/mod.rs", "str", "strip_prefix"),
-            ("core/slice/mod.rs", "slice", "split_at"),
-            ("core/slice/mod.rs", "slice", "strip_prefix"),
             ("core/bool.rs", "bool", "then_some"),
-            ("core/char/methods.rs", "char", "is_ascii_hexdigit"),
             ("core/range.rs", "RangeInclusive", "contains"),
         ];
 
@@ -1570,6 +1694,214 @@ mod provider_tests {
                     }),
                 "missing #[op(class = {class:?})] #[op(method = {method:?})] in {path}",
             );
+        }
+    }
+
+    #[test]
+    fn language_implementable_std_methods_are_ordinary_definitions() {
+        let ordinary_methods = [
+            ("core/option.rs", "Option", "unwrap_or"),
+            ("core/option.rs", "Option", "map"),
+            ("core/iter/traits/iterator.rs", "Iterator", "collect"),
+            ("core/iter/traits/iterator.rs", "Iterator", "find_map"),
+            ("core/result.rs", "Result", "map"),
+            ("core/result.rs", "Result", "unwrap"),
+            ("core/str/mod.rs", "str", "split"),
+            ("core/str/mod.rs", "str", "lines"),
+            ("core/str/mod.rs", "str", "trim"),
+            ("core/str/mod.rs", "str", "trim_start"),
+            ("core/str/mod.rs", "str", "trim_end"),
+            ("core/char/methods.rs", "char", "is_ascii_alphabetic"),
+            ("core/char/methods.rs", "char", "is_ascii_digit"),
+            ("core/char/methods.rs", "char", "is_ascii_hexdigit"),
+            ("core/slice/mod.rs", "slice", "split_at"),
+            ("core/slice/mod.rs", "slice", "strip_prefix"),
+            ("alloc/slice.rs", "slice", "to_vec"),
+            ("alloc/slice.rs", "slice", "to_vec_in"),
+            ("std/process.rs", "Command", "output"),
+            ("std/process.rs", "Command", "status"),
+        ];
+
+        for (path, class, method) in ordinary_methods {
+            assert!(
+                method_has_no_operation_tag(path, class, method),
+                "{class}::{method} must resolve as an ordinary std definition"
+            );
+        }
+    }
+
+    #[test]
+    fn vendored_std_exposes_ordinary_target_api_definitions() {
+        let provider = RustStdProvider;
+        let expected = [
+            ("std/path.rs", "PathBuf", "new"),
+            ("std/path.rs", "PathBuf", "push"),
+            ("std/process.rs", "Command", "output"),
+            ("std/process.rs", "Command", "status"),
+            ("alloc/string.rs", "String", "default"),
+        ];
+
+        for (path, type_name, method) in expected {
+            let source_path = crate::embedded_std::root_dir().join(path);
+            let source = crate::embedded_std::read(&source_path).expect("vendored std source");
+            let parsed = RustFrontend::new()
+                .parse_file(source, &source_path)
+                .expect("parse vendored std source");
+            assert!(
+                parsed.ast.items.iter().any(|item| {
+                    let ItemKind::Impl(impl_block) = item.kind() else {
+                        return false;
+                    };
+                    let fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(receiver)) =
+                        impl_block.self_ty.kind()
+                    else {
+                        return false;
+                    };
+                    if receiver.as_str() != type_name {
+                        return false;
+                    }
+                    impl_block.items.iter().any(|member| {
+                        matches!(member.kind(), ItemKind::DefFunction(function)
+                            if function.name.as_str() == method)
+                    })
+                }),
+                "missing ordinary {type_name}::{method} definition in {path}",
+            );
+        }
+
+        let error_kind = crate::embedded_std::root_dir().join("core/io/error.rs");
+        let source = crate::embedded_std::read(&error_kind).expect("vendored io error source");
+        let parsed = RustFrontend::new()
+            .parse_file(source, &error_kind)
+            .expect("parse vendored io error source");
+        let error_kind_enum = parsed
+            .ast
+            .items
+            .iter()
+            .find_map(|item| match item.kind() {
+                ItemKind::DefEnum(def) if def.name.as_str() == "ErrorKind" => Some(def),
+                _ => None,
+            })
+            .expect("ordinary ErrorKind declaration");
+        for name in ["NotFound", "InvalidData"] {
+            assert!(
+                error_kind_enum
+                    .value
+                    .variants
+                    .iter()
+                    .any(|variant| variant.name.as_str() == name),
+                "missing ordinary ErrorKind::{name} definition",
+            );
+        }
+
+        let ordinary_methods = [
+            ("alloc", "string", "String", "from_str"),
+            ("std", "path", "PathBuf", "from_str"),
+            ("core", "iter/traits/iterator", "Iterator", "find_map"),
+            ("core", "str", "str", "lines"),
+        ];
+        for (crate_name, module, type_name, method) in ordinary_methods {
+            let source_path = crate::embedded_std::root_dir()
+                .join(crate_name)
+                .join(module);
+            let source_path = if source_path.extension().is_some() {
+                source_path
+            } else if crate::embedded_std::read(&source_path.with_extension("rs")).is_some() {
+                source_path.with_extension("rs")
+            } else {
+                source_path.join("mod.rs")
+            };
+            let source = crate::embedded_std::read(&source_path).expect("ordinary std source");
+            let parsed = RustFrontend::new()
+                .parse_file(source, &source_path)
+                .expect("parse ordinary std source");
+            assert!(
+                parsed.ast.items.iter().any(|item| {
+                    let ItemKind::Impl(impl_block) = item.kind() else {
+                        return false;
+                    };
+                    let receiver = match impl_block.self_ty.kind() {
+                        fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(receiver)) => {
+                            receiver.as_str()
+                        }
+                        _ => return false,
+                    };
+                    receiver == type_name
+                        && impl_block.items.iter().any(|member| {
+                            matches!(member.kind(), ItemKind::DefFunction(function)
+                                if function.name.as_str() == method)
+                        })
+                }),
+                "missing ordinary {type_name}::{method} in {crate_name}::{module}"
+            );
+        }
+
+        let source = provider
+            .load_package_source(&PackageId::new(STD_PACKAGE_NAME))
+            .expect("ordinary std package source");
+        let published = [
+            ("std::process", "output"),
+            ("std::process", "status"),
+            ("std::path", "push"),
+        ];
+        for (module, method) in published {
+            assert!(
+                source.items.iter().any(|item| {
+                    item.module_path.to_key() == module
+                        && matches!(item.item.kind(), ItemKind::DefFunction(function)
+                            if function.name.as_str() == method)
+                }),
+                "ordinary {module}::{method} must be published with its source module identity"
+            );
+        }
+    }
+
+    #[test]
+    fn sysroot_metadata_publishes_api_definition_modules_and_edges() {
+        let provider = RustStdProvider;
+        let cases = [
+            (
+                "core",
+                None,
+                &[][..],
+                &["core::cell", "core::option", "core::result"][..],
+            ),
+            (
+                "alloc",
+                Some("core"),
+                &["core"][..],
+                &["alloc::sync", "alloc::string"][..],
+            ),
+            (
+                "std",
+                Some("std"),
+                &["core", "alloc", "libc"][..],
+                &["std::process", "std::sync", "std::io"][..],
+            ),
+        ];
+
+        for (crate_name, prelude, dependencies, modules) in cases {
+            let descriptor = provider
+                .load_package_metadata(&PackageId::new(crate_name))
+                .expect("sysroot metadata");
+            assert_eq!(
+                descriptor.metadata.prelude.as_ref().map(PackageId::as_str),
+                prelude,
+                "unexpected prelude for {crate_name}"
+            );
+            let actual_dependencies: Vec<_> = descriptor
+                .metadata
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.package.as_str())
+                .collect();
+            assert_eq!(actual_dependencies, dependencies);
+            for module in modules {
+                assert!(
+                    descriptor.modules.iter().any(|id| id.as_str() == *module),
+                    "{crate_name} metadata must publish module {module}"
+                );
+            }
         }
     }
 

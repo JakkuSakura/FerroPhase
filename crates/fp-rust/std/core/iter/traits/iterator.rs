@@ -950,7 +950,6 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "iter_filter"]
-    #[op(method = "filter")]
     fn filter<P>(self, predicate: P) -> Filter<Self, P>
     where
         Self: Sized,
@@ -2076,7 +2075,6 @@ pub const trait Iterator {
     #[must_use = "if you really need to exhaust the iterator, consider `.for_each(drop)` instead"]
     #[rustc_diagnostic_item = "iterator_collect_fn"]
     #[rustc_non_const_trait_method]
-    #[op(method = "collect")]
     fn collect<B: FromIterator<Self::Item>>(self) -> B
     where
         Self: Sized,
@@ -2991,7 +2989,6 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "iterator_find_map", since = "1.30.0")]
     #[rustc_non_const_trait_method]
-    #[op(method = "find_map")]
     fn find_map<B, F>(&mut self, f: F) -> Option<B>
     where
         Self: Sized,
@@ -3135,7 +3132,6 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_non_const_trait_method]
-    #[op(method = "position")]
     fn position<P>(&mut self, predicate: P) -> Option<usize>
     where
         Self: Sized,

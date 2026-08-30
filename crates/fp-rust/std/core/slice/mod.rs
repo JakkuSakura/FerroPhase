@@ -1953,7 +1953,6 @@ impl<T> [T] {
     #[inline]
     #[track_caller]
     #[must_use]
-    #[op(method = "split_at")]
     pub const fn split_at(&self, mid: usize) -> (&[T], &[T]) {
         match self.split_at_checked(mid) {
             Some(pair) => pair,
@@ -2686,7 +2685,6 @@ impl<T> [T] {
     /// ```
     #[must_use = "returns the subslice without modifying the original"]
     #[stable(feature = "slice_strip", since = "1.51.0")]
-    #[op(method = "strip_prefix")]
     pub fn strip_prefix<P: SlicePattern<Item = T> + ?Sized>(&self, prefix: &P) -> Option<&[T]>
     where
         T: PartialEq,

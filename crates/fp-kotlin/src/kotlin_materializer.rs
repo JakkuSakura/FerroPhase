@@ -1,8 +1,8 @@
 use fp_core::ast::{
     BlockStmt, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprIntrinsicCall,
     ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, ExprSelectType,
-    ExprTry, Ident, Name, Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot,
-    TypeInt, TypePrimitive, Value,
+    Ident, Name, Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt,
+    TypePrimitive, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, PortableOpCall};
@@ -57,13 +57,12 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             ))),
             "result_propagate" => {
                 let source = call.args.first().cloned().unwrap_or_else(Expr::unit);
-                Ok(Some(Expr::new(ExprKind::Try(ExprTry {
-                    span: call.span(),
-                    expr: Box::new(source),
-                    catches: Vec::new(),
-                    elze: None,
-                    finally: None,
-                }))))
+                // Kotlin has no postfix `?`. The source expression is a
+                // Result<T>, and this operation is the one place where Rust
+                // propagates the error while producing T for the caller.
+                // Lower it explicitly so the serializer cannot accidentally
+                // pass Result<T> to code expecting T.
+                Ok(Some(runtime_method("resultUnwrap", vec![source])))
             }
             "result_map" => Ok(Some(runtime_method(
                 "mapResult",
@@ -136,27 +135,28 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                     .chain(portable_op_args_after_receiver(call))
                     .collect(),
             ))),
-            "vec_from_iter" | "collect" => Ok(Some(runtime_method(
+            // These are ordinary Kotlin collection operations. Keep the
+            // lowering in the target materializer so the serializer sees
+            // target-shaped method calls, and preserve ByteArray's distinct
+            // JVM representation where it is required by the inferred type.
+            "vec_from_iter" | "collect" => {
                 if is_byte_vector(ty) {
-                    "bytesFromIterable"
+                    Ok(Some(invoke_method(receiver(), "toByteArray", Vec::new())))
                 } else {
-                    "mutableListFromIterable"
-                },
-                vec![receiver()],
-            ))),
-            "slice_to_vec" | "slice_to_vec_in" => Ok(Some(runtime_method(
+                    Ok(Some(invoke_method(receiver(), "toMutableList", Vec::new())))
+                }
+            }
+            "slice_to_vec" | "slice_to_vec_in" => {
                 if is_byte_vector(ty) {
-                    "bytesFromIterable"
+                    Ok(Some(invoke_method(receiver(), "toByteArray", Vec::new())))
                 } else {
-                    "mutableListFromIterable"
-                },
-                vec![receiver()],
-            ))),
-            "filter" => Ok(Some(runtime_method(
-                "filterIterable",
-                std::iter::once(receiver())
-                    .chain(portable_op_args_after_receiver(call))
-                    .collect(),
+                    Ok(Some(invoke_method(receiver(), "toMutableList", Vec::new())))
+                }
+            }
+            "filter" => Ok(Some(invoke_method(
+                receiver(),
+                "filter",
+                portable_op_args_after_receiver(call),
             ))),
             "trim" | "trim_end" | "trim_start" => Ok(Some(invoke_method(
                 receiver(),
@@ -222,7 +222,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                     .chain(portable_op_args_after_receiver(call))
                     .collect(),
             ))),
-            "lines" => Ok(Some(runtime_method("stringLines", vec![receiver()]))),
+            "lines" => Ok(Some(invoke_method(receiver(), "lines", Vec::new()))),
             "starts_with" => Ok(Some(invoke_method(
                 receiver(),
                 "startsWith",
@@ -259,14 +259,17 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             "file_create" => Ok(Some(runtime_method("createFile", call.args.clone()))),
             "fs_canonicalize" => Ok(Some(runtime_method("canonicalize", call.args.clone()))),
             "path_canonicalize" => Ok(Some(runtime_method("canonicalize", vec![receiver()]))),
-            "path_exists" => Ok(Some(runtime_method("pathExists", vec![receiver()]))),
+            "path_exists" => Ok(Some(invoke_static_method(
+                &["java", "nio", "file", "Files"],
+                "exists",
+                vec![receiver()],
+            ))),
             "path_parent" => Ok(Some(select_property(receiver(), "parent"))),
             "path_to_path_buf" => Ok(Some(receiver())),
-            "path_join" => Ok(Some(runtime_method(
-                "pathResolve",
-                std::iter::once(receiver())
-                    .chain(portable_op_args_after_receiver(call))
-                    .collect(),
+            "path_join" => Ok(Some(invoke_method(
+                receiver(),
+                "resolve",
+                portable_op_args_after_receiver(call),
             ))),
             "path_file_name" => Ok(Some(select_property(receiver(), "fileName"))),
             "path_to_string_lossy" | "os_str_to_string_lossy" => {
@@ -358,14 +361,36 @@ impl IntrinsicMaterializer for KotlinMaterializer {
     }
 
     fn materialize_invoke(&self, invoke: &mut ExprInvoke, ty: &TySlot) -> Result<Option<Expr>> {
+        // Rust error constructors retain concrete payload types, while Kotlin
+        // Result callbacks expose Throwable. Normalize this payload at the
+        // target materialization boundary, before syntax serialization.
+        if is_io_constructor(&invoke.target) && invoke.args.len() == 1 {
+            let error = invoke.args.pop().expect("one Io constructor argument");
+            invoke.args.push(runtime_method("ioError", vec![error]));
+        }
         let ExprInvokeTarget::Method(select) = &invoke.target else {
             return Ok(None);
         };
         let receiver = (*select.obj).clone();
         let replacement = match select.field.as_str() {
+            "trim" => invoke_method(receiver, "trim", invoke.args.clone()),
+            "trim_end" => invoke_method(receiver, "trimEnd", invoke.args.clone()),
+            "trim_start" => invoke_method(receiver, "trimStart", invoke.args.clone()),
+            "starts_with" => invoke_method(receiver, "startsWith", invoke.args.clone()),
+            "ends_with" => invoke_method(receiver, "endsWith", invoke.args.clone()),
+            "lines" => invoke_method(receiver, "lines", invoke.args.clone()),
+            "is_none" => Expr::new(ExprKind::BinOp(ExprBinOp {
+                span: Default::default(),
+                kind: BinOpKind::Eq,
+                lhs: Box::new(receiver),
+                rhs: Box::new(Expr::value(Value::Null(Default::default()))),
+            })),
+            "position" => invoke_method(receiver, "indexOfFirst", invoke.args.clone()),
             "clone" | "copy" | "into_owned" | "to_owned" => kotlin_owned_value(receiver, ty),
-            "resolve" => runtime_method("pathResolve", vec![receiver, invoke.args[0].clone()]),
-            "exists" => runtime_method("pathExists", vec![receiver]),
+            "resolve" => invoke_method(receiver, "resolve", invoke.args.clone()),
+            "exists" => {
+                invoke_static_method(&["java", "nio", "file", "Files"], "exists", vec![receiver])
+            }
             "arg" => runtime_method("commandArg", vec![receiver, invoke.args[0].clone()]),
             "args" => runtime_method("commandArgs", vec![receiver, invoke.args[0].clone()]),
             "current_dir" => {
@@ -382,6 +407,8 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             "try_wait" => runtime_method("childTryWait", vec![receiver]),
             "wait_with_output" => runtime_method("childWaitWithOutput", vec![receiver]),
             "success" => runtime_method("exitStatusSuccess", vec![receiver]),
+            "isSuccess" => runtime_method("resultIsSuccess", vec![receiver]),
+            "isFailure" => runtime_method("resultIsFailure", vec![receiver]),
             "map_err" => runtime_method(
                 "mapError",
                 vec![receiver, result_error_mapping(invoke.args.first().cloned())],
@@ -491,6 +518,19 @@ impl IntrinsicMaterializer for KotlinMaterializer {
         };
         Ok(Some(expression))
     }
+}
+
+fn is_io_constructor(target: &ExprInvokeTarget) -> bool {
+    let name = match target {
+        ExprInvokeTarget::Function(Name::Ident(name)) => name.as_str(),
+        ExprInvokeTarget::Function(Name::Path(path)) => path.last().as_str(),
+        ExprInvokeTarget::Function(Name::ParameterPath(path)) => path
+            .last()
+            .map(|segment| segment.ident.as_str())
+            .unwrap_or(""),
+        _ => return false,
+    };
+    name == "Io"
 }
 
 fn assign_byte_vector(target: Expr, value: Expr) -> Expr {
@@ -753,8 +793,9 @@ fn portable_op_args_after_receiver(call: &PortableOpCall) -> Vec<Expr> {
 #[cfg(test)]
 mod tests {
     use fp_core::ast::{
-        BlockStmt, ExprBlock, ExprIntrinsicCall, ExprKind, ExprSelect, ExprSelectType, File, Ident,
-        Item, ItemDefFunction, ItemKind, Name, PatternKind, Ty, Value,
+        BlockStmt, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
+        ExprSelect, ExprSelectType, File, Ident, Item, ItemDefFunction, ItemKind, Name,
+        PatternKind, Ty, Value,
     };
     use fp_core::intrinsics::{PortableOpCall, PortableOpRegistry, materialize_file};
 
@@ -894,6 +935,31 @@ mod tests {
     }
 
     #[test]
+    fn materializes_io_constructor_payload_as_jvm_io_exception() {
+        let mut invoke = ExprInvoke {
+            span: Default::default(),
+            target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+                Ident::new("ConfigError"),
+                Ident::new("Io"),
+            ]))),
+            args: vec![Expr::name(Name::ident("source"))],
+            kwargs: Vec::new(),
+        };
+
+        KotlinMaterializer
+            .materialize_invoke(&mut invoke, &None)
+            .expect("materialize Io constructor");
+
+        let ExprKind::Invoke(_) = invoke.args[0].kind() else {
+            panic!("expected IOException adapter");
+        };
+        assert_eq!(
+            render_invoke_name(&invoke.args[0]),
+            "RustKotlinRuntime.ioError"
+        );
+    }
+
+    #[test]
     fn materializes_str_parse_as_typed_kotlin_result() {
         let registry = PortableOpRegistry::builtin();
         let mut call = PortableOpCall {
@@ -911,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn materializes_result_propagation_as_try_expression() {
+    fn materializes_result_propagation_as_single_unwrap() {
         let registry = PortableOpRegistry::builtin();
         let mut call = PortableOpCall {
             span: Default::default(),
@@ -926,7 +992,10 @@ mod tests {
             .materialize_portable_op(&mut call, &None)
             .expect("materialize Result propagation")
             .expect("Result propagation replacement");
-        assert!(matches!(materialized.kind(), ExprKind::Try(_)));
+        assert_eq!(
+            render_invoke_name(&materialized),
+            "RustKotlinRuntime.resultUnwrap"
+        );
     }
 
     #[test]
@@ -1530,8 +1599,8 @@ mod tests {
     fn materializes_path_and_process_methods_through_runtime_adapters() {
         let materializer = KotlinMaterializer;
         for (method, args, expected) in [
-            ("resolve", 1, "RustKotlinRuntime.pathResolve"),
-            ("exists", 0, "RustKotlinRuntime.pathExists"),
+            ("resolve", 1, "path.resolve"),
+            ("exists", 0, "java.nio.file.Files.exists"),
             ("arg", 1, "RustKotlinRuntime.commandArg"),
             ("args", 1, "RustKotlinRuntime.commandArgs"),
             ("current_dir", 1, "RustKotlinRuntime.commandCurrentDir"),
@@ -1696,8 +1765,8 @@ mod tests {
 
         for (op, expected) in [
             ("vec_extend", "RustKotlinRuntime.listExtend"),
-            ("collect", "RustKotlinRuntime.mutableListFromIterable"),
-            ("filter", "RustKotlinRuntime.filterIterable"),
+            ("collect", "items.toMutableList"),
+            ("filter", "items.filter"),
         ] {
             let mut call = PortableOpCall {
                 span: Default::default(),
@@ -1717,32 +1786,85 @@ mod tests {
     }
 
     #[test]
-    fn materializes_string_operations_through_the_runtime() {
+    fn materializes_byte_collection_conversion_with_kotlin_array_api() {
         let registry = PortableOpRegistry::builtin();
-        let materializer = KotlinMaterializer;
+        let bytes = TySlot::from(Ty::Vec(fp_core::ast::TypeVec {
+            ty: Box::new(Ty::Primitive(TypePrimitive::Int(TypeInt::U8))),
+        }));
 
-        for (op, expected) in [
-            ("trim", "text.trim"),
-            ("split", "RustKotlinRuntime.splitString"),
-            ("lines", "RustKotlinRuntime.stringLines"),
-            ("starts_with", "text.startsWith"),
-            ("ends_with", "text.endsWith"),
+        for op in [
+            "collect",
+            "vec_from_iter",
+            "slice_to_vec",
+            "slice_to_vec_in",
         ] {
             let mut call = PortableOpCall {
                 span: Default::default(),
-                op: registry.resolve(op).expect("registered portable op"),
-                args: vec![
-                    Expr::name(Name::ident("text")),
-                    Expr::name(Name::ident("pattern")),
-                ],
+                op: registry
+                    .resolve(op)
+                    .expect("registered collection operation"),
+                args: vec![Expr::name(Name::ident("values"))],
+                kwargs: Vec::new(),
+            };
+            let materialized = KotlinMaterializer
+                .materialize_portable_op(&mut call, &bytes)
+                .expect("materialize byte collection conversion")
+                .expect("byte collection replacement");
+            assert_eq!(render_invoke_name(&materialized), "values.toByteArray");
+        }
+    }
+
+    #[test]
+    fn materializes_kotlin_native_operations_from_ordinary_invokes() {
+        let materializer = KotlinMaterializer;
+
+        for (method, expected) in [
+            ("trim", "text.trim"),
+            ("trim_start", "text.trimStart"),
+            ("trim_end", "text.trimEnd"),
+            ("lines", "text.lines"),
+            ("starts_with", "text.startsWith"),
+            ("ends_with", "text.endsWith"),
+        ] {
+            let mut call = ExprInvoke {
+                span: Default::default(),
+                target: ExprInvokeTarget::Method(ExprSelect {
+                    span: Default::default(),
+                    obj: Box::new(Expr::name(Name::ident("text"))),
+                    field: Ident::new(method),
+                    generic_args: Vec::new(),
+                    select: ExprSelectType::Method,
+                }),
+                args: Vec::new(),
                 kwargs: Vec::new(),
             };
             let materialized = materializer
-                .materialize_portable_op(&mut call, &None)
-                .expect("materialize string operation")
-                .expect("string replacement");
+                .materialize_invoke(&mut call, &None)
+                .expect("materialize native operation")
+                .expect("native operation replacement");
             assert_eq!(render_invoke_name(&materialized), expected);
         }
+    }
+
+    #[test]
+    fn materializes_option_is_none_as_a_null_check() {
+        let mut call = ExprInvoke {
+            span: Default::default(),
+            target: ExprInvokeTarget::Method(ExprSelect {
+                span: Default::default(),
+                obj: Box::new(Expr::name(Name::ident("value"))),
+                field: Ident::new("is_none"),
+                generic_args: Vec::new(),
+                select: ExprSelectType::Method,
+            }),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        };
+        let materialized = KotlinMaterializer
+            .materialize_invoke(&mut call, &None)
+            .expect("materialize Option::is_none")
+            .expect("null-check replacement");
+        assert!(matches!(materialized.kind(), ExprKind::BinOp(_)));
     }
 
     #[test]
@@ -1757,8 +1879,8 @@ mod tests {
             ("file_create", "RustKotlinRuntime.createFile"),
             ("fs_canonicalize", "RustKotlinRuntime.canonicalize"),
             ("path_canonicalize", "RustKotlinRuntime.canonicalize"),
-            ("path_exists", "RustKotlinRuntime.pathExists"),
-            ("path_join", "RustKotlinRuntime.pathResolve"),
+            ("path_exists", "java.nio.file.Files.exists"),
+            ("path_join", "stream.resolve"),
             ("path_to_string_lossy", "stream.toString"),
             ("dir_entry_path", "stream.path"),
             ("dir_entry_file_type", "runCatching"),

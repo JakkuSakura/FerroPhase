@@ -370,7 +370,6 @@ impl<T> [T] {
     #[rustc_conversion_suggestion]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    #[op(method = "to_vec")]
     pub fn to_vec(&self) -> Vec<T>
     where
         T: Clone,
@@ -395,7 +394,6 @@ impl<T> [T] {
     #[rustc_allow_incoherent_impl]
     #[inline]
     #[unstable(feature = "allocator_api", issue = "32838")]
-    #[op(method = "to_vec_in")]
     pub fn to_vec_in<A: Allocator>(&self, alloc: A) -> Vec<T, A>
     where
         T: Clone,
