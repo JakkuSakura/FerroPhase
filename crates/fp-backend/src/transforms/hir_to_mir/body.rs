@@ -983,6 +983,10 @@ impl<'a> BodyBuilder<'a> {
             });
         if let Some(def_id) = resolved_call_def {
             if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id) {
+                if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
+                    self.lower_resolved_print_call(expr, kind, args, destination.clone())?;
+                    return Ok(None);
+                }
                 if self.lower_resolved_intrinsic_call(
                     expr,
                     kind,
@@ -996,6 +1000,10 @@ impl<'a> BodyBuilder<'a> {
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(hir::Res::Def(def_id)) = &path.res {
                 if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
+                    if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
+                        self.lower_resolved_print_call(expr, kind, args, destination.clone())?;
+                        return Ok(None);
+                    }
                     if self.lower_resolved_intrinsic_call(
                         expr,
                         kind,
@@ -2724,6 +2732,37 @@ impl<'a> BodyBuilder<'a> {
             self.locals[place.local as usize].ty = ty;
         }
         Ok(true)
+    }
+
+    fn lower_resolved_print_call(
+        &mut self,
+        expr: &hir::Expr,
+        kind: IntrinsicKind,
+        args: &[hir::CallArg],
+        destination: Option<(mir::Place, Ty)>,
+    ) -> Result<()> {
+        self.emit_printf_call(
+            &hir::IntrinsicCallExpr {
+                kind,
+                callargs: args.to_vec(),
+            },
+            expr.span,
+        )?;
+        let (place, _) = destination.unwrap_or_else(|| {
+            let local = self.allocate_temp(HirToMirLowerer::unit_ty(), expr.span);
+            (mir::Place::from_local(local), HirToMirLowerer::unit_ty())
+        });
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                place.clone(),
+                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+            ),
+        });
+        if place.projection.is_empty() && (place.local as usize) < self.locals.len() {
+            self.locals[place.local as usize].ty = HirToMirLowerer::unit_ty();
+        }
+        Ok(())
     }
 
     pub(super) fn param_names_for_callee(&mut self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
