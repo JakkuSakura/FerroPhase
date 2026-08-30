@@ -550,6 +550,18 @@ impl AstToHirLowerer {
         };
         let prefix = fp_core::ast::path::QualifiedPath::new(segments);
         let module_id = self.package.module_tree.ensure_namespace(&prefix);
+        if let Some(previous) = self
+            .package
+            .module_tree
+            .lookup_res(module_id, ns, &leaf)
+            .cloned()
+            && previous != entry.res
+        {
+            self.emit_error(
+                Span::new(self.current_file, 0, 0),
+                format!("duplicate definition `{leaf}` in the same namespace"),
+            );
+        }
         self.package
             .module_tree
             .bind(module_id, ns, &leaf, entry.clone());
