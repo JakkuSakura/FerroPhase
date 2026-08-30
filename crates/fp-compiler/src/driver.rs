@@ -1300,9 +1300,10 @@ impl CompilerDriver {
         let interpreter = state_mut.interpreter_mut();
         interpreter.load_program(program)?;
         let mut value = interpreter.run_entrypoint(&package_id, def_id)?;
-        if let Some(ty) = return_ty {
-            value = interpreter.read_typed_const_value(value, &ty)?;
-        }
+        let result_ty = return_ty.unwrap_or_else(|| {
+            fp_core::lir::LirType::Ptr(Box::new(fp_core::lir::LirType::Void))
+        });
+        value = interpreter.read_typed_const_value(value, &result_ty)?;
         Ok(value)
     }
 }
