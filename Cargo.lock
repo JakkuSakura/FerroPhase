@@ -1168,6 +1168,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "fp-core",
+ "fp-interpret",
  "tempfile",
 ]
 
