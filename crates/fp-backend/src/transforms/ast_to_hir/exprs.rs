@@ -2339,13 +2339,9 @@ impl AstToHirLowerer {
         // front. The exported binding stays in its owning package.
         local
             .or_else(|| self.hir_program.find_export(&key))
-            .or_else(|| {
-                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                    self.lookup_symbol(&key, hir::Namespace::Type)
-                } else {
-                    None
-                }
-            })
+            // Keep value and type namespaces distinct. A value-position path
+            // must not silently resolve to a type merely because the value
+            // lookup failed; callers need an unresolved-name/namespace error.
     }
 
     // make_path_segment moved to helpers.rs
