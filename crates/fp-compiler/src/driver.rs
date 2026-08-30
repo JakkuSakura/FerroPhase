@@ -165,42 +165,37 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<(), CompilerDriverError> {
-        let (mir, entries) = {
+        let entries = {
             let state = self.state.borrow();
             let package_rc = state
                 .mir_program()
                 .package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
             let package = package_rc.borrow();
-            let mut mir = mir::MirCodeUnit::new();
-            mir.items.extend(package.items().cloned());
-            mir.bodies
-                .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
-            let entries = package
+            package
                 .executable_consts
                 .iter()
                 .map(|(def_id, (function_name, _))| {
                     (def_id.clone(), function_name.as_str().to_string())
                 })
-                .collect::<Vec<_>>();
-            (mir, entries)
+                .collect::<Vec<_>>()
         };
-        let bytecode =
-            if self.state.borrow().bytecode_comptime() {
-                Some(fp_bytecode::lower_program(&mir).map_err(|error| {
-                    CompilerDriverError::InternalCompilerError(error.to_string())
-                })?)
-            } else {
-                None
-            };
         let mut resolved_entries = Vec::with_capacity(entries.len());
-        for (def_id, function_name) in entries {
-            let value = if let Some(bytecode) = bytecode.clone() {
-                fp_stackcode::interpret_const(bytecode, &function_name)
-                    .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))?
-            } else {
-                Self::evaluate_comptime_lir(&self.state, &def_id)?
-            };
+        for (def_id, _function_name) in entries {
+            // Lower the requested entry itself before interpreting it. The
+            // package root pass registers executable-const metadata, but the
+            // synthetic const-block function is intentionally demand-driven.
+            // Reuse the same shared HIR/MIR/LIR path used by type checking;
+            // this keeps one DefId and one cache instead of interpreting a
+            // stale package snapshot.
+            let value = Self::resolve_comptime_request_with(
+                &self.state,
+                fp_typing::ComptimeRequest {
+                    package_id: def_id.package_id.clone(),
+                    def_id: def_id.clone(),
+                },
+            )
+            .await?;
             let hir_package_id = self
                 .state
                 .borrow()
@@ -746,7 +741,6 @@ impl CompilerDriver {
             .borrow()
             .items
             .iter()
-            .filter(|item| item.def_id.package_id == hir_package_id)
             .filter(|item| Self::is_lowering_root(item))
             .map(|item| item.def_id.clone())
             .collect::<Vec<_>>();
@@ -1059,6 +1053,77 @@ impl CompilerDriver {
         };
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone())
             .await?;
+
+        let foreign_methods = {
+            let state_ref = state.borrow();
+            state_ref
+                .mir_program()
+                .packages
+                .values()
+                .flat_map(|package| package.borrow().method_hir_defs.keys().cloned().collect::<Vec<_>>())
+                .filter(|def_id| def_id.package_id != package_id)
+                .collect::<Vec<_>>()
+        };
+        for method_def_id in foreign_methods {
+            let owner_package_id = method_def_id.package_id.clone();
+            let owner_hir = state.borrow().hir_program_rc();
+            let owner_mir = state.borrow_mut().mir_package_rc(&owner_package_id);
+            let mut owner_lowering = HirToMirLowerer::new(
+                owner_hir,
+                owner_package_id.clone(),
+                owner_mir,
+            );
+            owner_lowering.register_package_items();
+            owner_lowering
+                .ensure_method_lowered(method_def_id.clone())
+                .map_err(|error| {
+                    CompilerDriverError::InternalCompilerError(format!(
+                        "MIR lowering failed for foreign method {method_def_id}: {error}"
+                    ))
+                })?;
+            let unit = owner_lowering.take_unit();
+            state
+                .borrow_mut()
+                .insert_mir_unit(&owner_package_id, method_def_id.clone(), unit);
+            owner_lowering.sync_layout_exports();
+        }
+
+        // A comptime body may call a method whose HIR/MIR owner is a
+        // dependency package (for example `std::meta::TypeBuilder`). The
+        // shared interpreter resolves that call by package and DefId, so
+        // publish the dependency units that were materialized by the same
+        // HIR-to-MIR request before evaluating the entry.
+        let dependency_units = {
+            let state_ref = state.borrow();
+            state_ref
+                .mir_program()
+                .packages
+                .iter()
+                .flat_map(|(id, package)| {
+                    package
+                        .borrow()
+                        .units
+                        .keys()
+                        .cloned()
+                        .filter(|def_id| def_id != &request.def_id)
+                        .map(|def_id| (id.clone(), def_id))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (dependency_id, def_id) in dependency_units {
+            let mut dependency_lir = {
+                let state_ref = state.borrow();
+                MirToLirLowerer::new(
+                    state_ref.data_layout.clone(),
+                    state_ref.mir_program_rc(),
+                    state_ref.lir_program_rc(),
+                )
+                .with_package_id(dependency_id.clone())
+            };
+            Self::lower_package_to_lir_with(state, &dependency_id, &mut dependency_lir, def_id)
+                .await?;
+        }
 
         if state.borrow().bytecode_comptime() {
             Self::evaluate_comptime_bytecode(state, &request.def_id)

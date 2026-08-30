@@ -627,13 +627,18 @@ impl HirTypeChecker {
         checker: &Rc<RefCell<Self>>,
         def_id: hir::DefId,
         request: crate::ComptimeRequest,
-    ) -> TaskHandle<Option<hir::Value>> {
+    ) -> TaskHandle<std::result::Result<hir::Value, String>> {
         let cache_key = format!("comptime:{def_id:?}");
         let checker = checker.clone();
         let executor = checker.borrow().executor.clone();
         executor.get_or_spawn(cache_key, move || {
-            Box::pin(async move { checker.borrow().request_comptime(request).await.ok() })
-                as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
+            Box::pin(async move {
+                checker
+                    .borrow()
+                    .request_comptime(request)
+                    .await
+                    .map_err(|error| error.to_string())
+            }) as Pin<Box<dyn Future<Output = std::result::Result<hir::Value, String>>>>
         })
     }
 }
@@ -743,11 +748,19 @@ impl HirTypeChecker {
                     self.check_trait(item.def_id.clone(), trait_def).await?;
                 }
                 hir::ItemKind::TypeAlias(alias) => {
-                    tracing::info!(
-                        def_id = ?item.def_id,
-                        alias = %alias.name,
-                        "skipping standalone type-alias item type checking"
-                    );
+                    // Local comptime aliases are represented as HIR items
+                    // nested in a block. They must still run their const
+                    // block query before a later use can consume the alias's
+                    // generated ADT shape. Ordinary aliases remain lazy.
+                    if matches!(alias.target.kind, hir::TypeExprKind::ConstBlock(..)) {
+                        self.check_type_expr(&alias.target).await?;
+                    } else {
+                        tracing::info!(
+                            def_id = ?item.def_id,
+                            alias = %alias.name,
+                            "skipping standalone type-alias item type checking"
+                        );
+                    }
                 }
                 hir::ItemKind::Query(_) => {}
                 hir::ItemKind::Expr(expr) => {
@@ -961,8 +974,19 @@ impl HirTypeChecker {
                         matches!(lhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
                     let rhs_literal =
                         matches!(rhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
-                    let lhs = self.check_expr(lhs).await?;
-                    let rhs = self.check_expr(rhs).await?;
+                    let mut lhs = self.check_expr(lhs).await?;
+                    let mut rhs = self.check_expr(rhs).await?;
+                    // Integer literals are untyped until their neighboring
+                    // operand supplies a concrete integer type. Apply that
+                    // context before comparison/arithmetic unification so
+                    // `usize_value == 0` does not become `usize` vs `i64`.
+                    if lhs_literal && matches!(rhs.kind, TyKind::Int(_) | TyKind::Uint(_)) {
+                        lhs = rhs.clone();
+                    } else if rhs_literal
+                        && matches!(lhs.kind, TyKind::Int(_) | TyKind::Uint(_))
+                    {
+                        rhs = lhs.clone();
+                    }
                     let integer_literal = (lhs_literal
                         && matches!(rhs.kind, TyKind::Int(_) | TyKind::Uint(_)))
                         || (rhs_literal && matches!(lhs.kind, TyKind::Int(_) | TyKind::Uint(_)));
@@ -1888,7 +1912,7 @@ impl HirTypeChecker {
                     // comptime value recorded routes through `hir_to_mir`'s
                     // own existing fallback ("no comptime value available":
                     // lower the block's body as ordinary code instead).
-                    if !ty_contains_param(&body_ty) {
+                    {
                         // Deliberately non-fatal: a failure here (most
                         // commonly the body references a generic/const-
                         // generic parameter this compiler can't evaluate
@@ -1914,8 +1938,12 @@ impl HirTypeChecker {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                            .await;
+                        let _ = HirTypeChecker::spawn_comptime_task(
+                            &self.root_handle(),
+                            def_id.clone(),
+                            request,
+                        )
+                        .await;
                     }
                     body_ty
                 }
@@ -2695,9 +2723,13 @@ impl HirTypeChecker {
                             package_id: self.current_package(),
                             def_id: def_id.clone(),
                         };
-                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                            .await
-                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                        HirTypeChecker::spawn_comptime_task(
+                            &self.root_handle(),
+                            def_id.clone(),
+                            request,
+                        )
+                        .await
+                        .map_err(Error::from)?;
                     }
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
@@ -2846,7 +2878,18 @@ impl HirTypeChecker {
             // `const_block_values` entry, so this only fires for the
             // comptime-local case; everything else falls through to the
             // ordinary `def_map`-based resolution below.
-            if let Some(value) = self.package().const_block_value(def_id.clone()) {
+            if self.program.const_block_value(def_id.clone()).is_none() {
+                let target = self.program_rc().type_alias_target(def_id.clone());
+                if let Some(target) = target {
+                    if matches!(target.kind, hir::TypeExprKind::ConstBlock(..)) {
+                        // A type alias use is a query dependency on its
+                        // comptime RHS. Ensure that query is driven before
+                        // attempting to consume the generated ADT shape.
+                        self.check_type_expr(&target).await?;
+                    }
+                }
+            }
+            if let Some(value) = self.program.const_block_value(def_id.clone()) {
                 return Ok(match value {
                     fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
                         let fields: Vec<(hir::Symbol, Ty)> = struct_ty
@@ -3583,6 +3626,15 @@ impl HirTypeChecker {
             }
         };
         let def_id = &def_id;
+        // A comptime-generated type alias is a type value when referenced as
+        // an expression (for example `type(Config)` or
+        // `clone_struct!(Config)`). Its concrete ADT shape is consumed by
+        // type-position paths; the expression-position type is the meta-type
+        // itself, and must not be treated as an ordinary HIR item lookup.
+        if let Some(fp_core::ast::Value::Type(_)) = self.program.const_block_value(def_id.clone())
+        {
+            return Ok(Ty { kind: TyKind::Type });
+        }
         // Type-relative value path (`Map::new(..)`, `T::default()`) —
         // `ast_to_hir` resolves only the *base* segment (mirroring rustc's
         // `QPath::TypeRelative`: the resolver settles the type, typeck
