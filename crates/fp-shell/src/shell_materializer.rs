@@ -3,7 +3,7 @@ use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionSignature, Item, ItemKind, Name, Value,
 };
-use fp_core::intrinsics::{CallKind, IntrinsicMaterializer};
+use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -64,7 +64,7 @@ impl<'a> ShellMaterializer<'a> {
     }
 }
 
-impl IntrinsicMaterializer for ShellMaterializer<'_> {
+impl ShellMaterializer<'_> {
     fn prepare_file(&self, file: &mut File) {
         // Scan signatures from the AST
         *self.sigs.borrow_mut() = Some(scan_all_signatures(file));
@@ -94,7 +94,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         file.items = new_items;
     }
 
-    fn materialize_invoke(
+    fn lower_invoke(
         &self,
         invoke: &mut ExprInvoke,
         _expr_ty: &fp_core::ast::TySlot,
@@ -108,7 +108,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         if let Some(expr) = try_rewrite_to_intrinsic(invoke) {
             if let ExprKind::IntrinsicCall(mut call) = expr.into_parts().2 {
                 // Convert intrinsic call to final mangled invoke
-                return self.materialize_call(&mut call, &None);
+                return self.lower_intrinsic_call(&mut call, &None);
             }
         }
 
@@ -121,7 +121,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         Ok(None)
     }
 
-    fn materialize_call(
+    fn lower_intrinsic_call(
         &self,
         call: &mut ExprIntrinsicCall,
         _expr_ty: &fp_core::ast::TySlot,
@@ -201,6 +201,32 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
             }
             _ => Ok(None),
         }
+    }
+}
+
+impl IntrinsicMaterializer for ShellMaterializer<'_> {
+    fn prepare_file(&self, file: &mut File) {
+        ShellMaterializer::prepare_file(self, file);
+    }
+
+    fn materialize_invoke_expression(
+        &self,
+        invoke: ExprInvoke,
+        ty: &fp_core::ast::TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_invoke(&mut invoke.clone(), ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    }
+
+    fn materialize_intrinsic_call(
+        &self,
+        call: ExprIntrinsicCall,
+        ty: &fp_core::ast::TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_intrinsic_call(&mut call.clone(), ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
 }
 
@@ -499,7 +525,7 @@ fn fill_args(invoke: &mut ExprInvoke, sigs: &HashMap<String, FunctionSignature>)
 
 fn try_rewrite_to_intrinsic(invoke: &mut ExprInvoke) -> Option<Expr> {
     let name = invoke_target_name(&invoke.target)?;
-    // Only rewrite unmangled names (the OUTPUT of materialize_call is already mangled,
+    // Only rewrite unmangled names (the OUTPUT of lower_intrinsic_call is already mangled,
     // so skip __fp_ prefixed names to avoid infinite recursion)
     let kind = match name.as_str() {
         "std::ops::server::shell" | "std::ops::server::shell_local" => CallKind::ShellExec,

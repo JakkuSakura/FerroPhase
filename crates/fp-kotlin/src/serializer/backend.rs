@@ -1,5 +1,5 @@
 use super::*;
-use crate::kotlin_materializer::KotlinMaterializer;
+use crate::materialize::KotlinMaterializer;
 use fp_core::ast::{BlockStmt, ExprKind, Ident, Item, ItemKind, Name, Path, Ty};
 use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome};
 use std::path::{Path as FsPath, PathBuf};

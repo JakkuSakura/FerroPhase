@@ -907,7 +907,10 @@ pub(super) fn map_kt_path(name: &str) -> String {
             }
             return kt_method;
         }
-        let kt_prefix = map_name_to_kt(prefix);
+        // The semantic type mapping has already happened in the materializer;
+        // this renderer only retains the final source identifier for paths
+        // that were not resolved to a target AST type.
+        let kt_prefix = prefix.rsplit("::").next().unwrap_or(prefix).to_string();
         // `Type::new(...)` — a real constructor call (JDK type like
         // `ProcessBuilder`/`Arc`, or any user-defined struct's own `new`).
         // `Vec`/`HashSet`/`HashMap` (the only real static-factory-shaped

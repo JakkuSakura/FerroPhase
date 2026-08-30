@@ -118,7 +118,7 @@ impl<'a> HirToAstLifter<'a> {
                 "portable operation reached HIR-to-AST without a target materializer",
             ));
         };
-        let mut call = PortableOpCall {
+        let call = PortableOpCall {
             span,
             op,
             args,
@@ -128,11 +128,12 @@ impl<'a> HirToAstLifter<'a> {
             .package
             .expr_type(ty.clone())
             .and_then(|ty| self.hir_ty_to_ast(&ty));
-        materializer
-            .materialize_portable_op(&mut call, &expr_ty)?
-            .ok_or_else(|| {
-                fp_core::error::Error::from("target materializer did not handle portable operation")
-            })
+        match materializer.materialize_portable_operation(call, &expr_ty)? {
+            fp_core::intrinsics::MaterializeOutcome::Replaced(expr) => Ok(expr),
+            fp_core::intrinsics::MaterializeOutcome::Unchanged => Err(fp_core::error::Error::from(
+                "target materializer did not handle portable operation",
+            )),
+        }
     }
 
     /// Publishes every `ExprId` -> resolved `Ty` pair collected while

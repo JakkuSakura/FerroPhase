@@ -1,4 +1,5 @@
 use eyre::Result;
+use crate::materialize::KotlinMaterializer;
 use fp_core::ast::package::{AstPackage, PackageItem};
 use fp_core::ast::{
     AttrMeta, BExpr, BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, FormatArgRef,
@@ -7,6 +8,7 @@ use fp_core::ast::{
 };
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
+use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use std::collections::BTreeSet;
@@ -16,7 +18,7 @@ use std::collections::HashSet;
 mod backend;
 mod collections;
 mod expressions;
-mod naming;
+mod identifiers;
 pub use backend::KotlinBackend;
 pub use collections::{
     collect_enum_field_names, collect_enum_variant_names, collect_enum_variant_payload_fields,
@@ -24,7 +26,7 @@ pub use collections::{
 };
 use collections::{enum_variant_payload_field_names, sized_collection_element_type};
 use expressions::*;
-use naming::*;
+use identifiers::*;
 
 fn enum_variant_names_from_items(items: &[Item]) -> HashMap<String, HashMap<String, String>> {
     let mut names = HashMap::new();
@@ -2517,7 +2519,23 @@ impl KotlinEmitter {
             Ty::Enum(en) => en.name.name.clone(),
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
             Ty::Expr(expr) => {
+                if let Ok(fp_core::intrinsics::MaterializeOutcome::Replaced(mapped)) =
+                    KotlinMaterializer.materialize_type_mapping(ty)
+                {
+                    return self.kotlin_type_from_ty(&mapped);
+                }
                 let name = expr_to_name(expr);
+                if let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() {
+                    if let Some(segment) = path.last() {
+                        if segment.ident.as_str() == "Nullable" {
+                            return segment
+                                .args
+                                .first()
+                                .map(|arg| format!("{}?", self.kotlin_type_from_ty(arg)))
+                                .unwrap_or_else(|| "Any?".into());
+                        }
+                    }
+                }
                 // `to_vec_in<T>` is an internal Rust helper type emitted by
                 // collection materialization. It is not a Kotlin declaration;
                 // preserve the element type while lowering it to the mutable
@@ -2530,13 +2548,13 @@ impl KotlinEmitter {
                 {
                     let element = split_top_level(inner, ',')
                         .first()
-                        .map(|part| map_name_to_kt(part.trim()))
+                        .map(|part| part.trim().to_string())
                         .unwrap_or_else(|| "Any".to_string());
                     format!("MutableList<{}>", element)
                 } else if bare.starts_with("Split<") {
                     "List<String>".to_string()
                 } else {
-                    map_name_to_kt(&name)
+                    bare.to_string()
                 }
             }
             Ty::Unit(_) => "Unit".into(),
@@ -2550,13 +2568,13 @@ impl KotlinEmitter {
             Ty::TypeBounds(tb) => tb
                 .bounds
                 .first()
-                .map(|b| map_name_to_kt(&expr_to_name(b)))
+                .map(|b| self.kotlin_type_from_ty(&Ty::Expr(Box::new(b.clone()))))
                 .unwrap_or_else(|| "Any".into()),
             Ty::ImplTraits(it) => it
                 .bounds
                 .bounds
                 .first()
-                .map(|b| map_name_to_kt(&expr_to_name(b)))
+                .map(|b| self.kotlin_type_from_ty(&Ty::Expr(Box::new(b.clone()))))
                 .unwrap_or_else(|| "Any".into()),
             _ => "Any".into(),
         }
@@ -2998,7 +3016,7 @@ mod tests {
         let ty = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
             "to_vec_in<str>",
         ))));
-        assert_eq!(emitter.kotlin_type_from_ty(&ty), "MutableList<Any>");
+        assert_eq!(emitter.kotlin_type_from_ty(&ty), "MutableList<String>");
         let split = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
             "Split<str>",
         ))));

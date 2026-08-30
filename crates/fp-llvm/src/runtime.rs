@@ -6,7 +6,7 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
-use fp_core::intrinsics::{IntrinsicMaterializer, ensure_function_decl, make_function_decl};
+use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome, ensure_function_decl, make_function_decl};
 use fp_core::span::Span;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
@@ -26,33 +26,34 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
         ensure_function_decl(file, decl);
     }
 
-    fn materialize_call(
+    fn materialize_intrinsic_call(
         &self,
-        call: &mut ExprIntrinsicCall,
+        call: ExprIntrinsicCall,
         expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
+    ) -> Result<MaterializeOutcome<Expr>> {
+        let call = call;
         if matches!(call.kind, CallKind::Print | CallKind::Println) {
-            let Some((_template, args, kwargs)) = extract_format_call(call) else {
-                return Ok(None);
+            let Some((_template, args, kwargs)) = extract_format_call(&call) else {
+                return Ok(MaterializeOutcome::Unchanged);
             };
             if !kwargs.is_empty() {
-                return Ok(None);
+                return Ok(MaterializeOutcome::Unchanged);
             }
             if args
                 .iter()
                 .any(|arg| fp_core::ast::resolved_expr_type(arg.id()).is_none())
             {
-                return Ok(None);
+                return Ok(MaterializeOutcome::Unchanged);
             }
             if args.iter().any(|arg| is_missing_printf_type_info(arg)) {
-                return Ok(None);
+                return Ok(MaterializeOutcome::Unchanged);
             }
             match build_printf_invoke(expr_ty.clone(), call.clone()) {
-                Ok(expr) => Ok(Some(expr)),
-                Err(_) => Ok(None),
+                Ok(expr) => Ok(MaterializeOutcome::Replaced(expr)),
+                Err(_) => Ok(MaterializeOutcome::Unchanged),
             }
         } else {
-            Ok(None)
+            Ok(MaterializeOutcome::Unchanged)
         }
     }
 }
