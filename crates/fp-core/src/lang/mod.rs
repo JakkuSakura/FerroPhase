@@ -69,6 +69,7 @@ fn class_and_member_to_canonical_name(class: &str, member: &str) -> Option<&'sta
         ("RangeInclusive", "contains") => Some("range_inclusive_contains"),
         ("String", "from_utf8_lossy") => Some("string_from_utf8_lossy"),
         ("String", "from_utf8") => Some("string_from_utf8"),
+        ("Any", "to_string") => Some("to_string"),
         ("File", "create") => Some("file_create"),
         ("Path", "canonicalize") => Some("path_canonicalize"),
         ("Path", "exists") => Some("path_exists"),
@@ -155,7 +156,8 @@ pub fn class_and_member_to_portable_op(class: &str, member: &str) -> Option<Port
 
 #[cfg(test)]
 mod tests {
-    use super::class_and_member_to_portable_op;
+    use super::{LangItemRegistry, class_and_member_to_portable_op};
+    use crate::ast::{Ident, Path};
 
     #[test]
     fn resolves_collection_and_string_member_operations() {
@@ -215,6 +217,32 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn operation_registry_keeps_qualified_method_paths() {
+        let op = super::central_registry()
+            .resolve("option_unwrap")
+            .expect("builtin operation");
+        let mut registry = LangItemRegistry::default();
+        registry.insert_method_op(
+            "Option",
+            "unwrapOr",
+            op,
+            Path::plain(vec![
+                Ident::new("kotlin"),
+                Ident::new("Option"),
+                Ident::new("unwrapOr"),
+            ]),
+        );
+
+        assert_eq!(
+            registry
+                .get_op_path("option_unwrap")
+                .expect("qualified operation path")
+                .to_string(),
+            "kotlin::Option::unwrapOr"
+        );
+    }
 }
 
 #[derive(Clone, Default)]
@@ -232,7 +260,11 @@ pub struct LangItemRegistry {
     /// `#[op(class = "...")]` for methods tagged `#[op(method = "...")]`.
     /// Kept separate from `ops` (matched by the receiver's resolved type
     /// name, not a static call path).
-    method_ops: HashMap<String, PortableOp>,
+    method_ops: HashMap<String, (PortableOp, Path)>,
+    /// Canonical operation name to the declaration path in this language's
+    /// standard library.  This includes method declarations; consumers use
+    /// the final segment as the target method name.
+    op_paths: HashMap<String, Path>,
 }
 
 impl LangItemRegistry {
@@ -253,8 +285,10 @@ impl LangItemRegistry {
         }
     }
 
-    pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, op: PortableOp) {
-        self.method_ops.insert(format!("{opclass}.{opmethod}"), op);
+    pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, op: PortableOp, path: Path) {
+        self.op_paths.insert(op.name().to_string(), path.clone());
+        self.method_ops
+            .insert(format!("{opclass}.{opmethod}"), (op, path));
     }
 
     pub fn extend(&mut self, other: LangItemRegistry) {
@@ -267,6 +301,9 @@ impl LangItemRegistry {
         for (key, op) in other.method_ops {
             self.method_ops.insert(key, op);
         }
+        for (name, path) in other.op_paths {
+            self.op_paths.insert(name, path);
+        }
     }
 
     pub fn get_path(&self, name: &str) -> Option<&Path> {
@@ -277,7 +314,7 @@ impl LangItemRegistry {
     /// (e.g. `"fs_read_dir"` -> `std::fs::read_dir`'s real path) — direct
     /// lookup, no reverse name mapping.
     pub fn get_op_path(&self, name: &str) -> Option<&Path> {
-        self.ops.get(name)
+        self.ops.get(name).or_else(|| self.op_paths.get(name))
     }
 
     /// Finds which (if any) registered free-function op's declared path
@@ -303,7 +340,7 @@ impl LangItemRegistry {
     pub fn get_method_op(&self, opclass: &str, opmethod: &str) -> Option<PortableOp> {
         self.method_ops
             .get(&format!("{opclass}.{opmethod}"))
-            .cloned()
+            .map(|(op, _)| op.clone())
     }
 }
 
@@ -422,7 +459,18 @@ fn collect_lang_items_from_items(
                         if let Some(op) =
                             canonical.and_then(|name| central_registry().resolve(name))
                         {
-                            registry.insert_method_op(&opclass, &opmethod, op);
+                            registry.insert_method_op(
+                                &opclass,
+                                &opmethod,
+                                op,
+                                Path::plain(
+                                    module_path
+                                        .iter()
+                                        .cloned()
+                                        .chain(std::iter::once(Ident::new(opmethod.clone())))
+                                        .collect(),
+                                ),
+                            );
                         }
                     }
                 }
@@ -448,7 +496,18 @@ fn collect_lang_items_from_items(
                         if let Some(op) =
                             canonical.and_then(|name| central_registry().resolve(name))
                         {
-                            registry.insert_method_op(&opclass, &opmethod, op);
+                            registry.insert_method_op(
+                                &opclass,
+                                &opmethod,
+                                op,
+                                Path::plain(
+                                    module_path
+                                        .iter()
+                                        .cloned()
+                                        .chain(std::iter::once(Ident::new(opmethod.clone())))
+                                        .collect(),
+                                ),
+                            );
                         }
                     }
                 }

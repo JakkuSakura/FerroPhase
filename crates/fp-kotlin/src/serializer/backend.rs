@@ -17,6 +17,85 @@ struct KotlinScan {
 
 const RUNTIME_PROJECT: &str = "fp-kotlin-runtime";
 
+fn collect_kotlin_files(root: &FsPath, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_kotlin_files(&path, files)?;
+        } else if path.extension().is_some_and(|extension| extension == "kt") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn collect_kotlin_operation_decls(
+    declarations: &[crate::kt_parser::KtDecl],
+    module_path: &[String],
+    registry: &mut fp_core::lang::LangItemRegistry,
+) {
+    for declaration in declarations {
+        if let Some(op_name) = declaration.op_func.as_deref() {
+            let mut path = module_path.to_vec();
+            path.push(declaration.name.clone());
+            registry.insert_op(
+                op_name,
+                Path::plain(path.into_iter().map(Ident::new).collect()),
+            );
+        }
+        if let Some(op_class) = declaration.op_class.as_deref() {
+            for member in &declaration.members {
+                let Some(op_method) = member.op_method.as_deref() else {
+                    continue;
+                };
+                let Some(operation) =
+                    fp_core::lang::class_and_member_to_portable_op(op_class, op_method)
+                else {
+                    continue;
+                };
+                let mut path = module_path.to_vec();
+                path.push(declaration.name.clone());
+                path.push(member.name.clone());
+                registry.insert_method_op(
+                    op_class,
+                    op_method,
+                    operation,
+                    Path::plain(path.into_iter().map(Ident::new).collect()),
+                );
+            }
+        }
+        let mut nested_path = module_path.to_vec();
+        nested_path.push(declaration.name.clone());
+        collect_kotlin_operation_decls(&declaration.members, &nested_path, registry);
+    }
+}
+
+fn kotlin_operation_registry() -> Option<fp_core::lang::LangItemRegistry> {
+    let root = FsPath::new(env!("CARGO_MANIFEST_DIR")).join("std/kotlin");
+    let mut files = Vec::new();
+    collect_kotlin_files(&root, &mut files).ok()?;
+    let diagnostics = fp_core::diagnostics::DiagnosticManager::new();
+    let mut registry = fp_core::lang::LangItemRegistry::default();
+    for file in files {
+        let source = std::fs::read_to_string(&file).ok()?;
+        let Ok(declarations) = crate::kt_parser::parse_declarations(&source, &diagnostics) else {
+            continue;
+        };
+        let relative = file.strip_prefix(&root).ok()?;
+        let mut module_path = vec!["kotlin".to_string()];
+        if let Some(parent) = relative.parent() {
+            module_path.extend(
+                parent
+                    .iter()
+                    .filter_map(|segment| segment.to_str().map(str::to_owned)),
+            );
+        }
+        collect_kotlin_operation_decls(&declarations, &module_path, &mut registry);
+    }
+    Some(registry)
+}
+
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context beyond what `BackendConfig` carries — the
 /// workspace-wide `KotlinScan` is read lazily from `&AstProgram` on
@@ -213,12 +292,47 @@ mod tests {
     };
 
     use super::{
-        create_staging_directory, kotlin_package_name, kotlin_runtime_source,
-        materialize_io_error_constructor, materialize_kotlin_ty, materialize_kotlin_types,
-        publish_staged_workspace, remove_path,
+        collect_kotlin_operation_decls, create_staging_directory, kotlin_package_name,
+        kotlin_runtime_source, materialize_io_error_constructor, materialize_kotlin_ty,
+        materialize_kotlin_types, publish_staged_workspace, remove_path,
     };
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn kotlin_operation_declarations_become_attribute_paths() {
+        let member = crate::kt_parser::KtDecl {
+            kind: crate::kt_parser::KtDeclKind::Function,
+            name: "unwrapOr".to_string(),
+            type_params: Vec::new(),
+            receiver: None,
+            params: Vec::new(),
+            return_type: None,
+            supertypes: Vec::new(),
+            is_mutable: false,
+            members: Vec::new(),
+            op_class: None,
+            op_method: Some("unwrap_or".to_string()),
+            op_func: None,
+        };
+        let class = crate::kt_parser::KtDecl {
+            kind: crate::kt_parser::KtDeclKind::Class,
+            name: "OptionBox".to_string(),
+            type_params: Vec::new(),
+            receiver: None,
+            params: Vec::new(),
+            return_type: None,
+            supertypes: Vec::new(),
+            is_mutable: false,
+            members: vec![member],
+            op_class: Some("Option".to_string()),
+            op_method: None,
+            op_func: None,
+        };
+        let mut registry = fp_core::lang::LangItemRegistry::default();
+        collect_kotlin_operation_decls(&[class], &["kotlin".to_string()], &mut registry);
+        assert!(registry.get_op_path("unwrap_or").is_some());
+    }
 
     fn test_workspace_root(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -753,6 +867,10 @@ impl TargetBackend for KotlinBackend {
         &self,
     ) -> Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
         Some(std::sync::Arc::new(crate::KotlinMaterializer))
+    }
+
+    fn portable_operation_registry(&self) -> Option<fp_core::lang::LangItemRegistry> {
+        kotlin_operation_registry()
     }
 
     fn emit_package_artifact(

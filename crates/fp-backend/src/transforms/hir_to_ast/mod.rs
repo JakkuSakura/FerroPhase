@@ -20,6 +20,53 @@ use fp_core::intrinsics::{IntrinsicMaterializer, PortableOpCall};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
+/// Converts a canonical portable operation to the destination language's
+/// ordinary AST using paths collected from its `#[op]` declarations.
+pub struct PortableOpAstConverter {
+    operations: fp_core::lang::LangItemRegistry,
+}
+
+impl PortableOpAstConverter {
+    pub fn new(operations: fp_core::lang::LangItemRegistry) -> Self {
+        Self { operations }
+    }
+
+    pub fn convert(&self, call: PortableOpCall, expr_ty: &ast::TySlot) -> Option<Expr> {
+        let path = self.operations.get_op_path(call.op.name())?.clone();
+        if call.op.arity.receiver {
+            let (receiver, args) = call.args.split_first()?;
+            let field = path.segments.last()?.clone();
+            let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                span: call.span,
+                target: ast::ExprInvokeTarget::Method(ast::ExprSelect {
+                    obj: Box::new(receiver.clone()),
+                    field,
+                    generic_args: Vec::new(),
+                    select: ast::ExprSelectType::Method,
+                    span: call.span,
+                }),
+                args: args.to_vec(),
+                kwargs: call.kwargs,
+            }));
+            if let Some(ty) = expr_ty {
+                ast::set_resolved_expr_type(node.id(), ty.clone());
+            }
+            Some(node)
+        } else {
+            let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                span: call.span,
+                target: ast::ExprInvokeTarget::Function(Name::path(path)),
+                args: call.args,
+                kwargs: call.kwargs,
+            }));
+            if let Some(ty) = expr_ty {
+                ast::set_resolved_expr_type(node.id(), ty.clone());
+            }
+            Some(node)
+        }
+    }
+}
+
 /// Lifts a typechecked `hir::HirPackage` back into a plain item list — the
 /// shape every backend serializer (Kotlin, Python, Go, ...) already knows
 /// how to consume, so `PipelineMode::Transpile` can reuse those
@@ -46,6 +93,19 @@ pub struct HirToAstLifter<'a> {
     /// the configured materializer.
     capabilities: fp_core::capabilities::LanguageCapabilities,
     materializer: Option<std::sync::Arc<dyn IntrinsicMaterializer>>,
+    /// Operation declarations from the destination language's standard
+    /// library.  A hit is lowered to an ordinary target AST call; only a miss
+    /// reaches the target materializer.
+    target_converter: Option<std::sync::Arc<PortableOpAstConverter>>,
+    /// The fp-lang standard-library operation declarations.  A destination
+    /// mapping is valid only after the operation exists in this canonical
+    /// middle language.
+    fp_operations: Option<fp_core::lang::LangItemRegistry>,
+    fp_converter: Option<std::sync::Arc<PortableOpAstConverter>>,
+    /// The source standard-library operation declarations. HIR identity is
+    /// authoritative, while this registry verifies the source declaration
+    /// participated in the same attribute-driven mapping.
+    source_operations: Option<fp_core::lang::LangItemRegistry>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -83,6 +143,10 @@ impl<'a> HirToAstLifter<'a> {
             hir_program,
             capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             materializer: None,
+            target_converter: None,
+            fp_operations: None,
+            fp_converter: None,
+            source_operations: None,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
             resolved_expr_types: RefCell::new(HashMap::new()),
@@ -105,6 +169,31 @@ impl<'a> HirToAstLifter<'a> {
         self
     }
 
+    pub fn with_target_converter(
+        mut self,
+        converter: std::sync::Arc<PortableOpAstConverter>,
+    ) -> Self {
+        self.target_converter = Some(converter);
+        self
+    }
+
+    pub fn with_target_operations(self, operations: fp_core::lang::LangItemRegistry) -> Self {
+        self.with_target_converter(std::sync::Arc::new(PortableOpAstConverter::new(operations)))
+    }
+
+    pub fn with_fp_operations(mut self, operations: fp_core::lang::LangItemRegistry) -> Self {
+        self.fp_converter = Some(std::sync::Arc::new(PortableOpAstConverter::new(
+            operations.clone(),
+        )));
+        self.fp_operations = Some(operations);
+        self
+    }
+
+    pub fn with_source_operations(mut self, operations: fp_core::lang::LangItemRegistry) -> Self {
+        self.source_operations = Some(operations);
+        self
+    }
+
     fn materialize_portable_op(
         &self,
         span: Span,
@@ -113,21 +202,46 @@ impl<'a> HirToAstLifter<'a> {
         kwargs: Vec<ExprKwArg>,
         ty: &hir::HirId,
     ) -> Result<Expr> {
-        let Some(materializer) = &self.materializer else {
-            return Err(fp_core::error::Error::from(
-                "portable operation reached HIR-to-AST without a target materializer",
-            ));
-        };
+        let expr_ty = self
+            .package
+            .expr_type(ty.clone())
+            .and_then(|ty| self.hir_ty_to_ast(&ty));
         let call = PortableOpCall {
             span,
             op,
             args,
             kwargs,
         };
-        let expr_ty = self
-            .package
-            .expr_type(ty.clone())
-            .and_then(|ty| self.hir_ty_to_ast(&ty));
+        let source_declared = self
+            .source_operations
+            .as_ref()
+            .map(|operations| operations.get_op_path(call.op.name()).is_some())
+            .unwrap_or(true);
+        let fp_declared = self
+            .fp_operations
+            .as_ref()
+            .map(|operations| operations.get_op_path(call.op.name()).is_some())
+            .unwrap_or(true);
+        if source_declared && fp_declared {
+            let fp_ast = self
+                .fp_converter
+                .as_ref()
+                .and_then(|converter| converter.convert(call.clone(), &expr_ty));
+            if let Some(converter) = &self.target_converter {
+                if fp_ast.is_some() || self.fp_operations.is_none() {
+                    if let Some(expr) = converter.convert(call.clone(), &expr_ty) {
+                        return Ok(expr);
+                    }
+                }
+            } else if let Some(expr) = fp_ast {
+                return Ok(expr);
+            }
+        }
+        let Some(materializer) = &self.materializer else {
+            return Err(fp_core::error::Error::from(
+                "portable operation reached HIR-to-AST without a target materializer",
+            ));
+        };
         match materializer.materialize_portable_operation(call, &expr_ty)? {
             fp_core::intrinsics::MaterializeOutcome::Replaced(expr) => Ok(expr),
             fp_core::intrinsics::MaterializeOutcome::Unchanged => Err(fp_core::error::Error::from(
@@ -2168,13 +2282,90 @@ mod tests {
 
     struct TestMaterializer;
 
+    #[test]
+    fn portable_op_converter_emits_target_ast_from_declared_path() {
+        let op = fp_core::intrinsics::PortableOpRegistry::builtin()
+            .resolve("fs_read")
+            .expect("builtin operation");
+        let mut operations = fp_core::lang::LangItemRegistry::default();
+        operations.insert_op(
+            op.name(),
+            ast::Path::plain(vec![
+                ast::Ident::new("std"),
+                ast::Ident::new("fs"),
+                ast::Ident::new("read"),
+            ]),
+        );
+        let converter = PortableOpAstConverter::new(operations);
+        let expr = converter
+            .convert(
+                PortableOpCall {
+                    span: Span::null(),
+                    op,
+                    args: vec![Expr::name(Name::ident("path"))],
+                    kwargs: Vec::new(),
+                },
+                &None,
+            )
+            .expect("declared operation path");
+        let ast::ExprKind::Invoke(invoke) = expr.kind else {
+            panic!("expected an AST invoke");
+        };
+        let ast::ExprInvokeTarget::Function(name) = invoke.target else {
+            panic!("expected a target function");
+        };
+        assert_eq!(name.to_string(), "std::fs::read");
+    }
+
+    #[test]
+    fn portable_op_converter_emits_method_ast_from_declared_operation() {
+        let op = fp_core::intrinsics::PortableOpRegistry::builtin()
+            .resolve("option_unwrap")
+            .expect("builtin operation");
+        let mut operations = fp_core::lang::LangItemRegistry::default();
+        operations.insert_method_op(
+            "Option",
+            "unwrapOrTarget",
+            op,
+            ast::Path::plain(vec![
+                ast::Ident::new("kotlin"),
+                ast::Ident::new("Option"),
+                ast::Ident::new("unwrapOrTarget"),
+            ]),
+        );
+        let converter = PortableOpAstConverter::new(operations);
+        let expr = converter
+            .convert(
+                PortableOpCall {
+                    span: Span::null(),
+                    op: fp_core::intrinsics::PortableOpRegistry::builtin()
+                        .resolve("option_unwrap")
+                        .unwrap(),
+                    args: vec![Expr::name(Name::ident("value"))],
+                    kwargs: Vec::new(),
+                },
+                &None,
+            )
+            .expect("declared method operation");
+        let ast::ExprKind::Invoke(invoke) = expr.kind else {
+            panic!("expected an AST invoke");
+        };
+        let ast::ExprInvokeTarget::Method(select) = invoke.target else {
+            panic!("expected a target method");
+        };
+        assert_eq!(select.field.as_str(), "unwrapOrTarget");
+        assert_eq!(invoke.args.len(), 0);
+    }
+
     impl IntrinsicMaterializer for TestMaterializer {
-        fn materialize_portable_op(
+        fn materialize_portable_operation(
             &self,
-            call: &mut PortableOpCall,
+            call: PortableOpCall,
             _ty: &ast::TySlot,
-        ) -> Result<Option<Expr>> {
-            Ok(Some(Expr::name(Name::ident(call.op.name().to_string()))))
+        ) -> Result<fp_core::intrinsics::MaterializeOutcome<Expr>> {
+            Ok(fp_core::intrinsics::MaterializeOutcome::Replaced(
+                Expr::name(Name::ident(call.op.name().to_string())),
+            ))
         }
     }
 
@@ -2256,16 +2447,42 @@ mod tests {
         };
         let mut workspace = hir::HirProgram::new();
         workspace.publish_package(package.clone());
+        let target_path = ast::Path::plain(vec![
+            ast::Ident::new("kotlin"),
+            ast::Ident::new("String"),
+            ast::Ident::new("fromUtf8Lossy"),
+        ]);
+        let mut source_operations = fp_core::lang::LangItemRegistry::default();
+        source_operations.insert_op(
+            "string_from_utf8_lossy",
+            ast::Path::plain(vec![
+                ast::Ident::new("String"),
+                ast::Ident::new("from_utf8_lossy"),
+            ]),
+        );
+        let mut fp_operations = fp_core::lang::LangItemRegistry::default();
+        fp_operations.insert_op(
+            "string_from_utf8_lossy",
+            ast::Path::plain(vec![
+                ast::Ident::new("fp"),
+                ast::Ident::new("string_from_utf8_lossy"),
+            ]),
+        );
+        let mut target_operations = fp_core::lang::LangItemRegistry::default();
+        target_operations.insert_op("string_from_utf8_lossy", target_path);
         let lifter = HirToAstLifter::new(&package, &workspace)
             .with_capabilities(fp_core::capabilities::LanguageCapabilities {
                 portable_operations: true,
                 ..fp_core::capabilities::LanguageCapabilities::NATIVE
             })
+            .with_source_operations(source_operations)
+            .with_fp_operations(fp_operations)
+            .with_target_operations(target_operations)
             .with_materializer(Arc::new(TestMaterializer));
 
         let lifted = lifter.lift_expr(&call).expect("lift associated call");
         assert!(
-            matches!(lifted.kind, ast::ExprKind::Name(ast::Name::Ident(ref name)) if name.name == "string_from_utf8_lossy")
+            matches!(lifted.kind, ast::ExprKind::Invoke(ast::ExprInvoke { target: ast::ExprInvokeTarget::Function(ast::Name::Path(ref path)), .. }) if path.to_string() == "kotlin::String::fromUtf8Lossy")
         );
     }
 

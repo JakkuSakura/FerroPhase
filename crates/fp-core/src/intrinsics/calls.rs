@@ -251,6 +251,7 @@ fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
         def("winnow_verify", true, 2, NotStaticallyKnowable),
         def("string_from_utf8_lossy", false, 1, TargetNativeString),
         def("string_from_utf8", false, 1, TargetNativeString),
+        def("to_string", true, 1, TargetNativeString),
         def("fs_read", false, 1, NotStaticallyKnowable),
         def("fs_read_dir", false, 1, NotStaticallyKnowable),
         def("fs_create_dir", false, 1, NotStaticallyKnowable),

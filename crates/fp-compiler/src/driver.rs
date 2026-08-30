@@ -832,6 +832,21 @@ impl CompilerDriver {
             let hir = state.hir(hir_package_id.clone())?;
             let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program())
                 .with_capabilities(state.backend_capabilities());
+            let lifter = if let Some(operations) = state.target_operations() {
+                lifter.with_target_operations(operations)
+            } else {
+                lifter
+            };
+            let lifter = if let Some(operations) = state.source_operations() {
+                lifter.with_source_operations(operations)
+            } else {
+                lifter
+            };
+            let lifter = if let Some(operations) = state.fp_operations() {
+                lifter.with_fp_operations(operations)
+            } else {
+                lifter
+            };
             let lifter = if let Some(materializer) = state.intrinsic_materializer() {
                 lifter.with_materializer(materializer)
             } else {

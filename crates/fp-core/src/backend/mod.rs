@@ -222,6 +222,13 @@ pub trait TargetBackend: Send + Sync {
         None
     }
 
+    /// Attribute-derived operation declarations for this destination
+    /// language.  HIR→AST uses these paths before invoking the semantic
+    /// materializer.
+    fn portable_operation_registry(&self) -> Option<crate::lang::LangItemRegistry> {
+        None
+    }
+
     /// Writes `package_id`'s artifact to the path fixed at construction,
     /// reading whichever view of it the backend needs — `workspace`
     /// (`package_source`, AST-level lookups, ...) for AST-emitting

@@ -605,6 +605,11 @@ async fn run_compile_pipeline(
         .state
         .borrow_mut()
         .set_intrinsic_materializer(backend.intrinsic_materializer());
+    session
+        .driver()
+        .state
+        .borrow_mut()
+        .set_target_operations(backend.portable_operation_registry());
     // Source serializers consume lifted HIR, while native IR backends need
     // the HIR -> MIR -> LIR stages populated before emission. Select that
     // pipeline before compilation so the typed HIR is lowered exactly once.

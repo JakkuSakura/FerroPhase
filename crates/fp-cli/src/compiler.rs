@@ -63,6 +63,23 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::ast::package::provider::
     }
 }
 
+fn operation_registry_for(
+    provider: &dyn PackageProvider,
+) -> Option<fp_core::lang::LangItemRegistry> {
+    let mut registry = fp_core::lang::LangItemRegistry::default();
+    let mut found = false;
+    for package_id in provider.list_packages().ok()? {
+        let package = provider.load_package_source(&package_id).ok()?;
+        for package_item in package.items {
+            registry.extend(fp_core::lang::collect_lang_items_from_item(
+                &package_item.item,
+            ));
+            found = true;
+        }
+    }
+    found.then_some(registry)
+}
+
 /// Package/provider discovery shared by every single-file compiler entry
 /// point — `resolve_input_package` below, and `commands::compile`'s
 /// `provider_and_package_for_input`. A single file is a package with one
@@ -448,6 +465,9 @@ pub fn build_workspace_session(
 ) -> (CompilerExecutor, CompilerSession) {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
+    let source_operations = operation_registry_for(provider.as_ref());
+    let source_std_operations = operation_registry_for(std_provider.as_ref());
+    let fp_operations = operation_registry_for(std_provider_for(languages::FERROPHASE).as_ref());
     let external_api_provider: Arc<dyn fp_core::ast::package::provider::PackageProvider> =
         if language == languages::RUST {
             Arc::new(fp_rust::RustExternalApiProvider)
@@ -466,6 +486,18 @@ pub fn build_workspace_session(
         .state
         .borrow_mut()
         .set_backend_capabilities(backend_capabilities);
+    let mut merged_source_operations = source_operations;
+    if let Some(std_operations) = source_std_operations {
+        if let Some(source_operations) = &mut merged_source_operations {
+            source_operations.extend(std_operations);
+        } else {
+            merged_source_operations = Some(std_operations);
+        }
+    }
+    let mut state = session.driver().state.borrow_mut();
+    state.set_source_operations(merged_source_operations);
+    state.set_fp_operations(fp_operations);
+    drop(state);
     (executor, session)
 }
 
