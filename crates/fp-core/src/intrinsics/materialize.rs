@@ -229,7 +229,10 @@ pub fn materialize_expr(
                 kwarg.value = materialize_expr(value, strategy)?;
             }
             if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
-                materialize_expr(expr, strategy)?
+                // The children were already materialized above. Reapplying
+                // the hook to a target-shaped replacement would repeat
+                // rewrites such as Rust `.trim()` -> Kotlin `.trim()`.
+                expr
             } else {
                 ast::Expr::new(ast::ExprKind::Invoke(invoke))
             }
@@ -246,12 +249,12 @@ pub fn materialize_expr(
                     base: select.obj,
                 };
                 if let Some(expr) = strategy.materialize_await(&mut await_expr, &expr_ty)? {
-                    materialize_expr(expr, strategy)?
+                    expr
                 } else {
                     ast::Expr::new(ast::ExprKind::Await(await_expr))
                 }
             } else if let Some(expr) = strategy.materialize_select(&mut select, &expr_ty)? {
-                materialize_expr(expr, strategy)?
+                expr
             } else {
                 ast::Expr::new(ast::ExprKind::Select(select))
             }
@@ -403,7 +406,7 @@ pub fn materialize_expr(
             }
 
             if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {
-                materialize_expr(expr, strategy)?
+                expr
             } else {
                 ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
             }
@@ -494,7 +497,7 @@ pub fn materialize_expr(
         ast::ExprKind::Await(mut expr_await) => {
             expr_await.base = Box::new(materialize_expr(*expr_await.base, strategy)?);
             if let Some(expr) = strategy.materialize_await(&mut expr_await, &expr_ty)? {
-                materialize_expr(expr, strategy)?
+                expr
             } else {
                 ast::Expr::new(ast::ExprKind::Await(expr_await))
             }

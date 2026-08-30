@@ -1485,7 +1485,7 @@ fn enum_constructor_keeps_variant_identity_with_generic_arguments() -> Result<()
     )?;
     let package = package_from_items(items)?;
     let mut lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1527,7 +1527,7 @@ fn enum_constructor_through_alias_keeps_nominal_variant_identity() -> Result<()>
     )?;
     let package = package_from_items(items)?;
     let mut lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1568,7 +1568,7 @@ fn self_enum_constructor_preserves_type_relative_identity() -> Result<()> {
     )?;
     let package = package_from_items(items)?;
     let mut lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1615,7 +1615,7 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
         parser.parse_items_ast("type Alias = i64; fn read(value: Alias) -> Alias { value }")?;
     let package = package_from_items(items)?;
     let mut lowerer = AstToHirLowerer::new(
-        std::rc::Rc::new(hir::HirProgram::new()),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;

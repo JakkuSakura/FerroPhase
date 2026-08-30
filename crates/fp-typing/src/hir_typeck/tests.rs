@@ -270,7 +270,7 @@ fn impl_header_obligation_is_keyed_by_impl_def_id() {
     let executor = fp_core::executor::CompilerExecutor::new().handle();
     let checker = HirTypeChecker::new(
         hir::HirPackage::new(package_id),
-        None,
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
         None,
         executor.clone(),
     );

@@ -3084,7 +3084,11 @@ impl HirTypeChecker {
         // `hir::HirPackage::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
-        if let Some(target) = self.program_rc().type_alias_target(def_id.clone()) {
+        let type_alias_target = {
+            let program = self.program_rc();
+            program.type_alias_target(def_id.clone())
+        };
+        if let Some(target) = type_alias_target {
             if self.resolving_type_aliases.contains(def_id) {
                 return Ok(self.error_ty(format!("recursive type alias `{def_id}`")));
             }
@@ -5019,8 +5023,19 @@ impl HirTypeChecker {
         // recursively probing it would grow the stack indefinitely.
         let key = (
             format!(
-                "method:{:?}:{:?}:{:?}",
-                receiver_ty.kind, actuals, explicit_generic_args
+                "method:{}:{}:{}",
+                obligation_shape_key(receiver_ty),
+                actuals
+                    .iter()
+                    .map(obligation_shape_key)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                explicit_generic_args
+                    .unwrap_or_default()
+                    .iter()
+                    .map(obligation_shape_key)
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             method.clone(),
         );
