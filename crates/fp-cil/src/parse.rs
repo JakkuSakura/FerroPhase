@@ -155,7 +155,12 @@ fn lower_method(method: ParsedMethod) -> Result<LirFunction> {
                 current_label = Some(Name::new(label));
             }
             ParsedLine::Instr(text) => {
-                if let Some(term) = try_parse_terminator(&text, &mut stack, &label_to_block)? {
+                if let Some(term) = try_parse_terminator(
+                    &text,
+                    &mut stack,
+                    &label_to_block,
+                    current_block_id + 1,
+                )? {
                     blocks.push(LirBasicBlock {
                         id: current_block_id,
                         label: current_label.take(),
@@ -241,6 +246,7 @@ fn try_parse_terminator(
     line: &str,
     stack: &mut Vec<LirValue>,
     labels: &HashMap<String, BasicBlockId>,
+    fallthrough: BasicBlockId,
 ) -> Result<Option<LirTerminator>> {
     let line = line.trim();
     if line == "ret" {
@@ -266,7 +272,8 @@ fn try_parse_terminator(
         return Ok(Some(LirTerminator::CondBr {
             condition: cond,
             if_true: bb,
-            if_false: bb,
+            // `brtrue` carries only the taken target; false falls through.
+            if_false: fallthrough,
         }));
     }
     Ok(None)

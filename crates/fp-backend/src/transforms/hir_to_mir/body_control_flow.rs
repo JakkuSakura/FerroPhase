@@ -18,6 +18,12 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn lower_block_impl(&mut self, block: &hir::Block, is_tail: bool) -> Result<()> {
         let scope_depth = self.defer_scopes.len();
+        // Name-based fallback resolution is only needed while lowering this
+        // lexical block.  Preserve the outer bindings and restore them when
+        // the block is complete so an inner shadow does not leak into later
+        // expressions (HIR paths normally carry a Local resolution, but a
+        // few synthesized paths rely on this fallback map).
+        let fallback_locals_before = self.fallback_locals.clone();
         self.defer_scopes.push(DeferScope {
             deferred: Vec::new(),
         });
@@ -58,6 +64,8 @@ impl<'a> BodyBuilder<'a> {
             let scope = self.defer_scopes.pop().unwrap();
             self.run_popped_deferred(scope)?;
         }
+
+        self.fallback_locals = fallback_locals_before;
 
         Ok(())
     }

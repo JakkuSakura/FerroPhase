@@ -22,7 +22,9 @@ impl KotlinPackageProvider {
 
 impl PackageProvider for KotlinPackageProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        todo!()
+        Err(fp_core::ast::package::provider::ProviderError::Other(
+            "Kotlin package discovery is not implemented".into(),
+        ))
     }
 
     fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
@@ -34,14 +36,20 @@ impl PackageProvider for KotlinPackageProvider {
     }
 
     fn load_package_metadata(&self, _id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        todo!()
+        Err(fp_core::ast::package::provider::ProviderError::Other(
+            "Kotlin package metadata loading is not implemented".into(),
+        ))
     }
 
     fn load_package_source(&self, _id: &PackageId) -> ProviderResult<AstPackage> {
-        todo!()
+        Err(fp_core::ast::package::provider::ProviderError::Other(
+            "Kotlin package source loading is not implemented".into(),
+        ))
     }
 
     fn refresh(&self) -> ProviderResult<()> {
-        todo!()
+        Err(fp_core::ast::package::provider::ProviderError::Other(
+            "Kotlin package refresh is not implemented".into(),
+        ))
     }
 }
