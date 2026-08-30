@@ -415,6 +415,20 @@ impl AstToHirLowerer {
                                 def_id.clone(),
                                 &def_type.visibility,
                             );
+                            // A type alias whose RHS is a const block can
+                            // evaluate to a concrete ADT. Bind the alias in
+                            // the value namespace too so a following
+                            // `Alias { ... }` literal carries this DefId into
+                            // type checking and MIR lowering; its concrete
+                            // shape still comes solely from the checked
+                            // const-block result.
+                            if matches!(def_type.value, ast::Ty::ConstBlock(_)) {
+                                self.register_value_def(
+                                    &def_type.name.name,
+                                    def_id.clone(),
+                                    &def_type.visibility,
+                                );
+                            }
                             let target = self.transform_type_to_hir(&def_type.value)?;
                             self.package.type_alias_targets.insert(def_id, target);
                         }

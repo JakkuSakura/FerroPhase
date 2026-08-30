@@ -653,8 +653,7 @@ impl MirToLirLowerer {
             return_type: self.lir_type_from_ty(&sig.output),
             is_variadic: false,
         };
-        self.function_def_map
-            .insert((def_id, substs), name.clone());
+        self.function_def_map.insert((def_id, substs), name.clone());
         self.function_signatures
             .entry(name.clone())
             .or_insert(lir_signature);
@@ -662,7 +661,9 @@ impl MirToLirLowerer {
         self.function_call_conventions
             .entry(name.clone())
             .or_insert(calling_convention);
-        self.function_declarations.entry(name.clone()).or_insert(true);
+        self.function_declarations
+            .entry(name.clone())
+            .or_insert(true);
         self.function_package_ids
             .entry(name.clone())
             .or_insert(package_id);

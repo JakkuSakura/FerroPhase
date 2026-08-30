@@ -956,12 +956,12 @@ impl<'a> BodyBuilder<'a> {
                     span: expr.span,
                 };
                 call_args.push(env.operand);
-                self.resolve_callee(&call_expr)?
+                self.resolve_callee(expr.hir_id.clone(), &call_expr)?
             } else {
-                self.resolve_callee(callee)?
+                self.resolve_callee(expr.hir_id.clone(), callee)?
             }
         } else {
-            self.resolve_callee(callee)?
+            self.resolve_callee(expr.hir_id.clone(), callee)?
         };
         if call_args.is_empty() {
             if !sig.inputs.is_empty() {
@@ -1096,12 +1096,12 @@ impl<'a> BodyBuilder<'a> {
                     span: expr.span,
                 };
                 call_args.push(env.operand);
-                self.resolve_callee(&call_expr)?
+                self.resolve_callee(expr.hir_id.clone(), &call_expr)?
             } else {
-                self.resolve_callee(callee)?
+                self.resolve_callee(expr.hir_id.clone(), callee)?
             }
         } else {
-            self.resolve_callee(callee)?
+            self.resolve_callee(expr.hir_id.clone(), callee)?
         };
         match (call_args.is_empty(), sig.inputs.len(), call_args.len()) {
             (true, 0, _) => {}

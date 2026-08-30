@@ -15,15 +15,12 @@ use std::ffi::CString;
 use std::rc::Rc;
 
 use fp_core::ast::package::PackageId;
-use fp_core::ast::{
-    Ty, TypePrimitive, TypeStruct, Value, ValueList, ValueMapEntry,
-    ValueTuple,
-};
+use fp_core::ast::{Ty, TypePrimitive, TypeStruct, Value, ValueList, ValueMapEntry, ValueTuple};
 use fp_core::lir::{
     BasicBlockId, ComptimeOp, LirBasicBlock, LirBlob, LirConstant, LirConstantAggregate,
     LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
-    LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger, LirTerminator,
-    LirType, LirValue, LirValueKind, Name, RegisterId,
+    LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger, LirTerminator, LirType,
+    LirValue, LirValueKind, Name, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 

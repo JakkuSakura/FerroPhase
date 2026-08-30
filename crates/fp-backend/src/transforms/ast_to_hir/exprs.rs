@@ -1023,6 +1023,40 @@ impl AstToHirLowerer {
 
                 let mut path =
                     self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+                if let Some(hir::Res::Module(module_path)) = path.res.as_ref() {
+                    if let Some(leaf) = path.segments.last() {
+                        if let Some(module) = self.package.module_tree.module_id(
+                            &QualifiedPath::new(module_path.clone()),
+                        ) {
+                            if let Some(member) = self.package.module_tree.lookup(
+                                module,
+                                hir::Namespace::Value,
+                                leaf.name.as_str(),
+                            ) {
+                                path.res = Some(member.res.clone());
+                            }
+                        }
+                    }
+                }
+                if matches!(path.res, Some(hir::Res::Module(_))) {
+                    let complete = QualifiedPath::new(
+                        path.segments
+                            .iter()
+                            .map(|segment| segment.name.as_str().to_string())
+                            .collect(),
+                    );
+                    let mut package_relative = vec![self.package.id.as_str().to_owned()];
+                    package_relative.extend(complete.segments.iter().cloned());
+                    let package_relative = QualifiedPath::new(package_relative);
+                    if let Some(res) = self
+                        .lookup_symbol(&complete.to_key(), hir::Namespace::Value)
+                        .or_else(|| {
+                            self.lookup_symbol(&package_relative.to_key(), hir::Namespace::Value)
+                        })
+                    {
+                        path.res = Some(res);
+                    }
+                }
                 if path.res.is_none() {
                     let base_name = match name {
                         ast::Name::Path(source) if source.segments.len() > 1 => {
@@ -1124,9 +1158,28 @@ impl AstToHirLowerer {
                     .map(|segment| segment.name.as_str().to_string())
                     .collect(),
             );
-            path.res = self
-                .lookup_global_res(&full_path, PathResolutionScope::Value)
-                .or(path.res);
+            path.res = match path.res.as_ref() {
+                Some(hir::Res::Module(module_path)) => {
+                    let module = self
+                        .package
+                        .module_tree
+                        .module_id(&QualifiedPath::new(module_path.clone()));
+                    module
+                        .and_then(|module| {
+                            self.package.module_tree.lookup(
+                                module,
+                                hir::Namespace::Value,
+                                select.field.name.as_str(),
+                            )
+                        })
+                        .map(|entry| entry.res.clone())
+                        .or_else(|| self.lookup_global_res(&full_path, PathResolutionScope::Value))
+                        .or_else(|| path.res.clone())
+                }
+                _ => self
+                    .lookup_global_res(&full_path, PathResolutionScope::Value)
+                    .or(path.res),
+            };
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -1140,8 +1193,15 @@ impl AstToHirLowerer {
         &mut self,
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::ExprKind> {
-        let path =
+        let mut path =
             self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Value)?;
+        if !matches!(path.res, Some(hir::Res::Def(_))) {
+            let type_path =
+                self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
+            if matches!(type_path.res, Some(hir::Res::Def(_))) {
+                path.res = type_path.res;
+            }
+        }
         let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();

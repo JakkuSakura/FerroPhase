@@ -506,10 +506,7 @@ pub enum LirValueKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LirFunctionRef {
     Name(Name),
-    Package {
-        package_id: PackageId,
-        name: Name,
-    },
+    Package { package_id: PackageId, name: Name },
     Definition(crate::hir::DefId),
 }
 

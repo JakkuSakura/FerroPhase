@@ -208,7 +208,10 @@ impl Ty {
             Ty::Expr(expr) => match expr.kind() {
                 ExprKind::Name(Name::Ident(ident)) => {
                     TypePrimitive::from_name(&ident.name).map(|primitive| {
-                        primitive.canonical_name().unwrap_or(&ident.name).to_string()
+                        primitive
+                            .canonical_name()
+                            .unwrap_or(&ident.name)
+                            .to_string()
                     })
                 }
                 _ => None,

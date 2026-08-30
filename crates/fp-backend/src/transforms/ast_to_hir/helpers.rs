@@ -56,14 +56,53 @@ impl AstToHirLowerer {
             ResolvedNameNamespace::Value => PathResolutionScope::Value,
             ResolvedNameNamespace::Type => PathResolutionScope::Type,
             ResolvedNameNamespace::Module => {
+                let source_segments = match name {
+                    Name::Ident(ident) => vec![ident.name.clone()],
+                    Name::Path(path) => path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.name.clone())
+                        .collect(),
+                    Name::ParameterPath(path) => path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.name.clone())
+                        .collect(),
+                };
+                let mut path = resolved_name.path.clone();
+                if source_segments.starts_with(&path.segments) {
+                    path = QualifiedPath::new(source_segments);
+                } else if source_segments.len() > 1 {
+                    path.segments.extend(source_segments.into_iter().skip(1));
+                }
+                let res = path
+                    .segments
+                    .split_last()
+                    .and_then(|(leaf, parent)| {
+                        self.package
+                            .module_tree
+                            .module_id(&QualifiedPath::new(parent.to_vec()))
+                            .and_then(|module| {
+                                self.package
+                                    .module_tree
+                                    .lookup(module, scope.namespace(), leaf)
+                            })
+                    })
+                    .map(|entry| entry.res.clone())
+                    .or_else(|| self.lookup_global_res(&path, scope))
+                    .or_else(|| {
+                        self.package
+                            .module_tree
+                            .module_exists(&path)
+                            .then(|| hir::Res::Module(path.segments.clone()))
+                    });
                 return Ok(Some(hir::Path {
-                    segments: resolved_name
-                        .path
+                    segments: path
                         .segments
                         .iter()
                         .map(|segment| self.make_path_segment(segment, None))
                         .collect(),
-                    res: Some(hir::Res::Module(resolved_name.path.segments.clone())),
+                    res,
                 }));
             }
         };
@@ -777,7 +816,22 @@ impl AstToHirLowerer {
                         .map(|segment| segment.name.as_str().to_string()),
                 );
                 let aliased = QualifiedPath::new(aliased);
-                if let Some(res) = self.lookup_global_res(&aliased, scope) {
+                let module_member = aliased
+                    .segments
+                    .split_last()
+                    .and_then(|(leaf, parent)| {
+                        self.package
+                            .module_tree
+                            .module_id(&QualifiedPath::new(parent.to_vec()))
+                            .and_then(|module| {
+                                self.package
+                                    .module_tree
+                                    .lookup(module, scope.namespace(), leaf)
+                            })
+                    })
+                    .map(|entry| entry.res.clone());
+                if let Some(res) = module_member.or_else(|| self.lookup_global_res(&aliased, scope))
+                {
                     let offset = aliased.segments.len().saturating_sub(segments.len());
                     return Ok(hir::Path {
                         segments: aliased
@@ -1053,7 +1107,12 @@ impl AstToHirLowerer {
                 // the first place (e.g. a multi-segment path, where the
                 // single-segment tiered lookup above never ran) — never
                 // as a second opinion on something already answered.
-                let canonical_res = if resolved.is_some() {
+                let canonical_res = if matches!(resolved, Some(hir::Res::Module(_)))
+                    && canonical.segments.len() > 1
+                {
+                    self.lookup_global_res(&canonical, scope)
+                        .or(resolved.clone())
+                } else if resolved.is_some() {
                     resolved.clone()
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
@@ -1252,6 +1311,18 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
+                if let Some(hir::Res::Module(module_path)) = base.res.as_ref() {
+                    let member_path = QualifiedPath::new(module_path.clone());
+                    if let Some(module) = self.package.module_tree.module_id(&member_path) {
+                        if let Some(member) = self.package.module_tree.lookup(
+                            module,
+                            scope.namespace(),
+                            select.field.name.as_str(),
+                        ) {
+                            base.res = Some(member.res.clone());
+                        }
+                    }
+                }
                 if matches!(
                     select.select,
                     ast::ExprSelectType::Const | ast::ExprSelectType::Function

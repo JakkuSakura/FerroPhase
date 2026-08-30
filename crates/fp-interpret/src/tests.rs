@@ -171,7 +171,11 @@ fn preserves_type_handle_argument_after_aggregate_arguments() {
             &[builder_ty.clone(), str_ty.clone(), type_handle_ty.clone()],
             type_handle_ty.clone(),
         ),
-        basic_blocks: vec![bb(0, vec![], ret(LirValue::local(3, type_handle_ty.clone())))],
+        basic_blocks: vec![bb(
+            0,
+            vec![],
+            ret(LirValue::local(3, type_handle_ty.clone())),
+        )],
         locals: vec![
             fp_core::lir::LirLocal {
                 id: 0,
@@ -209,7 +213,9 @@ fn preserves_type_handle_argument_after_aggregate_arguments() {
             .run_function(
                 &f,
                 &[
-                    Value::Tuple(ValueTuple::new(vec![Value::Pointer(ValuePointer::managed(0))])),
+                    Value::Tuple(ValueTuple::new(vec![Value::Pointer(
+                        ValuePointer::managed(0)
+                    )])),
                     Value::Tuple(ValueTuple::new(vec![
                         Value::Pointer(ValuePointer::managed(4096)),
                         Value::int(2),

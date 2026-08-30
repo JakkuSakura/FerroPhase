@@ -1592,8 +1592,14 @@ mod tests {
     fn intrinsic_macro_names_accept_snake_case_reflection_spelling() {
         use fp_core::intrinsics::IntrinsicKind;
 
-        assert_eq!(intrinsic_macro_kind("has_field"), Some(IntrinsicKind::HasField));
-        assert_eq!(intrinsic_macro_kind("has_method"), Some(IntrinsicKind::HasMethod));
+        assert_eq!(
+            intrinsic_macro_kind("has_field"),
+            Some(IntrinsicKind::HasField)
+        );
+        assert_eq!(
+            intrinsic_macro_kind("has_method"),
+            Some(IntrinsicKind::HasMethod)
+        );
     }
 
     #[test]

@@ -948,7 +948,15 @@ impl AstToHirLowerer {
         let mut segments: Vec<String> = key.split("::").map(|s| s.to_string()).collect();
         let leaf = segments.pop()?;
         let prefix = fp_core::ast::path::QualifiedPath::new(segments);
-        let module_id = self.package.module_tree.module_id(&prefix)?;
+        // The crate root is represented by `ModuleTree::root()`, not by an
+        // entry in `by_path`. Top-level definitions are bound there, so an
+        // empty prefix must select the root directly rather than attempting
+        // an impossible empty-path lookup.
+        let module_id = if prefix.is_empty() {
+            self.package.module_tree.root()
+        } else {
+            self.package.module_tree.module_id(&prefix)?
+        };
         self.package.module_tree.lookup(module_id, ns, &leaf)
     }
 

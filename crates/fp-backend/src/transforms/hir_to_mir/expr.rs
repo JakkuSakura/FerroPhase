@@ -34,7 +34,7 @@ use super::body::BodyBuilder;
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
 
-fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
+pub(crate) fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
     pub(super) fn lower_const(value: &hir::ty::ConstKind) -> Result<mir::ty::ConstKind> {
         Ok(match value {
             hir::ty::ConstKind::Infer(hir::ty::InferConst::Fresh(id)) => {
@@ -120,6 +120,20 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
             hir::ty::FloatTy::F64 => FloatTy::F64,
             hir::ty::FloatTy::F128 => FloatTy::F128,
         }),
+        // Checked HIR keeps `str` distinct from `[u8]` so method resolution
+        // selects the string API. MIR uses the established slice storage
+        // representation shared by string literals and `&str` values.
+        hir::ty::TyKind::Str => TyKind::Slice(Box::new(Ty {
+            kind: TyKind::Int(IntTy::I8),
+        })),
+        // `&str` is represented directly as the same `{ptr, len}` slice in
+        // MIR. This is already how syntax-level type lowering handles it;
+        // preserve it when consuming the authoritative type-check cache too.
+        hir::ty::TyKind::Ref(_, inner, _) if matches!(inner.kind, hir::ty::TyKind::Str) => {
+            TyKind::Slice(Box::new(Ty {
+                kind: TyKind::Int(IntTy::I8),
+            }))
+        }
         hir::ty::TyKind::Adt(def, args) => TyKind::Adt(
             AdtDef {
                 did: def.did.clone(),

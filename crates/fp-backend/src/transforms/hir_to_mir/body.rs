@@ -835,6 +835,7 @@ impl<'a> BodyBuilder<'a> {
     pub(crate) fn lower(mut self) -> Result<mir::Body> {
         let has_body = self.function.body.is_some();
         if let Some(body) = &self.function.body {
+            self.collect_local_consts(body);
             self.lower_block(body)?;
         }
 
@@ -870,6 +871,47 @@ impl<'a> BodyBuilder<'a> {
             self.sig.inputs.len(),
             self.span,
         ))
+    }
+
+    fn collect_local_consts(&mut self, block: &hir::Block) {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                hir::StmtKind::Item(item) => {
+                    if let hir::ItemKind::Const(konst) = &item.kind {
+                        self.const_items.insert(item.def_id.clone(), konst.clone());
+                    }
+                }
+                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                    self.collect_local_consts_from_expr(expr);
+                }
+                hir::StmtKind::Local(local) => {
+                    if let Some(init) = &local.init {
+                        self.collect_local_consts_from_expr(init);
+                    }
+                }
+            }
+        }
+        if let Some(expr) = &block.expr {
+            self.collect_local_consts_from_expr(expr);
+        }
+    }
+
+    fn collect_local_consts_from_expr(&mut self, expr: &hir::Expr) {
+        match &expr.kind {
+            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
+                self.collect_local_consts(block)
+            }
+            hir::ExprKind::While(_, block) | hir::ExprKind::For(_, _, block) => {
+                self.collect_local_consts(block)
+            }
+            hir::ExprKind::If(_, then_block, else_expr) => {
+                self.collect_local_consts_from_expr(then_block);
+                if let Some(else_expr) = else_expr {
+                    self.collect_local_consts_from_expr(else_expr);
+                }
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn ensure_terminated(&mut self) {
@@ -1600,7 +1642,11 @@ impl<'a> BodyBuilder<'a> {
             }
             let resolved_method_def_id = self
                 .lowering
-                .typeck_method_resolution(callee.hir_id.clone());
+                .typeck_method_resolution(expr.hir_id.clone())
+                .or_else(|| {
+                    self.lowering
+                        .typeck_method_resolution(callee.hir_id.clone())
+                });
             if let Some(def_id) = resolved_method_def_id.as_ref() {
                 generic_method_def = self.lowering.ensure_generic_method_def(def_id.clone());
             } else if let Some(hir::Res::Def(def_id)) = &path.res {
@@ -1664,12 +1710,16 @@ impl<'a> BodyBuilder<'a> {
             });
             (operand, sig, Some(name))
         } else {
-            self.resolve_callee(callee)?
+            self.resolve_callee(expr.hir_id.clone(), callee)?
         };
         let mut associated_struct = match &callee.kind {
             hir::ExprKind::Path(path) => self
                 .lowering
-                .typeck_method_resolution(callee.hir_id.clone())
+                .typeck_method_resolution(expr.hir_id.clone())
+                .or_else(|| {
+                    self.lowering
+                        .typeck_method_resolution(callee.hir_id.clone())
+                })
                 .or_else(|| match path.res.as_ref() {
                     Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
                     _ => None,
@@ -2816,10 +2866,11 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn resolve_callee(
         &mut self,
+        call_hir_id: hir::HirId,
         callee: &hir::Expr,
     ) -> Result<(mir::Operand, mir::FunctionSig, Option<String>)> {
         match &callee.kind {
-            hir::ExprKind::Path(path) => self.resolve_callee_path(callee, path),
+            hir::ExprKind::Path(path) => self.resolve_callee_path(call_hir_id, callee, path),
             hir::ExprKind::FieldAccess(_, _) => {
                 let operand = self.lower_operand(callee, None)?;
                 if let TyKind::FnPtr(poly_fn_sig) = &operand.ty.kind {
@@ -2881,6 +2932,7 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn resolve_callee_path(
         &mut self,
+        call_hir_id: hir::HirId,
         callee: &hir::Expr,
         path: &hir::Path,
     ) -> Result<(mir::Operand, mir::FunctionSig, Option<String>)> {
@@ -2922,9 +2974,13 @@ impl<'a> BodyBuilder<'a> {
         // example `TypeBuilder::new`) to the concrete impl member.  Consume
         // that identity directly; MIR must not rediscover the member through
         // a `struct_methods["Type"]["method"]` name lookup.
-        if let Some(method_def_id) = self
-            .lowering
-            .typeck_method_resolution(callee.hir_id.clone())
+        if let Some(method_def_id) =
+            self.lowering
+                .typeck_method_resolution(call_hir_id)
+                .or_else(|| {
+                    self.lowering
+                        .typeck_method_resolution(callee.hir_id.clone())
+                })
         {
             if let Some(info) = self.lowering.ensure_method_info(method_def_id.clone()) {
                 self.lowering.ensure_method_lowered(method_def_id.clone())?;
@@ -3015,7 +3071,8 @@ impl<'a> BodyBuilder<'a> {
             .collect::<Vec<_>>()
             .join("::");
         Err(crate::error::optimization_error(format!(
-            "unresolved call target `{path}`: no HIR-resolved definition"
+            "unresolved call target `{path}` with resolution {:?}: no HIR-resolved definition",
+            resolved_path.res
         )))
     }
 
@@ -3050,6 +3107,52 @@ impl<'a> BodyBuilder<'a> {
                     ty,
                 });
             }
+
+            if let Some(place) = self.lower_place(expr)? {
+                return Ok(OperandInfo {
+                    operand: mir::Operand::copy(place.place),
+                    ty: place.ty,
+                });
+            }
+
+            let hir::ExprKind::FieldAccess(base, field) = &expr.kind else {
+                unreachable!();
+            };
+            // A field access is still a value expression when its receiver
+            // is a const or another computed expression. Materialize that
+            // receiver once, then use the ordinary typed place projection.
+            let mut base = self.materialize_expr_place(base)?;
+            let mut base_ty = base.ty.clone();
+            while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) =
+                &base_ty.kind
+            {
+                base.place.projection.push(mir::PlaceElem::Deref);
+                base_ty = inner.as_ref().clone();
+            }
+            let Some(struct_def) = base
+                .struct_def
+                .clone()
+                .or_else(|| self.struct_def_from_ty(&base_ty))
+            else {
+                let message = format!("field access `{field}` has a non-struct receiver");
+                self.lowering.emit_error(expr.span, &message);
+                return Err(fp_core::error::Error::from(message));
+            };
+            let Some((field_index, field_info)) =
+                self.lowering
+                    .struct_field(struct_def, &base_ty, field.as_str(), expr.span)
+            else {
+                let message = format!("unknown field `{field}` on field-access receiver");
+                self.lowering.emit_error(expr.span, &message);
+                return Err(fp_core::error::Error::from(message));
+            };
+            base.place
+                .projection
+                .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
+            return Ok(OperandInfo {
+                operand: mir::Operand::copy(base.place),
+                ty: field_info.ty,
+            });
         }
         // A method call is a value expression, even when its receiver is a
         // place. Do not let `lower_place` project through the receiver and
@@ -3319,6 +3422,19 @@ impl<'a> BodyBuilder<'a> {
                                 ty: info.fn_ty,
                             });
                         }
+                    }
+                    if let Some(konst) = self.const_items.get(def_id).cloned() {
+                        let ty = self.lower_type_expr(&konst.ty);
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let place = mir::Place::from_local(local_id);
+                        self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
+                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                            self.local_structs.insert(local_id, struct_def);
+                        }
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(place),
+                            ty,
+                        });
                     }
                     if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                         return Ok(OperandInfo {

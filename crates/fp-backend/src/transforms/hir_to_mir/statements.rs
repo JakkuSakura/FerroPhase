@@ -121,15 +121,22 @@ impl<'a> BodyBuilder<'a> {
     }
 
     pub(super) fn implicit_local_init_ty(&mut self, expr: &hir::Expr) -> Result<Ty> {
-        let ty = self
+        let hir_ty = self
             .lowering
-            .typeck_expr_type(expr.hir_id.clone())
+            .hir_program
+            .expr_type(expr.hir_id.clone())
             .ok_or_else(|| {
                 fp_core::error::Error::from(format!(
                     "missing HIR type for local initializer {}",
                     expr.hir_id
                 ))
             })?;
+        let ty = super::expr::lower_hir_ty(&hir_ty).map_err(|error| {
+            fp_core::error::Error::from(format!(
+                "cannot lower cached HIR type `{hir_ty:?}` for local initializer {}: {error}",
+                expr.hir_id
+            ))
+        })?;
         // Same concern as `lower_type_expr`'s typeck-cache check: the type
         // checker's cached type for this initializer expression comes from
         // type-checking the generic body once, abstractly — inside a

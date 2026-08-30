@@ -66,9 +66,14 @@ impl MirProgram {
     pub fn signature_by_def_id(
         &self,
         def_id: &crate::hir::DefId,
-    ) -> Option<(PackageId, crate::mir::Symbol, super::FunctionSig, super::SubstsRef)> {
+    ) -> Option<(
+        PackageId,
+        crate::mir::Symbol,
+        super::FunctionSig,
+        super::SubstsRef,
+    )> {
         let package_id = def_id.package_id.clone();
-        self.packages.get(&package_id).and_then(|package| {
+        let lookup = |package_id: PackageId, package: &Rc<RefCell<MirPackage>>| {
             let package = package.borrow();
             if let Some(info) = package.method_lookup_by_def.get(def_id) {
                 return Some((
@@ -78,14 +83,21 @@ impl MirProgram {
                     info.substs.clone(),
                 ));
             }
-            package.function_sigs.get(def_id).cloned().map(|sig| {
-                (
-                    package_id,
-                    format!("fn#{}", def_id).into(),
-                    sig,
-                    Vec::new(),
-                )
+            package
+                .function_sigs
+                .get(def_id)
+                .cloned()
+                .map(|sig| (package_id, format!("fn#{}", def_id).into(), sig, Vec::new()))
+        };
+        self.packages
+            .get(&package_id)
+            .and_then(|package| lookup(package_id.clone(), package))
+            .or_else(|| {
+                self.packages.iter().find_map(|(id, package)| {
+                    (id != &package_id)
+                        .then(|| lookup(id.clone(), package))
+                        .flatten()
+                })
             })
-        })
     }
 }

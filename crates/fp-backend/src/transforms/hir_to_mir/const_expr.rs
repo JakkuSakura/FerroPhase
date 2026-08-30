@@ -526,6 +526,60 @@ impl HirToMirLowerer {
             }
         }
 
+        // `type(T).field_type("field").name` is reflection, not a runtime
+        // method call. Resolve the nominal type and its declared field here
+        // so the `TypeOf` marker never reaches MIR operand lowering.
+        if field == "name" {
+            if let hir::ExprKind::MethodCall(receiver, method, _, args) = &base.kind {
+                if method.as_str() == "field_type" && args.len() == 1 {
+                    if let hir::ExprKind::IntrinsicCall(call) = &receiver.kind {
+                        if call.kind == IntrinsicKind::TypeOf && call.callargs.len() == 1 {
+                            let hir::ExprKind::Path(type_path) = &call.callargs[0].value.kind else {
+                                return None;
+                            };
+                            let hir::Res::Def(def_id) = type_path.res.as_ref()? else {
+                                return None;
+                            };
+                            let field_name = self.const_string_from_expr(&args[0].value)?;
+                            let struct_def_id = self
+                                .hir_program
+                                .type_alias_target_hir_id(def_id.clone())
+                                .and_then(|target| self.typeck_type_expr_type(target))
+                                .and_then(|ty| match ty.kind {
+                                    TyKind::Adt(adt, _) => Some(adt.did),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| def_id.clone());
+                            self.try_lazily_register_adt(struct_def_id.clone(), span);
+                            let info = self
+                                .mir_package
+                                .borrow()
+                                .struct_defs
+                                .get(&struct_def_id)?
+                                .clone();
+                            let index = info.field_index.get(&field_name).copied()?;
+                            let field_ty = self.lower_type_expr(&info.fields.get(index)?.ty);
+                            let name = self.display_type_name(&field_ty).or_else(|| match field_ty.kind {
+                                TyKind::Bool => Some("bool".to_string()),
+                                TyKind::Char => Some("char".to_string()),
+                                TyKind::Int(_) => Some("i64".to_string()),
+                                TyKind::Uint(_) => Some("u64".to_string()),
+                                TyKind::Float(_) => Some("f64".to_string()),
+                                TyKind::Slice(_) => Some("str".to_string()),
+                                _ => None,
+                            })?;
+                            return Some(mir::Constant {
+                                span,
+                                ty: self.raw_string_ptr_ty(),
+                                user_ty: None,
+                                literal: mir::ConstantKind::Str(name),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
             return None;
         };
@@ -599,9 +653,7 @@ impl HirToMirLowerer {
                 span,
                 ty: self.raw_string_ptr_ty(),
                 user_ty: None,
-                literal: mir::ConstantKind::Str(
-                    reflected_name.unwrap_or(struct_info.name),
-                ),
+                literal: mir::ConstantKind::Str(reflected_name.unwrap_or(struct_info.name)),
             }),
             _ => None,
         }

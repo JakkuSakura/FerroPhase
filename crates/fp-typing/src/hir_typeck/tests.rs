@@ -21,9 +21,14 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<RefCell<hir::HirPackage>>> {
+    let package_id = package.id.clone();
+    let program = hir::SharedHirProgram::new(hir::HirProgram::new());
+    program.publish_package(package);
     let checker = HirTypeChecker::new(
-        package,
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        program
+            .package_rc(&package_id)
+            .expect("published test package"),
+        program,
         None,
         executor,
     );
@@ -425,9 +430,13 @@ fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
         Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
     let package = hir::HirPackage::new(test_pkg());
+    let program = hir::SharedHirProgram::new(hir::HirProgram::new());
+    program.publish_package(package);
     let checker = HirTypeChecker::new(
-        package,
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        program
+            .package_rc(&test_pkg())
+            .expect("published test package"),
+        program,
         Some(resolver),
         fp_core::executor::CompilerExecutor::new().handle(),
     );

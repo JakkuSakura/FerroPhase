@@ -99,7 +99,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
                 || variant
                     .discriminant
                     .as_ref()
-                .is_some_and(expr_has_unresolved_paths)
+                    .is_some_and(expr_has_unresolved_paths)
         }),
         hir::ItemKind::TypeAlias(alias) => type_has_unresolved_paths(&alias.target),
         hir::ItemKind::Impl(_) => true,

@@ -671,7 +671,8 @@ impl CompilerDriver {
             .borrow_mut()
             .type_alias_exports
             .extend(type_alias_exports);
-        self.type_check_program(hir_program, package_exports)
+        self.state.borrow_mut().insert_hir(hir_program);
+        self.type_check_program(hir_package_id.clone(), package_exports)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -886,14 +887,19 @@ impl CompilerDriver {
     /// return from here.
     async fn type_check_program(
         &mut self,
-        program: hir::HirPackage,
+        package_id: hir::PackageId,
         package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let hir_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
+        let package = hir_program.package_rc(&package_id).ok_or_else(|| {
+            fp_core::error::Error::from(format!(
+                "typechecking package `{package_id}` without published HIR"
+            ))
+        })?;
         let checker =
-            fp_typing::HirTypeChecker::new(program, hir_program, comptime_resolver, executor);
+            fp_typing::HirTypeChecker::new(package, hir_program, comptime_resolver, executor);
         let item_ids: Vec<_> = checker
             .borrow()
             .package()

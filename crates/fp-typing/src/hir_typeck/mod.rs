@@ -167,16 +167,12 @@ impl HirTypeChecker {
     /// one `Rc<RefCell<_>>` root handle, spawned against by every item's
     /// task (see `spawn_item_task`).
     pub fn new(
-        current_package: hir::HirPackage,
+        current_package_handle: Rc<RefCell<hir::HirPackage>>,
         program: hir::SharedHirProgram,
         comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<RefCell<Self>> {
-        let package_id = current_package.id.clone();
-        program.publish_package(current_package);
-        let current_package_handle = program
-            .package_rc(&package_id)
-            .expect("published current package must be available");
+        let package_id = current_package_handle.borrow().id.clone();
         Rc::new(RefCell::new(Self {
             program,
             current_package: package_id,
@@ -1047,12 +1043,15 @@ impl HirTypeChecker {
                 hir::ExprKind::Reference(reference) => {
                     let mut referent = self.check_expr(&reference.expr).await?;
                     if reference.raw {
-                        return Ok(Ty {
-                            kind: TyKind::RawPtr(ty::TypeAndMut {
-                                ty: Box::new(referent),
-                                mutbl: reference.mutable,
-                            }),
-                        });
+                        return self.finish_expr(
+                            expr,
+                            Ty {
+                                kind: TyKind::RawPtr(ty::TypeAndMut {
+                                    ty: Box::new(referent),
+                                    mutbl: reference.mutable,
+                                }),
+                            },
+                        );
                     }
                     // Re-borrow, don't stack references: `&expr` where
                     // `expr` is already a `&T`/`&mut T` (e.g. `&self.field`
@@ -1378,7 +1377,7 @@ impl HirTypeChecker {
                     // erroring the whole enclosing expression over it.
                     if let TyKind::Adt(adt, _) = &callee_ty.kind {
                         if adt.flags.contains(AdtFlags::IS_STRUCT) {
-                            return Ok(callee_ty);
+                            return self.finish_expr(expr, callee_ty);
                         }
                     }
                     // A unit struct is both a type and a value in Rust.
@@ -1425,7 +1424,7 @@ impl HirTypeChecker {
                             callee_expr = ?callee.kind,
                             "call target did not resolve to a function type"
                         );
-                        return Ok(self.error_ty(format!(
+                        return self.finish_expr(expr, self.error_ty(format!(
                             "called expression is not a function (callee type: {:?}, callee expr: {:?})",
                             callee_ty.kind, callee.kind
                         )));
@@ -1436,6 +1435,60 @@ impl HirTypeChecker {
                         _ => unreachable!(),
                     };
                     if let hir::ExprKind::Path(path) = &callee.kind {
+                        // AST resolution intentionally leaves a type-relative path such as
+                        // `Point::new` attached to its nominal base. Once the explicit
+                        // arguments have been checked, select and record the concrete impl
+                        // member for MIR instead of making later stages inspect its spelling.
+                        if path.segments.len() > 1 {
+                            if let Some(hir::Res::Def(base_def_id)) = path.res.as_ref() {
+                                let is_nominal_base = self
+                                    .program_rc()
+                                    .item(base_def_id.clone())
+                                    .is_some_and(|item| {
+                                        matches!(
+                                            item.kind,
+                                            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)
+                                        )
+                                    });
+                                if is_nominal_base {
+                                    let mut base_path = path.clone();
+                                    base_path.segments.truncate(1);
+                                    let receiver_ty = self.path_ty(&base_path).await?;
+                                    let method =
+                                        &path.segments.last().expect("non-empty path").name;
+                                    if let Ok((method_def_id, generic_args, _)) = self
+                                        .method_output(&receiver_ty, method, &arg_types, None)
+                                        .await
+                                    {
+                                        let package = self.package();
+                                        package.record_method_resolution(
+                                            expr.hir_id.clone(),
+                                            method_def_id.clone(),
+                                        );
+                                        package.record_method_resolution(
+                                            callee.hir_id.clone(),
+                                            method_def_id.clone(),
+                                        );
+                                        if let Some(args) = generic_args {
+                                            package.record_generic_method_arg(
+                                                expr.hir_id.clone(),
+                                                GenericCallResolution {
+                                                    def_id: method_def_id.clone(),
+                                                    args: args.clone(),
+                                                },
+                                            );
+                                            package.record_generic_method_arg(
+                                                callee.hir_id.clone(),
+                                                GenericCallResolution {
+                                                    def_id: method_def_id,
+                                                    args,
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
                             let args = self
                                 .generic_call_args(def_id.clone(), &substitutions)?
@@ -1577,7 +1630,10 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Index(receiver, index) => {
                     let receiver_ty = self.check_expr(receiver).await?;
-                    let index_ty = self.check_expr(index).await?;
+                    let index_ty = self
+                        .with_expected_expr_type(Ty::uint(ty::UintTy::Usize))
+                        .check_expr(index)
+                        .await?;
                     let receiver_ty = match &receiver_ty.kind {
                         TyKind::Ref(_, inner, _) => inner.as_ref(),
                         _ => &receiver_ty,
@@ -1728,7 +1784,10 @@ impl HirTypeChecker {
                 hir::ExprKind::Match(scrutinee, arms) => {
                     let scrutinee_ty = self.check_expr(scrutinee).await?;
                     if arms.is_empty() {
-                        return Ok(self.error_ty("match expression requires at least one arm"));
+                        return self.finish_expr(
+                            expr,
+                            self.error_ty("match expression requires at least one arm"),
+                        );
                     }
                     let mut result: Option<Ty> = None;
                     let mut result_is_default_integer_literal = false;
@@ -1906,10 +1965,13 @@ impl HirTypeChecker {
                                 _ => expected,
                             };
                             if matches!(&unwrapped.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
-                                return Ok(unwrapped.clone());
+                                return self.finish_expr(expr, unwrapped.clone());
                             }
                         }
-                        return Ok(self.error_ty("empty array has no inferable element type"));
+                        return self.finish_expr(
+                            expr,
+                            self.error_ty("empty array has no inferable element type"),
+                        );
                     }
                     let mut value_types = Vec::with_capacity(values.len());
                     for value in values {
@@ -2093,10 +2155,14 @@ impl HirTypeChecker {
                 hir::ExprKind::Slice(slice) => {
                     let base_ty = self.check_expr(&slice.base).await?;
                     if let Some(start) = &slice.start {
-                        self.check_expr(start).await?;
+                        self.with_expected_expr_type(Ty::uint(ty::UintTy::Usize))
+                            .check_expr(start)
+                            .await?;
                     }
                     if let Some(end) = &slice.end {
-                        self.check_expr(end).await?;
+                        self.with_expected_expr_type(Ty::uint(ty::UintTy::Usize))
+                            .check_expr(end)
+                            .await?;
                     }
                     let base_ty = match &base_ty.kind {
                         TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -2108,6 +2174,9 @@ impl HirTypeChecker {
                         },
                         TyKind::Slice(inner) => Ty {
                             kind: TyKind::Slice(inner.clone()),
+                        },
+                        TyKind::Str => Ty {
+                            kind: TyKind::Slice(Box::new(Ty::uint(ty::UintTy::U8))),
                         },
                         _ => self.error_ty("slicing requires an array or slice"),
                     }
@@ -2183,10 +2252,14 @@ impl HirTypeChecker {
                     }
                 }
             };
-            self.package()
-                .record_expr_type(expr.hir_id.clone(), ty.clone());
-            Ok(ty)
+            self.finish_expr(expr, ty)
         })
+    }
+
+    fn finish_expr(&self, expr: &hir::Expr, ty: Ty) -> Result<Ty> {
+        self.package()
+            .record_expr_type(expr.hir_id.clone(), ty.clone());
+        Ok(ty)
     }
 
     async fn check_block(&mut self, block: &hir::Block) -> Result<Ty> {
@@ -5623,6 +5696,7 @@ impl HirTypeChecker {
     /// single highest-leverage source of "one hard error, every time").
     fn require_same(&self, lhs: &Ty, rhs: &Ty) -> Result<()> {
         if lhs == rhs
+            || Self::is_str_reference_pair(lhs, rhs)
             || matches!(lhs.kind, TyKind::Error(_))
             || matches!(rhs.kind, TyKind::Error(_))
             || matches!(lhs.kind, TyKind::Never)
@@ -5828,6 +5902,7 @@ impl HirTypeChecker {
     /// still use the spanless `require_same` above.
     fn require_same_at(&self, lhs: &Ty, rhs: &Ty, span: fp_core::span::Span) -> Result<()> {
         if lhs == rhs
+            || Self::is_str_reference_pair(lhs, rhs)
             || matches!(lhs.kind, TyKind::Error(_))
             || matches!(rhs.kind, TyKind::Error(_))
             || matches!(lhs.kind, TyKind::Never)
@@ -5838,6 +5913,14 @@ impl HirTypeChecker {
             self.record_error_with_span(format!("HIR type mismatch: {lhs} and {rhs}"), span);
             Ok(())
         }
+    }
+
+    fn is_str_reference_pair(lhs: &Ty, rhs: &Ty) -> bool {
+        matches!(
+            (&lhs.kind, &rhs.kind),
+            (TyKind::Ref(_, inner, _), TyKind::Str) | (TyKind::Str, TyKind::Ref(_, inner, _))
+                if matches!(inner.kind, TyKind::Str)
+        )
     }
 
     /// Discharge a refinement type's predicate against the value actually

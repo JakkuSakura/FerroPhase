@@ -703,6 +703,81 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
 }
 
 #[test]
+fn lowers_function_local_const_before_its_declaration_without_a_global() {
+    let local_const_id = def_id(43);
+    let local_const = Item {
+        hir_id: hid(43),
+        def_id: local_const_id.clone(),
+        visibility: Visibility::Private,
+        kind: ItemKind::Const(hir::Const {
+            name: Symbol::new("VALUE"),
+            ty: primitive_type(TypePrimitive::Int(TypeInt::I64)),
+            body: hir::Body {
+                hir_id: hid(44),
+                params: Vec::new(),
+                value: literal_expr(45, 7),
+            },
+            mutable: false,
+            is_host: false,
+        }),
+        span: span(),
+    };
+    let use_before_declaration = Expr::new(
+        hid(46),
+        ExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new("VALUE"),
+                args: None,
+            }],
+            res: Some(Res::Def(local_const_id)),
+        }),
+        span(),
+    );
+    let function = Function::new(
+        FunctionSig {
+            name: Symbol::new("read"),
+            inputs: Vec::new(),
+            output: primitive_type(TypePrimitive::Int(TypeInt::I64)),
+            generics: Generics::default(),
+            abi: hir::Abi::Rust,
+        },
+        Some(hir::Block {
+            hir_id: hid(47),
+            stmts: vec![
+                hir::Stmt {
+                    hir_id: hid(48),
+                    kind: hir::StmtKind::Expr(use_before_declaration),
+                },
+                hir::Stmt {
+                    hir_id: hid(49),
+                    kind: hir::StmtKind::Item(local_const),
+                },
+            ],
+            expr: Some(Box::new(literal_expr(50, 0))),
+        }),
+        false,
+        false,
+    );
+    let program = program_with_items(vec![Item {
+        hir_id: hid(51),
+        def_id: def_id(44),
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    }]);
+
+    let (_, result) = transform(program);
+    let mir_program = result.expect("HIR-to-MIR lowering should succeed");
+    assert!(
+        !mir_program
+            .items
+            .iter()
+            .any(|item| matches!(item.kind, MirItemKind::ExecutableConst(_))),
+        "function-local consts must be materialized in their body, not emitted as globals"
+    );
+}
+
+#[test]
 fn lowers_index_expression_into_place_projection() {
     let values_pat = Pat {
         hir_id: hid(20),

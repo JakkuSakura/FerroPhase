@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use semver::{Version, VersionReq};
 
 use crate::ast::module::{FeatureRef, ModuleId};
-use crate::vfs::VirtualPath;
 pub use crate::package::PackageId;
+use crate::vfs::VirtualPath;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TargetFilter {

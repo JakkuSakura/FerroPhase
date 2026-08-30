@@ -711,9 +711,11 @@ impl LirInterpreter {
                 self.write_typed_result(dst, self.result_type(instr)?, Value::unit())
             }
             LirInstructionKind::ComptimeOp(op) => match op {
-                ComptimeOp::TypeValue { value } => {
-                    self.write_typed_result(dst, self.result_type(instr)?, Value::Type(value.clone()))
-                }
+                ComptimeOp::TypeValue { value } => self.write_typed_result(
+                    dst,
+                    self.result_type(instr)?,
+                    Value::Type(value.clone()),
+                ),
                 ComptimeOp::CreateStruct { name } => {
                     let struct_name = self.render_str_argument(name)?;
                     let fields: Vec<fp_core::ast::StructuralField> = vec![];
@@ -3867,7 +3869,9 @@ impl LirInterpreter {
             LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void) => {
                 match self.state.objects.get(raw as usize) {
                     Some(Value::Type(value)) => Ok(Value::Type(value.clone())),
-                    _ => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(raw as i64))),
+                    _ => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                        raw as i64,
+                    ))),
                 }
             }
             LirType::Ptr(_) => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
