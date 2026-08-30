@@ -2791,15 +2791,16 @@ impl MirToLirLowerer {
                         // the package-qualified function reference.
                         self.function_package_ids.insert(name.clone(), package_id);
                     }
-                    let mut value = self.function_value(name)?;
-                    // Preserve the resolved HIR identity through LIR. A
-                    // display-name reference can point at the caller's
-                    // package or at a stale alias; the interpreter and
-                    // native reachability pass can both resolve this exact
-                    // cross-package definition by DefId.
-                    value.kind = lir::LirValueKind::Function(lir::LirFunctionRef::Definition(
-                        def_id.clone(),
-                    ));
+                    let mut value = self.function_value(name.clone())?;
+                    // Carry the owning package together with the canonical
+                    // emitted symbol. A bare name is insufficient for
+                    // comptime/interpreter lookup, while formatting a DefId
+                    // as `package:3` produces an identity rather than a
+                    // linkable native symbol.
+                    value.kind = lir::LirValueKind::Function(lir::LirFunctionRef::Package {
+                        package_id: def_id.package_id.clone(),
+                        name: lir::Name::new(name),
+                    });
                     Ok(value)
                 }
                 mir::ConstantKind::Fn(name) => {
