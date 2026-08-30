@@ -81,6 +81,7 @@ impl String {
 }
 
 impl str {
+    #[intrinsic = "len"]
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
 
     pub fn is_empty(&self) -> bool { self.len() == 0 }
@@ -95,15 +96,41 @@ impl str {
     pub fn as_ptr(&self) -> *const u8 { compile_error!("compiler intrinsic") }
 
     pub fn starts_with(&self, prefix: &str) -> bool {
-        compile_error!("compiler intrinsic")
+        if prefix.len() > self.len() { return false; }
+        let mut idx: usize = 0;
+        while idx < prefix.len() {
+            if self[idx] != prefix[idx] { return false; }
+            idx = idx + 1;
+        }
+        true
     }
 
     pub fn ends_with(&self, suffix: &str) -> bool {
-        compile_error!("compiler intrinsic")
+        if suffix.len() > self.len() { return false; }
+        let start = self.len() - suffix.len();
+        let mut idx: usize = 0;
+        while idx < suffix.len() {
+            if self[start + idx] != suffix[idx] { return false; }
+            idx = idx + 1;
+        }
+        true
     }
 
     pub fn contains(&self, needle: &str) -> bool {
-        compile_error!("compiler intrinsic")
+        if needle.len() == 0 { return true; }
+        if needle.len() > self.len() { return false; }
+        let mut start: usize = 0;
+        while start + needle.len() <= self.len() {
+            let mut idx: usize = 0;
+            let mut matched = true;
+            while idx < needle.len() {
+                if self[start + idx] != needle[idx] { matched = false; break; }
+                idx = idx + 1;
+            }
+            if matched { return true; }
+            start = start + 1;
+        }
+        false
     }
 
     pub fn replace(&self, pattern: &str, replacement: &str) -> ::alloc::string::String {
