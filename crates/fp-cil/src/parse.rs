@@ -290,7 +290,9 @@ fn parse_stack_instruction(
         ));
         return Ok(None);
     }
-    if let Some(rest) = line.strip_prefix("ldloc.") {
+    if let Some(rest) = line
+        .strip_prefix("ldloc.")
+        .or_else(|| line.strip_prefix("ldloc ")) {
         let id = rest
             .trim()
             .parse::<u32>()
@@ -298,8 +300,10 @@ fn parse_stack_instruction(
         stack.push(LirValue::local(id, LirType::I64));
         return Ok(None);
     }
-    if let Some(rest) = line.strip_prefix("stloc.") {
-        let _id = rest
+    if let Some(rest) = line
+        .strip_prefix("stloc.")
+        .or_else(|| line.strip_prefix("stloc ")) {
+        let id = rest
             .trim()
             .parse::<u32>()
             .map_err(|_| Error::from("cil parse: invalid stloc"))?;
@@ -310,11 +314,13 @@ fn parse_stack_instruction(
         *next_vreg += 1;
         return Ok(Some(LirInstruction {
             id: id_inst,
-            kind: LirInstructionKind::Freeze(value),
-            result: Some(LirRegister {
-                id: id_inst,
-                ty: LirType::I64,
-            }),
+            kind: LirInstructionKind::Store {
+                value,
+                address: LirValue::local(id, LirType::I64),
+                alignment: None,
+                volatile: false,
+            },
+            result: None,
             debug_info: None,
         }));
     }
@@ -348,5 +354,36 @@ fn parse_stack_instruction(
         }));
     }
 
-    Ok(None)
+    Err(Error::from(format!(
+        "cil parse: unsupported instruction `{line}`"
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stloc_preserves_destination_local() {
+        let program = parse_cil_program(
+            ".method public static int32 'main'() cil managed {\n.locals init (int32 V_0)\nldc.i4 7\nstloc 0\nldloc 0\nret\n}\n",
+        )
+        .expect("valid CIL");
+        let instructions = &program.functions[0].basic_blocks[0].instructions;
+        let LirInstructionKind::Store { address, .. } = &instructions[0].kind else {
+            panic!("expected stloc to lower to Store");
+        };
+        assert!(matches!(
+            address.kind,
+            fp_core::lir::LirValueKind::Local(0)
+        ));
+    }
+
+    #[test]
+    fn unknown_instruction_is_rejected() {
+        let result = parse_cil_program(
+            ".method public static int32 'main'() cil managed {\nfoo\nret\n}\n",
+        );
+        assert!(result.is_err());
+    }
 }

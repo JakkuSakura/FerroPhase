@@ -983,7 +983,7 @@ mod tests {
         }
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(package));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
 
         for (index, path) in [
             (7, "error::CoreError"),
@@ -1007,7 +1007,7 @@ mod tests {
             .insert("core::option::Option".to_string(), Res::Def(def_id.clone()));
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(package));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
 
         assert_eq!(
             program.find_export("core::option::Option"),
@@ -1043,7 +1043,7 @@ mod tests {
         );
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(package));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
 
         assert_eq!(
             program.external_module_member_names(&QualifiedPath::new(vec![
@@ -1065,7 +1065,7 @@ mod tests {
         );
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(package));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
 
         assert_eq!(
             program.find_export("skln_core::types::ChangeRange"),
@@ -1085,8 +1085,8 @@ mod tests {
         let consumer_id = PackageId::new("consumer");
         let consumer = HirPackage::new(consumer_id.clone());
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(dependency));
-        program.add_package(std::rc::Rc::new(consumer));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(consumer)));
 
         assert_eq!(
             program.find_export("dependency::api::PublicType"),
@@ -1110,7 +1110,7 @@ mod tests {
                 Res::Def(DefId::new(alloc_id.clone(), index)),
             );
         }
-        program.add_package(std::rc::Rc::new(alloc));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(alloc)));
 
         let core_id = PackageId::new("skln-core");
         let mut core = HirPackage::new(core_id.clone());
@@ -1118,7 +1118,7 @@ mod tests {
             "error::CoreError".to_string(),
             Res::Def(DefId::new(core_id, 4)),
         );
-        program.add_package(std::rc::Rc::new(core));
+        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(core)));
 
         let mut actual = program
             .hir_definitions()
