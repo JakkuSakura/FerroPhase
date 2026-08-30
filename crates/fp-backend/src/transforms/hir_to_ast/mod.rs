@@ -32,7 +32,12 @@ impl PortableOpAstConverter {
     }
 
     pub fn convert(&self, call: PortableOpCall, expr_ty: &ast::TySlot) -> Option<Expr> {
-        let path = self.operations.get_op_path(call.op.name())?.clone();
+        let binding = self
+            .operations
+            .resolve_operation(fp_core::lang::OperationSelector::PortableName(
+                call.op.name(),
+            ))?;
+        let path = binding.path.clone();
         if call.op.arity.receiver {
             let (receiver, args) = call.args.split_first()?;
             let field = path.segments.last()?.clone();

@@ -16,14 +16,9 @@ fn central_registry() -> &'static PortableOpRegistry {
     REGISTRY.get_or_init(PortableOpRegistry::builtin)
 }
 
-/// Translates a short, unqualified `#[op(method = "...")]`/
+/// Resolves a short, unqualified `#[op(method = "...")]`/
 /// `#[op(variant = "...")]` tag using its enclosing declaration's own
-/// `#[op(class = "...")]` name for context, into the central registry's
-/// canonical flat name — so std source can write natural, short tags
-/// (`#[op(method = "new")]` inside `#[op(class = "Vec")]`) instead of
-/// inventing a globally-unique flat string per op. Checked before falling
-/// back to a direct name match (for ops that are unambiguous without any
-/// class context, and for flat, no-enclosing-declaration free functions).
+/// `#[op(class = "...")]` name for semantic validation.
 fn class_and_member_to_canonical_name(class: &str, member: &str) -> Option<&'static str> {
     match (class, member) {
         ("Default", "default") => Some("default"),
@@ -156,7 +151,7 @@ pub fn class_and_member_to_portable_op(class: &str, member: &str) -> Option<Port
 
 #[cfg(test)]
 mod tests {
-    use super::{LangItemRegistry, class_and_member_to_portable_op};
+    use super::{LangItemRegistry, OperationSelector, class_and_member_to_portable_op};
     use crate::ast::{Ident, Path};
 
     #[test]
@@ -242,29 +237,79 @@ mod tests {
                 .to_string(),
             "kotlin::Option::unwrapOr"
         );
+        assert!(registry
+            .resolve_operation(OperationSelector::DeclarationKey("Option.unwrapOr"))
+            .is_some());
+        assert!(registry
+            .resolve_operation(OperationSelector::DeclarationKey("option_unwrap"))
+            .is_none());
+    }
+
+    #[test]
+    fn operation_registry_uses_exact_function_keys() {
+        let op = super::central_registry()
+            .resolve("path_exists")
+            .expect("builtin operation");
+        let mut registry = LangItemRegistry::default();
+        registry.insert_op("path_exists", Path::plain(vec![Ident::new("path_exists")]));
+
+        assert_eq!(
+            registry
+                .resolve_operation(OperationSelector::DeclarationKey("path_exists"))
+                .expect("function declaration")
+                .op,
+            op
+        );
+        assert!(registry
+            .resolve_operation(OperationSelector::DeclarationKey("Path.exists"))
+            .is_none());
+    }
+
+    #[test]
+    fn operation_registry_uses_qualified_variant_keys() {
+        let op = super::central_registry()
+            .resolve("result_ok")
+            .expect("builtin operation");
+        let mut registry = LangItemRegistry::default();
+        registry.insert_operation(
+            "Result.ok",
+            op.clone(),
+            Path::plain(vec![Ident::new("Result"), Ident::new("Ok")]),
+        );
+
+        assert_eq!(
+            registry
+                .resolve_operation(OperationSelector::DeclarationKey("Result.ok"))
+                .expect("variant declaration")
+                .op,
+            op
+        );
+        assert!(registry
+            .resolve_operation(OperationSelector::DeclarationKey("result_ok"))
+            .is_none());
     }
 }
 
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
     items: HashMap<String, Path>,
-    /// Free-function portable ops, keyed by canonical name (resolved
-    /// against the central registry — see `central_registry`) — the std
-    /// source's own declared path for that op: no separate hardcoded
-    /// name -> path table needed anywhere downstream, and no reverse
-    /// mapping needed either, both lookup directions are a single
-    /// `HashMap` op on this one field.
-    ops: HashMap<String, Path>,
-    /// Method-position portable ops, keyed by `"{opclass}.{opmethod}"` (e.g.
-    /// `"Option.as_ref"`) — populated by scanning `impl` blocks tagged
-    /// `#[op(class = "...")]` for methods tagged `#[op(method = "...")]`.
-    /// Kept separate from `ops` (matched by the receiver's resolved type
-    /// name, not a static call path).
-    method_ops: HashMap<String, (PortableOp, Path)>,
-    /// Canonical operation name to the declaration path in this language's
-    /// standard library.  This includes method declarations; consumers use
-    /// the final segment as the target method name.
-    op_paths: HashMap<String, Path>,
+    /// All portable operations, keyed by the declaration's exact source
+    /// representation: a function tag (`path_exists`) or a qualified member
+    /// tag (`Path.exists`, including variants). The canonical operation name
+    /// lives in the binding and is used for cross-language interchange.
+    operations: HashMap<String, PortableOpBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortableOpBinding {
+    pub op: PortableOp,
+    pub path: Path,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationSelector<'a> {
+    DeclarationKey(&'a str),
+    PortableName(&'a str),
 }
 
 impl LangItemRegistry {
@@ -272,37 +317,27 @@ impl LangItemRegistry {
         self.items.insert(name.into(), path);
     }
 
-    /// `tag` is the raw `#[op(func = "...")]` attribute value — resolved
-    /// against the central registry here, once. Silently a no-op if the tag
-    /// doesn't name a known op (e.g. a typo, or a tag reserved for future
-    /// use) rather than storing an unusable string key — a real "unknown
-    /// portable op" diagnostic belongs at a build-time self-check over the
-    /// vendored std source, not here (see the central registry's own doc
-    /// comment).
+    pub fn insert_operation(&mut self, key: impl Into<String>, op: PortableOp, path: Path) {
+        self.operations
+            .insert(key.into(), PortableOpBinding { op, path });
+    }
+
     pub fn insert_op(&mut self, tag: &str, path: Path) {
-        if central_registry().contains(tag) {
-            self.ops.insert(tag.to_string(), path);
+        if let Some(op) = central_registry().resolve(tag) {
+            self.insert_operation(tag, op, path);
         }
     }
 
     pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, op: PortableOp, path: Path) {
-        self.op_paths.insert(op.name().to_string(), path.clone());
-        self.method_ops
-            .insert(format!("{opclass}.{opmethod}"), (op, path));
+        self.insert_operation(format!("{opclass}.{opmethod}"), op, path);
     }
 
     pub fn extend(&mut self, other: LangItemRegistry) {
         for (name, path) in other.items {
             self.items.insert(name, path);
         }
-        for (name, path) in other.ops {
-            self.ops.insert(name, path);
-        }
-        for (key, op) in other.method_ops {
-            self.method_ops.insert(key, op);
-        }
-        for (name, path) in other.op_paths {
-            self.op_paths.insert(name, path);
+        for (key, binding) in other.operations {
+            self.operations.insert(key, binding);
         }
     }
 
@@ -310,11 +345,22 @@ impl LangItemRegistry {
         self.items.get(name)
     }
 
-    /// The std source's own declared path for a free-function portable op
-    /// (e.g. `"fs_read_dir"` -> `std::fs::read_dir`'s real path) — direct
-    /// lookup, no reverse name mapping.
+    pub fn resolve_operation(
+        &self,
+        selector: OperationSelector<'_>,
+    ) -> Option<&PortableOpBinding> {
+        match selector {
+            OperationSelector::DeclarationKey(key) => self.operations.get(key),
+            OperationSelector::PortableName(name) => self
+                .operations
+                .values()
+                .find(|binding| binding.op.name() == name),
+        }
+    }
+
     pub fn get_op_path(&self, name: &str) -> Option<&Path> {
-        self.ops.get(name).or_else(|| self.op_paths.get(name))
+        self.resolve_operation(OperationSelector::PortableName(name))
+            .map(|binding| &binding.path)
     }
 
     /// Finds which (if any) registered free-function op's declared path
@@ -322,25 +368,26 @@ impl LangItemRegistry {
     /// `PortableOpResolver::resolve_call_op`).
     pub fn find_op_by_call_segments(&self, segments: &[&str]) -> Option<PortableOp> {
         let name = self
-            .ops
+            .operations
             .iter()
-            .find(|(_, path)| {
-                path.segments
+            .find(|(_, binding)| {
+                binding.path.segments
                     .iter()
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     == segments
             })
-            .map(|(name, _)| name.clone())?;
-        central_registry().resolve(&name)
+            .map(|(_, binding)| binding.op.clone())?;
+        Some(name)
     }
 
     /// Looks up a method-position portable op by the receiver's real type
     /// name and the method name being called — `"{opclass}.{opmethod}"`.
     pub fn get_method_op(&self, opclass: &str, opmethod: &str) -> Option<PortableOp> {
-        self.method_ops
-            .get(&format!("{opclass}.{opmethod}"))
-            .map(|(op, _)| op.clone())
+        self.resolve_operation(OperationSelector::DeclarationKey(&format!(
+            "{opclass}.{opmethod}"
+        )))
+        .map(|binding| binding.op.clone())
     }
 }
 
@@ -426,6 +473,27 @@ fn collect_lang_items_from_items(
                     let mut segments = module_path.clone();
                     segments.push(function.name.clone());
                     registry.insert_op(&op_name, Path::plain(segments));
+                }
+            }
+            ItemKind::DefEnum(def_enum) => {
+                let Some(opclass) = extract_opclass_attribute(&def_enum.attrs) else {
+                    continue;
+                };
+                for variant in &def_enum.value.variants {
+                    let Some(opvariant) = extract_opvariant_attribute(&variant.attrs) else {
+                        continue;
+                    };
+                    let Some(op) = class_and_member_to_portable_op(&opclass, &opvariant) else {
+                        continue;
+                    };
+                    let mut segments = module_path.clone();
+                    segments.push(def_enum.name.clone());
+                    segments.push(variant.name.clone());
+                    registry.insert_operation(
+                        format!("{opclass}.{opvariant}"),
+                        op,
+                        Path::plain(segments),
+                    );
                 }
             }
             ItemKind::Impl(impl_block) => {
@@ -531,6 +599,10 @@ fn extract_opclass_attribute(attrs: &[Attribute]) -> Option<String> {
 
 fn extract_opmethod_attribute(attrs: &[Attribute]) -> Option<String> {
     extract_op_call_value(attrs, "method")
+}
+
+fn extract_opvariant_attribute(attrs: &[Attribute]) -> Option<String> {
+    extract_op_call_value(attrs, "variant")
 }
 
 /// Extracts `key`'s string value from a call-style `#[op(key = "value")]`
