@@ -1,5 +1,7 @@
 use super::*;
+use crate::kotlin_materializer::KotlinMaterializer;
 use fp_core::ast::{BlockStmt, ExprKind, Ident, Item, ItemKind, Name, Path, Ty};
+use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1450,6 +1452,11 @@ fn kotlin_runtime_call(name: &str, args: Vec<fp_core::ast::Expr>) -> fp_core::as
 }
 
 fn materialize_kotlin_ty(ty: &mut Ty) {
+    if let Ok(MaterializeOutcome::Replaced(materialized)) =
+        KotlinMaterializer.materialize_type_mapping(ty)
+    {
+        *ty = materialized;
+    }
     match ty {
         Ty::Expr(expr) => {
             if let ExprKind::Name(name) = expr.kind_mut() {

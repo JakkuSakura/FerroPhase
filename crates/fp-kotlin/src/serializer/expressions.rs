@@ -1024,7 +1024,10 @@ pub(super) fn map_kt_method(name: &str) -> String {
         "file_type" => "fileType".into(),
         "is_dir" => "isDirectory".into(),
         "kill_process" => "destroy".into(),
-        "sleep" => "Thread.sleep".into(),
+        // std::thread::sleep is represented by the runtime adapter so its
+        // duration conversion and suspension semantics stay in the Kotlin
+        // backend; emitting Thread.sleep loses that contract.
+        "sleep" => "sleep".into(),
         "next" => "".into(),
         "clamp" => "coerceIn".into(),
         _ => name.replace("::", "."),

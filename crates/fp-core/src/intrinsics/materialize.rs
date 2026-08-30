@@ -228,7 +228,7 @@ pub fn materialize_expr(
                     std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
                 kwarg.value = materialize_expr(value, strategy)?;
             }
-            if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
+            if let Some(expr) = strategy.materialize_invoke_expression(&mut invoke, &expr_ty)? {
                 // The children were already materialized above. Reapplying
                 // the hook to a target-shaped replacement would repeat
                 // rewrites such as Rust `.trim()` -> Kotlin `.trim()`.
@@ -248,12 +248,16 @@ pub fn materialize_expr(
                     span: select.span,
                     base: select.obj,
                 };
-                if let Some(expr) = strategy.materialize_await(&mut await_expr, &expr_ty)? {
+                if let Some(expr) =
+                    strategy.materialize_await_expression(&mut await_expr, &expr_ty)?
+                {
                     expr
                 } else {
                     ast::Expr::new(ast::ExprKind::Await(await_expr))
                 }
-            } else if let Some(expr) = strategy.materialize_select(&mut select, &expr_ty)? {
+            } else if let Some(expr) =
+                strategy.materialize_select_expression(&mut select, &expr_ty)?
+            {
                 expr
             } else {
                 ast::Expr::new(ast::ExprKind::Select(select))
@@ -265,7 +269,9 @@ pub fn materialize_expr(
                     field.value = Some(materialize_expr(value, strategy)?);
                 }
             }
-            if let Some(new_expr) = strategy.materialize_struct(&mut struct_expr, &expr_ty)? {
+            if let Some(new_expr) =
+                strategy.materialize_struct_expression(&mut struct_expr, &expr_ty)?
+            {
                 new_expr
             } else {
                 ast::Expr::new(ast::ExprKind::Struct(struct_expr))
@@ -277,7 +283,9 @@ pub fn materialize_expr(
                     field.value = Some(materialize_expr(value, strategy)?);
                 }
             }
-            if let Some(new_expr) = strategy.materialize_structural(&mut struct_expr, &expr_ty)? {
+            if let Some(new_expr) =
+                strategy.materialize_structural_expression(&mut struct_expr, &expr_ty)?
+            {
                 new_expr
             } else {
                 ast::Expr::new(ast::ExprKind::Structural(struct_expr))
@@ -350,7 +358,12 @@ pub fn materialize_expr(
             if let Some(finally) = expr_try.finally.take() {
                 expr_try.finally = Some(Box::new(materialize_expr(*finally, strategy)?));
             }
-            ast::Expr::new(ast::ExprKind::Try(expr_try))
+            match strategy.materialize_try_expression(&mut expr_try, &expr_ty)? {
+                crate::intrinsics::MaterializeOutcome::Unchanged => {
+                    ast::Expr::new(ast::ExprKind::Try(expr_try))
+                }
+                crate::intrinsics::MaterializeOutcome::Replaced(expr) => expr,
+            }
         }
         // `return Ok(x);`/`break Some(x);` — omitted from this walker
         // before, so a portable op used directly as a `return`/`break`
@@ -405,7 +418,7 @@ pub fn materialize_expr(
                 kwarg.value = materialize_expr(value, strategy)?;
             }
 
-            if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {
+            if let Some(expr) = strategy.materialize_intrinsic_call(&mut call, &expr_ty)? {
                 expr
             } else {
                 ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
@@ -447,7 +460,9 @@ pub fn materialize_expr(
                     return Ok(build_hashmap_from_entries(entries, expr_ty));
                 }
             }
-            if let Some(new_expr) = strategy.materialize_container(&mut collection, &expr_ty)? {
+            if let Some(new_expr) =
+                strategy.materialize_intrinsic_container(&mut collection, &expr_ty)?
+            {
                 new_expr
             } else {
                 ast::Expr::new(ast::ExprKind::IntrinsicContainer(collection))
@@ -496,7 +511,7 @@ pub fn materialize_expr(
         }
         ast::ExprKind::Await(mut expr_await) => {
             expr_await.base = Box::new(materialize_expr(*expr_await.base, strategy)?);
-            if let Some(expr) = strategy.materialize_await(&mut expr_await, &expr_ty)? {
+            if let Some(expr) = strategy.materialize_await_expression(&mut expr_await, &expr_ty)? {
                 expr
             } else {
                 ast::Expr::new(ast::ExprKind::Await(expr_await))

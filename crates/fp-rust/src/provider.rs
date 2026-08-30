@@ -1267,7 +1267,11 @@ fn is_cfg_test(attrs: &[Attribute]) -> bool {
 /// Bump this whenever the Rust AST representation or parser semantics change.
 /// Parsed standard-library source is semantic compiler input, so a cache entry
 /// created by an older parser must never be reused by a newer compiler.
-const STD_PARSE_CACHE_SCHEMA: u8 = 1;
+// Bump when AST lowering, path identity, or parser recovery semantics change,
+// even if the embedded Rust source remains byte-for-byte identical. Cached
+// items carry resolver-visible structure, so source hashing alone is not a
+// sufficient compatibility boundary.
+const STD_PARSE_CACHE_SCHEMA: u8 = 2;
 
 /// Parse every embedded real-std `.rs` file, skipping (with a warning) any
 /// that `RustFrontend` can't handle yet, rather than failing the whole load.

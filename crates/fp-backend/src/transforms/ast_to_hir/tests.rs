@@ -2097,6 +2097,54 @@ fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
 }
 
 #[test]
+fn transform_imported_dependency_enum_variant_uses_defining_identity() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let dependency_items = parser
+        .parse_items_ast("pub mod types { pub enum RefNode { WorkingTree, Branch(String) } }")?;
+    let dependency_package = package_from_items_as(PackageId::new("skln-core"), dependency_items)?;
+    let mut dependency_lowerer = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("skln-core"),
+    );
+    let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
+    dependency.hir_exports = dependency_lowerer.exported_symbols();
+
+    let mut workspace = hir::HirProgram::new();
+    workspace.publish_package(dependency);
+    let consumer_items = parser.parse_items_ast(
+        "use skln_core::types::RefNode; pub fn make() -> RefNode { RefNode::WorkingTree }",
+    )?;
+    let consumer_package = package_from_items(consumer_items)?;
+    let mut consumer_lowerer = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(workspace),
+        hir::PackageId::new("consumer"),
+    );
+    let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    assert!(
+        consumer_lowerer
+            .take_diagnostics()
+            .get_diagnostics()
+            .is_empty(),
+        "imported dependency enum variant should resolve without diagnostics"
+    );
+    let function = consumer
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "make" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("lowered make function");
+    let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
+        panic!("expected RefNode output path")
+    };
+    assert!(matches!(path.res, Some(hir::Res::Def(_))));
+    Ok(())
+}
+
+#[test]
 fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let dependency_items = parser.parse_items_ast(

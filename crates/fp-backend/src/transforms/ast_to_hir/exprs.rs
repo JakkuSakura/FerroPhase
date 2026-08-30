@@ -2274,6 +2274,10 @@ impl AstToHirLowerer {
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
         local
+            .or_else(|| {
+                self.hir_program
+                    .resolve_external_path(path, scope.namespace())
+            })
             .or_else(|| self.hir_program.find_export(&key))
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {

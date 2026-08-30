@@ -109,6 +109,20 @@ pub(super) fn map_name_to_kt(name: &str) -> String {
     let dot_name = name.replace("::", ".");
     let last_seg = dot_name.rsplit('.').next().unwrap_or(&dot_name);
 
+    // Rust's std::io::Error is represented by the JVM exception type used by
+    // the Kotlin runtime adapters.  Keep this fully qualified because an
+    // unresolved/soft-typed source path may otherwise leave only the bare
+    // `IOException` identifier without importing java.io.
+    if last_seg == "IOException" {
+        return "java.io.IOException".into();
+    }
+    if last_seg == "JsonNode" {
+        return "com.fasterxml.jackson.databind.JsonNode".into();
+    }
+    if dot_name == "Command" {
+        return "RustKotlinRuntime.Command".into();
+    }
+
     if dot_name.starts_with("std.env") {
         return "System".into();
     }
@@ -134,6 +148,15 @@ pub(super) fn map_name_to_kt(name: &str) -> String {
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Option") {
         return format!("{}?", map_name_to_kt(inner));
     }
+    // Rust Result<T, E> has two type parameters, while Kotlin Result carries
+    // failures as Throwable and therefore has only the success type.
+    if let Some(inner) = strip_generic_wrapper(&dot_name, "Result") {
+        let success = split_top_level(inner, ',')
+            .first()
+            .copied()
+            .unwrap_or(inner);
+        return format!("Result<{}>", map_name_to_kt(success.trim()));
+    }
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Arc") {
         return map_name_to_kt(inner);
     }
@@ -158,7 +181,10 @@ pub(super) fn map_name_to_kt(name: &str) -> String {
     // KnownPackage-based resolution (skips language-internal crates)
     match known_package(&dot_name) {
         KnownPackage::StdPath => return kt_type_for_class(KnownClass::Path),
-        KnownPackage::StdProcess => return "ProcessBuilder".into(),
+        // Rust std::process::Command is represented by the backend-owned
+        // runtime adapter.  It must never be emitted as a raw JVM
+        // ProcessBuilder: the adapter preserves Rust's builder/Result API.
+        KnownPackage::StdProcess => return "RustKotlinRuntime.Command".into(),
         KnownPackage::StdFs => return "Path".into(),
         // "java.io.*" is a glob import, not a valid type — use a concrete class here.
         KnownPackage::StdIo => return "java.io.IOException".into(),

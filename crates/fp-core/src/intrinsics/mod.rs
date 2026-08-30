@@ -6,7 +6,7 @@
 
 use crate::ast::{
     Abi, AttrMeta, Attribute, Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprKind, ExprKwArg,
-    ExprStruct, ExprStructural, File, FunctionParam, FunctionSignature, Ident, Item,
+    ExprStruct, ExprStructural, ExprTry, File, FunctionParam, FunctionSignature, Ident, Item,
     ItemDeclFunction, ItemKind, Ty, TySlot, TypeFunction, Value,
 };
 use crate::error::Result;
@@ -77,6 +77,16 @@ pub enum NormalizeOutcome<T> {
     Ignored(T),
     /// The strategy normalized this node and produced a replacement.
     Normalized(T),
+}
+
+/// Explicit result of a target materialization hook.
+///
+/// Unlike `Option`, this makes the control flow at a materialization boundary
+/// self-documenting: a target either leaves the node unchanged or replaces it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MaterializeOutcome<T> {
+    Unchanged,
+    Replaced(T),
 }
 
 impl<T> NormalizeOutcome<T> {
@@ -298,6 +308,16 @@ pub trait IntrinsicMaterializer {
 
     fn prepare_file(&self, _file: &mut File) {}
 
+    /// Rewrite a source type into the target language's AST type before
+    /// serialization. Targets should construct a real [`Ty`] shape here;
+    /// serializers must only print the resulting AST.
+    fn materialize_type_mapping(
+        &self,
+        _ty: &crate::ast::Ty,
+    ) -> Result<MaterializeOutcome<crate::ast::Ty>> {
+        Ok(MaterializeOutcome::Unchanged)
+    }
+
     fn materialize_invoke(
         &self,
         _invoke: &mut crate::ast::ExprInvoke,
@@ -306,12 +326,28 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
+    fn materialize_invoke_expression(
+        &self,
+        invoke: &mut crate::ast::ExprInvoke,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_invoke(invoke, expr_ty)
+    }
+
     fn materialize_select(
         &self,
         _select: &mut crate::ast::ExprSelect,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)
+    }
+
+    fn materialize_select_expression(
+        &self,
+        select: &mut crate::ast::ExprSelect,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_select(select, expr_ty)
     }
 
     /// Lower an await wrapper after its operand has been materialized.
@@ -325,12 +361,39 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
+    fn materialize_await_expression(
+        &self,
+        await_expr: &mut crate::ast::ExprAwait,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_await(await_expr, expr_ty)
+    }
+
+    /// Lower a target-visible `try` expression after its children have been
+    /// materialized. Targets may replace the complete expression, or leave
+    /// the structured try node intact.
+    fn materialize_try_expression(
+        &self,
+        _try_expr: &mut ExprTry,
+        _expr_ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(MaterializeOutcome::Unchanged)
+    }
+
     fn materialize_call(
         &self,
         _call: &mut ExprIntrinsicCall,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)
+    }
+
+    fn materialize_intrinsic_call(
+        &self,
+        call: &mut ExprIntrinsicCall,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_call(call, expr_ty)
     }
 
     fn materialize_portable_op(
@@ -341,12 +404,28 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
+    fn materialize_portable_operation(
+        &self,
+        call: &mut PortableOpCall,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_portable_op(call, expr_ty)
+    }
+
     fn materialize_struct(
         &self,
         _struct_expr: &mut ExprStruct,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)
+    }
+
+    fn materialize_struct_expression(
+        &self,
+        struct_expr: &mut ExprStruct,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_struct(struct_expr, expr_ty)
     }
 
     fn materialize_structural(
@@ -357,12 +436,28 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
+    fn materialize_structural_expression(
+        &self,
+        struct_expr: &mut ExprStructural,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_structural(struct_expr, expr_ty)
+    }
+
     fn materialize_container(
         &self,
         _container: &mut ExprIntrinsicContainer,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)
+    }
+
+    fn materialize_intrinsic_container(
+        &self,
+        container: &mut ExprIntrinsicContainer,
+        expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.materialize_container(container, expr_ty)
     }
 }
 

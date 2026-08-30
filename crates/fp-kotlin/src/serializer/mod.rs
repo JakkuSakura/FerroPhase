@@ -3,7 +3,7 @@ use fp_core::ast::package::{AstPackage, PackageItem};
 use fp_core::ast::{
     AttrMeta, BExpr, BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, FormatArgRef,
     FormatTemplatePart, Item, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind,
-    Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
+    Name, Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
@@ -1613,7 +1613,9 @@ fn kt_import_for(pkg: KnownPackage, path: &str) -> Option<String> {
         // `Path::from`/`new` renders as `Paths.get(...)` (see map_kt_path), so both
         // classes need to be in scope.
         StdPath => Some("java.nio.file.Path\njava.nio.file.Paths".into()),
-        StdProcess => Some("java.lang.ProcessBuilder".into()),
+        // std::process::Command is materialized to RustKotlinRuntime.Command
+        // by KotlinMaterializer; no raw JVM constructor import is valid here.
+        StdProcess => None,
         StdFs => Some("java.nio.file.Path".into()),
         StdIo => Some("java.io.*".into()),
         Other => {
@@ -1659,6 +1661,14 @@ impl KotlinEmitter {
             BlockStmt::Let(l) => {
                 let var_name = ident_from_pattern(&l.pat);
                 let mut type_ann = extract_type_annotation(&l.pat, self);
+                // `resultUnwrap` is introduced by KotlinMaterializer and
+                // changes the expression's target type from `Result<T>` to
+                // `T`. The Rust annotation belongs to the pre-materialized
+                // expression and is therefore no longer valid on the JVM
+                // value. Let Kotlin infer the adapter's concrete return type.
+                if l.init.as_ref().is_some_and(is_result_unwrap_expr) {
+                    type_ann = None;
+                }
                 // Kotlin's `String.split(...)` returns a plain (immutable) `List`,
                 // never a `MutableList` — a Rust `Vec<T>` annotation on a
                 // `let x: Vec<T> = s.split(...).collect();` binding (the `.collect()`
@@ -2173,6 +2183,21 @@ fn extract_type_annotation(pat: &Pattern, e: &KotlinEmitter) -> Option<String> {
     }
 }
 
+fn is_result_unwrap_expr(expr: &Expr) -> bool {
+    let ExprKind::Invoke(invoke) = expr.kind() else {
+        return false;
+    };
+    let ExprInvokeTarget::Method(select) = &invoke.target else {
+        return false;
+    };
+    select.field.as_str() == "resultUnwrap"
+        || matches!(
+            select.obj.kind(),
+            ExprKind::Name(Name::Path(path))
+                if path.segments.last().is_some_and(|segment| segment.as_str() == "RustKotlinRuntime")
+        ) && select.field.as_str() == "resultUnwrap"
+}
+
 fn ident_from_pattern(pat: &Pattern) -> String {
     match &pat.kind {
         PatternKind::Ident(id) => {
@@ -2487,6 +2512,7 @@ impl KotlinEmitter {
                 ),
                 _ => "Any".into(),
             },
+            Ty::Struct(s) if s.name.as_str() == "Command" => "RustKotlinRuntime.Command".into(),
             Ty::Struct(s) => s.name.name.clone(),
             Ty::Enum(en) => en.name.name.clone(),
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
