@@ -848,21 +848,6 @@ impl AstToHirLowerer {
                         })
                         .cloned()
                 });
-                let module_member = module_member.or_else(|| {
-                    self.package
-                        .module_tree
-                        .all_bindings(scope.namespace())
-                        .find(|(bound_path, _)| {
-                            bound_path.segments.len() >= aliased.segments.len()
-                                && bound_path
-                                    .segments
-                                    .iter()
-                                    .rev()
-                                    .zip(aliased.segments.iter().rev())
-                                    .all(|(bound, requested)| bound == requested)
-                        })
-                        .map(|(_, entry)| entry.res.clone())
-                });
                 if let Some(res) = module_member.or_else(|| self.lookup_global_res(&aliased, scope))
                 {
                     let offset = aliased.segments.len().saturating_sub(segments.len());

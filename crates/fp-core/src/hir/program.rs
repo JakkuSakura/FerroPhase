@@ -869,7 +869,11 @@ impl HirProgram {
     ) -> Option<Res> {
         let package = self.package(from)?;
         let module = package.module_tree.module_id(from_module)?;
-        package.module_tree.lookup_res(module, ns, name).cloned()
+        package
+            .module_tree
+            .lookup(module, ns, name)
+            .filter(|entry| entry.export.can_access(&from_module.segments))
+            .map(|entry| entry.res.clone())
     }
 
     /// Resolves a path whose first segment is an extern-prelude crate name.
