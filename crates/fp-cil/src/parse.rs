@@ -227,13 +227,30 @@ fn lower_method(method: ParsedMethod) -> Result<LirFunction> {
 fn collect_block_labels(lines: &[ParsedLine]) -> HashMap<String, BasicBlockId> {
     let mut map = HashMap::new();
     let mut next = 0u32;
+    let mut has_content = false;
+    let mut has_label = false;
     for line in lines {
-        if let ParsedLine::Label(label) = line {
-            map.entry(label.clone()).or_insert_with(|| {
-                let id = next;
-                next += 1;
-                id
-            });
+        match line {
+            ParsedLine::Label(label) => {
+                if has_content || has_label {
+                    next += 1;
+                    has_content = false;
+                }
+                map.entry(label.clone()).or_insert(next);
+                has_label = true;
+            }
+            ParsedLine::Instr(text) => {
+                if matches!(text.as_str(), "ret")
+                    || text.starts_with("br ")
+                    || text.starts_with("brtrue ")
+                {
+                    next += 1;
+                    has_content = false;
+                    has_label = false;
+                } else {
+                    has_content = true;
+                }
+            }
         }
     }
     if map.is_empty() {
