@@ -372,6 +372,7 @@ impl CompilerDriver {
                 self.ensure_hir_for_resolution(&package)?;
             }
             if is_root && !self.completed_roots.contains(package_id) {
+                self.ensure_hir_for_compilation(&package)?;
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
@@ -382,6 +383,7 @@ impl CompilerDriver {
                 self.ensure_hir_for_resolution(&package)?;
             }
             if is_root && !self.completed_roots.contains(package_id) {
+                self.ensure_hir_for_compilation(&package)?;
                 self.compile_items_to_lir_units(&package).await?;
                 self.completed_roots.insert(package_id.clone());
             }
@@ -463,6 +465,7 @@ impl CompilerDriver {
                     self.pipeline,
                     PipelineMode::Native | PipelineMode::Transpile
                 ) {
+                    self.ensure_hir_for_compilation(&package)?;
                     self.compile_items_to_lir_units(&package).await?;
                 }
                 Ok(package)
@@ -640,6 +643,29 @@ impl CompilerDriver {
         self.lower_package_hir_for_resolution(package)
     }
 
+    fn ensure_hir_for_compilation(
+        &mut self,
+        package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
+    ) -> Result<(), CompilerDriverError> {
+        let hir_package_id = package.borrow().hir_package_id.clone();
+        if self
+            .state
+            .borrow()
+            .hir_program()
+            .package(&hir_package_id)
+            .is_some()
+        {
+            return Ok(());
+        }
+        let package_source = package.borrow().clone();
+        let (mut hir_package, exports, type_aliases) =
+            self.lower_package_hir(&package_source, hir_package_id, false)?;
+        hir_package.hir_exports.extend(exports);
+        package.borrow_mut().type_alias_exports.extend(type_aliases);
+        self.state.borrow_mut().insert_hir(hir_package);
+        Ok(())
+    }
+
     /// Runs a whole package's HIR generation + typing, then per-`DefId`
     /// HIR->MIR->LIR lowering (`lower_package_to_mir`/`lower_package_to_lir_with`)
     /// — every step one `DefId` in, one unit out, stored straight into the shared
@@ -652,7 +678,6 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
-        let package_source = package.borrow().clone();
         // Re-lowering after comptime evaluation rebuilds HIR from the same
         // source. Preserve values recorded on the previous package so the
         // new MIR pass can replace executable entries with static data.
@@ -665,20 +690,16 @@ impl CompilerDriver {
                 let hir_package = hir_package.borrow();
                 (hir_package.const_values(), hir_package.const_block_values())
             });
-        let (hir_package, package_exports, type_alias_exports) =
-            self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
-        package
-            .borrow_mut()
-            .type_alias_exports
-            .extend(type_alias_exports);
-        let hir_package = Rc::new(RefCell::new(hir_package));
-        hir_package
-            .borrow_mut()
-            .hir_exports
-            .extend(package_exports.clone());
-        self.state
-            .borrow_mut()
-            .insert_hir_shared(hir_package);
+        let _hir_package = self
+            .state
+            .borrow()
+            .hir_program()
+            .package(&hir_package_id)
+            .ok_or_else(|| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "package {hir_package_id} has no established HIR package"
+                ))
+            })?;
         self.type_check_program(hir_package_id.clone())
             .await
             .map_err(|error| {
