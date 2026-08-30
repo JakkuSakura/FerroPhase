@@ -8,3 +8,6 @@ publish = false
 fp-core = { path = "../fp-core" }
 eyre = "0.6"
 tempfile = "3"
+
+[dev-dependencies]
+fp-interpret = { path = "../fp-interpret" }

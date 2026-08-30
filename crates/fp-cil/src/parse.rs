@@ -314,6 +314,17 @@ fn parse_stack_instruction(
         ));
         return Ok(None);
     }
+    if let Some(rest) = line.strip_prefix("ldc.i8 ") {
+        let value = rest
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| Error::from("cil parse: invalid ldc.i8"))?;
+        stack.push(LirValue::constant(
+            LirConstant::integer(LirType::I64, LirInteger::I64(value as u64))
+                .expect("valid .NET integer"),
+        ));
+        return Ok(None);
+    }
     if let Some(rest) = line
         .strip_prefix("ldloc.")
         .or_else(|| line.strip_prefix("ldloc ")) {
@@ -409,5 +420,67 @@ mod tests {
             ".method public static int32 'main'() cil managed {\nfoo\nret\n}\n",
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn emitted_cil_round_trips_and_executes() {
+        use fp_core::mir::{self, BasicBlockData, Body, BodyId, Constant, ConstantKind,
+            Function, FunctionSig, Item, ItemKind, LocalDecl, LocalInfo, MirCodeUnit,
+            Mutability, Operand, Rvalue, Statement, StatementKind, Terminator,
+            TerminatorKind, Symbol};
+        use fp_core::mir::ty::{Abi, IntTy, Ty};
+        use fp_core::span::Span;
+
+        let span = Span::new(0, 0, 0);
+        let int_ty = Ty::int(IntTy::I32);
+        let body = Body::new(
+            vec![BasicBlockData {
+                statements: vec![Statement {
+                    source_info: span,
+                    kind: StatementKind::Assign(
+                        mir::Place::from_local(0),
+                        Rvalue::Use(Operand::Constant(Constant {
+                            span,
+                            ty: int_ty.clone(),
+                            user_ty: None,
+                            literal: ConstantKind::Int(7),
+                        })),
+                    ),
+                }],
+                terminator: Some(Terminator { source_info: span, kind: TerminatorKind::Return }),
+                is_cleanup: false,
+            }],
+            vec![LocalDecl {
+                mutability: Mutability::Mut,
+                local_info: LocalInfo::Other,
+                internal: false,
+                is_block_tail: None,
+                ty: int_ty.clone(),
+                user_ty: None,
+                source_info: span,
+            }],
+            0,
+            span,
+        );
+        let mut mir = MirCodeUnit::new();
+        mir.bodies.insert(BodyId(0), body);
+        mir.items.push(Item {
+            mir_id: 0,
+            kind: ItemKind::Function(Function {
+                name: Symbol::new("main"),
+                def_id: None,
+                substs: Vec::new(),
+                sig: FunctionSig { inputs: Vec::new(), output: int_ty },
+                body_id: BodyId(0),
+                abi: Abi::Rust,
+                is_extern: false,
+                attrs: Vec::new(),
+            }),
+        });
+
+        let cil = super::super::cil::emit_cil(&mir).expect("emit CIL");
+        let lir = parse_cil_program(&cil).expect("parse emitted CIL");
+        let value = fp_interpret::LirInterpreter::new().run_main(&lir).expect("execute LIR");
+        assert_eq!(value, fp_core::ast::Value::int(7));
     }
 }
