@@ -287,9 +287,21 @@ impl AstToHirLowerer {
                 format!("unresolved expression id {expr_id} during AST→HIR lowering"),
                 expr_span,
             ),
-            ExprKind::Name(_) => hir::ExprKind::Path(
-                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
-            ),
+            ExprKind::Name(_) => {
+                let value_path =
+                    self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?;
+                if matches!(value_path.res, Some(hir::Res::Def(_))) {
+                    hir::ExprKind::Path(value_path)
+                } else {
+                    let type_path =
+                        self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Type)?;
+                    if matches!(type_path.res, Some(hir::Res::Def(_))) {
+                        hir::ExprKind::Path(type_path)
+                    } else {
+                        hir::ExprKind::Path(value_path)
+                    }
+                }
+            }
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
             ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
@@ -1010,7 +1022,27 @@ impl AstToHirLowerer {
                         && invoke.args.len() == 1
                         && invoke.kwargs.is_empty()
                     {
-                        let value = self.transform_expr_to_hir(&invoke.args[0])?;
+                        let mut value = self.transform_expr_to_hir(&invoke.args[0])?;
+                        // `type(Alias)` consumes a type-position path. A
+                        // local comptime type alias may intentionally have
+                        // no value-namespace binding, so preserve the
+                        // resolver's type identity instead of passing an
+                        // unresolved value path into MIR.
+                        if matches!(
+                            value.kind,
+                            hir::ExprKind::Path(hir::Path { res: None, .. })
+                        ) {
+                            if let ast::ExprKind::Name(_) = invoke.args[0].kind() {
+                                value = hir::Expr {
+                                    hir_id: self.next_id(),
+                                    kind: hir::ExprKind::Path(self.ast_expr_to_hir_path(
+                                        &invoke.args[0],
+                                        PathResolutionScope::Type,
+                                    )?),
+                                    span: self.create_span(1),
+                                };
+                            }
+                        }
                         return Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                             kind: CallKind::TypeOf,
                             callargs: vec![hir::CallArg {
@@ -1025,15 +1057,38 @@ impl AstToHirLowerer {
                     self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
                 if let Some(hir::Res::Module(module_path)) = path.res.as_ref() {
                     if let Some(leaf) = path.segments.last() {
-                        if let Some(module) = self.package.module_tree.module_id(
-                            &QualifiedPath::new(module_path.clone()),
-                        ) {
+                        let mut candidates = vec![QualifiedPath::new(module_path.clone())];
+                        if !self.module_path.segments.is_empty()
+                            && !module_path.starts_with(&self.module_path.segments)
+                        {
+                            let mut rooted = self.module_path.segments.clone();
+                            rooted.extend(module_path.iter().cloned());
+                            candidates.push(QualifiedPath::new(rooted));
+                        }
+                        // A file-backed package can store an inline module
+                        // below its package root while the resolver exposes
+                        // the import alias relative to the crate. Follow the
+                        // actual module-tree path rather than reconstructing
+                        // a symbol key from the spelling.
+                        candidates.extend(
+                            self.package
+                                .module_tree
+                                .all_paths()
+                                .filter(|candidate| candidate.segments.ends_with(module_path))
+                                .cloned(),
+                        );
+                        for candidate in candidates {
+                            let Some(module) = self.package.module_tree.module_id(&candidate)
+                            else {
+                                continue;
+                            };
                             if let Some(member) = self.package.module_tree.lookup(
                                 module,
                                 hir::Namespace::Value,
                                 leaf.name.as_str(),
                             ) {
                                 path.res = Some(member.res.clone());
+                                break;
                             }
                         }
                     }
@@ -1654,7 +1709,22 @@ impl AstToHirLowerer {
         let local = hir::Local {
             hir_id: self.next_id(),
             pat: pat.clone(),
-            ty: None,
+            // Range loops are used as index-producing loops throughout the
+            // standard library and examples. Their binding has the same
+            // concrete type as an array/slice index.
+            ty: Some(hir::TypeExpr {
+                hir_id: self.next_id(),
+                kind: hir::TypeExprKind::Path(hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new("usize"),
+                        args: None,
+                    }],
+                    res: Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
+                        "usize".to_string(),
+                    ))),
+                }),
+                span: Span::new(self.current_file, 0, 0),
+            }),
             init: Some(init_expr),
         };
         self.register_pattern_bindings(&local.pat);

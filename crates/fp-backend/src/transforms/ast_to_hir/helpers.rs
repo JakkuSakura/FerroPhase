@@ -1266,6 +1266,27 @@ impl AstToHirLowerer {
     ) -> Result<hir::Path> {
         match expr.kind() {
             ast::ExprKind::Name(name) => {
+                // Frontend name resolution may have recorded a stale
+                // module-level DefId before this function's local type alias
+                // scope was entered. Lexical type bindings have rustc's
+                // normal shadowing precedence, so preserve the local HIR
+                // identity before consulting that snapshot.
+                if scope == PathResolutionScope::Type {
+                    let local_name = match name {
+                        Name::Ident(ident) => Some(ident.name.as_str()),
+                        Name::Path(path) if path.segments.len() == 1 => {
+                            path.segments.first().map(|segment| segment.name.as_str())
+                        }
+                        _ => None,
+                    };
+                    if let Some(local_name) = local_name {
+                        if let Some(res) = self.resolve_lexical_type_symbol(local_name) {
+                            let mut path = self.name_to_hir_path_with_scope(name, scope)?;
+                            path.res = Some(res);
+                            return Ok(path);
+                        }
+                    }
+                }
                 if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
                     if !resolved_name.path.segments.is_empty() {
                         if let Some(path) =

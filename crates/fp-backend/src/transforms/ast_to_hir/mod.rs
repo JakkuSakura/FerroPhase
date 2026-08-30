@@ -1497,6 +1497,9 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
+        for (def_id, block) in self.package.const_block_defs() {
+            program.record_const_block_def(def_id, block);
+        }
         // Crate metadata must travel with the published HIR snapshot. The
         // consumer lowerer uses this edge set to select the implicit prelude;
         // deriving it again from a transient package workspace makes the
@@ -1964,7 +1967,7 @@ impl AstToHirLowerer {
                     let hir_expr = this.transform_expr_to_hir(expr)?;
                     let hir_item = hir::Item {
                         hir_id: this.next_id(),
-                        def_id,
+                        def_id: def_id.clone(),
                         visibility: hir::Visibility::Private,
                         kind: hir::ItemKind::Expr(hir_expr),
                         span: item.span(),
@@ -2080,21 +2083,40 @@ impl AstToHirLowerer {
                     // resolved shape straight out of the package's own
                     // `const_block_values` by that `DefId` once this
                     // statement has been checked.
-                    let body = Box::new(self.transform_expr_to_hir(inner)?);
-                    let def_id = self.next_def_id();
-                    let const_block_expr = hir::Expr {
+                    let alias_def_id = self.next_def_id();
+                    // Lower the declared RHS as a type expression.  An
+                    // explicit `const { ... }` remains a const-block query,
+                    // but it is the alias target rather than the alias item.
+                    let target = self.transform_type_to_hir(&def_type.value)?;
+                    self.package.type_alias_targets.insert(
+                        alias_def_id.clone(),
+                        target,
+                    );
+                    self.current_value_scope()
+                        .insert(
+                            def_type.name.name.clone(),
+                            hir::Res::Def(alias_def_id.clone()),
+                        );
+                    self.current_type_scope()
+                        .insert(
+                            def_type.name.name.clone(),
+                            hir::Res::Def(alias_def_id.clone()),
+                        );
+                    Ok(hir::StmtKind::Item(hir::Item {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock {
-                            def_id: def_id.clone(),
-                            body,
+                        visibility: hir::Visibility::Private,
+                        def_id: alias_def_id.clone(),
+                        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
+                            name: hir::Symbol::new(def_type.name.name.clone()),
+                            target: self
+                                .package
+                                .type_alias_targets
+                                .get(&alias_def_id)
+                                .cloned()
+                                .expect("local comptime type alias target was registered"),
                         }),
                         span: item.span(),
-                    };
-                    self.current_value_scope()
-                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
-                    self.current_type_scope()
-                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
-                    Ok(hir::StmtKind::Expr(const_block_expr))
+                    }))
                 } else {
                     let unit_block = hir::Block {
                         hir_id: self.next_id(),

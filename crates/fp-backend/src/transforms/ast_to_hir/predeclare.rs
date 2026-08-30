@@ -422,7 +422,7 @@ impl AstToHirLowerer {
                             // type checking and MIR lowering; its concrete
                             // shape still comes solely from the checked
                             // const-block result.
-                            if matches!(def_type.value, ast::Ty::ConstBlock(_)) {
+                            if comptime_type_alias_rhs(&def_type.value).is_some() {
                                 self.register_value_def(
                                     &def_type.name.name,
                                     def_id.clone(),
