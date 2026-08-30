@@ -2675,10 +2675,32 @@ impl<'a> BodyBuilder<'a> {
             return Ok(false);
         }
 
-        let operands = args
-            .iter()
-            .map(|arg| self.lower_operand(arg, None).map(|info| info.operand))
-            .collect::<Result<Vec<_>>>()?;
+        let mut operands = Vec::with_capacity(args.len());
+        for arg in args {
+            if kind == IntrinsicKind::CloneStruct {
+                if let hir::ExprKind::Path(path) = &arg.kind {
+                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                        if let Some(Value::Type(value)) =
+                            self.lowering.typeck_const_block_value(def_id.clone())
+                        {
+                            let ty = HirToMirLowerer::type_ty();
+                            let local = self.allocate_temp(ty.clone(), arg.span);
+                            let place = mir::Place::from_local(local);
+                            self.push_statement(mir::Statement {
+                                source_info: arg.span,
+                                kind: mir::StatementKind::Assign(
+                                    place.clone(),
+                                    mir::Rvalue::TypeValue(value),
+                                ),
+                            });
+                            operands.push(mir::Operand::copy(place));
+                            continue;
+                        }
+                    }
+                }
+            }
+            operands.push(self.lower_operand(arg, None)?.operand);
+        }
         let (place, ty) = destination.unwrap_or_else(|| {
             let ty = self
                 .lowering
@@ -3330,15 +3352,38 @@ impl<'a> BodyBuilder<'a> {
                     // a comptime intrinsic argument. Its target's completed
                     // const-block result is the authoritative type handle;
                     // do not lower the alias again or recover it by name.
-                    if let Some(hir::TypeExprKind::ConstBlock(const_def_id, _)) = self
+                    let direct_type_value = self
+                        .lowering
+                        .typeck_const_block_value(def_id.clone());
+                    if let Some(Value::Type(value)) = direct_type_value {
+                        let ty = HirToMirLowerer::type_ty();
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let local_place = mir::Place::from_local(local_id);
+                        self.push_statement(mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                local_place.clone(),
+                                mir::Rvalue::TypeValue(value),
+                            ),
+                        });
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(local_place),
+                            ty,
+                        });
+                    }
+                    if let Some(target) = self
                         .lowering
                         .hir_program
                         .type_alias_target(def_id.clone())
-                        .map(|target| target.kind)
                     {
-                        if let Some(Value::Type(value)) =
-                            self.lowering.typeck_const_block_value(const_def_id.clone())
-                        {
+                        let value = match target.kind {
+                            hir::TypeExprKind::ConstBlock(const_def_id, _) => self
+                                .lowering
+                                .typeck_const_block_value(const_def_id),
+                            _ => None,
+                        }
+                        .or_else(|| self.lowering.typeck_const_block_value(def_id.clone()));
+                        if let Some(Value::Type(value)) = value {
                             let ty = HirToMirLowerer::type_ty();
                             let local_id = self.allocate_temp(ty.clone(), expr.span);
                             let local_place = mir::Place::from_local(local_id);
@@ -3425,6 +3470,15 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let Some(konst) = self.const_items.get(def_id).cloned() {
                         let ty = self.lower_type_expr(&konst.ty);
+                        if let Some(constant) = self
+                            .lowering
+                            .lower_const_expr(&konst.body.value, Some(&ty), None)
+                        {
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(constant),
+                                ty,
+                            });
+                        }
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
                         let place = mir::Place::from_local(local_id);
                         self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
@@ -3470,6 +3524,17 @@ impl<'a> BodyBuilder<'a> {
                                 _ => None,
                             });
                     if let Some(konst) = const_def_item {
+                        let const_ty = self.lower_type_expr(&konst.ty);
+                        if let Some(constant) = self.lowering.lower_const_expr(
+                            &konst.body.value,
+                            Some(&const_ty),
+                            None,
+                        ) {
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(constant),
+                                ty: const_ty,
+                            });
+                        }
                         self.lowering.ensure_item_lowered(def_id.clone())?;
                         if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                             return Ok(OperandInfo {

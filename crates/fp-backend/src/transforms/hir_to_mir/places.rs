@@ -1038,10 +1038,33 @@ impl<'a> BodyBuilder<'a> {
             },
             hir::ExprKind::MethodCall(receiver, method_name, _, args) => {
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
+                let mut resolved_intrinsic = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
+
+                // Const expressions are materialized before runtime lowering,
+                // matching rustc's const-propagation boundary. This prevents
+                // compiler-only std operations used by a `const` declaration
+                // from becoming runtime calls to placeholder declarations.
+                let const_result = matches!(
+                    expected_ty.kind,
+                    TyKind::Bool | TyKind::Int(_) | TyKind::Uint(_)
+                )
+                .then(|| self.lowering.lower_const_expr(expr, Some(expected_ty), None))
+                .flatten();
+                if let Some(constant) = const_result {
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                        ),
+                    });
+                    return Ok(());
+                }
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
                     if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
+                        resolved_intrinsic = Some(kind);
                         let mut intrinsic_args = Vec::with_capacity(arg_values.len() + 1);
                         intrinsic_args.push(receiver.as_ref());
                         intrinsic_args.extend(arg_values.iter().copied());
@@ -1085,7 +1108,10 @@ impl<'a> BodyBuilder<'a> {
                 // `lower_slice_len_place`/`lower_slice_ptr_place` helpers
                 // the hand-written env/fs intrinsics already use.
                 let str_intrinsic_name = |name: &str| -> Option<bool> {
-                    if name == "len" || name.ends_with("::len") {
+                    if resolved_intrinsic == Some(fp_core::intrinsics::CallKind::Len)
+                        || name == "len"
+                        || name.ends_with("::len")
+                    {
                         Some(true)
                     } else if name == "as_ptr" || name.ends_with("::as_ptr") {
                         Some(false)

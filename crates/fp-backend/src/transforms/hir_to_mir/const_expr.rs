@@ -111,6 +111,14 @@ impl HirToMirLowerer {
                 if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
                     return Some(const_info.typed_value());
                 }
+                if let Some(hir::Item {
+                    kind: hir::ItemKind::Const(constant),
+                    ..
+                }) = self.hir_item(def_id.clone())
+                {
+                    let ty = self.lower_type_expr(&constant.ty);
+                    return self.lower_const_expr(&constant.body.value, Some(&ty), container_args);
+                }
                 let item = self.hir_item(def_id.clone())?;
                 let hir::ItemKind::Function(_function) = &item.kind else {
                     return None;
@@ -406,6 +414,15 @@ impl HirToMirLowerer {
                         mir::ConstantKind::Val(v) => Some(v.clone()),
                         _ => None,
                     };
+                }
+
+                if let Some(hir::Item {
+                    kind: hir::ItemKind::Const(constant),
+                    ..
+                }) = self.hir_item(def_id.clone())
+                {
+                    let ty = self.lower_type_expr(&constant.ty);
+                    return self.lower_const_value(&constant.body.value, Some(&ty));
                 }
 
                 let item = self.hir_item(def_id.clone())?;

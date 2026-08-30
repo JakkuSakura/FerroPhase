@@ -1035,6 +1035,43 @@ impl MirToLirLowerer {
         let destination_lir_ty = place_ty.as_ref().map(|ty| self.lir_type_from_ty(ty));
         let mut result_value: Option<lir::LirValue> = None;
 
+        if let mir::Rvalue::IntrinsicCall { kind, args, .. } = rvalue {
+            if *kind == IntrinsicKind::Len {
+                if args.len() != 1 {
+                    return Err(fp_core::error::Error::from(format!(
+                        "len intrinsic expects one argument, got {}",
+                        args.len()
+                    )));
+                }
+                let source = self.transform_operand(&args[0])?;
+                instructions.extend(self.take_queued_instructions());
+                let result_ty = destination_lir_ty
+                    .clone()
+                    .ok_or_else(|| fp_core::error::Error::from("len has no destination type"))?;
+                let value = self.extract_slice_field(
+                    source,
+                    1,
+                    result_ty,
+                    &mut instructions,
+                );
+                if let PlaceAccess::Address(addr) = &target_access {
+                    instructions.push(lir::LirInstruction {
+                        id: self.next_id(),
+                        kind: lir::LirInstructionKind::Store {
+                            value: value.clone(),
+                            address: addr.ptr.clone(),
+                            alignment: Some(addr.alignment),
+                            volatile: false,
+                        },
+                        result: None,
+                        debug_info: None,
+                    });
+                }
+                self.register_map.insert(place.local, value);
+                return Ok(instructions);
+            }
+        }
+
         match rvalue {
             mir::Rvalue::TypeValue(value) => {
                 let instr_id = self.next_id();
@@ -1152,7 +1189,26 @@ impl MirToLirLowerer {
                 // vector shadowed the outer one under the same name.
                 let mut intrinsic_instructions = Vec::new();
 
-                if matches!(
+                if *kind == IntrinsicKind::Len {
+                    if args.len() != 1 {
+                        return Err(fp_core::error::Error::from(format!(
+                            "len intrinsic expects one argument, got {}",
+                            args.len()
+                        )));
+                    }
+                    let value = self.transform_operand(&args[0])?;
+                    intrinsic_instructions.extend(self.take_queued_instructions());
+                    let result_ty = destination_lir_ty.clone().ok_or_else(|| {
+                        fp_core::error::Error::from("len intrinsic has no destination type")
+                    })?;
+                    result_value = Some(self.extract_slice_field(
+                        value,
+                        1,
+                        result_ty,
+                        &mut intrinsic_instructions,
+                    ));
+                    instructions.append(&mut intrinsic_instructions);
+                } else if matches!(
                     kind,
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
@@ -2457,6 +2513,26 @@ impl MirToLirLowerer {
                     return Ok(instructions);
                 }
 
+                let is_type_handle = |ty: &lir::LirType| {
+                    matches!(ty, lir::LirType::Ptr(pointee) if matches!(pointee.as_ref(), lir::LirType::Void))
+                };
+                if is_type_handle(&operand_value.ty) && is_type_handle(&target_ty) {
+                    let instr_id = self.next_id();
+                    instructions.push(lir::LirInstruction {
+                        id: instr_id,
+                        kind: lir::LirInstructionKind::ComptimeOp(lir::ComptimeOp::IntoType {
+                            value: operand_value,
+                        }),
+                        result: Some(lir::LirRegister {
+                            id: instr_id,
+                            ty: target_ty.clone(),
+                        }),
+                        debug_info: None,
+                    });
+                    result_value = Some(lir::LirValue::register(instr_id, target_ty));
+                    return Ok(instructions);
+                }
+
                 {
                     let src_ty = operand_value.ty.clone();
                     let target_is_ptr = matches!(target_ty, lir::LirType::Ptr(_));
@@ -2688,7 +2764,26 @@ impl MirToLirLowerer {
                             })?
                         }
                     };
-                    self.function_value(name)
+                    if let Some((package_id, _, _, _)) =
+                        self.mir_program.signature_by_def_id(def_id)
+                    {
+                        // The DefId is authoritative for cross-package
+                        // method ownership. A lazily registered signature
+                        // may already have the caller package's default
+                        // name entry; correct that entry before constructing
+                        // the package-qualified function reference.
+                        self.function_package_ids.insert(name.clone(), package_id);
+                    }
+                    let mut value = self.function_value(name)?;
+                    // Preserve the resolved HIR identity through LIR. A
+                    // display-name reference can point at the caller's
+                    // package or at a stale alias; the interpreter and
+                    // native reachability pass can both resolve this exact
+                    // cross-package definition by DefId.
+                    value.kind = lir::LirValueKind::Function(lir::LirFunctionRef::Definition(
+                        def_id.clone(),
+                    ));
+                    Ok(value)
                 }
                 mir::ConstantKind::Fn(name) => {
                     let mut function_name = self
@@ -2696,6 +2791,23 @@ impl MirToLirLowerer {
                         .get(&String::from(name.clone()))
                         .cloned()
                         .unwrap_or_else(|| String::from(name.clone()));
+                    // Const-evaluated method calls can arrive as a legacy
+                    // name-only MIR constant. Recover the canonical method
+                    // symbol and owner from the shared MIR API before
+                    // constructing the LIR reference; otherwise a name
+                    // such as `TypeBuilder::new` is incorrectly treated as
+                    // belonging to the caller package.
+                    for (package_id, package) in &self.mir_program.packages {
+                        if let Some(info) = package.borrow().method_lookup.values().find(|info| {
+                            info.fn_name.as_str() == function_name
+                                || info.fn_name.as_str() == name.as_str()
+                        }) {
+                            function_name = info.fn_name.as_str().to_owned();
+                            self.function_package_ids
+                                .insert(function_name.clone(), package_id.clone());
+                            break;
+                        }
+                    }
                     let suffix = format!("::{name}");
                     let matches: Vec<String> = self
                         .function_signatures

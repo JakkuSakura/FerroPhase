@@ -1326,8 +1326,14 @@ impl HirToMirLowerer {
         let Some(body) = block.expr.as_ref() else {
             return Ok(());
         };
-        let Some(ty) = self.typeck_type_expr_type(block.hir_id.clone()) else {
-            return Ok(());
+        let Some(ty) = self
+            .typeck_type_expr_type(block.hir_id.clone())
+            .or_else(|| self.typeck_expr_type(block.hir_id.clone()))
+        else {
+            return Err(fp_core::error::Error::from(format!(
+                "const block {def_id} has no checked result type for HIR node {:?}",
+                block.hir_id
+            )));
         };
         let name = hir::Symbol::new(format!(
             "__const_block_{}_{}",
