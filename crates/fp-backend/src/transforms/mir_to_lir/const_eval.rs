@@ -5,6 +5,26 @@ use fp_core::{lir, mir};
 use super::MirToLirLowerer;
 
 impl MirToLirLowerer {
+    fn lir_function_constant(
+        &mut self,
+        def_id: &mir::DefId,
+        ty: lir::LirType,
+    ) -> Result<lir::LirConstant> {
+        let Some((package_id, name, _, _)) = self.function_signature_by_def_id(def_id) else {
+            return Err(fp_core::error::Error::from(format!(
+                "missing MIR signature for function constant {}",
+                def_id
+            )));
+        };
+        Ok(lir::LirConstant::function_address(
+            ty,
+            lir::LirFunctionRef::Package {
+                package_id,
+                name: lir::Name::new(name.as_str().to_owned()),
+            },
+        ))
+    }
+
     /// Analyze MIR body to extract const values assigned to locals
     pub(crate) fn analyze_const_values(&mut self, mir_body: &mir::Body) -> Result<()> {
         // Iterate to propagate simple aliases like x = y where y is const-evaluated
@@ -250,7 +270,7 @@ impl MirToLirLowerer {
                     "function definition references are not valid static initializer data",
                 ));
             }
-            mir::ConstantKind::Fn(name) => lir::LirConstant::function_address(
+            mir::ConstantKind::ExternFn(name) => lir::LirConstant::function_address(
                 target_ty.clone(),
                 lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
             ),
@@ -451,10 +471,7 @@ impl MirToLirLowerer {
                 Ok(self.const_string_ptr(value))
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::null(self.lir_type_from_ty(ty))),
-            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::function_address(
-                self.lir_type_from_ty(ty),
-                lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
-            )),
+            mir::ConstValue::FnDef(def_id, _) => self.lir_function_constant(def_id, self.lir_type_from_ty(ty)),
             // `ty.kind` isn't always `TyKind::Tuple` for a `ConstValue::
             // Tuple` payload — `fp-interpret` stores every register-
             // resident aggregate this way regardless of nominal type, so a
@@ -627,10 +644,7 @@ impl MirToLirLowerer {
                 Ok(self.const_string_ptr(value))
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::null(lir_ty.clone())),
-            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::function_address(
-                lir_ty.clone(),
-                lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
-            )),
+            mir::ConstValue::FnDef(def_id, _) => self.lir_function_constant(def_id, lir_ty.clone()),
             mir::ConstValue::Array(elements) => {
                 let lir::LirType::Array(elem_ty, _len) = lir_ty else {
                     return Err(fp_core::error::Error::from(

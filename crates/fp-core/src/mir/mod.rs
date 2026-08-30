@@ -348,8 +348,8 @@ pub struct Constant {
 pub enum ConstantKind {
     Ty(ConstTy),
     Val(ConstValue),
-    /// Reference to a function by name (simple)
-    Fn(Symbol),
+    /// Reference to a runtime or foreign function supplied by the host ABI.
+    ExternFn(Symbol),
     /// Reference to a language function by its definition identity and the
     /// complete generic substitutions for this use.
     FnDef(DefId, ty::SubstsRef),
@@ -547,7 +547,7 @@ pub enum ConstValue {
     Float(f64),
     Str(String),
     Null,
-    Fn(Symbol),
+    FnDef(DefId, ty::SubstsRef),
     Tuple(Vec<ConstValue>),
     Array(Vec<ConstValue>),
     Struct(Vec<ConstValue>),

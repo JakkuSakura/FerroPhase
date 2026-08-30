@@ -34,7 +34,7 @@ impl MirToHir {
             // actual execution — an honest "can't convert this" rather
             // than a placeholder.
             mir::ConstantKind::Ty(_)
-            | mir::ConstantKind::Fn(_)
+            | mir::ConstantKind::ExternFn(_)
             | mir::ConstantKind::FnDef(_, _)
             | mir::ConstantKind::Global(_)
             | mir::ConstantKind::TokenStream { .. }
@@ -81,7 +81,7 @@ impl MirToHir {
             mir::ConstValue::Map { .. } => None,
             // A function reference has no meaningful runtime `Value`
             // representation outside actual execution.
-            mir::ConstValue::Fn(_) => None,
+            mir::ConstValue::FnDef(_, _) => None,
         }
     }
 }

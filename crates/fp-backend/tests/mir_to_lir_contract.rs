@@ -560,7 +560,7 @@ fn rejects_call_terminator_without_destination() {
                 span: Span::new(0, 0, 0),
                 ty: Ty::int(IntTy::I32),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(mir::Symbol::new("no_dest_fn")),
+                literal: mir::ConstantKind::ExternFn(mir::Symbol::new("no_dest_fn")),
             }),
             args: Vec::new(),
             destination: None,

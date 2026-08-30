@@ -105,7 +105,7 @@ fn lowers_general_call_and_branches() {
                 span: Span::new(0, 0, 0),
                 user_ty: None,
                 ty: return_ty.clone(),
-                literal: mir::ConstantKind::Fn(MirSymbol::new("foo")),
+                literal: mir::ConstantKind::ExternFn(MirSymbol::new("foo")),
             }),
             args: vec![mir::Operand::Constant(mir::Constant {
                 span: Span::new(0, 0, 0),

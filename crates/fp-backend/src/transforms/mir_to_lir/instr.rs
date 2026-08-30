@@ -86,6 +86,18 @@ pub(super) enum PlaceAccess {
 }
 
 impl MirToLirLowerer {
+    pub(super) fn function_signature_by_def_id(
+        &self,
+        def_id: &mir::DefId,
+    ) -> Option<(
+        fp_core::ast::package::PackageId,
+        mir::Symbol,
+        mir::FunctionSig,
+        mir::ty::SubstsRef,
+    )> {
+        self.mir_program.signature_by_def_id(def_id)
+    }
+
     /// Create a new LIR generator, owning `mir_program`/`lir_program`
     /// directly (see their own doc comments) — the caller (`driver.rs`'s
     /// `new_lir_generator`) supplies the whole session's current
@@ -2803,7 +2815,7 @@ impl MirToLirLowerer {
                     });
                     Ok(value)
                 }
-                mir::ConstantKind::Fn(name) => {
+                mir::ConstantKind::ExternFn(name) => {
                     let mut function_name = self
                         .function_symbol_map
                         .get(&String::from(name.clone()))

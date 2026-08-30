@@ -427,15 +427,13 @@ impl HirToMirLowerer {
 
                 let item = self.hir_item(def_id.clone())?;
                 match &item.kind {
-                    hir::ItemKind::Function(function) => {
+                    hir::ItemKind::Function(_function) => {
                         let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
                             expected_ty.map(|ty| &ty.kind)?
                         else {
                             return None;
                         };
-                        Some(mir::ConstValue::Fn(mir::Symbol::new(
-                            function.sig.name.as_str(),
-                        )))
+                        Some(mir::ConstValue::FnDef(def_id.clone(), Vec::new()))
                     }
                     hir::ItemKind::Const(_) => {
                         let const_info = self.ensure_const_info(def_id.clone())?;

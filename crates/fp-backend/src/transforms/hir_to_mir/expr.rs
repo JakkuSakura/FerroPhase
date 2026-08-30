@@ -4064,7 +4064,9 @@ impl HirToMirLowerer {
             (mir::ConstValue::Bool(a), mir::ConstValue::Bool(b)) => a == b,
             (mir::ConstValue::Str(a), mir::ConstValue::Str(b)) => a == b,
             (mir::ConstValue::Null, mir::ConstValue::Null) => true,
-            (mir::ConstValue::Fn(a), mir::ConstValue::Fn(b)) => a == b,
+            (mir::ConstValue::FnDef(a, asubsts), mir::ConstValue::FnDef(b, bsubsts)) => {
+                a == b && asubsts == bsubsts
+            }
             _ => lhs == rhs,
         }
     }
@@ -4082,7 +4084,8 @@ impl HirToMirLowerer {
             mir::ConstValue::Float(value) => mir::ConstantKind::Float(*value),
             mir::ConstValue::Str(value) => mir::ConstantKind::Str(value.clone()),
             mir::ConstValue::Null => mir::ConstantKind::Null,
-            mir::ConstValue::Fn(name) => mir::ConstantKind::Fn(name.clone()),
+            mir::ConstValue::FnDef(def_id, substs) =>
+                mir::ConstantKind::FnDef(def_id.clone(), substs.clone()),
             _ => mir::ConstantKind::Val(value.clone()),
         };
         mir::Constant {

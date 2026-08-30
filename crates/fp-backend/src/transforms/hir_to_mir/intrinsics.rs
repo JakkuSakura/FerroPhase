@@ -692,7 +692,7 @@ impl<'a> BodyBuilder<'a> {
                                 span,
                                 ty: fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(mir::Symbol::new(
+                                literal: mir::ConstantKind::ExternFn(mir::Symbol::new(
                                     "fp_panic".to_string(),
                                 )),
                             });
@@ -778,7 +778,7 @@ impl<'a> BodyBuilder<'a> {
                         span,
                         ty: fn_ty.clone(),
                         user_ty: None,
-                        literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
+                        literal: mir::ConstantKind::ExternFn(mir::Symbol::new("fp_panic".to_string())),
                     });
                     let args = vec![message_operand.operand];
 
@@ -821,7 +821,7 @@ impl<'a> BodyBuilder<'a> {
             span,
             ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
+            literal: mir::ConstantKind::ExternFn(mir::Symbol::new("fp_panic".to_string())),
         });
         let args = vec![mir::Operand::Constant(mir::Constant {
             span,
@@ -889,7 +889,7 @@ impl<'a> BodyBuilder<'a> {
             span,
             ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
+            literal: mir::ConstantKind::ExternFn(mir::Symbol::new("fp_panic".to_string())),
         });
         let args = vec![message_operand];
 
@@ -1533,7 +1533,7 @@ impl<'a> BodyBuilder<'a> {
             mir::ConstValue::Float(value) => Some(Value::decimal(*value)),
             mir::ConstValue::Str(value) => Some(Value::string(value.clone())),
             mir::ConstValue::Null => Some(Value::null()),
-            mir::ConstValue::Fn(_) => None,
+            mir::ConstValue::FnDef(_, _) => None,
             mir::ConstValue::Tuple(values) | mir::ConstValue::Struct(values) => {
                 let mut elements = Vec::with_capacity(values.len());
                 for element in values {

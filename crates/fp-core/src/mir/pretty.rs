@@ -403,7 +403,7 @@ fn summarize_constant(constant: &Constant) -> String {
         ConstantKind::Float(value) => format!("{}", value),
         ConstantKind::Bool(value) => value.to_string(),
         ConstantKind::Str(value) => format!("\"{}\"", escape_str(value)),
-        ConstantKind::Fn(name) => format!("fn {}", name),
+        ConstantKind::ExternFn(name) => format!("extern fn {}", name),
         ConstantKind::FnDef(def_id, args) => format!("fn <{}> {:?}", def_id, args),
         ConstantKind::Global(name) => format!("global {}", name),
         ConstantKind::Ty(_) => "<type>".into(),

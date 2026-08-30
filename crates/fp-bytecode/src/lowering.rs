@@ -452,7 +452,7 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
         mir::ConstantKind::Bool(value) => Ok(BytecodeConst::Bool(*value)),
         mir::ConstantKind::Str(value) => Ok(BytecodeConst::Str(value.clone())),
-        mir::ConstantKind::Fn(symbol) => Ok(BytecodeConst::Function(symbol.as_str().to_string())),
+        mir::ConstantKind::ExternFn(symbol) => Ok(BytecodeConst::Function(symbol.as_str().to_string())),
         mir::ConstantKind::FnDef(def_id, substs) => Err(BytecodeError::Lowering {
             message: format!(
                 "function definition reference {:?} with substitutions {:?} cannot be represented in bytecode",
@@ -554,7 +554,7 @@ fn lower_callee(
 ) -> Result<BytecodeCallee, BytecodeError> {
     match operand {
         mir::Operand::Constant(constant) => match &constant.literal {
-            mir::ConstantKind::Fn(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
+            mir::ConstantKind::ExternFn(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
             mir::ConstantKind::FnDef(def_id, substs) => {
                 if !substs.is_empty() {
                     return Err(BytecodeError::Lowering {

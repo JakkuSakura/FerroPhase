@@ -125,7 +125,7 @@ impl MirToLirLowerer {
                 mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
                 mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),
                 mir::ConstantKind::Float(_) => Some(lir::LirType::F64),
-                mir::ConstantKind::Fn(_) | mir::ConstantKind::Global(_) => {
+                mir::ConstantKind::ExternFn(_) | mir::ConstantKind::Global(_) => {
                     Some(self.lir_type_from_ty(&constant.ty))
                 }
                 mir::ConstantKind::Null => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),

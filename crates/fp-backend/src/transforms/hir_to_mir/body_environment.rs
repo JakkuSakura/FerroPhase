@@ -21,7 +21,7 @@ impl<'a> BodyBuilder<'a> {
             span,
             ty: fn_ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Fn(mir::Symbol::from(name.to_string())),
+            literal: mir::ConstantKind::ExternFn(mir::Symbol::from(name.to_string())),
         });
 
         self.blocks[self.current_block as usize].terminator = Some(mir::Terminator {
