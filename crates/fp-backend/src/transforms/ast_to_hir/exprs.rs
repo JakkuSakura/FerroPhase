@@ -2333,11 +2333,49 @@ impl AstToHirLowerer {
         }
 
         let local = self.lookup_symbol(&key, scope.namespace());
+        let package_item = if local.is_none() && scope == PathResolutionScope::Value {
+            self.package
+                .def_paths
+                .iter()
+                .filter(|(_, def_path)| {
+                    def_path.segments.len() >= path.segments.len()
+                        && def_path
+                            .segments
+                            .iter()
+                            .rev()
+                            .zip(path.segments.iter().rev())
+                            .all(|(defined, requested)| defined.as_str() == requested)
+                })
+                .filter_map(|(def_id, _)| self.package.def_map.get(def_id).map(|_| def_id))
+                .map(|def_id| hir::Res::Def(def_id.clone()))
+                .next()
+        } else {
+            None
+        };
+        let tree_item = if local.is_none() && scope == PathResolutionScope::Value {
+            self.package
+                .module_tree
+                .all_bindings(scope.namespace())
+                .find(|(bound_path, _)| {
+                    bound_path.segments.len() >= path.segments.len()
+                        && bound_path
+                            .segments
+                            .iter()
+                            .rev()
+                            .zip(path.segments.iter().rev())
+                            .all(|(bound, requested)| bound == requested)
+                })
+                .map(|(_, entry)| entry.res.clone())
+        } else {
+            None
+        };
         // A cross-package export (e.g. `libc::macos::getenv`) is looked up
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
         local
+            .or(package_item)
+            .or(tree_item)
             .or_else(|| self.hir_program.find_export(&key))
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {

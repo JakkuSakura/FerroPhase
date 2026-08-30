@@ -3037,7 +3037,7 @@ impl<'a> BodyBuilder<'a> {
         // a `struct_methods["Type"]["method"]` name lookup.
         if let Some(method_def_id) =
             self.lowering
-                .typeck_method_resolution(call_hir_id)
+                .typeck_method_resolution(call_hir_id.clone())
                 .or_else(|| {
                     self.lowering
                         .typeck_method_resolution(callee.hir_id.clone())
@@ -3122,6 +3122,33 @@ impl<'a> BodyBuilder<'a> {
                     literal: mir::ConstantKind::FnDef(def_id.clone(), Vec::new()),
                 });
                 return Ok((operand, sig, Some(String::from(name))));
+            }
+        }
+
+        if let Some(hir::Res::Module(module_path)) = &resolved_path.res {
+            let mut requested = module_path.clone();
+            requested.extend(
+                resolved_path
+                    .segments
+                    .iter()
+                    .skip(module_path.len())
+                    .map(|segment| segment.name.as_str().to_string()),
+            );
+            let def_id = self.lowering.hir_program.with(|program| {
+                program.all_items().find_map(|item| {
+                    let hir::ItemKind::Function(_) = item.kind else {
+                        return None;
+                    };
+                    let path = program.def_path(item.def_id.clone())?;
+                    (path.segments.iter().map(|segment| segment.as_str()).eq(
+                        requested.iter().map(String::as_str),
+                    ))
+                    .then_some(item.def_id)
+                })
+            });
+            if let Some(def_id) = def_id {
+                resolved_path.res = Some(hir::Res::Def(def_id));
+                return self.resolve_callee_path(call_hir_id.clone(), callee, &resolved_path);
             }
         }
 

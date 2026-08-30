@@ -3636,6 +3636,33 @@ impl HirTypeChecker {
             } else {
                 None
             };
+        let module_member_def_id = if matches!(path.res, Some(hir::Res::Module(_))) {
+            let requested = path
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>();
+            let package = self.current_package_handle.borrow();
+            package
+                .module_tree
+                .all_bindings(hir::Namespace::Value)
+                .find(|(bound_path, _)| {
+                    bound_path.segments.len() >= requested.len()
+                        && bound_path
+                            .segments
+                            .iter()
+                            .rev()
+                            .zip(requested.iter().rev())
+                            .all(|(bound, wanted)| bound.as_str() == *wanted)
+                })
+                .and_then(|(_, entry)| match &entry.res {
+                    hir::Res::Def(def_id) => Some(def_id.clone()),
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        let recovered_def_id = recovered_def_id.or(module_member_def_id);
         let def_id = match (&path.res, &recovered_def_id) {
             (Some(hir::Res::Def(def_id)), _) => def_id.clone(),
             (_, Some(def_id)) => def_id.clone(),

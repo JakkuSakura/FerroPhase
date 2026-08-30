@@ -830,6 +830,39 @@ impl AstToHirLowerer {
                             })
                     })
                     .map(|entry| entry.res.clone());
+                let module_member = module_member.or_else(|| {
+                    let root = self.package_crate_root();
+                    if root.is_empty() {
+                        return None;
+                    }
+                    let mut rooted = root;
+                    rooted.extend(aliased.segments.iter().cloned());
+                    let (leaf, parent) = rooted.split_last()?;
+                    self.package
+                        .module_tree
+                        .module_id(&QualifiedPath::new(parent.to_vec()))
+                        .and_then(|module| {
+                            self.package
+                                .module_tree
+                                .lookup_res(module, scope.namespace(), leaf)
+                        })
+                        .cloned()
+                });
+                let module_member = module_member.or_else(|| {
+                    self.package
+                        .module_tree
+                        .all_bindings(scope.namespace())
+                        .find(|(bound_path, _)| {
+                            bound_path.segments.len() >= aliased.segments.len()
+                                && bound_path
+                                    .segments
+                                    .iter()
+                                    .rev()
+                                    .zip(aliased.segments.iter().rev())
+                                    .all(|(bound, requested)| bound == requested)
+                        })
+                        .map(|(_, entry)| entry.res.clone())
+                });
                 if let Some(res) = module_member.or_else(|| self.lookup_global_res(&aliased, scope))
                 {
                     let offset = aliased.segments.len().saturating_sub(segments.len());
@@ -1071,6 +1104,19 @@ impl AstToHirLowerer {
                             );
                         }
                     }
+                    if canonical_res.is_none() && canonical.len() > 1 {
+                        let parent = QualifiedPath::new(canonical[..canonical.len() - 1].to_vec());
+                        if let (Some(module), Some(last)) = (
+                            self.package.module_tree.module_id(&parent),
+                            canonical.last(),
+                        ) {
+                            canonical_res = self
+                                .package
+                                .module_tree
+                                .lookup_res(module, scope.namespace(), last)
+                                .cloned();
+                        }
+                    }
                     if canonical_res.is_none()
                         && self.package.module_tree.module_exists(&canonical_path)
                     {
@@ -1269,6 +1315,16 @@ impl AstToHirLowerer {
             }
         }
 
+        if segments.len() > 1 {
+            if let Some(hir::Res::Module(module_path)) = resolved.clone() {
+                let mut qualified = module_path;
+                qualified.extend(segments.iter().skip(1).map(|segment| segment.name.as_str().to_string()));
+                if let Some(res) = self.lookup_global_res(&QualifiedPath::new(qualified), scope) {
+                    resolved = Some(res);
+                }
+            }
+        }
+
         Ok(hir::Path {
             segments,
             res: resolved,
@@ -1348,7 +1404,7 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
-                if let Some(hir::Res::Module(module_path)) = base.res.as_ref() {
+                if let Some(hir::Res::Module(module_path)) = base.res.clone() {
                     let member_path = QualifiedPath::new(module_path.clone());
                     if let Some(module) = self.package.module_tree.module_id(&member_path) {
                         if let Some(member) = self.package.module_tree.lookup(
@@ -1356,6 +1412,27 @@ impl AstToHirLowerer {
                             scope.namespace(),
                             select.field.name.as_str(),
                         ) {
+                            base.res = Some(member.res.clone());
+                        }
+                    }
+                    if matches!(base.res, Some(hir::Res::Module(_))) {
+                        let member_name = select.field.name.as_str();
+                        let mut requested = module_path.clone();
+                        requested.push(member_name.to_string());
+                        if let Some((_, member)) = self
+                            .package
+                            .module_tree
+                            .all_bindings(scope.namespace())
+                            .find(|(bound_path, _)| {
+                                bound_path.segments.len() >= requested.len()
+                                    && bound_path
+                                        .segments
+                                        .iter()
+                                        .rev()
+                                        .zip(requested.iter().rev())
+                                        .all(|(bound, wanted)| bound == wanted)
+                            })
+                        {
                             base.res = Some(member.res.clone());
                         }
                     }
