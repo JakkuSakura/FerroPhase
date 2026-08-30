@@ -984,39 +984,11 @@ impl AstToHirLowerer {
                         // `global_type_defs` (potentially thousands once
                         // vendored std is loaded) with a `format!`
                         // allocation per candidate.
-                        let suffix = format!("::{}", first.name);
-                        let mut type_paths: Vec<_> = self
-                            .global_type_defs_by_def_id
-                            .get(&type_def_id)
+                        let type_paths = self
+                            .hir_program
+                            .def_path(type_def_id.clone())
                             .into_iter()
-                            .flatten()
-                            .filter(|path| path.ends_with(&suffix))
-                            .cloned()
-                            .collect();
-                        // `global_type_defs_by_def_id` only ever holds
-                        // *this* module's own predeclared types —
-                        // `type_def_id` resolved above can just as easily
-                        // name a workspace dependency's type (`Option`,
-                        // `Vec`, ...), whose own `AstToHirLowerer` instance
-                        // (and its local maps) no longer exists. Its real
-                        // path survives in that dependency's own lowered
-                        // `hir::HirPackage::def_paths` instead — fall back to
-                        // scanning those when the local map has nothing.
-                        if type_paths.is_empty() {
-                            {
-                                let packages = self.hir_program.with(|program| {
-                                    program.packages.values().cloned().collect::<Vec<_>>()
-                                });
-                                for package in packages {
-                                    if let Some(def_path) =
-                                        package.borrow().def_paths.get(&type_def_id)
-                                    {
-                                        type_paths.push(def_path.join("::"));
-                                    }
-                                }
-                            }
-                        }
-                        type_paths.sort();
+                            .map(|path| path.join("::"));
                         for type_path in type_paths {
                             let mut associated_path = Self::parse_path(&type_path)
                                 .map_err(|error| fp_core::Error::from(format!("{error:?}")))?
@@ -1397,27 +1369,6 @@ impl AstToHirLowerer {
                             scope.namespace(),
                             select.field.name.as_str(),
                         ) {
-                            base.res = Some(member.res.clone());
-                        }
-                    }
-                    if matches!(base.res, Some(hir::Res::Module(_))) {
-                        let member_name = select.field.name.as_str();
-                        let mut requested = module_path.clone();
-                        requested.push(member_name.to_string());
-                        if let Some((_, member)) = self
-                            .package
-                            .module_tree
-                            .all_bindings(scope.namespace())
-                            .find(|(bound_path, _)| {
-                                bound_path.segments.len() >= requested.len()
-                                    && bound_path
-                                        .segments
-                                        .iter()
-                                        .rev()
-                                        .zip(requested.iter().rev())
-                                        .all(|(bound, wanted)| bound == wanted)
-                            })
-                        {
                             base.res = Some(member.res.clone());
                         }
                     }
