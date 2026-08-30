@@ -1313,18 +1313,16 @@ impl HirToMirLowerer {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }
-        let Some(block) = self
-            .hir_program
-            .package_rc(&def_id.package_id)
-            .ok_or_else(|| crate::error::optimization_error("missing HIR package"))?
-            .borrow()
-            .const_block_def(def_id.clone())
-        else {
-            return Ok(());
+        let Some(block) = self.hir_program.anonymous_const(def_id.clone()) else {
+            return Err(fp_core::error::Error::from(format!(
+                "comptime definition {def_id} is missing from its HIR package"
+            )));
         };
         self.lowered_items.insert(def_id.clone());
         let Some(body) = block.expr.as_ref() else {
-            return Ok(());
+            return Err(fp_core::error::Error::from(format!(
+                "anonymous const {def_id} has no body"
+            )));
         };
         let Some(ty) = self
             .typeck_type_expr_type(block.hir_id.clone())
@@ -1356,7 +1354,13 @@ impl HirToMirLowerer {
             is_host: false,
         };
         let key = self.const_key(name.as_str(), body.span);
-        let mir_item = self.lower_executable_const(def_id, &konst, ty, key, Some(block.hir_id))?;
+        let mir_item = self.lower_executable_const(
+            def_id,
+            &konst,
+            ty,
+            key,
+            Some(block.hir_id),
+        )?;
         self.extra_items.push(mir_item);
         Ok(())
     }

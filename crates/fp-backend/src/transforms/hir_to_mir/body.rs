@@ -3379,7 +3379,8 @@ impl<'a> BodyBuilder<'a> {
                         let value = match target.kind {
                             hir::TypeExprKind::ConstBlock(const_def_id, _) => self
                                 .lowering
-                                .typeck_const_block_value(const_def_id),
+                                .hir_program
+                                .const_value(const_def_id),
                             _ => None,
                         }
                         .or_else(|| self.lowering.typeck_const_block_value(def_id.clone()));
@@ -3802,7 +3803,8 @@ impl<'a> BodyBuilder<'a> {
                     });
                 }
                 Err(fp_core::error::Error::from(format!(
-                    "unresolved value path during MIR lowering: `{name}`"
+                    "unresolved value path during MIR lowering: `{name}` (resolution: {:?})",
+                    resolved_path.res
                 )))
             }
             hir::ExprKind::Cast(inner, ty_expr) => {

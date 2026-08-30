@@ -481,7 +481,7 @@ impl HirTypeChecker {
         // Recorded here, once, for every caller — not each call site's own
         // responsibility (see `spawn_comptime_task`, which used to do this
         // itself right after awaiting this same method).
-        self.program.record_const_block_value(def_id, value.clone());
+        self.program.record_const_value(def_id, value.clone());
         Ok(value)
     }
 
@@ -1433,6 +1433,25 @@ impl HirTypeChecker {
                                 }) {
                                     arg_types.insert(0, (**receiver).clone());
                                 }
+                            }
+                        }
+                    }
+                    // The std print declarations are intentionally
+                    // variadic (`*args`, `**argv`) and therefore carry
+                    // inference placeholders in their public signature.
+                    // Their resolved intrinsic identity is authoritative;
+                    // do not send that declaration through ordinary
+                    // function substitution, which rejects the placeholders
+                    // and manufactures an Error type for every showcase
+                    // call.
+                    if let hir::ExprKind::Path(path) = &callee.kind {
+                        if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                            if matches!(
+                                self.program_rc().intrinsic_def(def_id.clone()),
+                                Some(fp_core::intrinsics::CallKind::Print)
+                                    | Some(fp_core::intrinsics::CallKind::Println)
+                            ) {
+                                return self.finish_expr(expr, self.unit_ty());
                             }
                         }
                     }
@@ -2703,6 +2722,12 @@ impl HirTypeChecker {
                     let def_id = def_id.clone();
                     let hir_id = expr.hir_id.clone();
                     let body_ty = self.check_expr(body).await?;
+                    // Publish the checked body type before requesting the
+                    // comptime query. The resolver immediately enters
+                    // HIR-to-MIR lowering, which must be able to read this
+                    // query input while the type-check task is suspended.
+                    self.package()
+                        .record_type_expr_type(hir_id.clone(), body_ty.clone());
                     // A `const { .. }` block whose value still depends on
                     // an uninstantiated generic parameter of the enclosing
                     // (still-generic) function/impl can't be evaluated yet
@@ -2735,8 +2760,6 @@ impl HirTypeChecker {
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    self.package()
-                        .record_type_expr_type(hir_id, body_ty.clone());
                     body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
@@ -2889,7 +2912,16 @@ impl HirTypeChecker {
                     }
                 }
             }
-            if let Some(value) = self.program.const_block_value(def_id.clone()) {
+            let alias_value = self
+                .program
+                .type_alias_target(def_id.clone())
+                .and_then(|target| match target.kind {
+                    hir::TypeExprKind::ConstBlock(const_def_id, _) => {
+                        self.program.const_value(const_def_id)
+                    }
+                    _ => None,
+                });
+            if let Some(value) = alias_value {
                 return Ok(match value {
                     fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
                         let fields: Vec<(hir::Symbol, Ty)> = struct_ty

@@ -1055,6 +1055,22 @@ impl AstToHirLowerer {
                     }
                     let canonical_path = QualifiedPath::new(canonical.clone());
                     let mut canonical_res = self.lookup_global_res(&canonical_path, scope);
+                    // Inline/file modules can be represented either at the
+                    // package-root path or below the package crate root,
+                    // depending on how the source provider assembled the
+                    // package. Resolve the latter as a namespace path, not
+                    // by guessing a function from its display name.
+                    if canonical_res.is_none() {
+                        let crate_root = self.package_crate_root();
+                        if !crate_root.is_empty() {
+                            let mut rooted = crate_root;
+                            rooted.extend(canonical.clone());
+                            canonical_res = self.lookup_global_res(
+                                &QualifiedPath::new(rooted),
+                                scope,
+                            );
+                        }
+                    }
                     if canonical_res.is_none()
                         && self.package.module_tree.module_exists(&canonical_path)
                     {

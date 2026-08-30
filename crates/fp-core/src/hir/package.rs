@@ -311,7 +311,7 @@ pub struct HirPackage {
     /// block's own `DefId` (minted during AST-to-HIR lowering, see
     /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
     /// via `const_values`.
-    const_block_values: RefCell<HashMap<DefId, Value>>,
+    anonymous_consts: RefCell<HashMap<DefId, Block>>,
     /// A `const { .. }` block's own HIR body, recorded under its own
     /// `DefId` once, unconditionally, at AST-to-HIR lowering time (the
     /// moment `ExprConstBlock`/`TypeExprKind::ConstBlock` mint that
@@ -324,7 +324,6 @@ pub struct HirPackage {
     /// every other typed result already goes through, alongside
     /// `type_alias_targets` (another "extra HIR shape with no real
     /// `def_map` entry" index).
-    const_block_defs: RefCell<HashMap<DefId, Block>>,
     /// This package's typing diagnostics (warnings and recovered, non-fatal
     /// mismatches — see `fp_typing::TypingShared::record_error`'s doc
     /// comment for the full split with hard item-check aborts). Lives here
@@ -496,8 +495,7 @@ impl HirPackage {
             generic_method_args: RefCell::new(HashMap::new()),
             const_types: RefCell::new(HashMap::new()),
             const_values: RefCell::new(HashMap::new()),
-            const_block_values: RefCell::new(HashMap::new()),
-            const_block_defs: RefCell::new(HashMap::new()),
+            anonymous_consts: RefCell::new(HashMap::new()),
             diagnostics: crate::diagnostics::DiagnosticManager::new(),
         }
     }
@@ -943,27 +941,29 @@ impl HirPackage {
     /// Comptime-evaluated value of a `const { ... }` block, keyed by its
     /// own `DefId` — see `const_block_values`'s doc comment.
     pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
-        self.const_block_values.borrow().get(&def_id).cloned()
+        self.const_value(def_id)
     }
 
     pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
-        self.const_block_values.borrow_mut().insert(def_id, value);
+        self.record_const_value(def_id, value);
     }
 
     pub fn const_block_values(&self) -> HashMap<DefId, Value> {
-        self.const_block_values.borrow().clone()
+        self.const_values()
     }
 
-    /// See `const_block_defs`'s doc comment.
-    pub fn record_const_block_def(&self, def_id: DefId, block: Block) {
-        self.const_block_defs.borrow_mut().insert(def_id, block);
+
+    /// Register an anonymous const body under its ordinary compiler DefId.
+    pub fn add_anonymous_const(&mut self, def_id: DefId, block: Block) {
+        self.anonymous_consts.get_mut().insert(def_id, block);
     }
 
-    pub fn const_block_def(&self, def_id: DefId) -> Option<Block> {
-        self.const_block_defs.borrow().get(&def_id).cloned()
+    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
+        self.anonymous_consts.borrow().get(&def_id).cloned()
     }
 
-    pub fn const_block_defs(&self) -> HashMap<DefId, Block> {
-        self.const_block_defs.borrow().clone()
+    pub fn anonymous_consts(&self) -> HashMap<DefId, Block> {
+        self.anonymous_consts.borrow().clone()
     }
+
 }

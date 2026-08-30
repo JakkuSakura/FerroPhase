@@ -407,6 +407,23 @@ impl MirToLirLowerer {
         else {
             return Ok(Vec::new());
         };
+        for item in &unit.items {
+            if let mir::ItemKind::Function(function) = &item.kind {
+                if let Some(body) = unit.bodies.get(&function.body_id) {
+                    if let Some((index, local)) = body
+                        .locals
+                        .iter()
+                        .enumerate()
+                        .find(|(_, local)| matches!(local.ty.kind, TyKind::Error(_)))
+                    {
+                        return Err(fp_core::error::Error::from(format!(
+                            "cannot lower `{}`: local {index} has unresolved error type {:?} (info: {:?}, span: {:?})",
+                            function.name, local.ty, local.local_info, local.source_info
+                        )));
+                    }
+                }
+            }
+        }
         unit.items
             .into_iter()
             .map(|item| self.transform_item(item, &unit.bodies))

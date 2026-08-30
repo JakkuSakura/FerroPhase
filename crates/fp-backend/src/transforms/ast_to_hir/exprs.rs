@@ -605,7 +605,7 @@ impl AstToHirLowerer {
         // Recorded once, unconditionally, right here — not lazily by the
         // type checker each time it happens to encounter this node (see
         // `hir::HirPackage::const_block_defs`'s doc comment).
-        self.package.record_const_block_def(
+        self.package.add_anonymous_const(
             def_id.clone(),
             hir::Block {
                 hir_id,

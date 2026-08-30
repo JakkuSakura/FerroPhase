@@ -42,6 +42,27 @@ impl SharedHirProgram {
         self.0.borrow().record_const_block_value(def_id, value);
     }
 
+    pub fn record_const_value(&self, def_id: DefId, value: Value) {
+        self.0.borrow().record_const_value(def_id, value);
+    }
+
+    pub fn add_anonymous_const(&self, def_id: DefId, block: Block) {
+        if let Some(package) = self.package(&def_id.package_id) {
+            package.borrow_mut().add_anonymous_const(def_id, block);
+        }
+    }
+
+    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
+        self.0.borrow().anonymous_const(def_id)
+    }
+
+    pub fn anonymous_consts(&self, package_id: &PackageId) -> HashMap<DefId, Block> {
+        self.package(package_id)
+            .map(|package| package.borrow().anonymous_consts())
+            .unwrap_or_default()
+    }
+
+
     pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
         self.0.borrow().refinement_hint(hir_id, slot)
     }
@@ -557,6 +578,11 @@ impl HirProgram {
     pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
         self.package(&def_id.package_id)?.const_block_value(def_id)
     }
+
+    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
+        self.package(&def_id.package_id)?.anonymous_const(def_id)
+    }
+
 
     pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
         if let Some(package) = self.package(&def_id.package_id) {

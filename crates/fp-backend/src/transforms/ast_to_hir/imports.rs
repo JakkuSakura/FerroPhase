@@ -170,7 +170,7 @@ impl AstToHirLowerer {
         Ok(())
     }
 
-    fn package_crate_root(&self) -> Vec<String> {
+    pub(super) fn package_crate_root(&self) -> Vec<String> {
         // The vendored Rust sysroot is intentionally one FerroPhase package
         // containing Rust's three distinct crates. Inside `core::io`,
         // `crate::result` therefore means `core::result`, never the outer

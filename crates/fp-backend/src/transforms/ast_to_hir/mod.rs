@@ -1489,6 +1489,9 @@ impl AstToHirLowerer {
             .extend(std::mem::take(&mut self.local_dispatch_items));
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.package.def_paths.clone();
+        for (def_id, block) in self.package.anonymous_consts() {
+            program.add_anonymous_const(def_id, block);
+        }
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program.op_defs.extend(self.package.op_defs.clone());
         program
@@ -1497,9 +1500,6 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
-        for (def_id, block) in self.package.const_block_defs() {
-            program.record_const_block_def(def_id, block);
-        }
         // Crate metadata must travel with the published HIR snapshot. The
         // consumer lowerer uses this edge set to select the implicit prelude;
         // deriving it again from a transient package workspace makes the
@@ -3023,7 +3023,7 @@ impl AstToHirLowerer {
                 // below and into a silently-wrong error path.
                 if matches!(
                     block.expr.kind(),
-                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_) | ast::ExprKind::Invoke(_)
+                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_)
                 ) {
                     if let Ok(path) =
                         self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)
@@ -3043,7 +3043,7 @@ impl AstToHirLowerer {
                 let hir_id = self.next_id();
                 // Recorded once, unconditionally, right here — see
                 // `hir::HirPackage::const_block_defs`'s doc comment.
-                self.package.record_const_block_def(
+                self.package.add_anonymous_const(
                     def_id.clone(),
                     hir::Block {
                         hir_id: hir_id.clone(),
@@ -3143,7 +3143,7 @@ impl AstToHirLowerer {
                         let body = Box::new(self.transform_expr_to_hir(expr)?);
                         let def_id = self.next_def_id();
                         let hir_id = self.next_id();
-                        self.package.record_const_block_def(
+                        self.package.add_anonymous_const(
                             def_id.clone(),
                             hir::Block {
                                 hir_id: hir_id.clone(),
