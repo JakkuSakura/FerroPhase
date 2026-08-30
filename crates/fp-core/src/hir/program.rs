@@ -2,186 +2,6 @@ use super::*;
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
-#[derive(Clone, Debug, Default)]
-pub struct SharedHirProgram(Rc<RefCell<HirProgram>>);
-
-impl SharedHirProgram {
-    pub fn new(program: HirProgram) -> Self {
-        Self(Rc::new(RefCell::new(program)))
-    }
-
-    pub fn publish_package(&self, package: HirPackage) {
-        self.0.borrow_mut().publish_package(package);
-    }
-
-    pub fn add_package(&self, package: Rc<RefCell<HirPackage>>) {
-        self.0.borrow_mut().add_package(package);
-    }
-
-    pub fn package(&self, id: &PackageId) -> Option<Rc<RefCell<HirPackage>>> {
-        self.0.borrow().package_rc(id)
-    }
-
-    pub fn package_rc(&self, id: &PackageId) -> Option<Rc<RefCell<HirPackage>>> {
-        self.0.borrow().package_rc(id)
-    }
-
-    pub fn with<R>(&self, f: impl FnOnce(&HirProgram) -> R) -> R {
-        f(&self.0.borrow())
-    }
-
-    pub fn borrow(&self) -> Ref<'_, HirProgram> {
-        self.0.borrow()
-    }
-
-    pub fn item(&self, def_id: DefId) -> Option<Item> {
-        self.0.borrow().item(def_id)
-    }
-
-    pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
-        self.0.borrow().record_const_block_value(def_id, value);
-    }
-
-    pub fn record_const_value(&self, def_id: DefId, value: Value) {
-        self.0.borrow().record_const_value(def_id, value);
-    }
-
-    pub fn add_anonymous_const(&self, def_id: DefId, block: Block) {
-        if let Some(package) = self.package(&def_id.package_id) {
-            package.borrow_mut().add_anonymous_const(def_id, block);
-        }
-    }
-
-    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
-        self.0.borrow().anonymous_const(def_id)
-    }
-
-    pub fn anonymous_consts(&self, package_id: &PackageId) -> HashMap<DefId, Block> {
-        self.package(package_id)
-            .map(|package| package.borrow().anonymous_consts())
-            .unwrap_or_default()
-    }
-
-    pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
-        self.0.borrow().refinement_hint(hir_id, slot)
-    }
-
-    pub fn all_items(&self) -> Vec<Item> {
-        self.0.borrow().all_items().collect()
-    }
-
-    pub fn def_path(&self, def_id: DefId) -> Option<DefPath> {
-        self.0.borrow().def_path(def_id)
-    }
-
-    pub fn type_alias_target(&self, def_id: DefId) -> Option<TypeExpr> {
-        self.0.borrow().type_alias_target(def_id)
-    }
-
-    pub fn type_alias_target_hir_id(&self, def_id: DefId) -> Option<HirId> {
-        self.0.borrow().type_alias_target_hir_id(def_id)
-    }
-
-    pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
-        self.0.borrow().member_owner(def_id)
-    }
-
-    pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
-        self.0.borrow().local_struct_fields(def_id)
-    }
-
-    pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.0.borrow().expr_type(hir_id)
-    }
-
-    pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.0.borrow().type_expr_type(hir_id)
-    }
-
-    pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
-        self.0.borrow().record_type_expr_type(hir_id, ty);
-    }
-
-    pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
-        self.0.borrow().method_resolution(hir_id)
-    }
-
-    pub fn reflection_field_intrinsic(
-        &self,
-        hir_id: HirId,
-    ) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.0.borrow().reflection_field_intrinsic(hir_id)
-    }
-
-    pub fn reflection_field_intrinsic_at_span(
-        &self,
-        package_id: PackageId,
-        span: crate::span::Span,
-    ) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.0
-            .borrow()
-            .reflection_field_intrinsic_at_span(package_id, span)
-    }
-
-    pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.0.borrow().generic_call_arg(hir_id)
-    }
-
-    pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.0.borrow().generic_method_arg(hir_id)
-    }
-
-    pub fn const_value(&self, def_id: DefId) -> Option<Value> {
-        self.0.borrow().const_value(def_id)
-    }
-
-    pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
-        self.0.borrow().const_block_value(def_id)
-    }
-
-    pub fn op_def(&self, def_id: DefId) -> Option<crate::intrinsics::PortableOp> {
-        self.0.borrow().op_def(def_id)
-    }
-
-    pub fn intrinsic_def(&self, def_id: DefId) -> Option<CallKind> {
-        self.0.borrow().intrinsic_def(def_id)
-    }
-
-    pub fn find_export(&self, key: &str) -> Option<Res> {
-        self.0.borrow().find_export(key)
-    }
-
-    pub fn resolve_external_path(
-        &self,
-        path: &crate::ast::path::QualifiedPath,
-        namespace: resolve::Namespace,
-    ) -> Option<Res> {
-        self.0.borrow().resolve_external_path(path, namespace)
-    }
-
-    pub fn resolve_external_entry(
-        &self,
-        path: &crate::ast::path::QualifiedPath,
-        namespace: resolve::Namespace,
-    ) -> Option<resolve::SymbolEntry> {
-        self.0.borrow().resolve_external_entry(path, namespace)
-    }
-
-    pub fn resolve_external_module_path(
-        &self,
-        path: &crate::ast::path::QualifiedPath,
-    ) -> Option<crate::ast::path::QualifiedPath> {
-        self.0.borrow().resolve_external_module_path(path)
-    }
-
-    pub fn external_module_member_names(
-        &self,
-        path: &crate::ast::path::QualifiedPath,
-    ) -> Option<Vec<String>> {
-        self.0.borrow().external_module_member_names(path)
-    }
-}
-
 /// The whole compiled result — every package involved, keyed by
 /// `PackageId`. `AstToHirLowerer` owns one of these and works package-by-package
 /// against it (see `docs/Resolution.md`); resolution across an
@@ -578,10 +398,6 @@ impl HirProgram {
         self.package(&def_id.package_id)?.const_block_value(def_id)
     }
 
-    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
-        self.package(&def_id.package_id)?.anonymous_const(def_id)
-    }
-
     pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
         if let Some(package) = self.package(&def_id.package_id) {
             package.record_const_block_value(def_id, value);
@@ -867,11 +683,7 @@ impl HirProgram {
     ) -> Option<Res> {
         let package = self.package(from)?;
         let module = package.module_tree.module_id(from_module)?;
-        package
-            .module_tree
-            .lookup(module, ns, name)
-            .filter(|entry| entry.export.can_access(&from_module.segments))
-            .map(|entry| entry.res.clone())
+        package.module_tree.lookup_res(module, ns, name).cloned()
     }
 
     /// Resolves a path whose first segment is an extern-prelude crate name.
@@ -940,7 +752,7 @@ impl HirProgram {
         let rooted = package
             .module_tree
             .module_exists(&crate::ast::path::QualifiedPath::new(vec![
-                crate_name.to_string()
+                crate_name.to_string(),
             ]));
         let internal = if rooted {
             path.clone()
@@ -966,8 +778,8 @@ impl HirProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::path::QualifiedPath;
     use crate::ast::ReprOptions;
+    use crate::ast::path::QualifiedPath;
     use crate::hir::resolve::{Namespace, SymbolEntry, SymbolExport};
     use crate::hir::{Enum, EnumVariant, Item, ItemKind, OwnerId, Symbol, Visibility};
 
@@ -987,7 +799,7 @@ mod tests {
         }
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
+        program.add_package(std::rc::Rc::new(package.into()));
 
         for (index, path) in [
             (7, "error::CoreError"),
@@ -1011,7 +823,7 @@ mod tests {
             .insert("core::option::Option".to_string(), Res::Def(def_id.clone()));
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
+        program.add_package(std::rc::Rc::new(package.into()));
 
         assert_eq!(
             program.find_export("core::option::Option"),
@@ -1047,7 +859,7 @@ mod tests {
         );
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
+        program.add_package(std::rc::Rc::new(package.into()));
 
         assert_eq!(
             program.external_module_member_names(&QualifiedPath::new(vec![
@@ -1069,7 +881,7 @@ mod tests {
         );
 
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(package)));
+        program.add_package(std::rc::Rc::new(package.into()));
 
         assert_eq!(
             program.find_export("skln_core::types::ChangeRange"),
@@ -1089,16 +901,18 @@ mod tests {
         let consumer_id = PackageId::new("consumer");
         let consumer = HirPackage::new(consumer_id.clone());
         let mut program = HirProgram::new();
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(consumer)));
+        program.add_package(std::rc::Rc::new(dependency.into()));
+        program.add_package(std::rc::Rc::new(consumer.into()));
 
         assert_eq!(
             program.find_export("dependency::api::PublicType"),
             Some(Res::Def(def_id.clone()))
         );
-        assert!(program
-            .package(&consumer_id)
-            .is_some_and(|package| !package.def_map.contains_key(&def_id)));
+        assert!(
+            program
+                .package(&consumer_id)
+                .is_some_and(|package| !package.def_map.contains_key(&def_id))
+        );
     }
 
     #[test]
@@ -1176,7 +990,7 @@ mod tests {
                 Res::Def(DefId::new(alloc_id.clone(), index)),
             );
         }
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(alloc)));
+        program.add_package(std::rc::Rc::new(alloc.into()));
 
         let core_id = PackageId::new("skln-core");
         let mut core = HirPackage::new(core_id.clone());
@@ -1184,7 +998,7 @@ mod tests {
             "error::CoreError".to_string(),
             Res::Def(DefId::new(core_id, 4)),
         );
-        program.add_package(std::rc::Rc::new(std::cell::RefCell::new(core)));
+        program.add_package(std::rc::Rc::new(core.into()));
 
         let mut actual = program
             .hir_definitions()

@@ -2,6 +2,7 @@
 
 use crate::marker::Destruct;
 
+#[op(class = "bool")]
 impl bool {
     /// Returns `Some(t)` if the `bool` is [`true`](../std/keyword.true.html),
     /// or `None` otherwise.
@@ -33,6 +34,7 @@ impl bool {
     #[stable(feature = "bool_to_option", since = "1.62.0")]
     #[rustc_const_unstable(feature = "const_bool", issue = "151531")]
     #[inline]
+    #[op(method = "then_some")]
     pub const fn then_some<T: Destruct>(self, t: T) -> Option<T> {
         if self { Some(t) } else { None }
     }

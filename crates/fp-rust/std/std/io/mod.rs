@@ -1451,6 +1451,7 @@ pub fn read_to_string<R: Read>(mut reader: R) -> Result<String> {
 #[stable(feature = "rust1", since = "1.0.0")]
 #[doc(notable_trait)]
 #[cfg_attr(not(test), rustc_diagnostic_item = "IoWrite")]
+#[op(class = "Write")]
 pub trait Write {
     /// Writes a buffer into this writer, returning how many bytes were written.
     ///
@@ -1609,6 +1610,7 @@ pub trait Write {
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "write_all")]
     fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
         while !buf.is_empty() {
             match self.write(buf) {

@@ -56,35 +56,67 @@ impl MemberRoot {
     }
 }
 
+fn rust_source_files(package_root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_source_files(&package_root.join("src"), &mut files);
+    files
+}
+
+fn collect_rust_source_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_source_files(&path, files);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn hash_source_bytes(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // Delimit source paths and contents so distinct sequences cannot merge.
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+}
+
 pub struct RustPackageProvider {
     members: Vec<(String, MemberRoot)>,
-    cache: RwLock<HashMap<String, Vec<PackageItem>>>,
+    cache: RwLock<HashMap<String, (String, Vec<PackageItem>)>>,
     disk_cache: fp_core::cache::DiskCache,
 }
 
 impl RustPackageProvider {
     fn source_fingerprint(member_root: &MemberRoot) -> String {
-        let path = match member_root {
-            MemberRoot::File(path) => path.clone(),
-            MemberRoot::Dir(dir) => {
-                let lib = dir.join("src/lib.rs");
-                if lib.is_file() {
-                    lib
-                } else {
-                    dir.join("src/main.rs")
-                }
+        let mut sources = match member_root {
+            MemberRoot::File(path) => vec![path.clone()],
+            // This deliberately includes every Rust file in a package rather
+            // than guessing its module graph. `#[path]`, generated module
+            // trees, and cfg-selected modules can otherwise make a child
+            // source invisible to cache invalidation. Extra invalidations are
+            // cheap; serving an AST for an old child module is not.
+            MemberRoot::Dir(dir) => rust_source_files(dir),
+        };
+        sources.sort();
+
+        // Keep the cache key stable across processes. `DefaultHasher` is not
+        // a persistence format, so use a small fixed FNV-1a accumulator over
+        // both source names and bytes.
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for path in sources {
+            hash_source_bytes(&mut hash, path.to_string_lossy().as_bytes());
+            match std::fs::read(&path) {
+                Ok(bytes) => hash_source_bytes(&mut hash, &bytes),
+                Err(_) => hash_source_bytes(&mut hash, b"<unreadable>"),
             }
-        };
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            return "missing".to_string();
-        };
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default();
-        format!("{}-{modified}-{}", path.display(), metadata.len())
+        }
+        format!("{hash:016x}")
     }
 
     pub fn new(root: PathBuf) -> Self {
@@ -232,12 +264,12 @@ impl RustPackageProvider {
         id: &PackageId,
         member_root: &MemberRoot,
     ) -> ProviderResult<Vec<PackageItem>> {
-        let cache_key = format!(
-            "rust/package-source/{id}/{}",
-            Self::source_fingerprint(member_root)
-        );
+        let fingerprint = Self::source_fingerprint(member_root);
+        let cache_key = format!("rust/package-source/{id}/{fingerprint}");
         if let Ok(c) = self.cache.read() {
-            if let Some(items) = c.get(id.as_str()) {
+            if let Some((cached_fingerprint, items)) = c.get(id.as_str())
+                && cached_fingerprint == &fingerprint
+            {
                 return Ok(items.clone());
             }
         }
@@ -251,7 +283,7 @@ impl RustPackageProvider {
                     })
                     .collect::<Vec<_>>();
                 if let Ok(mut c) = self.cache.write() {
-                    c.insert(id.as_str().to_string(), items.clone());
+                    c.insert(id.as_str().to_string(), (fingerprint, items.clone()));
                 }
                 return Ok(items);
             }
@@ -308,7 +340,7 @@ impl RustPackageProvider {
         }
 
         if let Ok(mut c) = self.cache.write() {
-            c.insert(id.as_str().to_string(), items.clone());
+            c.insert(id.as_str().to_string(), (fingerprint, items.clone()));
         }
         let serializable = items
             .iter()
@@ -392,7 +424,7 @@ fn workspace_path_dependencies(
 /// loaded as ordinary typed packages so calls resolve by definition identity
 /// before a target backend materializes them.
 fn external_api_dependency(name: &str, kind: DependencyKind) -> Option<DependencyDescriptor> {
-    matches!(name, "serde_json" | "toml" | "tokio").then(|| DependencyDescriptor {
+    matches!(name, "serde_json" | "toml" | "tokio" | "winnow").then(|| DependencyDescriptor {
         package: name.to_owned(),
         resolved_package_id: Some(PackageId::new(name)),
         constraint: None,
@@ -621,6 +653,7 @@ const EXTERNAL_API_SOURCES: &[(&str, &str)] = &[
         "serde_json",
         r#"
             pub struct Error;
+            pub struct Value;
             #[intrinsic = "serde_json_from_str"]
             pub fn from_str<T>(input: &str) -> Result<T, Error> { unreachable!() }
             #[intrinsic = "serde_json_to_string"]
@@ -650,6 +683,29 @@ const EXTERNAL_API_SOURCES: &[(&str, &str)] = &[
             pub mod time {
                 #[intrinsic = "sleep"]
                 pub async fn sleep(duration: std::time::Duration) { unreachable!() }
+            }
+        "#,
+    ),
+    (
+        "winnow",
+        r#"
+            pub struct ContextError;
+            pub type ModalResult<T> = Result<T, ContextError>;
+            pub struct ParserValue<T>;
+
+            #[op(func = "winnow_alt")]
+            pub fn alt<T>(parsers: T) -> ParserValue<T> { unreachable!() }
+
+            #[op(func = "winnow_take_while")]
+            pub fn take_while<R, F>(range: R, predicate: F) -> ParserValue<String> { unreachable!() }
+
+            pub trait Parser<I, O, E> {
+                #[op(method = "winnow_parse_next")]
+                fn parse_next(&mut self, input: &mut I) -> O { unreachable!() }
+                #[op(method = "winnow_map")]
+                fn map<F, R>(self, transform: F) -> ParserValue<R> { unreachable!() }
+                #[op(method = "winnow_verify")]
+                fn verify<F>(self, predicate: F) -> Self { unreachable!() }
             }
         "#,
     ),
@@ -1422,6 +1478,34 @@ fn fp_relative_to_module_segments(package_name: &str, relative: &str) -> Vec<Str
 #[cfg(test)]
 mod provider_tests {
     use super::*;
+    use fp_core::intrinsics::extract_op_attr;
+
+    fn op_method_tags(relative_path: &str) -> Vec<(String, String)> {
+        let path = crate::embedded_std::root_dir().join(relative_path);
+        let source = crate::embedded_std::read(&path).expect("vendored std source");
+        let parsed = RustFrontend::new()
+            .parse_file(source, &path)
+            .expect("parse vendored std source");
+
+        parsed
+            .ast
+            .items
+            .iter()
+            .filter_map(|item| {
+                let ItemKind::Impl(impl_block) = item.kind() else {
+                    return None;
+                };
+                let class = extract_op_attr(&impl_block.attrs, "class")?;
+                Some(impl_block.items.iter().filter_map(move |member| {
+                    let ItemKind::DefFunction(function) = member.kind() else {
+                        return None;
+                    };
+                    extract_op_attr(&function.attrs, "method").map(|method| (class.clone(), method))
+                }))
+            })
+            .flatten()
+            .collect()
+    }
 
     fn repository_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1461,6 +1545,31 @@ mod provider_tests {
                 .map(|dependency| dependency.resolved_package_id.as_ref().unwrap().as_str())
                 .collect();
             assert_eq!(actual, dependencies);
+        }
+    }
+
+    #[test]
+    fn vendored_std_exposes_requested_portable_operation_metadata() {
+        let expected = [
+            ("core/str/mod.rs", "str", "char_indices"),
+            ("core/str/mod.rs", "str", "split_at"),
+            ("core/str/mod.rs", "str", "strip_prefix"),
+            ("core/slice/mod.rs", "slice", "split_at"),
+            ("core/slice/mod.rs", "slice", "strip_prefix"),
+            ("core/bool.rs", "bool", "then_some"),
+            ("core/char/methods.rs", "char", "is_ascii_hexdigit"),
+            ("core/range.rs", "RangeInclusive", "contains"),
+        ];
+
+        for (path, class, method) in expected {
+            assert!(
+                op_method_tags(path)
+                    .iter()
+                    .any(|(actual_class, actual_method)| {
+                        actual_class == class && actual_method == method
+                    }),
+                "missing #[op(class = {class:?})] #[op(method = {method:?})] in {path}",
+            );
         }
     }
 
@@ -1648,6 +1757,49 @@ mod provider_tests {
             .unwrap();
         assert_eq!(second.items.len(), 1);
         assert_eq!(second.items[0].module_path, first.items[0].module_path);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_source_cache_invalidates_when_a_child_module_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "fp-rust-module-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source_dir = root.join("src");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\".\"]\n\n[package]\nname = \"sample\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(source_dir.join("lib.rs"), "mod child;").unwrap();
+        let child = source_dir.join("child.rs");
+        std::fs::write(&child, "pub struct Before;").unwrap();
+
+        let package_id = PackageId::new("sample");
+        let first = RustPackageProvider::new(root.clone())
+            .load_package_source(&package_id)
+            .unwrap();
+        assert!(first.items.iter().any(|item| {
+            matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "Before")
+        }));
+
+        std::fs::write(&child, "pub struct After;").unwrap();
+        let second = RustPackageProvider::new(root.clone())
+            .load_package_source(&package_id)
+            .unwrap();
+        assert!(second.items.iter().any(|item| {
+            matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "After")
+        }));
+        assert!(!second.items.iter().any(|item| {
+            matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "Before")
+        }));
 
         std::fs::remove_dir_all(root).unwrap();
     }

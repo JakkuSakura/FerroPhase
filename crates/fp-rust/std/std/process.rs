@@ -593,6 +593,7 @@ pub struct Command {
     inner: imp::Command,
 }
 
+#[op(class = "Command")]
 impl Command {
     /// Constructs a new `Command` for launching the program at
     /// path `program`, with the following default configuration:
@@ -683,6 +684,7 @@ impl Command {
     /// [`arg`]: Self::arg
     /// [`args`]: Self::args
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "new")]
     pub fn new<S: AsRef<OsStr>>(program: S) -> Command {
         Command { inner: imp::Command::new(program.as_ref()) }
     }
@@ -746,6 +748,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "arg")]
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Command {
         self.inner.arg(arg.as_ref());
         self
@@ -792,6 +795,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "args")]
     pub fn args<I, S>(&mut self, args: I) -> &mut Command
     where
         I: IntoIterator<Item = S>,
@@ -972,6 +976,7 @@ impl Command {
     ///
     /// [`canonicalize`]: crate::fs::canonicalize
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "current_dir")]
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Command {
         self.inner.cwd(dir.as_ref().as_ref());
         self
@@ -999,6 +1004,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "stdin")]
     pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
         self.inner.stdin(cfg.into().0);
         self
@@ -1026,6 +1032,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "stdout")]
     pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
         self.inner.stdout(cfg.into().0);
         self
@@ -1053,6 +1060,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "stderr")]
     pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
         self.inner.stderr(cfg.into().0);
         self
@@ -1092,6 +1100,7 @@ impl Command {
     ///     .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "spawn")]
     pub fn spawn(&mut self) -> io::Result<Child> {
         self.inner.spawn(imp::Stdio::Inherit, true).map(Child::from_inner)
     }
@@ -1135,6 +1144,7 @@ impl Command {
     /// # io::Result::Ok(())
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "output")]
     pub fn output(&mut self) -> io::Result<Output> {
         let (status, stdout, stderr) = imp::output(&mut self.inner)?;
         Ok(Output { status: ExitStatus(status), stdout, stderr })
@@ -1173,6 +1183,7 @@ impl Command {
     /// assert!(status.success());
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "status")]
     pub fn status(&mut self) -> io::Result<ExitStatus> {
         self.inner
             .spawn(imp::Stdio::Inherit, true)
@@ -1543,6 +1554,7 @@ impl fmt::Debug for Output {
 #[stable(feature = "process", since = "1.0.0")]
 pub struct Stdio(imp::Stdio);
 
+#[op(class = "Stdio")]
 impl Stdio {
     /// A new pipe should be arranged to connect the parent and child processes.
     ///
@@ -1592,6 +1604,7 @@ impl Stdio {
     ///
     #[must_use]
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "piped")]
     pub fn piped() -> Stdio {
         Stdio(imp::Stdio::MakePipe)
     }
@@ -1632,6 +1645,7 @@ impl Stdio {
     /// ```
     #[must_use]
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "inherit")]
     pub fn inherit() -> Stdio {
         Stdio(imp::Stdio::Inherit)
     }
@@ -1672,6 +1686,7 @@ impl Stdio {
     /// ```
     #[must_use]
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "null")]
     pub fn null() -> Stdio {
         Stdio(imp::Stdio::Null)
     }
@@ -1938,6 +1953,7 @@ impl Default for ExitStatus {
     }
 }
 
+#[op(class = "ExitStatus")]
 impl ExitStatus {
     /// Was termination successful?  Returns a `Result`.
     ///
@@ -1983,6 +1999,7 @@ impl ExitStatus {
     /// ```
     #[must_use]
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "success")]
     pub fn success(&self) -> bool {
         self.0.exit_ok().is_ok()
     }
@@ -2319,6 +2336,7 @@ impl FromInner<imp::ExitCode> for ExitCode {
     }
 }
 
+#[op(class = "Child")]
 impl Child {
     /// Forces the child process to exit. If the child has already exited, `Ok(())`
     /// is returned.
@@ -2344,6 +2362,7 @@ impl Child {
     /// [`InvalidInput`]: io::ErrorKind::InvalidInput
     #[stable(feature = "process", since = "1.0.0")]
     #[cfg_attr(not(test), rustc_diagnostic_item = "child_kill")]
+    #[op(method = "kill")]
     pub fn kill(&mut self) -> io::Result<()> {
         self.handle.kill()
     }
@@ -2392,6 +2411,7 @@ impl Child {
     /// }
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "wait")]
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         drop(self.stdin.take());
         self.handle.wait().map(ExitStatus)
@@ -2431,6 +2451,7 @@ impl Child {
     /// # std::io::Result::Ok(())
     /// ```
     #[stable(feature = "process_try_wait", since = "1.18.0")]
+    #[op(method = "try_wait")]
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         Ok(self.handle.try_wait()?.map(ExitStatus))
     }
@@ -2468,6 +2489,7 @@ impl Child {
     /// ```
     ///
     #[stable(feature = "process", since = "1.0.0")]
+    #[op(method = "wait_with_output")]
     pub fn wait_with_output(mut self) -> io::Result<Output> {
         drop(self.stdin.take());
 

@@ -337,6 +337,7 @@ pub struct DirBuilder {
 /// }
 /// ```
 #[stable(feature = "fs_read_write_bytes", since = "1.26.0")]
+#[op(func = "fs_read")]
 pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
     fn inner(path: &Path) -> io::Result<Vec<u8>> {
         let mut file = File::open(path)?;
@@ -636,6 +637,7 @@ impl File {
     /// }
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "create")]
     pub fn create<P: AsRef<Path>>(path: P) -> io::Result<File> {
         OpenOptions::new().write(true).create(true).truncate(true).open(path.as_ref())
     }
@@ -2340,6 +2342,7 @@ impl Permissions {
     }
 }
 
+#[op(class = "FileType")]
 impl FileType {
     /// Tests whether this file type represents a directory. The
     /// result is mutually exclusive to the results of
@@ -2364,6 +2367,7 @@ impl FileType {
     /// ```
     #[must_use]
     #[stable(feature = "file_type", since = "1.1.0")]
+    #[op(method = "is_dir")]
     pub fn is_dir(&self) -> bool {
         self.0.is_dir()
     }
@@ -2478,6 +2482,7 @@ impl Iterator for ReadDir {
     }
 }
 
+#[op(class = "DirEntry")]
 impl DirEntry {
     /// Returns the full path to the file that this entry represents.
     ///
@@ -2509,6 +2514,7 @@ impl DirEntry {
     /// The exact text, of course, depends on what files you have in `.`.
     #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "path")]
     pub fn path(&self) -> PathBuf {
         self.0.path()
     }
@@ -2582,6 +2588,7 @@ impl DirEntry {
     /// }
     /// ```
     #[stable(feature = "dir_entry_ext", since = "1.1.0")]
+    #[op(method = "file_type")]
     pub fn file_type(&self) -> io::Result<FileType> {
         self.0.file_type().map(FileType)
     }
@@ -2611,6 +2618,7 @@ impl DirEntry {
     /// ```
     #[must_use]
     #[stable(feature = "dir_entry_ext", since = "1.1.0")]
+    #[op(method = "file_name")]
     pub fn file_name(&self) -> OsString {
         self.0.file_name()
     }
@@ -3011,6 +3019,7 @@ pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 #[doc(alias = "realpath")]
 #[doc(alias = "GetFinalPathNameByHandle")]
 #[stable(feature = "fs_canonicalize", since = "1.5.0")]
+#[op(func = "fs_canonicalize")]
 pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     fs_imp::canonicalize(path.as_ref())
 }
@@ -3053,6 +3062,7 @@ pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 #[doc(alias = "mkdir", alias = "CreateDirectory")]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[cfg_attr(not(test), rustc_diagnostic_item = "fs_create_dir")]
+#[op(func = "fs_create_dir")]
 pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     DirBuilder::new().create(path.as_ref())
 }
@@ -3099,7 +3109,7 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
-#[intrinsic = "fs_create_dir_all"]
+#[op(func = "fs_create_dir_all")]
 pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     DirBuilder::new().recursive(true).create(path.as_ref())
 }
@@ -3289,6 +3299,7 @@ pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// ```
 #[doc(alias = "ls", alias = "opendir", alias = "FindFirstFile", alias = "FindNextFile")]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[op(func = "fs_read_dir")]
 pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<ReadDir> {
     fs_imp::read_dir(path.as_ref()).map(ReadDir)
 }

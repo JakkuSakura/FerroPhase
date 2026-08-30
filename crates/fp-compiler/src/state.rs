@@ -70,6 +70,8 @@ pub struct CompilerState {
     /// already-constructed backend (`TargetBackend::capabilities`) and
     /// sets it here before compiling (`set_backend_capabilities`).
     backend_capabilities: fp_core::capabilities::LanguageCapabilities,
+    pub(crate) intrinsic_materializer:
+        Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
     /// Selects bytecode lowering for comptime requests made during typing.
     bytecode_comptime: bool,
     /// The one shared task pool every suspendable unit of driver work runs
@@ -116,6 +118,7 @@ impl CompilerState {
             workspace,
             data_layout,
             backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
+            intrinsic_materializer: None,
             bytecode_comptime: false,
             tasks,
             interpreter: LirInterpreter::new(),
@@ -299,6 +302,19 @@ impl CompilerState {
 
     pub fn backend_capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         self.backend_capabilities
+    }
+
+    pub fn set_intrinsic_materializer(
+        &mut self,
+        materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
+    ) {
+        self.intrinsic_materializer = materializer;
+    }
+
+    pub fn intrinsic_materializer(
+        &self,
+    ) -> Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
+        self.intrinsic_materializer.clone()
     }
 
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {

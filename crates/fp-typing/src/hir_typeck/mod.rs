@@ -2396,7 +2396,14 @@ impl HirTypeChecker {
                             scope
                                 .package()
                                 .record_expr_type(init.hir_id.clone(), resolved_init.clone());
-                            resolved_init
+                            // The initializer's type proves compatibility, but the local's
+                            // declared type owns its nominal identity.  Binding the local to
+                            // `resolved_init` loses the declaration's DefId when a helper's
+                            // inferred return was resolved through a different package path;
+                            // subsequent inherent-method lookup then cannot reach the impl
+                            // index.  Keep the initializer fact above for expression consumers
+                            // and bind the pattern to the checked declaration instead.
+                            ty
                         }
                         (Some(annotation), None) => scope.check_type_expr(annotation).await?,
                         (None, Some(init)) => {
@@ -4871,7 +4878,10 @@ impl HirTypeChecker {
                     .as_ref()
                     .and_then(|trait_ty| match &trait_ty.kind {
                         hir::TypeExprKind::Path(path) => match path.res.as_ref()? {
-                            hir::Res::Def(def_id) => program.item(def_id.clone()),
+                            hir::Res::Def(def_id) => {
+                                let item = program.item(def_id.clone());
+                                item
+                            }
                             _ => None,
                         },
                         _ => None,
@@ -4883,6 +4893,7 @@ impl HirTypeChecker {
                                     &item.kind,
                                     hir::TraitItemKind::Method(function)
                                         if function.body.is_some()
+                                            || program.op_def(item.def_id.clone()).is_some()
                                 )
                         }),
                         _ => false,
@@ -5022,7 +5033,10 @@ impl HirTypeChecker {
                             // a fallback signature source — if the impl
                             // doesn't redeclare it, that's a genuine "method
                             // not found" case, not something to paper over.
-                            if trait_item.name == *method && function.body.is_some() {
+                            if trait_item.name == *method
+                                && (function.body.is_some()
+                                    || program.op_def(trait_item.def_id.clone()).is_some())
+                            {
                                 let signature = scope.function_signature(function).await?;
                                 let method_actuals = scope.method_call_actuals(&signature, actuals);
                                 let Some((mut substitutions, mut result)) = scope

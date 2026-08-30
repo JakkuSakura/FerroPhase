@@ -672,6 +672,28 @@ impl AstToHirLowerer {
                                 !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
                             )?;
                             method_names.insert(method.sig.name.as_str().to_string());
+                            let trait_method_def_id = trait_items.iter().find_map(|item| {
+                                let ast::ItemKind::DefFunction(trait_func) = item.kind() else {
+                                    return None;
+                                };
+                                (trait_func.name.name == func.name.name)
+                                    .then(|| self.def_id_for_item(item))
+                            });
+                            if let Some(trait_method_def_id) = trait_method_def_id {
+                                if let Some(op) =
+                                    self.package.op_defs.get(&trait_method_def_id).cloned()
+                                {
+                                    let method_def_id = self.next_def_id();
+                                    self.package.op_defs.insert(method_def_id.clone(), op);
+                                    items.push(hir::ImplItem {
+                                        def_id: method_def_id,
+                                        hir_id: self.next_id(),
+                                        name: method.sig.name.clone(),
+                                        kind: hir::ImplItemKind::Method(method),
+                                    });
+                                    continue;
+                                }
+                            }
                             items.push(hir::ImplItem {
                                 def_id: self.next_def_id(),
                                 hir_id: self.next_id(),
@@ -770,8 +792,19 @@ impl AstToHirLowerer {
                         // fallback signature source.
                         let function =
                             self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
+                        let method_def_id = self.def_id_for_item(item);
+                        if let Some(tag) =
+                            fp_core::intrinsics::extract_op_attr(&func_decl.attrs, "method")
+                        {
+                            let op = trait_op_class.as_deref().and_then(|class| {
+                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                            });
+                            if let Some(op) = op {
+                                self.package.op_defs.insert(method_def_id.clone(), op);
+                            }
+                        }
                         items.push(hir::TraitItem {
-                            def_id: self.def_id_for_item(item),
+                            def_id: method_def_id,
                             hir_id: self.next_id(),
                             name: func_decl.name.name.clone().into(),
                             kind: hir::TraitItemKind::Method(function),

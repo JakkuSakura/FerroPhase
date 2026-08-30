@@ -18,13 +18,86 @@ mod collections;
 mod expressions;
 mod naming;
 pub use backend::KotlinBackend;
-use collections::sized_collection_element_type;
 pub use collections::{
-    collect_enum_field_names, collect_enum_variant_names, collect_list_field_names,
-    collect_mutated_field_names, collect_string_field_names,
+    collect_enum_field_names, collect_enum_variant_names, collect_enum_variant_payload_fields,
+    collect_list_field_names, collect_mutated_field_names, collect_string_field_names,
 };
+use collections::{enum_variant_payload_field_names, sized_collection_element_type};
 use expressions::*;
 use naming::*;
+
+fn enum_variant_names_from_items(items: &[Item]) -> HashMap<String, HashMap<String, String>> {
+    let mut names = HashMap::new();
+    collect_enum_variant_names_from_items(items, &mut names);
+    names
+}
+
+fn collect_enum_variant_names_from_items(
+    items: &[Item],
+    names: &mut HashMap<String, HashMap<String, String>>,
+) {
+    for item in items {
+        match item.kind() {
+            ItemKind::DefEnum(en) => {
+                names.insert(
+                    en.name.name.clone(),
+                    en.value
+                        .variants
+                        .iter()
+                        .map(|variant| (variant.name.name.clone(), variant.name.name.clone()))
+                        .collect(),
+                );
+            }
+            ItemKind::Impl(impl_block) => {
+                collect_enum_variant_names_from_items(&impl_block.items, names);
+            }
+            ItemKind::Module(module) => {
+                collect_enum_variant_names_from_items(&module.items, names);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn enum_variant_payload_fields_from_items(
+    items: &[Item],
+) -> HashMap<String, HashMap<String, Vec<String>>> {
+    let mut fields = HashMap::new();
+    collect_enum_variant_payload_fields_from_items(items, &mut fields);
+    fields
+}
+
+fn collect_enum_variant_payload_fields_from_items(
+    items: &[Item],
+    fields: &mut HashMap<String, HashMap<String, Vec<String>>>,
+) {
+    for item in items {
+        match item.kind() {
+            ItemKind::DefEnum(en) => {
+                fields.insert(
+                    en.name.name.clone(),
+                    en.value
+                        .variants
+                        .iter()
+                        .map(|variant| {
+                            (
+                                variant.name.name.clone(),
+                                enum_variant_payload_field_names(&variant.value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            ItemKind::Impl(impl_block) => {
+                collect_enum_variant_payload_fields_from_items(&impl_block.items, fields);
+            }
+            ItemKind::Module(module) => {
+                collect_enum_variant_payload_fields_from_items(&module.items, fields);
+            }
+            _ => {}
+        }
+    }
+}
 
 // ── Emitter context ──────────────────────────────────────────────────────────
 
@@ -115,6 +188,14 @@ struct KotlinEmitter {
     /// `render_match_pat` instead of re-deriving a variant's Kotlin name from
     /// its own (possibly differently-qualified) pattern text.
     enum_variant_names: HashMap<String, HashMap<String, String>>,
+    /// Kotlin constructor-field names for data-carrying enum variants. Pattern
+    /// matching needs these after Kotlin has replaced Rust constructor patterns
+    /// with an `is` type test and explicit payload bindings.
+    enum_variant_payload_fields: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Trait methods that must be `suspend` because at least one implementation
+    /// is async. Rust's `async_trait` expansion can lose the declaration's async
+    /// marker while retaining it on the implementation.
+    async_trait_methods: HashSet<(String, String)>,
 }
 
 fn kotlin_writer_config() -> WriterConfig {
@@ -145,6 +226,8 @@ impl KotlinEmitter {
             declared_names: Vec::new(),
             referenced_paths: HashSet::new(),
             enum_variant_names: HashMap::new(),
+            enum_variant_payload_fields: HashMap::new(),
+            async_trait_methods: HashSet::new(),
         }
     }
 
@@ -193,6 +276,7 @@ pub struct KotlinWorkspaceContext {
     pub string_fields: HashSet<String>,
     pub enum_fields: HashSet<String>,
     pub enum_variant_names: HashMap<String, HashMap<String, String>>,
+    pub enum_variant_payload_fields: HashMap<String, HashMap<String, Vec<String>>>,
     /// `AstPackage::referenced_paths` merged across every package in the
     /// workspace — each item's own qualified path (module + name) mapped to
     /// the qualified paths it references.
@@ -210,6 +294,7 @@ impl KotlinWorkspaceContext {
         let string_fields = collect_string_field_names(items());
         let enum_fields = collect_enum_field_names(items());
         let enum_variant_names = collect_enum_variant_names(items());
+        let enum_variant_payload_fields = collect_enum_variant_payload_fields(items());
         let referenced_paths = sources
             .flat_map(|src| src.referenced_paths.iter())
             .map(|(path, refs)| (path.clone(), refs.clone()))
@@ -220,6 +305,7 @@ impl KotlinWorkspaceContext {
             string_fields,
             enum_fields,
             enum_variant_names,
+            enum_variant_payload_fields,
             referenced_paths,
         }
     }
@@ -230,6 +316,8 @@ pub struct KotlinSerializer;
 impl KotlinSerializer {
     pub fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut emitter = KotlinEmitter::new();
+        emitter.enum_variant_names = enum_variant_names_from_items(&file.items);
+        emitter.enum_variant_payload_fields = enum_variant_payload_fields_from_items(&file.items);
         emitter.emit_file(file)?;
         let mut out = String::from("// Generated by FerroPhase — Kotlin target\n\n");
         out.push_str(&emitter.writer.finish());
@@ -255,6 +343,7 @@ impl KotlinSerializer {
             string_fields,
             enum_fields,
             enum_variant_names,
+            enum_variant_payload_fields,
             referenced_paths,
         } = ctx;
         let modules = fp_core::ast::package::split_package_into_modules(source);
@@ -326,6 +415,7 @@ impl KotlinSerializer {
             emitter.enum_field_names = enum_fields.clone();
             emitter.referenced_paths = file_referenced_paths;
             emitter.enum_variant_names = enum_variant_names.clone();
+            emitter.enum_variant_payload_fields = enum_variant_payload_fields.clone();
             emitter
                 .emit_file(&file)
                 .map_err(|e| eyre::eyre!("serialize {}: {}", mod_path, e))?;
@@ -530,6 +620,12 @@ impl KotlinEmitter {
                 &mut trait_impls,
             );
         }
+        self.async_trait_methods = trait_impls
+            .values()
+            .flat_map(|methods| methods.iter())
+            .filter(|(_, method)| method.is_async)
+            .map(|(trait_name, method)| (trait_identity(trait_name), method.name.name.clone()))
+            .collect();
 
         for item in non_imports {
             self.emit_item(item, &static_methods, &trait_impls)?;
@@ -738,11 +834,15 @@ impl KotlinEmitter {
                         .as_ref()
                         .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty)))
                         .unwrap_or_else(|| ": Unit".to_string());
-                    let fn_kw = if f.is_async { "suspend fun" } else { "fun" };
+                    let is_async = f.is_async
+                        || self
+                            .async_trait_methods
+                            .contains(&(name.to_string(), f.name.name.clone()));
+                    let fn_kw = if is_async { "suspend fun" } else { "fun" };
                     self.writer.write_line(format!(
                         "{} {}({}){}",
                         fn_kw,
-                        f.name.name.as_str(),
+                        kotlin_member_name(f.name.name.as_str()),
                         params,
                         ret
                     ));
@@ -841,17 +941,12 @@ impl KotlinEmitter {
     ) -> Result<()> {
         let name = en.name.name.as_str().to_string();
         let variants = &en.value.variants;
-        let is_error = derives_rust_error(&en.attrs);
-        let has_data = is_error || variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
+        let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
         let implemented_traits = implemented_trait_names(traits);
-        let mut supertypes = implemented_traits;
-        if is_error {
-            supertypes.push("Exception()".to_string());
-        }
-        let header_suffix = if supertypes.is_empty() {
+        let header_suffix = if implemented_traits.is_empty() {
             String::new()
         } else {
-            format!(" : {}", supertypes.join(", "))
+            format!(" : {}", implemented_traits.join(", "))
         };
 
         if has_data {
@@ -865,6 +960,11 @@ impl KotlinEmitter {
                 // this same name back verbatim, so there's no separate
                 // casing transform for those sites to independently reproduce.
                 let vname = variant.name.name.clone();
+                let payload_fields = enum_variant_payload_field_names(&variant.value);
+                self.enum_variant_payload_fields
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(vname.clone(), payload_fields);
                 match &variant.value {
                     Ty::Unit(_) | Ty::Nothing(_) => {
                         self.writer
@@ -913,6 +1013,22 @@ impl KotlinEmitter {
                         self.writer.write_line(format!(
                             "    data class {}(val __data: {}) : {}()",
                             vname, ty_str, name
+                        ));
+                    }
+                    Ty::Tuple(tuple) => {
+                        let fields = tuple
+                            .types
+                            .iter()
+                            .enumerate()
+                            .map(|(index, ty)| {
+                                format!("val _{}: {}", index, self.kotlin_type_from_ty(ty))
+                            })
+                            .collect::<Vec<_>>();
+                        self.writer.write_line(format!(
+                            "    data class {}({}) : {}()",
+                            vname,
+                            fields.join(", "),
+                            name
                         ));
                     }
                     _ => {
@@ -988,22 +1104,6 @@ impl KotlinEmitter {
     }
 }
 
-/// Rust error enums derive `thiserror::Error` (or an imported `Error`). Kotlin's
-/// standard `Result.failure` accepts only a `Throwable`, so preserve that source
-/// declaration contract by making the generated sealed base an `Exception`.
-/// This inspects the structured derive attribute, never a declaration name.
-fn derives_rust_error(attrs: &[fp_core::ast::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        let fp_core::ast::AttrMeta::List(list) = &attr.meta else {
-            return false;
-        };
-        list.name.last().as_str() == "derive"
-            && list.items.iter().any(|item| {
-                matches!(item, fp_core::ast::AttrMeta::Path(path) if path.last().as_str() == "Error")
-            })
-    })
-}
-
 /// The distinct trait names in `traits`, in first-seen order — for the
 /// `: Trait1, Trait2` suffix on a type's own declaration. Must be computed
 /// (and the header line written) *before* `emit_trait_impl_block` opens the
@@ -1023,6 +1123,29 @@ fn implemented_trait_names(traits: &[(String, ItemDefFunction)]) -> Vec<String> 
         }
     }
     seen
+}
+
+fn trait_identity(name: &str) -> String {
+    name.rsplit(['.', ':']).next().unwrap_or(name).to_string()
+}
+
+/// Use the same target-language spelling at declarations and call sites.
+/// Mappings that are expressions/operators rather than identifiers have no
+/// declaration equivalent, so retain the source spelling for those.
+fn kotlin_member_name(name: &str) -> String {
+    let mapped = map_kt_method(name);
+    let mapped = mapped.strip_suffix("()").unwrap_or(&mapped);
+    if !mapped.is_empty()
+        && mapped.chars().enumerate().all(|(index, ch)| {
+            (index == 0 && (ch == '_' || ch.is_ascii_alphabetic()))
+                || ch == '_'
+                || ch.is_ascii_alphanumeric()
+        })
+    {
+        mapped.to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 // ── Function ─────────────────────────────────────────────────────────────────
@@ -1070,7 +1193,7 @@ impl KotlinEmitter {
     }
 
     fn emit_companion_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
-        let name = f.name.name.as_str();
+        let name = kotlin_member_name(f.name.name.as_str());
         self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
         self.current_self_name = Some(self_name.to_string());
         let params = f
@@ -1118,7 +1241,7 @@ impl KotlinEmitter {
 
 impl KotlinEmitter {
     fn emit_impl_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
-        let name = f.name.name.as_str();
+        let name = kotlin_member_name(f.name.name.as_str());
         if is_fmt_trait_method(f) {
             // Kotlin resolves a real member (`Any.toString()`) over an
             // extension function of the same name, so this inherent-impl
@@ -1183,7 +1306,7 @@ impl KotlinEmitter {
 /// function never does, regardless of its name/signature match).
 impl KotlinEmitter {
     fn emit_override_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
-        let name = f.name.name.as_str();
+        let name = kotlin_member_name(f.name.name.as_str());
         if is_fmt_trait_method(f) {
             // `toString()` is the one Kotlin name that must go through a real
             // class-member override (satisfying `Any.toString()`), which is
@@ -1239,7 +1362,7 @@ impl KotlinEmitter {
 
 impl KotlinEmitter {
     fn emit_function(&mut self, f: &ItemDefFunction) -> Result<()> {
-        let name = f.name.name.as_str();
+        let name = kotlin_member_name(f.name.name.as_str());
         self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
         self.current_self_name = None;
         let params = f
@@ -1778,9 +1901,13 @@ impl KotlinEmitter {
             );
         let is_two_arm = mt.cases.len() == 2 && is_else_arm(&mt.cases[1].pat);
 
+        if let Some((ok_case, err_case)) = result_match_cases(&mt.cases) {
+            return self.emit_result_match_stmt(&scrutinee, ok_case, err_case, tail);
+        }
+
         if is_single_arm || is_two_arm {
             let case = &mt.cases[0];
-            let non_monadic = if is_two_arm {
+            let non_monadic = if is_single_arm || is_two_arm {
                 non_monadic_tuple_variant(self, &case.pat)
             } else {
                 None
@@ -1794,8 +1921,10 @@ impl KotlinEmitter {
             };
 
             self.push_scope();
-            if let Some((_, ref binding)) = non_monadic {
-                self.declare_name(binding);
+            if let Some((_, ref bindings)) = non_monadic {
+                for (binding, _) in bindings {
+                    self.declare_name(binding);
+                }
             }
             if let Some(ref var) = effective_var {
                 if let Some(names) = var.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
@@ -1807,22 +1936,28 @@ impl KotlinEmitter {
 
             let has_second_arm = mt.cases.len() > 1;
 
-            // A 2-arm match on an ordinary enum variant (not Some/Ok/Err/None) isn't a
+            // A match on an ordinary enum variant (not Some/Ok/Err/None) isn't a
             // null-check equivalent — the scrutinee itself isn't interchangeable with its
             // payload, so it needs a smart-cast + field access, not `val x = scrutinee`.
-            if let Some((variant_path, binding)) = non_monadic {
+            if let Some((variant_path, bindings)) = non_monadic {
                 self.writer
                     .write_line(&format!("if ({} is {}) {{", scrutinee, variant_path));
                 self.writer.increase_indent();
-                self.writer
-                    .write_line(&format!("val {} = {}.__data", binding, scrutinee));
+                for (binding, field) in bindings {
+                    self.writer
+                        .write_line(&format!("val {} = {}.{}", binding, scrutinee, field));
+                }
                 self.emit_box_body(&case.body, tail)?;
                 self.writer.decrease_indent();
-                self.writer.write_line("} else {");
-                self.writer.increase_indent();
-                self.emit_box_body(&mt.cases[1].body, tail)?;
-                self.writer.decrease_indent();
-                self.writer.write_line("}");
+                if has_second_arm {
+                    self.writer.write_line("} else {");
+                    self.writer.increase_indent();
+                    self.emit_box_body(&mt.cases[1].body, tail)?;
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                } else {
+                    self.writer.write_line("}");
+                }
                 self.pop_scope();
                 return Ok(());
             }
@@ -1904,14 +2039,16 @@ impl KotlinEmitter {
             self.writer.write_line(&format!("when ({}) {{", scrutinee));
             self.writer.increase_indent();
             for case in &mt.cases {
-                if let Some((variant_path, binding)) = non_monadic_tuple_variant(self, &case.pat) {
+                if let Some((variant_path, bindings)) = non_monadic_tuple_variant(self, &case.pat) {
                     self.writer
                         .write_line(&format!("is {} -> {{", variant_path));
                     self.writer.increase_indent();
                     self.push_scope();
-                    self.declare_name(&binding);
-                    self.writer
-                        .write_line(&format!("val {} = {}.__data", binding, scrutinee));
+                    for (binding, field) in bindings {
+                        self.declare_name(&binding);
+                        self.writer
+                            .write_line(&format!("val {} = {}.{}", binding, scrutinee, field));
+                    }
                     self.emit_box_body(&case.body, tail)?;
                     self.pop_scope();
                     self.writer.decrease_indent();
@@ -1935,6 +2072,57 @@ impl KotlinEmitter {
             self.writer.write_line("}");
             Ok(())
         }
+    }
+
+    fn emit_result_match_stmt(
+        &mut self,
+        scrutinee: &str,
+        ok_case: &fp_core::ast::ExprMatchCase,
+        err_case: &fp_core::ast::ExprMatchCase,
+        tail: Tail,
+    ) -> Result<()> {
+        self.writer
+            .write_line(&format!("if ({}.isSuccess) {{", scrutinee));
+        self.writer.increase_indent();
+        self.push_scope();
+        if let Some(binding) = stripped_tuple_binding(&ok_case.pat) {
+            self.declare_name(&binding);
+            self.writer
+                .write_line(&format!("val {} = {}.getOrThrow()", binding, scrutinee));
+        }
+        self.emit_box_body(&ok_case.body, tail)?;
+        self.pop_scope();
+        self.writer.decrease_indent();
+        self.writer.write_line("} else {");
+        self.writer.increase_indent();
+        self.push_scope();
+        if let Some(binding) = stripped_tuple_binding(&err_case.pat) {
+            self.declare_name(&binding);
+            self.writer.write_line(&format!(
+                "val {} = {}.exceptionOrNull()!!",
+                binding, scrutinee
+            ));
+        }
+        self.emit_box_body(&err_case.body, tail)?;
+        self.pop_scope();
+        self.writer.decrease_indent();
+        self.writer.write_line("}");
+        Ok(())
+    }
+}
+
+fn result_match_cases(
+    cases: &[fp_core::ast::ExprMatchCase],
+) -> Option<(&fp_core::ast::ExprMatchCase, &fp_core::ast::ExprMatchCase)> {
+    if cases.len() != 2 {
+        return None;
+    }
+    let first = pattern_portable_op(&cases[0].pat);
+    let second = pattern_portable_op(&cases[1].pat);
+    match (first.as_deref(), second.as_deref()) {
+        (Some("result_ok"), Some("result_err")) => Some((&cases[0], &cases[1])),
+        (Some("result_err"), Some("result_ok")) => Some((&cases[1], &cases[0])),
+        _ => None,
     }
 }
 
@@ -2108,7 +2296,10 @@ impl KotlinEmitter {
                     TypeInt::I16 => "Short".into(),
                     TypeInt::I32 => "Int".into(),
                     TypeInt::I64 => "Long".into(),
-                    TypeInt::U8 => "Int".into(),
+                    // Kotlin's JVM byte buffers and stream APIs use `ByteArray`/
+                    // `Byte`. Keep the scalar ABI aligned with the structural
+                    // byte-vector lowering in the Kotlin backend.
+                    TypeInt::U8 => "Byte".into(),
                     TypeInt::U16 => "Int".into(),
                     TypeInt::U32 => "Long".into(),
                     TypeInt::U64 => "Long".into(),
@@ -2173,11 +2364,15 @@ impl KotlinEmitter {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use fp_core::ast::{
         AttrMeta, AttrMetaList, AttrStyle, Attribute, EnumTypeVariant, ExprBlock, ExprInvoke,
-        Ident, ItemDefEnum, Path, ReprOptions, TypeEnum,
+        ExprMatch, ExprMatchCase, FunctionParamReceiver, Ident, ItemDeclFunction, ItemDefEnum,
+        ItemDefStruct, ItemDefTrait, ItemImpl, Path, Pattern, PatternIdent, PatternKind,
+        PatternTupleStruct, ReprOptions, TypeBounds, TypeEnum, TypeInt, TypePrimitive, TypeTuple,
     };
+    use fp_core::intrinsics::PortableOpRegistry;
 
     use super::*;
 
@@ -2216,8 +2411,9 @@ mod tests {
         let rendered = KotlinSerializer
             .serialize_file(&file)
             .expect("serialize error enum");
-        assert!(rendered.contains("sealed class Problem : Exception()"));
-        assert!(rendered.contains("object Broken : Problem()"));
+        assert!(rendered.contains("enum class Problem"));
+        assert!(!rendered.contains("Exception()"));
+        assert!(rendered.contains("Broken"));
     }
 
     #[test]
@@ -2254,5 +2450,303 @@ mod tests {
             "an invoke target with no Kotlin rendering must be a real error, not a \
              silent callee-less `(args)` call"
         );
+    }
+
+    #[test]
+    fn result_match_uses_resolved_operation_identity_not_variant_name() {
+        let registry = PortableOpRegistry::builtin();
+        let success = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+            name: fp_core::ast::Name::ident("success_spelling_is_irrelevant"),
+            patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
+                Ident::new("ok"),
+            )))],
+        }));
+        fp_core::ast::set_resolved_pattern_op(
+            success.id(),
+            registry
+                .resolve("result_ok")
+                .expect("registered result success"),
+        );
+        let failure = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+            name: fp_core::ast::Name::ident("failure_spelling_is_irrelevant"),
+            patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
+                Ident::new("err"),
+            )))],
+        }));
+        fp_core::ast::set_resolved_pattern_op(
+            failure.id(),
+            registry
+                .resolve("result_err")
+                .expect("registered result failure"),
+        );
+        let body = ExprBlock::new_stmts(vec![BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(
+            Expr::new(ExprKind::Match(ExprMatch {
+                span: fp_core::span::Span::null(),
+                scrutinee: Some(Expr::ident(Ident::new("outcome")).into()),
+                cases: vec![
+                    ExprMatchCase {
+                        span: fp_core::span::Span::null(),
+                        pat: Some(Box::new(success)),
+                        cond: Expr::unit().into(),
+                        guard: None,
+                        body: Expr::ident(Ident::new("ok")).into(),
+                    },
+                    ExprMatchCase {
+                        span: fp_core::span::Span::null(),
+                        pat: Some(Box::new(failure)),
+                        cond: Expr::unit().into(),
+                        guard: None,
+                        body: Expr::ident(Ident::new("err")).into(),
+                    },
+                ],
+            })),
+        ))]);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefFunction(
+                ItemDefFunction::new_simple(Ident::new("unwrap_result"), body),
+            ))],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize Result match");
+        assert!(rendered.contains("if (outcome.isSuccess)"));
+        assert!(rendered.contains("val ok = outcome.getOrThrow()"));
+        assert!(rendered.contains("val err = outcome.exceptionOrNull()!!"));
+    }
+
+    #[test]
+    fn enum_tuple_payload_uses_typed_positional_fields() {
+        let enum_item = ItemDefEnum {
+            attrs: Vec::new(),
+            visibility: fp_core::ast::Visibility::Public,
+            name: Ident::new("Token"),
+            value: TypeEnum {
+                name: Ident::new("Token"),
+                generics_params: Vec::new(),
+                repr: ReprOptions::default(),
+                variants: vec![EnumTypeVariant {
+                    attrs: Vec::new(),
+                    name: Ident::new("Span"),
+                    value: Ty::Tuple(TypeTuple {
+                        types: vec![
+                            Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+                            Ty::Primitive(TypePrimitive::String),
+                        ],
+                    }),
+                    discriminant: None,
+                }],
+            },
+        };
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefEnum(enum_item))],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize enum");
+        assert!(rendered.contains("data class Span(val _0: Int, val _1: String) : Token()"));
+        assert!(!rendered.contains("vararg __data: Any?"));
+    }
+
+    #[test]
+    fn trait_and_override_share_kotlin_method_name_and_suspend_modifier() {
+        let mut trait_sig = fp_core::ast::FunctionSignature::unit();
+        trait_sig.name = Some(Ident::new("is_alive"));
+        trait_sig.receiver = Some(FunctionParamReceiver::Ref);
+        trait_sig.ret_ty = Some(Ty::Primitive(TypePrimitive::Bool));
+        let trait_decl = ItemDeclFunction {
+            attrs: Vec::new(),
+            ty_annotation: None,
+            name: Ident::new("is_alive"),
+            sig: trait_sig,
+            is_async: false,
+        };
+
+        let mut implementation = ItemDefFunction::new_simple(
+            Ident::new("is_alive"),
+            ExprBlock::new_stmts(vec![BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(
+                Expr::value(Value::bool(true)),
+            ))]),
+        )
+        .with_receiver(FunctionParamReceiver::Ref)
+        .with_ret_ty(Ty::Primitive(TypePrimitive::Bool));
+        implementation.is_async = true;
+        let worker = ItemDefStruct::new(Ident::new("Worker"), Vec::new());
+        let contract = ItemDefTrait {
+            attrs: Vec::new(),
+            name: Ident::new("WorkerState"),
+            generics_params: Vec::new(),
+            bounds: TypeBounds::any(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DeclFunction(trait_decl))],
+            visibility: fp_core::ast::Visibility::Public,
+        };
+        let implementation = ItemImpl::new(
+            Some(fp_core::ast::Name::ident("WorkerState")),
+            Expr::ident(Ident::new("Worker")),
+            vec![Item::new(ItemKind::DefFunction(implementation))],
+        );
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![
+                Item::new(ItemKind::DefTrait(contract)),
+                Item::new(ItemKind::DefStruct(worker)),
+                Item::new(ItemKind::Impl(implementation)),
+            ],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize async trait implementation");
+        assert!(rendered.contains("suspend fun isAlive(): Boolean"));
+        assert!(rendered.contains("override suspend fun isAlive(): Boolean"));
+        assert!(!rendered.contains("is_alive"));
+    }
+
+    #[test]
+    fn tuple_variant_match_uses_type_test_and_component_fields() {
+        let enum_item = ItemDefEnum {
+            attrs: Vec::new(),
+            visibility: fp_core::ast::Visibility::Public,
+            name: Ident::new("Token"),
+            value: TypeEnum {
+                name: Ident::new("Token"),
+                generics_params: Vec::new(),
+                repr: ReprOptions::default(),
+                variants: vec![EnumTypeVariant {
+                    attrs: Vec::new(),
+                    name: Ident::new("Span"),
+                    value: Ty::Tuple(TypeTuple {
+                        types: vec![
+                            Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+                            Ty::Primitive(TypePrimitive::String),
+                        ],
+                    }),
+                    discriminant: None,
+                }],
+            },
+        };
+        let pattern = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+            name: fp_core::ast::Name::path(Path::plain(vec![
+                Ident::new("Token"),
+                Ident::new("Span"),
+            ])),
+            patterns: vec![
+                Pattern::new(PatternKind::Ident(PatternIdent::new(Ident::new("start")))),
+                Pattern::new(PatternKind::Ident(PatternIdent::new(Ident::new("text")))),
+            ],
+        }));
+        let body = ExprBlock::new_stmts(vec![BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(
+            Expr::new(ExprKind::Match(ExprMatch {
+                span: fp_core::span::Span::null(),
+                scrutinee: Some(Expr::ident(Ident::new("token")).into()),
+                cases: vec![ExprMatchCase {
+                    span: fp_core::span::Span::null(),
+                    pat: Some(Box::new(pattern)),
+                    cond: Expr::unit().into(),
+                    guard: None,
+                    body: Expr::ident(Ident::new("start")).into(),
+                }],
+            })),
+        ))]);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![
+                Item::new(ItemKind::DefEnum(enum_item)),
+                Item::new(ItemKind::DefFunction(
+                    ItemDefFunction::new_simple(Ident::new("first_start"), body)
+                        .with_ret_ty(Ty::Primitive(TypePrimitive::Int(TypeInt::I32))),
+                )),
+            ],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize tuple variant match");
+        assert!(rendered.contains("if (token is Token.Span) {"));
+        assert!(rendered.contains("val start = token._0"));
+        assert!(rendered.contains("val text = token._1"));
+        assert!(!rendered.contains("Token.Span(start, text) ->"));
+    }
+
+    #[test]
+    fn mutable_reference_assignment_and_split_at_pair_use_kotlin_syntax() {
+        let input = Expr::ident(Ident::new("input"));
+        let split_at = Expr::new(ExprKind::Invoke(ExprInvoke {
+            span: fp_core::span::Span::null(),
+            target: ExprInvokeTarget::Method(fp_core::ast::ExprSelect {
+                span: fp_core::span::Span::null(),
+                obj: input.clone().into(),
+                field: Ident::new("split_at"),
+                generic_args: Vec::new(),
+                select: fp_core::ast::ExprSelectType::Method,
+            }),
+            args: vec![Expr::value(Value::int(3))],
+            kwargs: Vec::new(),
+        }));
+        let pair_pattern = Pattern::new(PatternKind::Tuple(fp_core::ast::PatternTuple {
+            patterns: vec![
+                Pattern::new(PatternKind::Ident(PatternIdent::new(Ident::new("head")))),
+                Pattern::new(PatternKind::Ident(PatternIdent::new(Ident::new(
+                    "remaining",
+                )))),
+            ],
+        }));
+        let assign = Expr::new(ExprKind::Assign(fp_core::ast::ExprAssign {
+            span: fp_core::span::Span::null(),
+            target: Expr::new(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                span: fp_core::span::Span::null(),
+                op: fp_core::ops::UnOpKind::Deref,
+                val: input.into(),
+            }))
+            .into(),
+            value: Expr::ident(Ident::new("remaining")).into(),
+        }));
+        let mut input_binding = fp_core::ast::StmtLet::new_simple(
+            Ident::new("input"),
+            Expr::value(Value::string("abcdef".to_string())),
+        );
+        input_binding.make_mut();
+        let body = ExprBlock::new_stmts(vec![
+            BlockStmt::Let(input_binding),
+            BlockStmt::Let(fp_core::ast::StmtLet::new(
+                pair_pattern,
+                Some(split_at),
+                None,
+            )),
+            BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(assign)),
+        ]);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefFunction(
+                ItemDefFunction::new_simple(Ident::new("parse"), body),
+            ))],
+        };
+
+        let rendered = KotlinSerializer
+            .serialize_file(&file)
+            .expect("serialize mutable split parser");
+        assert!(rendered.contains("var input = \"abcdef\""));
+        assert!(
+            rendered.contains(
+                "val (head, remaining) = Pair(input.substring(0, 3), input.substring(3))"
+            )
+        );
+        assert!(rendered.contains("input = remaining"));
+        assert!(!rendered.contains("*(input)"));
+        assert!(!rendered.contains(".split_at("));
     }
 }

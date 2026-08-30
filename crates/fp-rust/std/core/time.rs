@@ -83,6 +83,7 @@ pub struct Duration {
     nanos: Nanoseconds, // Always 0 <= nanos < NANOS_PER_SEC
 }
 
+#[op(class = "Duration")]
 impl Duration {
     /// The duration of one second.
     ///
@@ -221,6 +222,7 @@ impl Duration {
     #[must_use]
     #[inline]
     #[rustc_const_stable(feature = "duration_consts", since = "1.32.0")]
+    #[op(method = "from_secs")]
     pub const fn from_secs(secs: u64) -> Duration {
         Duration { secs, nanos: Nanoseconds::ZERO }
     }
@@ -241,6 +243,7 @@ impl Duration {
     #[must_use]
     #[inline]
     #[rustc_const_stable(feature = "duration_consts", since = "1.32.0")]
+    #[op(method = "from_millis")]
     pub const fn from_millis(millis: u64) -> Duration {
         let secs = millis / MILLIS_PER_SEC;
         let subsec_millis = (millis % MILLIS_PER_SEC) as u32;

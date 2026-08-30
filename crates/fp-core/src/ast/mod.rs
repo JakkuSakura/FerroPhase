@@ -73,6 +73,7 @@ mod resolved_types {
         // reusing one map would risk cross-kind id collisions.
         static RESOLVED_ITEM_TYPES: RefCell<HashMap<ItemId, Ty>> = RefCell::new(HashMap::new());
         static RESOLVED_PATTERN_TYPES: RefCell<HashMap<PatternId, Ty>> = RefCell::new(HashMap::new());
+        static RESOLVED_PATTERN_OPS: RefCell<HashMap<PatternId, crate::intrinsics::PortableOp>> = RefCell::new(HashMap::new());
     }
 
     pub fn resolved_item_type(id: ItemId) -> Option<Ty> {
@@ -93,6 +94,16 @@ mod resolved_types {
         RESOLVED_PATTERN_TYPES.with(|cell| {
             cell.borrow_mut().insert(id, ty);
         });
+    }
+
+    pub fn set_resolved_pattern_op(id: PatternId, op: crate::intrinsics::PortableOp) {
+        RESOLVED_PATTERN_OPS.with(|cell| {
+            cell.borrow_mut().insert(id, op);
+        });
+    }
+
+    pub fn resolved_pattern_op(id: PatternId) -> Option<crate::intrinsics::PortableOp> {
+        RESOLVED_PATTERN_OPS.with(|cell| cell.borrow().get(&id).cloned())
     }
 
     /// Replace the whole table — called once by `HirToAstLifter` after

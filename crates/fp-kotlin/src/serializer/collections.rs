@@ -196,6 +196,75 @@ pub fn collect_enum_variant_names<'a>(
     out
 }
 
+/// Kotlin constructor-field names for every data-carrying enum variant.
+/// Tuple payloads become positional `_0`, `_1`, ... fields; named payloads
+/// retain their source field names; single value payloads use `__data`.
+pub fn collect_enum_variant_payload_fields<'a>(
+    items: impl Iterator<Item = &'a PackageItem>,
+) -> HashMap<String, HashMap<String, Vec<String>>> {
+    let mut out = HashMap::new();
+    for pkg_item in items {
+        collect_enum_variant_payload_fields_in_item(&pkg_item.item, &mut out);
+    }
+    out
+}
+
+fn collect_enum_variant_payload_fields_in_item(
+    item: &Item,
+    out: &mut HashMap<String, HashMap<String, Vec<String>>>,
+) {
+    match item.kind() {
+        ItemKind::DefEnum(en) => {
+            let variants = en
+                .value
+                .variants
+                .iter()
+                .map(|variant| {
+                    (
+                        variant.name.name.clone(),
+                        enum_variant_payload_field_names(&variant.value),
+                    )
+                })
+                .collect();
+            out.insert(en.name.name.clone(), variants);
+        }
+        ItemKind::Impl(impl_block) => {
+            for item in &impl_block.items {
+                collect_enum_variant_payload_fields_in_item(item, out);
+            }
+        }
+        ItemKind::Module(module) => {
+            for item in &module.items {
+                collect_enum_variant_payload_fields_in_item(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(super) fn enum_variant_payload_field_names(ty: &Ty) -> Vec<String> {
+    match ty {
+        Ty::Struct(structure) => structure
+            .fields
+            .iter()
+            .map(|field| field.name.name.clone())
+            .collect(),
+        Ty::Structural(structure) => structure
+            .fields
+            .iter()
+            .map(|field| field.name.name.clone())
+            .collect(),
+        Ty::Tuple(tuple) => tuple
+            .types
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("_{index}"))
+            .collect(),
+        Ty::Unit(_) | Ty::Nothing(_) => Vec::new(),
+        _ => vec!["__data".to_string()],
+    }
+}
+
 fn collect_enum_variant_names_in_item(
     item: &Item,
     out: &mut HashMap<String, HashMap<String, String>>,

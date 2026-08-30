@@ -73,7 +73,7 @@ impl MirProgram {
         super::SubstsRef,
     )> {
         let package_id = def_id.package_id.clone();
-        let lookup = |package_id: PackageId, package: &Rc<RefCell<MirPackage>>| {
+        self.packages.get(&package_id).and_then(|package| {
             let package = package.borrow();
             if let Some(info) = package.method_lookup_by_def.get(def_id) {
                 return Some((
@@ -88,16 +88,6 @@ impl MirProgram {
                 .get(def_id)
                 .cloned()
                 .map(|sig| (package_id, format!("fn#{}", def_id).into(), sig, Vec::new()))
-        };
-        self.packages
-            .get(&package_id)
-            .and_then(|package| lookup(package_id.clone(), package))
-            .or_else(|| {
-                self.packages.iter().find_map(|(id, package)| {
-                    (id != &package_id)
-                        .then(|| lookup(id.clone(), package))
-                        .flatten()
-                })
-            })
+        })
     }
 }

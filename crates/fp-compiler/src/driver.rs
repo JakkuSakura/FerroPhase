@@ -832,6 +832,11 @@ impl CompilerDriver {
             let hir = state.hir(hir_package_id.clone())?;
             let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program())
                 .with_capabilities(state.backend_capabilities());
+            let lifter = if let Some(materializer) = state.intrinsic_materializer() {
+                lifter.with_materializer(materializer)
+            } else {
+                lifter
+            };
             // `lift_items_by_path` treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from

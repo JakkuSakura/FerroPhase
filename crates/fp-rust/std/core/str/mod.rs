@@ -857,6 +857,7 @@ impl str {
     #[must_use]
     #[stable(feature = "str_split_at", since = "1.4.0")]
     #[rustc_const_stable(feature = "const_str_split_at", since = "1.86.0")]
+    #[op(method = "split_at")]
     pub const fn split_at(&self, mid: usize) -> (&str, &str) {
         match self.split_at_checked(mid) {
             None => slice_error_fail(self, 0, mid),
@@ -1133,6 +1134,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "char_indices")]
     pub fn char_indices(&self) -> CharIndices<'_> {
         CharIndices { front_offset: 0, iter: self.chars() }
     }
@@ -2483,6 +2485,7 @@ impl str {
     #[must_use = "this returns the remaining substring as a new slice, \
                   without modifying the original"]
     #[stable(feature = "str_strip", since = "1.45.0")]
+    #[op(method = "strip_prefix")]
     pub fn strip_prefix<P: Pattern>(&self, prefix: P) -> Option<&str> {
         prefix.strip_prefix_of(self)
     }
@@ -2806,6 +2809,7 @@ impl str {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "parse")]
     pub fn parse<F: FromStr>(&self) -> Result<F, F::Err> {
         FromStr::from_str(self)
     }

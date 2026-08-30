@@ -493,9 +493,10 @@ impl AstToHirLowerer {
                             Ok(path) => path,
                             Err(error) => {
                                 self.pop_type_scope();
-                                tracing::warn!(
-                                    "skipping impl with unresolvable self-type in {}: {error}",
-                                    self.module_path.to_key(),
+                                tracing::debug!(
+                                    module = %self.module_path.to_key(),
+                                    %error,
+                                    "skipping unsupported impl during tolerant predeclaration",
                                 );
                                 continue;
                             }
@@ -504,10 +505,10 @@ impl AstToHirLowerer {
                             Ok(path) => path.segments,
                             Err(error) => {
                                 self.pop_type_scope();
-                                tracing::warn!(
-                                    "skipping impl with unresolvable self-type {:?} in {}: {error}",
-                                    self_path,
-                                    self.module_path.to_key(),
+                                tracing::debug!(
+                                    module = %self.module_path.to_key(),
+                                    %error,
+                                    "skipping unsupported impl during tolerant predeclaration",
                                 );
                                 continue;
                             }

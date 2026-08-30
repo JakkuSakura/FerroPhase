@@ -1617,6 +1617,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "option_filter", since = "1.27.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "filter")]
     pub const fn filter<P>(self, predicate: P) -> Self
     where
         P: FnOnce(&T) -> bool + Destruct,
@@ -1923,6 +1924,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
+    #[op(method = "take")]
     pub const fn take(&mut self) -> Option<T> {
         // FIXME(const-hack) replace `mem::replace` by `mem::take` when the latter is const ready
         mem::replace(self, None)

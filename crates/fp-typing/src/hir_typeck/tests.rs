@@ -21,17 +21,7 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<RefCell<hir::HirPackage>>> {
-    let package_id = package.id.clone();
-    let program = hir::SharedHirProgram::new(hir::HirProgram::new());
-    program.publish_package(package);
-    let checker = HirTypeChecker::new(
-        program
-            .package_rc(&package_id)
-            .expect("published test package"),
-        program,
-        None,
-        executor,
-    );
+    let checker = HirTypeChecker::new(package, None, None, executor);
     let item_ids: Vec<_> = checker
         .borrow()
         .package()
@@ -379,9 +369,7 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
                             name: path_name.into(),
                             args: None,
                         }],
-                        res: Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
-                            path_name.to_owned(),
-                        ))),
+                        res: None,
                     }),
                     span: fp_core::span::Span::null(),
                 }),
@@ -426,17 +414,302 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
 }
 
 #[test]
+fn typed_command_helper_local_preserves_method_def_identity() {
+    let package_id = test_pkg();
+    let command_id = hir::DefId::new(package_id.clone(), 1);
+    let helper_id = hir::DefId::new(package_id.clone(), 2);
+    let impl_id = hir::DefId::new(package_id.clone(), 3);
+    let output_id = hir::DefId::new(package_id.clone(), 4);
+    let new_id = hir::DefId::new(package_id.clone(), 6);
+    let caller_id = hir::DefId::new(package_id.clone(), 5);
+    let output_call_hir_id = hid(50);
+    let command_path = || hir::TypeExpr {
+        hir_id: hid(60),
+        kind: hir::TypeExprKind::Path(hir::Path {
+            segments: vec![hir::PathSegment {
+                name: "Command".into(),
+                args: None,
+            }],
+            res: Some(hir::Res::Def(command_id.clone())),
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let unit_ty = || hir::TypeExpr {
+        hir_id: hid(61),
+        kind: hir::TypeExprKind::Tuple(Vec::new()),
+        span: fp_core::span::Span::null(),
+    };
+    let function = |name: &str, output: hir::TypeExpr, body: hir::Block| hir::Function {
+        sig: hir::FunctionSig {
+            name: name.into(),
+            inputs: Vec::new(),
+            output,
+            generics: hir::Generics::default(),
+            abi: ty::Abi::Rust,
+        },
+        body: Some(body),
+        is_const: false,
+        is_extern: false,
+        is_async: false,
+        attrs: Vec::new(),
+    };
+    let command = hir::Item {
+        hir_id: hid(1),
+        def_id: command_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Struct(hir::Struct {
+            name: "Command".into(),
+            fields: Vec::new(),
+            generics: hir::Generics::default(),
+            repr: fp_core::ast::ReprOptions::default(),
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let helper = hir::Item {
+        hir_id: hid(2),
+        def_id: helper_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Function(function(
+            "helper",
+            command_path(),
+            hir::Block {
+                hir_id: hid(20),
+                stmts: Vec::new(),
+                expr: Some(Box::new(hir::Expr {
+                    hir_id: hid(21),
+                    kind: hir::ExprKind::Struct(
+                        hir::Path {
+                            segments: vec![hir::PathSegment {
+                                name: "Command".into(),
+                                args: None,
+                            }],
+                            res: Some(hir::Res::Def(command_id.clone())),
+                        },
+                        Vec::new(),
+                    ),
+                    span: fp_core::span::Span::null(),
+                })),
+            },
+        )),
+        span: fp_core::span::Span::null(),
+    };
+    let impl_item = hir::Item {
+        hir_id: hid(3),
+        def_id: impl_id,
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Impl(hir::Impl {
+            generics: hir::Generics::default(),
+            trait_ty: None,
+            self_ty: command_path(),
+            items: vec![
+                hir::ImplItem {
+                    def_id: output_id.clone(),
+                    hir_id: hid(30),
+                    name: "output".into(),
+                    kind: hir::ImplItemKind::Method({
+                        let mut method = function(
+                            "output",
+                            unit_ty(),
+                            hir::Block {
+                                hir_id: hid(31),
+                                stmts: Vec::new(),
+                                expr: Some(Box::new(hir::Expr {
+                                    hir_id: hid(32),
+                                    kind: hir::ExprKind::Tuple(Vec::new()),
+                                    span: fp_core::span::Span::null(),
+                                })),
+                            },
+                        );
+                        method.sig.inputs.push(hir::Param {
+                            hir_id: hid(33),
+                            pat: hir::Pat {
+                                hir_id: hid(34),
+                                kind: hir::PatKind::Binding {
+                                    name: "self".into(),
+                                    mutable: true,
+                                },
+                            },
+                            ty: hir::TypeExpr {
+                                hir_id: hid(35),
+                                kind: hir::TypeExprKind::Ref(Box::new(command_path())),
+                                span: fp_core::span::Span::null(),
+                            },
+                            is_context: false,
+                            as_tuple: false,
+                            as_dict: false,
+                            default: None,
+                        });
+                        method
+                    }),
+                },
+                hir::ImplItem {
+                    def_id: new_id.clone(),
+                    hir_id: hid(36),
+                    name: "new".into(),
+                    kind: hir::ImplItemKind::Method(function(
+                        "new",
+                        command_path(),
+                        hir::Block {
+                            hir_id: hid(37),
+                            stmts: Vec::new(),
+                            expr: Some(Box::new(hir::Expr {
+                                hir_id: hid(38),
+                                kind: hir::ExprKind::Struct(
+                                    hir::Path {
+                                        segments: vec![hir::PathSegment {
+                                            name: "Command".into(),
+                                            args: None,
+                                        }],
+                                        res: Some(hir::Res::Def(command_id.clone())),
+                                    },
+                                    Vec::new(),
+                                ),
+                                span: fp_core::span::Span::null(),
+                            })),
+                        },
+                    )),
+                },
+            ],
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let caller = hir::Item {
+        hir_id: hid(4),
+        def_id: caller_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Function(function(
+            "caller",
+            unit_ty(),
+            hir::Block {
+                hir_id: hid(40),
+                stmts: vec![
+                    hir::Stmt {
+                        hir_id: hid(41),
+                        kind: hir::StmtKind::Local(hir::Local {
+                            hir_id: hid(42),
+                            pat: hir::Pat {
+                                hir_id: hid(43),
+                                kind: hir::PatKind::Binding {
+                                    name: "cmd".into(),
+                                    mutable: true,
+                                },
+                            },
+                            ty: Some(command_path()),
+                            init: Some(hir::Expr {
+                                hir_id: hid(44),
+                                kind: hir::ExprKind::Call(
+                                    Box::new(hir::Expr {
+                                        hir_id: hid(45),
+                                        kind: hir::ExprKind::Path(hir::Path {
+                                            segments: vec![hir::PathSegment {
+                                                name: "helper".into(),
+                                                args: None,
+                                            }],
+                                            res: Some(hir::Res::Def(helper_id)),
+                                        }),
+                                        span: fp_core::span::Span::null(),
+                                    }),
+                                    Vec::new(),
+                                ),
+                                span: fp_core::span::Span::null(),
+                            }),
+                        }),
+                    },
+                    hir::Stmt {
+                        hir_id: hid(46),
+                        kind: hir::StmtKind::Local(hir::Local {
+                            hir_id: hid(47),
+                            pat: hir::Pat {
+                                hir_id: hid(48),
+                                kind: hir::PatKind::Binding {
+                                    name: "created".into(),
+                                    mutable: false,
+                                },
+                            },
+                            ty: None,
+                            init: Some(hir::Expr {
+                                hir_id: hid(49),
+                                kind: hir::ExprKind::Call(
+                                    Box::new(hir::Expr {
+                                        hir_id: hid(52),
+                                        kind: hir::ExprKind::Path(hir::Path {
+                                            segments: vec![
+                                                hir::PathSegment {
+                                                    name: "Command".into(),
+                                                    args: None,
+                                                },
+                                                hir::PathSegment {
+                                                    name: "new".into(),
+                                                    args: None,
+                                                },
+                                            ],
+                                            // Type-relative resolution is deliberately the type;
+                                            // typeck must record `new_id` on the enclosing call.
+                                            res: Some(hir::Res::Def(command_id.clone())),
+                                        }),
+                                        span: fp_core::span::Span::null(),
+                                    }),
+                                    Vec::new(),
+                                ),
+                                span: fp_core::span::Span::null(),
+                            }),
+                        }),
+                    },
+                ],
+                expr: Some(Box::new(hir::Expr {
+                    hir_id: output_call_hir_id.clone(),
+                    kind: hir::ExprKind::MethodCall(
+                        Box::new(hir::Expr {
+                            hir_id: hid(51),
+                            kind: hir::ExprKind::Path(hir::Path {
+                                segments: vec![hir::PathSegment {
+                                    name: "cmd".into(),
+                                    args: None,
+                                }],
+                                res: Some(hir::Res::Local(hid(43))),
+                            }),
+                            span: fp_core::span::Span::null(),
+                        }),
+                        "output".into(),
+                        None,
+                        Vec::new(),
+                    ),
+                    span: fp_core::span::Span::null(),
+                })),
+            },
+        )),
+        span: fp_core::span::Span::null(),
+    };
+
+    let mut package = hir::HirPackage::new(package_id);
+    for item in [command, helper, impl_item, caller] {
+        package.def_map.insert(item.def_id.clone(), item.clone());
+        package.items.push(item);
+    }
+    let executor = fp_core::executor::CompilerExecutor::new().handle();
+    let result = executor
+        .run(typecheck_program(package, executor.clone()))
+        .expect("HIR type check");
+    assert_eq!(
+        result.borrow().method_resolution(output_call_hir_id),
+        Some(output_id),
+        "a typed helper local must retain its Command DefId for method resolution"
+    );
+    assert_eq!(
+        result.borrow().method_resolution(hid(49)),
+        Some(new_id),
+        "a type-relative associated call must retain its selected impl member DefId"
+    );
+}
+
+#[test]
 fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
         Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
     let package = hir::HirPackage::new(test_pkg());
-    let program = hir::SharedHirProgram::new(hir::HirProgram::new());
-    program.publish_package(package);
     let checker = HirTypeChecker::new(
-        program
-            .package_rc(&test_pkg())
-            .expect("published test package"),
-        program,
+        package,
+        None,
         Some(resolver),
         fp_core::executor::CompilerExecutor::new().handle(),
     );

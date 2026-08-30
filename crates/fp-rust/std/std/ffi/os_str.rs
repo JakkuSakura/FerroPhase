@@ -961,6 +961,7 @@ impl OsStr {
     #[must_use = "this returns the result of the operation, \
                   without modifying the original"]
     #[inline]
+    #[op(method = "to_string_lossy")]
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         self.inner.to_string_lossy()
     }

@@ -16,6 +16,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir::DefId;
+use fp_core::intrinsics::{IntrinsicMaterializer, PortableOpCall};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -41,8 +42,10 @@ pub struct HirToAstLifter<'a> {
     hir_program: &'a hir::HirProgram,
     /// Controls whether lifting may recognize declaration-tagged portable
     /// operations. HIR always preserves ordinary calls; this is the single
-    /// point where a target-facing AST may introduce `PortableOpCall`.
+    /// point where a target-facing AST consumes a portable operation through
+    /// the configured materializer.
     capabilities: fp_core::capabilities::LanguageCapabilities,
+    materializer: Option<std::sync::Arc<dyn IntrinsicMaterializer>>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -79,6 +82,7 @@ impl<'a> HirToAstLifter<'a> {
             package,
             hir_program,
             capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
+            materializer: None,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
             resolved_expr_types: RefCell::new(HashMap::new()),
@@ -91,6 +95,44 @@ impl<'a> HirToAstLifter<'a> {
     ) -> Self {
         self.capabilities = capabilities;
         self
+    }
+
+    pub fn with_materializer(
+        mut self,
+        materializer: std::sync::Arc<dyn IntrinsicMaterializer>,
+    ) -> Self {
+        self.materializer = Some(materializer);
+        self
+    }
+
+    fn materialize_portable_op(
+        &self,
+        span: Span,
+        op: fp_core::intrinsics::PortableOp,
+        args: Vec<Expr>,
+        kwargs: Vec<ExprKwArg>,
+        ty: &hir::HirId,
+    ) -> Result<Expr> {
+        let Some(materializer) = &self.materializer else {
+            return Err(fp_core::error::Error::from(
+                "portable operation reached HIR-to-AST without a target materializer",
+            ));
+        };
+        let mut call = PortableOpCall {
+            span,
+            op,
+            args,
+            kwargs,
+        };
+        let expr_ty = self
+            .package
+            .expr_type(ty.clone())
+            .and_then(|ty| self.hir_ty_to_ast(&ty));
+        materializer
+            .materialize_portable_op(&mut call, &expr_ty)?
+            .ok_or_else(|| {
+                fp_core::error::Error::from("target materializer did not handle portable operation")
+            })
     }
 
     /// Publishes every `ExprId` -> resolved `Ty` pair collected while
@@ -107,6 +149,17 @@ impl<'a> HirToAstLifter<'a> {
             return None;
         }
         self.hir_program.op_def(def_id.clone())
+    }
+
+    fn portable_operations_enabled(&self) -> bool {
+        self.capabilities.portable_operations
+    }
+
+    fn portable_op_for_path(&self, path: &hir::Path) -> Option<fp_core::intrinsics::PortableOp> {
+        let hir::Res::Def(def_id) = path.res.as_ref()? else {
+            return None;
+        };
+        self.portable_op_for_def(def_id)
     }
 
     /// Resolve a declaration-tagged call through the definition's owning
@@ -183,12 +236,13 @@ impl<'a> HirToAstLifter<'a> {
             let Some(path) = self.def_path_for(&item.def_id) else {
                 continue;
             };
-            // A synthetic placeholder `ast_to_hir` fabricated because HIR
-            // has no first-class representation for this item's original
-            // construct (currently: trait declarations) — skip it so
-            // typed-splice (`typecheck_package`) falls back to the real
-            // source item instead of overwriting it with this stand-in.
-            if self.package.placeholder_defs.contains(&item.def_id) {
+            // Synthetic HIR definitions have no corresponding source item to
+            // splice back into. Traits are no longer placeholders: lifting
+            // their typed method signatures keeps interface suspension in
+            // lockstep with implementations lowered from the same HIR.
+            if self.package.placeholder_defs.contains(&item.def_id)
+                && !matches!(item.kind, hir::ItemKind::Trait(_))
+            {
                 continue;
             }
             let Ok(ast_item) = self.lift_item(item) else {
@@ -302,7 +356,7 @@ impl<'a> HirToAstLifter<'a> {
                         .map(|field| {
                             Ok(StructuralField::new(
                                 Ident::new(field.name.as_str()),
-                                self.lift_type(&field.ty)?,
+                                self.lift_resolved_type(&field.ty)?,
                             ))
                         })
                         .collect::<Result<Vec<_>>>()?,
@@ -356,12 +410,7 @@ impl<'a> HirToAstLifter<'a> {
                 value: Box::new(self.lift_body_value(&def.body.value)?),
             })),
             hir::ItemKind::Impl(_) => Item::from(ItemKind::Expr(ast::Expr::unit())),
-            // Same placeholder treatment as `Impl` — `Trait` items are
-            // always in `program.placeholder_defs` (see `ast_to_hir`'s
-            // `ItemKind::DefTrait` lowering), so `lift_items_by_path`'s own
-            // placeholder check already skips ever lifting one for real;
-            // this arm only exists to keep this match exhaustive.
-            hir::ItemKind::Trait(_) => Item::from(ItemKind::Expr(ast::Expr::unit())),
+            hir::ItemKind::Trait(def) => self.lift_trait_item(item, def)?,
             hir::ItemKind::Query(query) => {
                 return Err(fp_core::error::Error::Generic(eyre::eyre!(
                     "HIR->AST lifting for query item '{}' requires lift_program root handling",
@@ -438,6 +487,44 @@ impl<'a> HirToAstLifter<'a> {
         }
     }
 
+    fn lift_trait_item(&self, item: &hir::Item, trait_def: &hir::Trait) -> Result<Item> {
+        let trait_name = self
+            .hir_program
+            .def_path(item.def_id.clone())
+            .and_then(|path| path.segments.last().cloned())
+            .unwrap_or_else(|| hir::Symbol::new("Trait"));
+        let mut items = Vec::new();
+        for trait_item in &trait_def.items {
+            let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                continue;
+            };
+            let synthetic_item = hir::Item {
+                hir_id: trait_item.hir_id.clone(),
+                def_id: trait_item.def_id.clone(),
+                visibility: item.visibility.clone(),
+                kind: hir::ItemKind::Function(function.clone()),
+                span: item.span,
+            };
+            items.push(self.lift_function_item(&synthetic_item, function)?);
+        }
+        Ok(Item::from(ItemKind::DefTrait(ast::ItemDefTrait {
+            attrs: Vec::new(),
+            name: Ident::new(trait_name.as_str()),
+            generics_params: Vec::new(),
+            bounds: ast::TypeBounds {
+                bounds: trait_def
+                    .supertraits
+                    .iter()
+                    .map(|bound| Expr::name(Name::path(self.lift_path(bound))))
+                    .collect(),
+            },
+            collected_items: Vec::new(),
+            items,
+            visibility: lift_visibility(&item.visibility),
+        }))
+        .with_span(item.span))
+    }
+
     fn lift_signature(&self, sig: &hir::FunctionSig) -> Result<FunctionSignature> {
         // A method's `self` parameter has no dedicated HIR representation
         // of its own (see `make_self_param` on the AST→HIR side, which just
@@ -482,7 +569,7 @@ impl<'a> HirToAstLifter<'a> {
             is_const: false,
             abi: lift_abi(&sig.abi),
             quote_kind: None,
-            ret_ty: Some(self.lift_type(&sig.output)?),
+            ret_ty: Some(self.lift_resolved_type(&sig.output)?),
         })
     }
 
@@ -494,7 +581,7 @@ impl<'a> HirToAstLifter<'a> {
         Ok(FunctionParam {
             ty_annotation: None,
             name,
-            ty: self.lift_type(&param.ty)?,
+            ty: self.lift_resolved_type(&param.ty)?,
             is_const: false,
             is_context: param.is_context,
             default: param
@@ -531,12 +618,13 @@ impl<'a> HirToAstLifter<'a> {
                     _ => None,
                 };
                 if let Some(op) = portable_op {
-                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
-                        span: expr.span,
+                    self.materialize_portable_op(
+                        expr.span,
                         op,
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
-                    }))
+                        Vec::new(),
+                        Vec::new(),
+                        &expr.hir_id,
+                    )?
                 } else {
                     Expr::name(Name::path(self.lift_path(path)))
                 }
@@ -568,27 +656,42 @@ impl<'a> HirToAstLifter<'a> {
             hir::ExprKind::Call(callee, args) => {
                 let lifted_args = self.lift_positional_args(args)?;
                 let lifted_kwargs = self.lift_keyword_args(args)?;
-                let portable_op = match &callee.kind {
-                    hir::ExprKind::Path(path) => match path.res {
-                        Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                // Type-relative calls are resolved by type checking, not by
+                // the source path: `String::from_utf8_lossy` initially
+                // resolves the path to `String`, while the selected impl
+                // member has its own DefId.  The call-resolution table is
+                // therefore authoritative for both dot calls and associated
+                // calls.  Direct free-function paths simply have no entry.
+                let resolved_callee = self.hir_program.method_resolution(expr.hir_id.clone());
+                let portable_op = resolved_callee
+                    .as_ref()
+                    .and_then(|def_id| self.portable_op_for_def(def_id))
+                    .or_else(|| match &callee.kind {
+                        hir::ExprKind::Path(path) => match path.res {
+                            Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                };
+                    });
                 if let Some(op) = portable_op {
-                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
-                        span: expr.span,
+                    self.materialize_portable_op(
+                        expr.span,
                         op,
-                        args: lifted_args,
-                        kwargs: lifted_kwargs,
-                    }))
-                } else if let Some(kind) = match &callee.kind {
-                    hir::ExprKind::Path(path) => match path.res {
-                        Some(hir::Res::Def(ref def_id)) => self.intrinsic_call_for_def(def_id),
+                        lifted_args,
+                        lifted_kwargs,
+                        &expr.hir_id,
+                    )?
+                } else if let Some(kind) = resolved_callee
+                    .as_ref()
+                    .and_then(|def_id| self.intrinsic_call_for_def(def_id))
+                    .or_else(|| match &callee.kind {
+                        hir::ExprKind::Path(path) => match path.res {
+                            Some(hir::Res::Def(ref def_id)) => self.intrinsic_call_for_def(def_id),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                } {
+                    })
+                {
                     Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
                         span: expr.span,
                         kind,
@@ -607,14 +710,27 @@ impl<'a> HirToAstLifter<'a> {
             hir::ExprKind::MethodCall(receiver, name, generic_args, args) => {
                 let lifted_args = self.lift_positional_args(args)?;
                 let lifted_kwargs = self.lift_keyword_args(args)?;
-                if let Some(op) = self
-                    .hir_program
-                    .method_resolution(expr.hir_id.clone())
-                    .and_then(|def_id| self.portable_op_for_def(&def_id))
+                let resolved_method = self.hir_program.method_resolution(expr.hir_id.clone());
+                if let Some(op) = resolved_method
+                    .as_ref()
+                    .and_then(|def_id| self.portable_op_for_def(def_id))
                 {
-                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
-                        span: expr.span,
+                    self.materialize_portable_op(
+                        expr.span,
                         op,
+                        std::iter::once(self.lift_expr(receiver)?)
+                            .chain(lifted_args)
+                            .collect(),
+                        lifted_kwargs,
+                        &expr.hir_id,
+                    )?
+                } else if let Some(kind) = resolved_method
+                    .as_ref()
+                    .and_then(|def_id| self.intrinsic_call_for_def(def_id))
+                {
+                    Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
+                        span: expr.span,
+                        kind,
                         args: std::iter::once(self.lift_expr(receiver)?)
                             .chain(lifted_args)
                             .collect(),
@@ -697,15 +813,16 @@ impl<'a> HirToAstLifter<'a> {
                     _ => None,
                 };
                 if let Some(op) = portable_op {
-                    Expr::new(ast::ExprKind::PortableOpCall(ast::ExprPortableOpCall {
-                        span: expr.span,
+                    self.materialize_portable_op(
+                        expr.span,
                         op,
-                        args: fields
+                        fields
                             .iter()
                             .map(|field| self.lift_expr(&field.expr))
                             .collect::<Result<Vec<_>>>()?,
-                        kwargs: Vec::new(),
-                    }))
+                        Vec::new(),
+                        &expr.hir_id,
+                    )?
                 } else {
                     Expr::new(ast::ExprKind::Struct(ExprStruct {
                         span: expr.span,
@@ -743,7 +860,11 @@ impl<'a> HirToAstLifter<'a> {
                         Ok(ExprMatchCase {
                             span: arm.body.span,
                             pat: Some(Box::new(self.lift_pat(&arm.pat)?)),
-                            cond: Box::new(self.lift_expr(scrutinee)?),
+                            // The scrutinee belongs to `ExprMatch`; an arm has only
+                            // its pattern and optional guard.  Copying the scrutinee
+                            // here made downstream passes treat every arm as a boolean
+                            // condition and obscured the pattern's resolved identity.
+                            cond: Box::new(Expr::unit()),
                             guard: arm
                                 .guard
                                 .as_ref()
@@ -754,6 +875,24 @@ impl<'a> HirToAstLifter<'a> {
                     })
                     .collect::<Result<Vec<_>>>()?,
             })),
+            hir::ExprKind::Try(expr_try)
+                if expr_try.catches.is_empty()
+                    && expr_try.elze.is_none()
+                    && expr_try.finally.is_none()
+                    && self.portable_operations_enabled()
+                    && self.is_standard_result_expr(&expr_try.expr) =>
+            {
+                let op = fp_core::intrinsics::PortableOpRegistry::builtin()
+                    .resolve("result_propagate")
+                    .expect("result_propagate is a central portable operation");
+                self.materialize_portable_op(
+                    expr.span,
+                    op,
+                    vec![self.lift_expr(&expr_try.expr)?],
+                    Vec::new(),
+                    &expr.hir_id,
+                )?
+            }
             hir::ExprKind::Try(expr_try) => Expr::new(ast::ExprKind::Try(ExprTry {
                 span: expr.span,
                 expr: Box::new(self.lift_expr(&expr_try.expr)?),
@@ -1083,10 +1222,15 @@ impl<'a> HirToAstLifter<'a> {
                     }
                     _ => pat,
                 };
-                // Prefer an explicit, fully-written source-level annotation
-                // (`let x: T = ...`); otherwise fall back to the typer's own
-                // resolved binding type (`HirPackage::pat_type`, keyed by
-                // the pattern's `HirId`) — needed both for bindings like
+                // An explicit annotation is a declaration boundary. Prefer
+                // the type checker's resolved fact for that exact annotation,
+                // because it carries the nominal DefId selected during path
+                // resolution. Re-lifting the written `TypeExpr` here can
+                // retain an alias or a stale source path and corrupt target
+                // types (for example, a `Command` annotation becoming a
+                // `Path`). Otherwise fall back to the resolved binding type
+                // (`HirPackage::pat_type`, keyed by the pattern's `HirId`) —
+                // needed both for bindings like
                 // `let mut x = None;` whose real type is only known once
                 // later reassignments/usage are unified, not from the
                 // initializer expression alone, and for an annotation that
@@ -1098,7 +1242,16 @@ impl<'a> HirToAstLifter<'a> {
                 // backends (`fp-kotlin`) have to *guess* a var's type from the
                 // literal `null` initializer alone and can't.
                 let ty_ann = match &local.ty {
-                    Some(ty) if !type_expr_contains_infer(ty) => Some(self.lift_type(ty)?),
+                    Some(ty) if !type_expr_contains_infer(ty) => Some(
+                        self.package
+                            .type_expr_type(ty.hir_id.clone())
+                            .and_then(|ty| self.hir_ty_to_ast(&ty))
+                            .unwrap_or(self.lift_type(ty)?),
+                    ),
+                    Some(_) => self
+                        .package
+                        .pat_type(local.pat.hir_id.clone())
+                        .and_then(|ty| self.hir_ty_to_ast(&ty)),
                     _ => self
                         .package
                         .pat_type(local.pat.hir_id.clone())
@@ -1167,13 +1320,17 @@ impl<'a> HirToAstLifter<'a> {
                     .collect::<Result<Vec<_>>>()?,
             })),
             hir::PatKind::TupleStruct(path, items) => {
-                Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+                let lifted = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
                     name: Name::path(self.lift_path(path)),
                     patterns: items
                         .iter()
                         .map(|p| self.lift_pat(p))
                         .collect::<Result<Vec<_>>>()?,
-                }))
+                }));
+                if let Some(op) = self.portable_op_for_path(path) {
+                    ast::set_resolved_pattern_op(lifted.id(), op);
+                }
+                lifted
             }
             hir::PatKind::Struct(path, fields, has_rest) => {
                 Pattern::new(PatternKind::Struct(PatternStruct {
@@ -1195,10 +1352,16 @@ impl<'a> HirToAstLifter<'a> {
                     has_rest: *has_rest,
                 }))
             }
-            hir::PatKind::Variant(path) => Pattern::new(PatternKind::Variant(PatternVariant {
-                name: Expr::path(self.lift_path(path)),
-                pattern: None,
-            })),
+            hir::PatKind::Variant(path) => {
+                let lifted = Pattern::new(PatternKind::Variant(PatternVariant {
+                    name: Expr::path(self.lift_path(path)),
+                    pattern: None,
+                }));
+                if let Some(op) = self.portable_op_for_path(path) {
+                    ast::set_resolved_pattern_op(lifted.id(), op);
+                }
+                lifted
+            }
             hir::PatKind::Lit(lit) => Pattern::new(PatternKind::Variant(PatternVariant {
                 name: Expr::value(match lit {
                     hir::Lit::Bool(v) => Value::bool(*v),
@@ -1316,6 +1479,13 @@ impl<'a> HirToAstLifter<'a> {
                 value: value.clone(),
             }),
         })
+    }
+
+    /// Declaration-shaped types already retain resolved path identities in
+    /// HIR. Preserve their written structure rather than substituting an
+    /// inference result, which may describe an internal implementation type.
+    fn lift_resolved_type(&self, ty: &hir::TypeExpr) -> Result<Ty> {
+        self.lift_type(ty)
     }
 
     /// Source-shaped name (`"Vec<Hunk>"`) for a written type path if its
@@ -1615,6 +1785,25 @@ impl<'a> HirToAstLifter<'a> {
     /// package and dependencies.
     fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
         self.hir_program.def_path(def_id.clone())
+    }
+
+    /// `?` has several source-language implementations. Only Rust's
+    /// standard `Result` gets Kotlin's `Result<T>` propagation convention;
+    /// other try expressions retain their generic AST representation.
+    fn is_standard_result_expr(&self, expr: &hir::Expr) -> bool {
+        let Some(hir::ty::Ty {
+            kind: hir::ty::TyKind::Adt(adt, _),
+        }) = self.package.expr_type(expr.hir_id.clone())
+        else {
+            return false;
+        };
+        let Some(path) = self.def_path_for(&adt.did) else {
+            return false;
+        };
+        path.segments
+            .iter()
+            .map(|segment| segment.as_str())
+            .eq(["core", "result", "Result"])
     }
 
     /// After HIR→AST lifting, closures have been lowered to `__Closure{N}`
@@ -1974,6 +2163,19 @@ fn recon_closures_in_item(item: &mut Item, types: &HashMap<String, Vec<Ty>>) {
 mod tests {
     use super::*;
     use std::rc::Rc;
+    use std::sync::Arc;
+
+    struct TestMaterializer;
+
+    impl IntrinsicMaterializer for TestMaterializer {
+        fn materialize_portable_op(
+            &self,
+            call: &mut PortableOpCall,
+            _ty: &ast::TySlot,
+        ) -> Result<Option<Expr>> {
+            Ok(Some(Expr::name(Name::ident(call.op.name().to_string()))))
+        }
+    }
 
     #[test]
     fn dependency_def_path_metadata_is_enough_for_lifting_type_names() {
@@ -2006,6 +2208,613 @@ mod tests {
         };
         assert_eq!(path.segments[0].name, "dependency");
         assert_eq!(path.segments[1].name, "Widget");
+    }
+
+    #[test]
+    fn associated_call_resolution_lifts_to_portable_operation() {
+        let package_id = hir::PackageId::new("root");
+        let receiver_id = hir::DefId::new(package_id.clone(), 1);
+        let associated_id = hir::DefId::new(package_id.clone(), 2);
+        let call_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 3);
+        let callee_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 4);
+
+        let mut package = hir::HirPackage::new(package_id.clone());
+        package.op_defs.insert(
+            associated_id.clone(),
+            fp_core::intrinsics::PortableOpRegistry::builtin()
+                .resolve("string_from_utf8_lossy")
+                .expect("builtin string operation"),
+        );
+        package.record_method_resolution(call_id.clone(), associated_id);
+        let call = hir::Expr {
+            hir_id: call_id,
+            kind: hir::ExprKind::Call(
+                Box::new(hir::Expr {
+                    hir_id: callee_id,
+                    kind: hir::ExprKind::Path(hir::Path {
+                        segments: vec![
+                            hir::PathSegment {
+                                name: "String".into(),
+                                args: None,
+                            },
+                            hir::PathSegment {
+                                name: "from_utf8_lossy".into(),
+                                args: None,
+                            },
+                        ],
+                        // This deliberately remains the nominal type DefId:
+                        // the selected associated member comes only from
+                        // type checking's call-resolution table.
+                        res: Some(hir::Res::Def(receiver_id)),
+                    }),
+                    span: Span::null(),
+                }),
+                Vec::new(),
+            ),
+            span: Span::null(),
+        };
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace)
+            .with_capabilities(fp_core::capabilities::LanguageCapabilities {
+                portable_operations: true,
+                ..fp_core::capabilities::LanguageCapabilities::NATIVE
+            })
+            .with_materializer(Arc::new(TestMaterializer));
+
+        let lifted = lifter.lift_expr(&call).expect("lift associated call");
+        assert!(
+            matches!(lifted.kind, ast::ExprKind::Name(ast::Name::Ident(ref name)) if name.name == "string_from_utf8_lossy")
+        );
+    }
+
+    #[test]
+    fn native_lifting_preserves_an_op_tagged_call_as_an_invoke() {
+        let package_id = hir::PackageId::new("root");
+        let function_id = hir::DefId::new(package_id.clone(), 1);
+        let call_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 2);
+        let callee_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 3);
+
+        let mut package = hir::HirPackage::new(package_id.clone());
+        package.op_defs.insert(
+            function_id.clone(),
+            fp_core::intrinsics::PortableOpRegistry::builtin()
+                .resolve("string_from_utf8_lossy")
+                .expect("builtin string operation"),
+        );
+        let call = hir::Expr {
+            hir_id: call_id,
+            kind: hir::ExprKind::Call(
+                Box::new(hir::Expr {
+                    hir_id: callee_id,
+                    kind: hir::ExprKind::Path(hir::Path {
+                        segments: vec![hir::PathSegment {
+                            name: "from_utf8_lossy".into(),
+                            args: None,
+                        }],
+                        res: Some(hir::Res::Def(function_id)),
+                    }),
+                    span: Span::null(),
+                }),
+                Vec::new(),
+            ),
+            span: Span::null(),
+        };
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+
+        let lifted = HirToAstLifter::new(&package, &workspace)
+            .lift_expr(&call)
+            .expect("lift native call");
+        assert!(matches!(lifted.kind, ast::ExprKind::Invoke(_)));
+    }
+
+    #[test]
+    fn resolved_method_intrinsic_lifts_without_a_source_name_fallback() {
+        let package_id = hir::PackageId::new("root");
+        let receiver_id = hir::DefId::new(package_id.clone(), 1);
+        let method_id = hir::DefId::new(package_id.clone(), 2);
+        let call_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 3);
+        let receiver_hir_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 4);
+
+        let mut package = hir::HirPackage::new(package_id.clone());
+        package
+            .intrinsic_defs
+            .insert(method_id.clone(), fp_core::intrinsics::CallKind::FsExists);
+        package.record_method_resolution(call_id.clone(), method_id);
+        let call = hir::Expr {
+            hir_id: call_id,
+            kind: hir::ExprKind::MethodCall(
+                Box::new(hir::Expr {
+                    hir_id: receiver_hir_id,
+                    kind: hir::ExprKind::Path(hir::Path {
+                        segments: vec![hir::PathSegment {
+                            name: "path".into(),
+                            args: None,
+                        }],
+                        res: Some(hir::Res::Def(receiver_id)),
+                    }),
+                    span: Span::null(),
+                }),
+                hir::Symbol::new("exists"),
+                None,
+                Vec::new(),
+            ),
+            span: Span::null(),
+        };
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter
+            .lift_expr(&call)
+            .expect("lift resolved intrinsic call");
+        assert!(matches!(lifted.kind, ast::ExprKind::IntrinsicCall(_)));
+    }
+
+    #[test]
+    fn resolved_process_receivers_lift_through_portable_operation_identity() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let command_id = hir::DefId::new(package_id.clone(), 1);
+        let command_output_id = hir::DefId::new(package_id.clone(), 10);
+        let command_status_id = hir::DefId::new(package_id.clone(), 11);
+        let command_spawn_id = hir::DefId::new(package_id.clone(), 12);
+        let status_success_id = hir::DefId::new(package_id.clone(), 13);
+        let child_id = hir::DefId::new(package_id.clone(), 2);
+        let child_wait_id = hir::DefId::new(package_id.clone(), 14);
+        let child_output_id = hir::DefId::new(package_id.clone(), 15);
+        let dir_entry_id = hir::DefId::new(package_id.clone(), 3);
+        let dir_entry_file_type_id = hir::DefId::new(package_id.clone(), 16);
+        let file_type_id = hir::DefId::new(package_id.clone(), 4);
+        let file_type_is_dir_id = hir::DefId::new(package_id.clone(), 17);
+
+        let receiver = |index: u32, name: &str, def_id: hir::DefId| {
+            hir::Expr::new(
+                hir::HirId::new(owner.clone(), index),
+                hir::ExprKind::Path(hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: name.into(),
+                        args: None,
+                    }],
+                    res: Some(hir::Res::Def(def_id)),
+                }),
+                Span::null(),
+            )
+        };
+        let method = |index: u32, receiver: hir::Expr, name: &str| {
+            hir::Expr::new(
+                hir::HirId::new(owner.clone(), index),
+                hir::ExprKind::MethodCall(Box::new(receiver), name.into(), None, Vec::new()),
+                Span::null(),
+            )
+        };
+
+        let output_call = method(20, receiver(21, "command", command_id.clone()), "output");
+        let status_call = method(22, receiver(23, "command", command_id.clone()), "status");
+        let spawn_call = method(24, receiver(25, "command", command_id.clone()), "spawn");
+        let output_local = hir::Expr::new(
+            hir::HirId::new(owner.clone(), 26),
+            hir::ExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: "output".into(),
+                    args: None,
+                }],
+                res: Some(hir::Res::Local(hir::HirId::new(owner.clone(), 27))),
+            }),
+            Span::null(),
+        );
+        let output_status = hir::Expr::new(
+            hir::HirId::new(owner.clone(), 28),
+            hir::ExprKind::FieldAccess(Box::new(output_local), "status".into()),
+            Span::null(),
+        );
+        let success_call = method(29, output_status, "success");
+        let child_wait_call = method(30, receiver(31, "child", child_id.clone()), "wait");
+        let child_output_call = method(32, receiver(33, "child", child_id), "wait_with_output");
+        let file_type_call = method(34, receiver(35, "entry", dir_entry_id), "file_type");
+        let is_dir_call = method(36, receiver(37, "file_type", file_type_id), "is_dir");
+
+        let mut package = hir::HirPackage::new(package_id.clone());
+        let registry = fp_core::intrinsics::PortableOpRegistry::builtin();
+        for (def_id, operation) in [
+            (command_output_id.clone(), "command_output"),
+            (command_status_id.clone(), "command_status"),
+            (command_spawn_id.clone(), "command_spawn"),
+            (status_success_id.clone(), "exit_status_success"),
+            (child_wait_id.clone(), "child_wait"),
+            (child_output_id.clone(), "child_wait_with_output"),
+            (dir_entry_file_type_id.clone(), "dir_entry_file_type"),
+            (file_type_is_dir_id.clone(), "file_type_is_dir"),
+        ] {
+            package.op_defs.insert(
+                def_id,
+                registry
+                    .resolve(operation)
+                    .expect("registered process operation"),
+            );
+        }
+        for (expr, def_id) in [
+            (&output_call, command_output_id),
+            (&status_call, command_status_id),
+            (&spawn_call, command_spawn_id),
+            (&success_call, status_success_id),
+            (&child_wait_call, child_wait_id),
+            (&child_output_call, child_output_id),
+            (&file_type_call, dir_entry_file_type_id),
+            (&is_dir_call, file_type_is_dir_id),
+        ] {
+            package.record_method_resolution(expr.hir_id.clone(), def_id);
+        }
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace)
+            .with_capabilities(fp_core::capabilities::LanguageCapabilities {
+                portable_operations: true,
+                ..fp_core::capabilities::LanguageCapabilities::NATIVE
+            })
+            .with_materializer(Arc::new(TestMaterializer));
+
+        for (expr, operation) in [
+            (&output_call, "command_output"),
+            (&status_call, "command_status"),
+            (&spawn_call, "command_spawn"),
+            (&success_call, "exit_status_success"),
+            (&child_wait_call, "child_wait"),
+            (&child_output_call, "child_wait_with_output"),
+            (&file_type_call, "dir_entry_file_type"),
+            (&is_dir_call, "file_type_is_dir"),
+        ] {
+            let lifted = lifter.lift_expr(expr).expect("lift process receiver call");
+            let ast::ExprKind::Name(ast::Name::Ident(name)) = lifted.kind else {
+                panic!("resolved process receiver must not fall back to a source method");
+            };
+            assert_eq!(name.name, operation);
+        }
+
+        // Struct fields do not currently have DefIds in HIR. Their typed
+        // value is nevertheless sufficient for the following `success`
+        // method to resolve by identity above; lifting the field itself must
+        // remain a plain selection until HIR gains field declarations.
+        let status_field = lifter
+            .lift_expr(match &success_call.kind {
+                hir::ExprKind::MethodCall(receiver, _, _, _) => receiver,
+                _ => unreachable!(),
+            })
+            .expect("lift Output.status field");
+        assert!(matches!(status_field.kind, ast::ExprKind::Select(_)));
+    }
+
+    #[test]
+    fn typed_vec_and_command_locals_lift_with_resolved_nominal_types() {
+        let package_id = hir::PackageId::new("root");
+        let vec_def_id = hir::DefId::new(hir::PackageId::new("alloc"), 1);
+        let command_def_id = hir::DefId::new(hir::PackageId::new("std"), 2);
+        let owner = hir::OwnerId::root(package_id.clone());
+        let vec_ty_id = hir::HirId::new(owner.clone(), 1);
+        let command_ty_id = hir::HirId::new(owner.clone(), 2);
+        let vec_pat_id = hir::HirId::new(owner.clone(), 3);
+        let command_pat_id = hir::HirId::new(owner.clone(), 4);
+
+        let vec_ty = hir::TypeExpr::new(
+            vec_ty_id.clone(),
+            hir::TypeExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: "ListAlias".into(),
+                    args: None,
+                }],
+                res: Some(hir::Res::Def(vec_def_id.clone())),
+            }),
+            Span::null(),
+        );
+        let command_ty = hir::TypeExpr::new(
+            command_ty_id.clone(),
+            hir::TypeExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: "FileAlias".into(),
+                    args: None,
+                }],
+                res: Some(hir::Res::Def(command_def_id.clone())),
+            }),
+            Span::null(),
+        );
+        let local = |pat_id: hir::HirId, name: &str, ty: hir::TypeExpr| hir::Stmt {
+            hir_id: hir::HirId::new(owner.clone(), pat_id.local_id() + 10),
+            kind: hir::StmtKind::Local(hir::Local {
+                hir_id: hir::HirId::new(owner.clone(), pat_id.local_id() + 20),
+                pat: hir::Pat {
+                    hir_id: pat_id,
+                    kind: hir::PatKind::Binding {
+                        name: name.into(),
+                        mutable: false,
+                    },
+                },
+                ty: Some(ty),
+                init: None,
+            }),
+        };
+        let block = hir::Block {
+            hir_id: hir::HirId::new(owner.clone(), 30),
+            stmts: vec![
+                local(vec_pat_id, "entries", vec_ty),
+                local(command_pat_id, "command", command_ty),
+            ],
+            expr: None,
+        };
+        let mut alloc = hir::HirPackage::new(hir::PackageId::new("alloc"));
+        alloc.def_paths.insert(
+            vec_def_id.clone(),
+            hir::DefPath::new(vec![hir::Symbol::new("alloc"), hir::Symbol::new("Vec")]),
+        );
+        let mut std = hir::HirPackage::new(hir::PackageId::new("std"));
+        std.def_paths.insert(
+            command_def_id.clone(),
+            hir::DefPath::new(vec![hir::Symbol::new("std"), hir::Symbol::new("Command")]),
+        );
+        let package = hir::HirPackage::new(package_id);
+        package.record_type_expr_type(
+            vec_ty_id,
+            hir::ty::Ty {
+                kind: hir::ty::TyKind::Adt(
+                    hir::ty::AdtDef {
+                        did: vec_def_id,
+                        variants: Vec::new(),
+                        flags: hir::ty::AdtFlags::empty(),
+                        repr: hir::ty::ReprOptions {
+                            int: None,
+                            align: None,
+                            pack: None,
+                            flags: hir::ty::ReprFlags::empty(),
+                            field_shuffle_seed: 0,
+                        },
+                    },
+                    Vec::new(),
+                ),
+            },
+        );
+        package.record_type_expr_type(
+            command_ty_id,
+            hir::ty::Ty {
+                kind: hir::ty::TyKind::Adt(
+                    hir::ty::AdtDef {
+                        did: command_def_id,
+                        variants: Vec::new(),
+                        flags: hir::ty::AdtFlags::empty(),
+                        repr: hir::ty::ReprOptions {
+                            int: None,
+                            align: None,
+                            pack: None,
+                            flags: hir::ty::ReprFlags::empty(),
+                            field_shuffle_seed: 0,
+                        },
+                    },
+                    Vec::new(),
+                ),
+            },
+        );
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(alloc);
+        workspace.publish_package(std);
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter.lift_block(&block).expect("lift typed locals");
+        let types = lifted
+            .stmts
+            .iter()
+            .map(|stmt| match stmt {
+                BlockStmt::Let(stmt) => match stmt.pat.kind() {
+                    PatternKind::Type(typed) => match &typed.ty {
+                        Ty::Expr(expr) => match expr.kind() {
+                            ast::ExprKind::Name(Name::Path(path)) => path.join("."),
+                            ast::ExprKind::Name(Name::ParameterPath(path)) => path
+                                .segments
+                                .iter()
+                                .map(|segment| segment.ident.as_str())
+                                .collect::<Vec<_>>()
+                                .join("."),
+                            other => panic!("expected DefPath type name, got {other:?}"),
+                        },
+                        other => panic!("expected nominal type, got {other:?}"),
+                    },
+                    other => panic!("expected typed local, got {other:?}"),
+                },
+                _ => panic!("expected local statement"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(types, ["alloc.Vec", "std.Command"]);
+
+        // Exercise the actual item-lifting path used by transpilation. The
+        // written annotation names deliberately differ from their resolved
+        // definitions, so this catches a regression that re-emits source
+        // spelling instead of the type checker's nominal type fact.
+        let function = hir::Item {
+            hir_id: hir::HirId::new(owner.clone(), 40),
+            def_id: hir::DefId::new(hir::PackageId::new("root"), 40),
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Function(hir::Function {
+                sig: hir::FunctionSig {
+                    name: "typed_locals".into(),
+                    inputs: Vec::new(),
+                    output: hir::TypeExpr::new(
+                        hir::HirId::new(owner.clone(), 41),
+                        hir::TypeExprKind::Tuple(Vec::new()),
+                        Span::null(),
+                    ),
+                    generics: hir::Generics::default(),
+                    abi: hir::ty::Abi::Rust,
+                },
+                body: Some(block),
+                is_const: false,
+                is_extern: false,
+                is_async: false,
+                attrs: Vec::new(),
+            }),
+            span: Span::null(),
+        };
+        let lifted_function = lifter.lift_item(&function).expect("lift function");
+        let ast::ItemKind::DefFunction(function) = lifted_function.kind() else {
+            panic!("expected lifted function");
+        };
+        let local_types = function
+            .body
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                BlockStmt::Let(stmt) => match stmt.pat.kind() {
+                    PatternKind::Type(typed) => match &typed.ty {
+                        Ty::Expr(expr) => match expr.kind() {
+                            ast::ExprKind::Name(Name::Path(path)) => Some(path.join(".")),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(local_types, ["alloc.Vec", "std.Command"]);
+    }
+
+    #[test]
+    fn result_try_lifts_to_typed_propagation_operation() {
+        let package_id = hir::PackageId::new("root");
+        let result_package_id = hir::PackageId::new("core");
+        let result_def_id = hir::DefId::new(result_package_id.clone(), 1);
+        let operand_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 1);
+        let try_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 2);
+
+        let mut result_package = hir::HirPackage::new(result_package_id);
+        result_package.def_paths.insert(
+            result_def_id.clone(),
+            hir::DefPath::new(vec![
+                hir::Symbol::new("core"),
+                hir::Symbol::new("result"),
+                hir::Symbol::new("Result"),
+            ]),
+        );
+        let root = hir::HirPackage::new(package_id);
+        root.record_expr_type(
+            operand_id.clone(),
+            hir::ty::Ty {
+                kind: hir::ty::TyKind::Adt(
+                    hir::ty::AdtDef {
+                        did: result_def_id,
+                        variants: Vec::new(),
+                        flags: hir::ty::AdtFlags::IS_ENUM,
+                        repr: hir::ty::ReprOptions {
+                            int: None,
+                            align: None,
+                            pack: None,
+                            flags: hir::ty::ReprFlags::empty(),
+                            field_shuffle_seed: 0,
+                        },
+                    },
+                    Vec::new(),
+                ),
+            },
+        );
+        let try_expr = hir::Expr::new(
+            try_id,
+            hir::ExprKind::Try(hir::TryExpr {
+                expr: Box::new(hir::Expr::new(
+                    operand_id,
+                    hir::ExprKind::Literal(hir::Lit::Null),
+                    Span::null(),
+                )),
+                catches: Vec::new(),
+                elze: None,
+                finally: None,
+            }),
+            Span::null(),
+        );
+
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(result_package);
+        workspace.publish_package(root.clone());
+        let lifter = HirToAstLifter::new(&root, &workspace)
+            .with_capabilities(fp_core::capabilities::LanguageCapabilities {
+                portable_operations: true,
+                ..fp_core::capabilities::LanguageCapabilities::NATIVE
+            })
+            .with_materializer(Arc::new(TestMaterializer));
+
+        let lifted = lifter.lift_expr(&try_expr).expect("lift typed Result try");
+        let ast::ExprKind::Name(ast::Name::Ident(name)) = lifted.kind else {
+            panic!("typed Result try must not remain a generic Try expression");
+        };
+        assert_eq!(name.name, "result_propagate");
+    }
+
+    #[test]
+    fn lifts_async_trait_methods_as_async_declarations() {
+        let package_id = hir::PackageId::new("root");
+        let trait_id = hir::DefId::new(package_id.clone(), 1);
+        let method_id = hir::DefId::new(package_id.clone(), 2);
+        let owner = hir::OwnerId::root(package_id.clone());
+        let function = hir::Function {
+            sig: hir::FunctionSig {
+                name: hir::Symbol::new("browse"),
+                inputs: Vec::new(),
+                output: hir::TypeExpr::new(
+                    hir::HirId::new(owner.clone(), 3),
+                    hir::TypeExprKind::Tuple(Vec::new()),
+                    Span::null(),
+                ),
+                generics: hir::Generics {
+                    params: Vec::new(),
+                    where_clause: None,
+                },
+                abi: hir::Abi::Rust,
+            },
+            body: None,
+            is_const: false,
+            is_extern: false,
+            is_async: true,
+            attrs: Vec::new(),
+        };
+        let trait_item = hir::Item {
+            hir_id: hir::HirId::new(owner.clone(), 4),
+            def_id: trait_id.clone(),
+            visibility: hir::Visibility::Public,
+            kind: hir::ItemKind::Trait(hir::Trait {
+                generics: hir::Generics {
+                    params: Vec::new(),
+                    where_clause: None,
+                },
+                items: vec![hir::TraitItem {
+                    def_id: method_id,
+                    hir_id: hir::HirId::new(owner, 5),
+                    name: hir::Symbol::new("browse"),
+                    kind: hir::TraitItemKind::Method(function),
+                }],
+                supertraits: Vec::new(),
+            }),
+            span: Span::null(),
+        };
+        let mut package = hir::HirPackage::new(package_id);
+        package.items.push(trait_item);
+        package.def_paths.insert(
+            trait_id,
+            hir::DefPath::new(vec![hir::Symbol::new("RepoBrowse")]),
+        );
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter.lift_items_by_path();
+        let trait_item = lifted
+            .values()
+            .next()
+            .expect("trait must be lifted from typed HIR");
+        let ItemKind::DefTrait(trait_def) = trait_item.kind() else {
+            panic!("expected a trait declaration");
+        };
+        let ItemKind::DeclFunction(method) = trait_def.items[0].kind() else {
+            panic!("expected an abstract trait method declaration");
+        };
+        assert!(method.is_async);
     }
 }
 

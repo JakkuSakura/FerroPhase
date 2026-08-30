@@ -2374,6 +2374,7 @@ pub struct StripPrefixError(());
 #[non_exhaustive]
 pub struct NormalizeError;
 
+#[op(class = "Path")]
 impl Path {
     // The following (private!) function allows construction of a path from a u8
     // slice, which is only safe when it is known to follow the OsStr encoding.
@@ -2506,6 +2507,7 @@ impl Path {
     #[must_use = "this returns the result of the operation, \
                   without modifying the original"]
     #[inline]
+    #[op(method = "to_string_lossy")]
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         self.inner.to_string_lossy()
     }
@@ -2525,6 +2527,7 @@ impl Path {
                   without modifying the original"]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[cfg_attr(not(test), rustc_diagnostic_item = "path_to_pathbuf")]
+    #[op(method = "to_path_buf")]
     pub fn to_path_buf(&self) -> PathBuf {
         PathBuf::from(self.inner.to_os_string())
     }
@@ -2632,6 +2635,7 @@ impl Path {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[doc(alias = "dirname")]
     #[must_use]
+    #[op(method = "parent")]
     pub fn parent(&self) -> Option<&Path> {
         let mut comps = self.components();
         let comp = comps.next_back();
@@ -2699,6 +2703,7 @@ impl Path {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[doc(alias = "basename")]
     #[must_use]
+    #[op(method = "file_name")]
     pub fn file_name(&self) -> Option<&OsStr> {
         self.components().next_back().and_then(|p| match p {
             Component::Normal(p) => Some(p),
@@ -3074,6 +3079,7 @@ impl Path {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[must_use]
+    #[op(method = "join")]
     pub fn join<P: AsRef<Path>>(&self, path: P) -> PathBuf {
         self._join(path.as_ref())
     }
@@ -3380,6 +3386,7 @@ impl Path {
     /// ```
     #[stable(feature = "path_ext", since = "1.5.0")]
     #[inline]
+    #[op(method = "canonicalize")]
     pub fn canonicalize(&self) -> io::Result<PathBuf> {
         fs::canonicalize(self)
     }
@@ -3544,6 +3551,7 @@ impl Path {
     #[stable(feature = "path_ext", since = "1.5.0")]
     #[must_use]
     #[inline]
+    #[op(method = "exists")]
     pub fn exists(&self) -> bool {
         fs::metadata(self).is_ok()
     }

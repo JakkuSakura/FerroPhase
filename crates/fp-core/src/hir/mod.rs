@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::{CallKind, IntrinsicKind};
+use crate::intrinsics::CallKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::{HashMap, HashSet};
 use std::fmt;

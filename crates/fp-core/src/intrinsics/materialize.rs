@@ -106,6 +106,10 @@ pub fn materialize_stmt(
         ast::BlockStmt::Let(mut stmt_let) => {
             if let Some(init) = stmt_let.init {
                 stmt_let.init = Some(materialize_expr(init, strategy)?);
+                if let Some(diverge) = stmt_let.diverge {
+                    stmt_let.diverge = Some(materialize_expr(diverge, strategy)?);
+                }
+                return Ok(ast::BlockStmt::Let(stmt_let));
             }
             if let Some(diverge) = stmt_let.diverge {
                 stmt_let.diverge = Some(materialize_expr(diverge, strategy)?);
@@ -121,6 +125,14 @@ pub fn materialize_stmt(
         }
         ast::BlockStmt::Noop => Ok(ast::BlockStmt::Noop),
     }
+}
+
+/// Materialize an expression recursively within its owning return scope.
+fn materialize_expr_in_statement_scope(
+    expr: ast::Expr,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::Expr> {
+    materialize_expr(expr, strategy)
 }
 
 pub fn materialize_expr(
@@ -141,9 +153,14 @@ pub fn materialize_expr(
         }
         ast::ExprKind::If(mut expr_if) => {
             expr_if.cond = Box::new(materialize_expr(*expr_if.cond, strategy)?);
-            expr_if.then = Box::new(materialize_expr(*expr_if.then, strategy)?);
+            expr_if.then = Box::new(materialize_expr_in_statement_scope(
+                *expr_if.then,
+                strategy,
+            )?);
             if let Some(elze) = expr_if.elze {
-                expr_if.elze = Some(Box::new(materialize_expr(*elze, strategy)?));
+                expr_if.elze = Some(Box::new(materialize_expr_in_statement_scope(
+                    *elze, strategy,
+                )?));
             }
             ast::Expr::new(ast::ExprKind::If(expr_if))
         }
@@ -153,7 +170,10 @@ pub fn materialize_expr(
         }
         ast::ExprKind::While(mut expr_while) => {
             expr_while.cond = Box::new(materialize_expr(*expr_while.cond, strategy)?);
-            expr_while.body = Box::new(materialize_expr(*expr_while.body, strategy)?);
+            expr_while.body = Box::new(materialize_expr_in_statement_scope(
+                *expr_while.body,
+                strategy,
+            )?);
             ast::Expr::new(ast::ExprKind::While(expr_while))
         }
         // Was previously caught by the blanket fallback below (see its
@@ -165,7 +185,10 @@ pub fn materialize_expr(
         // fallback instead of real Kotlin syntax.
         ast::ExprKind::For(mut expr_for) => {
             expr_for.iter = Box::new(materialize_expr(*expr_for.iter, strategy)?);
-            expr_for.body = Box::new(materialize_expr(*expr_for.body, strategy)?);
+            expr_for.body = Box::new(materialize_expr_in_statement_scope(
+                *expr_for.body,
+                strategy,
+            )?);
             ast::Expr::new(ast::ExprKind::For(expr_for))
         }
         ast::ExprKind::Match(mut match_expr) => {
@@ -178,7 +201,7 @@ pub fn materialize_expr(
                 if let Some(guard) = case.guard {
                     case.guard = Some(Box::new(materialize_expr(*guard, strategy)?));
                 }
-                case.body = Box::new(materialize_expr(*case.body, strategy)?);
+                case.body = Box::new(materialize_expr_in_statement_scope(*case.body, strategy)?);
                 cases.push(case);
             }
             match_expr.cases = cases;
@@ -213,7 +236,25 @@ pub fn materialize_expr(
         }
         ast::ExprKind::Select(mut select) => {
             select.obj = Box::new(materialize_expr(*select.obj, strategy)?);
-            ast::Expr::new(ast::ExprKind::Select(select))
+            // Rust's postfix `.await` is represented by the frontend as a
+            // field select rather than `ExprKind::Await`. Canonicalize it at
+            // the shared materialization boundary so targets implement one
+            // await-lowering hook regardless of AST representation.
+            if select.field.as_str() == "await" {
+                let mut await_expr = ast::ExprAwait {
+                    span: select.span,
+                    base: select.obj,
+                };
+                if let Some(expr) = strategy.materialize_await(&mut await_expr, &expr_ty)? {
+                    materialize_expr(expr, strategy)?
+                } else {
+                    ast::Expr::new(ast::ExprKind::Await(await_expr))
+                }
+            } else if let Some(expr) = strategy.materialize_select(&mut select, &expr_ty)? {
+                materialize_expr(expr, strategy)?
+            } else {
+                ast::Expr::new(ast::ExprKind::Select(select))
+            }
         }
         ast::ExprKind::Struct(mut struct_expr) => {
             for field in &mut struct_expr.fields {
@@ -327,7 +368,10 @@ pub fn materialize_expr(
             ast::Expr::new(ast::ExprKind::Break(expr_break))
         }
         ast::ExprKind::Closure(mut closure) => {
-            closure.body = Box::new(materialize_expr(*closure.body, strategy)?);
+            closure.body = Box::new(materialize_expr_in_statement_scope(
+                *closure.body,
+                strategy,
+            )?);
             ast::Expr::new(ast::ExprKind::Closure(closure))
         }
         ast::ExprKind::Closured(mut closured) => {
@@ -362,27 +406,6 @@ pub fn materialize_expr(
                 materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
-            }
-        }
-        ast::ExprKind::PortableOpCall(mut call) => {
-            let mut args = Vec::with_capacity(call.args.len());
-            for arg in call.args.drain(..) {
-                args.push(materialize_expr(arg, strategy)?);
-            }
-            call.args = args;
-            for kwarg in &mut call.kwargs {
-                let value =
-                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
-                kwarg.value = materialize_expr(value, strategy)?;
-            }
-            if strategy.capabilities().portable_operations {
-                if let Some(expr) = strategy.materialize_portable_op(&mut call, &expr_ty)? {
-                    materialize_expr(expr, strategy)?
-                } else {
-                    ast::Expr::new(ast::ExprKind::PortableOpCall(call))
-                }
-            } else {
-                ast::Expr::new(ast::ExprKind::PortableOpCall(call))
             }
         }
         ast::ExprKind::IntrinsicContainer(mut collection) => {
@@ -470,7 +493,11 @@ pub fn materialize_expr(
         }
         ast::ExprKind::Await(mut expr_await) => {
             expr_await.base = Box::new(materialize_expr(*expr_await.base, strategy)?);
-            ast::Expr::new(ast::ExprKind::Await(expr_await))
+            if let Some(expr) = strategy.materialize_await(&mut expr_await, &expr_ty)? {
+                materialize_expr(expr, strategy)?
+            } else {
+                ast::Expr::new(ast::ExprKind::Await(expr_await))
+            }
         }
         ast::ExprKind::Range(mut expr_range) => {
             if let Some(start) = expr_range.start.take() {

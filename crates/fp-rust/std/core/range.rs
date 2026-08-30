@@ -263,6 +263,7 @@ impl<Idx: fmt::Debug> fmt::Debug for RangeInclusive<Idx> {
     }
 }
 
+#[op(class = "RangeInclusive")]
 impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     /// Returns `true` if `item` is contained in the range.
     ///
@@ -288,6 +289,7 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     #[inline]
     #[stable(feature = "new_range_inclusive_api", since = "1.95.0")]
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
+    #[op(method = "contains")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
         Idx: PartialOrd<U>,

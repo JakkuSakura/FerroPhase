@@ -5,12 +5,39 @@
 //! that lowering pass.
 
 use crate::ast::{
-    Abi, AttrMeta, Attribute, Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprKind,
+    Abi, AttrMeta, Attribute, Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprKind, ExprKwArg,
     ExprStruct, ExprStructural, File, FunctionParam, FunctionSignature, Ident, Item,
     ItemDeclFunction, ItemKind, Ty, TySlot, TypeFunction, Value,
 };
 use crate::error::Result;
+use crate::span::Span;
 use std::collections::HashMap;
+
+/// Temporary framework representation of a source-language portable
+/// operation. It is consumed during target materialization and must never be
+/// stored in the persistent AST.
+#[derive(Clone, Debug)]
+pub struct PortableOpCall {
+    pub span: Span,
+    pub op: PortableOp,
+    pub args: Vec<Expr>,
+    pub kwargs: Vec<ExprKwArg>,
+}
+
+impl PortableOpCall {
+    pub fn span(&self) -> Span {
+        if self.span.is_null() {
+            Span::union(
+                self.args
+                    .iter()
+                    .map(Expr::span)
+                    .chain(self.kwargs.iter().map(ExprKwArg::span)),
+            )
+        } else {
+            self.span
+        }
+    }
+}
 
 /// Extracts `key`'s string value from a call-style `#[op(key = "value")]`
 /// attribute (`#[op(class = "Foo")]`, `#[op(method = "bar")]`,
@@ -279,6 +306,25 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
+    fn materialize_select(
+        &self,
+        _select: &mut crate::ast::ExprSelect,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    /// Lower an await wrapper after its operand has been materialized.
+    /// Targets with native suspension-point calls can replace it with the
+    /// already-materialized operand.
+    fn materialize_await(
+        &self,
+        _await_expr: &mut crate::ast::ExprAwait,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
     fn materialize_call(
         &self,
         _call: &mut ExprIntrinsicCall,
@@ -289,7 +335,7 @@ pub trait IntrinsicMaterializer {
 
     fn materialize_portable_op(
         &self,
-        _call: &mut crate::ast::ExprPortableOpCall,
+        _call: &mut PortableOpCall,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)

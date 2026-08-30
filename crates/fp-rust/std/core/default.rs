@@ -101,6 +101,7 @@ use crate::ascii::Char as AsciiChar;
 ///     bar: f32,
 /// }
 /// ```
+#[op(class = "Default")]
 #[rustc_diagnostic_item = "Default"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
@@ -136,6 +137,7 @@ pub const trait Default: Sized {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "default_fn"]
+    #[op(method = "default")]
     fn default() -> Self;
 }
 

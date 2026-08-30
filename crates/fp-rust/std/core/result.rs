@@ -1232,6 +1232,7 @@ impl<T, E> Result<T, E> {
     #[inline(always)]
     #[track_caller]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "unwrap")]
     pub fn unwrap(self) -> T
     where
         E: fmt::Debug,

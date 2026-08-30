@@ -8,6 +8,7 @@ use crate::boxed::Box;
 use crate::io::const_error;
 use crate::io::{Error, ErrorKind};
 
+#[op(class = "IoError")]
 impl Error {
     /// Creates a new I/O error from a known kind of error as well as an
     /// arbitrary error payload.
@@ -39,6 +40,7 @@ impl Error {
     #[cfg_attr(not(test), rustc_diagnostic_item = "io_error_new")]
     #[inline(never)]
     #[rustc_allow_incoherent_impl]
+    #[op(method = "new")]
     pub fn new<E>(kind: ErrorKind, error: E) -> Error
     where
         E: Into<Box<dyn error::Error + Send + Sync>>,

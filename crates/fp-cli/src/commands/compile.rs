@@ -600,6 +600,11 @@ async fn run_compile_pipeline(
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
     let (executor, mut session) =
         compiler::build_workspace_session(provider.clone(), lang, backend_capabilities);
+    session
+        .driver()
+        .state
+        .borrow_mut()
+        .set_intrinsic_materializer(backend.intrinsic_materializer());
     // Source serializers consume lifted HIR, while native IR backends need
     // the HIR -> MIR -> LIR stages populated before emission. Select that
     // pipeline before compilation so the typed HIR is lowered exactly once.

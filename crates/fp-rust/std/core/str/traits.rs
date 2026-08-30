@@ -863,6 +863,7 @@ const unsafe impl SliceIndex<str> for range::RangeToInclusive<usize> {
 /// // Invalid input string
 /// assert!(Point::from_str("(1 2)").is_err());
 /// ```
+#[op(class = "FromStr")]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
 pub const trait FromStr: Sized {
@@ -890,6 +891,7 @@ pub const trait FromStr: Sized {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "from_str_method"]
+    #[op(method = "from_str")]
     fn from_str(s: &str) -> Result<Self, Self::Err>;
 }
 

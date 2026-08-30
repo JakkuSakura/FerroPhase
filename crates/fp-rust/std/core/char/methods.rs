@@ -7,6 +7,7 @@ use crate::str::from_utf8_unchecked_mut;
 use crate::ub_checks::assert_unsafe_precondition;
 use crate::unicode::{self, conversions};
 
+#[op(class = "char")]
 impl char {
     /// The lowest valid code point a `char` can have, `'\0'`.
     ///
@@ -344,6 +345,7 @@ impl char {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_char_classify", since = "1.87.0")]
     #[inline]
+    #[op(method = "is_digit")]
     pub const fn is_digit(self, radix: u32) -> bool {
         self.to_digit(radix).is_some()
     }
@@ -791,6 +793,7 @@ impl char {
     #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "is_alphabetic")]
     pub fn is_alphabetic(self) -> bool {
         match self {
             'a'..='z' | 'A'..='Z' => true,
@@ -1081,6 +1084,7 @@ impl char {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_char_classify", since = "1.87.0")]
     #[inline]
+    #[op(method = "is_whitespace")]
     pub const fn is_whitespace(self) -> bool {
         match self {
             ' ' | '\x09'..='\x0d' => true,
@@ -2046,6 +2050,7 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
+    #[op(method = "is_ascii_alphabetic")]
     pub const fn is_ascii_alphabetic(&self) -> bool {
         matches!(*self, 'a'..='z' | 'A'..='Z')
     }
@@ -2185,6 +2190,7 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
+    #[op(method = "is_ascii_digit")]
     pub const fn is_ascii_digit(&self) -> bool {
         matches!(*self, '0'..='9')
     }
@@ -2253,6 +2259,7 @@ impl char {
     #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[rustc_const_stable(feature = "const_ascii_ctype_on_intrinsics", since = "1.47.0")]
     #[inline]
+    #[op(method = "is_ascii_hexdigit")]
     pub const fn is_ascii_hexdigit(&self) -> bool {
         matches!(*self, '0'..='9') | matches!(*self, 'A'..='F') | matches!(*self, 'a'..='f')
     }

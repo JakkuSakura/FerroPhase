@@ -168,16 +168,6 @@ common_struct! {
     }
 }
 
-common_struct! {
-    pub struct ExprPortableOpCall {
-        #[serde(default)]
-        pub span: Span,
-        pub op: crate::intrinsics::PortableOp,
-        pub args: Vec<Expr>,
-        pub kwargs: Vec<ExprKwArg>,
-    }
-}
-
 impl ExprIntrinsicCall {
     pub fn new(kind: impl Into<CallKind>, args: Vec<Expr>, kwargs: Vec<ExprKwArg>) -> Self {
         Self {
@@ -186,20 +176,6 @@ impl ExprIntrinsicCall {
             args,
             kwargs,
         }
-    }
-}
-
-impl ExprPortableOpCall {
-    pub fn span(&self) -> Span {
-        span_or(
-            self.span,
-            union_spans(
-                self.args
-                    .iter()
-                    .map(Expr::span)
-                    .chain(self.kwargs.iter().map(ExprKwArg::span)),
-            ),
-        )
     }
 }
 

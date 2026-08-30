@@ -629,6 +629,14 @@ impl HirPackage {
     /// that still builds a whole `items: Vec<Item>` up front rather than
     /// through `add_item` one at a time. New code should prefer `add_item`.
     pub fn index_derived_lookups(&mut self) {
+        // Bulk lowerers append top-level items directly and may not update
+        // the point-lookup map on every path. Rebuild it from the item list
+        // before deriving the secondary indexes.
+        for item in &self.items {
+            self.def_map
+                .entry(item.def_id.clone())
+                .or_insert_with(|| item.clone());
+        }
         self.struct_defs_by_name.clear();
         self.impl_method_item_index.clear();
         self.impls_by_self_did.clear();

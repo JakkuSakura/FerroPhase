@@ -200,14 +200,6 @@ fn annotate_expr(expr: &mut Expr, module_path: &QualifiedPath) {
                 annotate_expr(&mut kwarg.value, module_path);
             }
         }
-        ExprKind::PortableOpCall(call) => {
-            for arg in &mut call.args {
-                annotate_expr(arg, module_path);
-            }
-            for kwarg in &mut call.kwargs {
-                annotate_expr(&mut kwarg.value, module_path);
-            }
-        }
         ExprKind::IntrinsicContainer(container) => match container {
             ExprIntrinsicContainer::VecElements { elements } => {
                 for element in elements {

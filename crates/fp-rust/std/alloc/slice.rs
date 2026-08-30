@@ -66,6 +66,7 @@ use crate::borrow::ToOwned;
 use crate::boxed::Box;
 use crate::vec::Vec;
 
+#[op(class = "slice")]
 impl<T> [T] {
     /// Sorts the slice in ascending order, preserving initial order of equal elements.
     ///
@@ -369,6 +370,7 @@ impl<T> [T] {
     #[rustc_conversion_suggestion]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "to_vec")]
     pub fn to_vec(&self) -> Vec<T>
     where
         T: Clone,
@@ -393,6 +395,7 @@ impl<T> [T] {
     #[rustc_allow_incoherent_impl]
     #[inline]
     #[unstable(feature = "allocator_api", issue = "32838")]
+    #[op(method = "to_vec_in")]
     pub fn to_vec_in<A: Allocator>(&self, alloc: A) -> Vec<T, A>
     where
         T: Clone,
@@ -593,6 +596,7 @@ impl<T> [T] {
     /// ```
     #[rustc_allow_incoherent_impl]
     #[stable(feature = "rename_connect_to_join", since = "1.3.0")]
+    #[op(method = "join")]
     pub fn join<Separator>(&self, sep: Separator) -> <Self as Join<Separator>>::Output
     where
         Self: Join<Separator>,

@@ -214,6 +214,14 @@ pub trait TargetBackend: Send + Sync {
     /// class" baseline — a handful, like Kotlin, return more).
     fn capabilities(&self) -> crate::capabilities::LanguageCapabilities;
 
+    /// Target-specific materializer used while lifting typed HIR into the
+    /// persistent AST. Portable operations must be consumed at that boundary.
+    fn intrinsic_materializer(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::intrinsics::IntrinsicMaterializer>> {
+        None
+    }
+
     /// Writes `package_id`'s artifact to the path fixed at construction,
     /// reading whichever view of it the backend needs — `workspace`
     /// (`package_source`, AST-level lookups, ...) for AST-emitting

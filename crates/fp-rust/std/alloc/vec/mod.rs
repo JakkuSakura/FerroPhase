@@ -4421,6 +4421,7 @@ impl<T: Clone, const N: usize> From<&mut [T; N]> for Vec<T> {
 
 #[cfg(not(no_global_oom_handling))]
 #[stable(feature = "vec_from_array", since = "1.44.0")]
+#[op(class = "Vec")]
 impl<T, const N: usize> From<[T; N]> for Vec<T> {
     /// Allocates a `Vec<T>` and moves `s`'s items into it.
     ///
@@ -4429,6 +4430,7 @@ impl<T, const N: usize> From<[T; N]> for Vec<T> {
     /// ```
     /// assert_eq!(Vec::from([1, 2, 3]), vec![1, 2, 3]);
     /// ```
+    #[op(method = "from")]
     fn from(s: [T; N]) -> Vec<T> {
         <[T]>::into_vec(Box::new(s))
     }

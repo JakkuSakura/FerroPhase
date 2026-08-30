@@ -2991,6 +2991,7 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "iterator_find_map", since = "1.30.0")]
     #[rustc_non_const_trait_method]
+    #[op(method = "find_map")]
     fn find_map<B, F>(&mut self, f: F) -> Option<B>
     where
         Self: Sized,

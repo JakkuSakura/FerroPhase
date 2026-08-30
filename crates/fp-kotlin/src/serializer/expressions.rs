@@ -136,6 +136,17 @@ impl KotlinEmitter {
                                 ));
                             }
                         }
+                        // Rust `str::split_at` returns a two-element tuple. Model it as a
+                        // Kotlin `Pair` so the tuple-pattern serializer can use Kotlin's
+                        // native destructuring declaration. Kotlin has no `split_at` member.
+                        if sel.field.name.as_str() == "split_at" && inv.args.len() == 1 {
+                            let obj = self.render_expr(&sel.obj)?;
+                            let index = self.render_expr(&inv.args[0])?;
+                            return Ok(format!(
+                                "Pair({0}.substring(0, {1}), {0}.substring({1}))",
+                                obj, index
+                            ));
+                        }
                         let obj = self.render_expr(&sel.obj)?;
                         // `round`/`log2` have no Kotlin member-method equivalent — both are
                         // top-level `kotlin.math` functions taking the receiver as an
@@ -386,6 +397,12 @@ impl KotlinEmitter {
                 Ok(format!("({} {} {})", lhs, kotlin_bin_op(&bin.kind), rhs))
             }
 
+            ExprKind::UnOp(un) if matches!(un.op, UnOpKind::Deref) => {
+                // References are represented by their value in Kotlin. Both
+                // AST dereference forms occur after HIR lifting, so neither
+                // may emit Rust's unary `*` syntax.
+                self.render_expr(&un.val)
+            }
             ExprKind::UnOp(un) => Ok(format!(
                 "{}({})",
                 kotlin_un_op(&un.op),
@@ -729,9 +746,14 @@ impl KotlinEmitter {
             }
             ExprKind::Await(a) => self.render_expr(&a.base),
 
-            _ => Ok(format!(
-                "/* unreachable: {:?} */",
-                std::mem::discriminant(expr.kind())
+            // Semantic AST must be fully materialized before it reaches this
+            // syntax-only renderer.  Emitting a comment here used to turn an
+            // unsupported expression into syntactically malformed Kotlin when
+            // it was used as a call receiver.  Preserve the operation/type
+            // boundary by failing the compilation instead.
+            _ => Err(eyre::eyre!(
+                "Kotlin serializer received unmaterialized expression: {:?}",
+                expr.kind()
             )),
         }
     }
@@ -922,11 +944,7 @@ pub(super) fn map_kt_method(name: &str) -> String {
         "as_ref" => "".into(),
         "as_bytes" => "toByteArray()".into(),
         "map" => "let".into(),
-        "parse_next" => "parse".into(),
-        "verify" => "also".into(),
-        "take_while" => "filter".into(),
         "is_ascii_alphanumeric" => "isLetterOrDigit()".into(),
-        "is_ascii_hexdigit" => "isDigit()".into(),
         "is_whitespace" => "isWhitespace()".into(),
         "all" => "all".into(),
         // Kotlin's `CharSequence` already has `.all { c: Char -> ... }`, `.map`, etc.
@@ -966,28 +984,20 @@ pub(super) fn is_else_arm(pat: &Option<fp_core::ast::BPattern>) -> bool {
         None => true,
         Some(p) => match &p.kind {
             PatternKind::Wildcard(_) => true,
-            // Err(_) is also a catch-all arm
-            PatternKind::TupleStruct(ts) => {
-                let raw = ts.name.to_string();
-                let simple = raw.rsplit("::").next().unwrap_or(&raw);
-                (simple == "Err" || simple == "None")
-                    && ts
-                        .patterns
-                        .iter()
-                        .all(|inner| matches!(&inner.kind, PatternKind::Wildcard(_)))
+            PatternKind::TupleStruct(_) | PatternKind::Variant(_) => {
+                matches!(
+                    pattern_portable_op(pat).as_deref(),
+                    Some("result_err" | "option_none")
+                )
             }
-            // `None` with no parens (a unit variant, not a tuple-struct
-            // shape) parses as a bare `Variant` pattern instead.
-            PatternKind::Variant(v) if v.pattern.is_none() => match v.name.kind() {
-                ExprKind::Name(name) => {
-                    let raw = name.to_string();
-                    raw.rsplit("::").next().unwrap_or(&raw) == "None"
-                }
-                _ => false,
-            },
             _ => false,
         },
     }
+}
+
+pub(super) fn pattern_portable_op(pat: &Option<fp_core::ast::BPattern>) -> Option<String> {
+    let pattern = pat.as_ref()?;
+    fp_core::ast::resolved_pattern_op(pattern.id()).map(|op| op.name().to_string())
 }
 
 /// The enum's own bare declared name for an enum-variant VALUE expression,
@@ -1091,9 +1101,12 @@ pub(super) fn render_match_pat(pat: &Option<fp_core::ast::BPattern>, e: &KotlinE
                 .join(", "),
             PatternKind::TupleStruct(ts) => {
                 let raw_name = ts.name.to_string();
-                let simple_name = raw_name.rsplit("::").next().unwrap_or(&raw_name);
-                // Portable monadic wrappers (Option/Result) — strip to just the binding
-                if matches!(simple_name, "Ok" | "Err" | "Some" | "None") {
+                // Option and Result representations are selected by their resolved
+                // portable operation, never the source spelling of a variant.
+                if matches!(
+                    pattern_portable_op(pat).as_deref(),
+                    Some("option_some" | "option_none" | "result_ok" | "result_err")
+                ) {
                     if ts.patterns.is_empty() {
                         return "null".to_string();
                     }
@@ -1147,28 +1160,50 @@ pub(super) fn render_match_pat(pat: &Option<fp_core::ast::BPattern>, e: &KotlinE
 pub(super) fn non_monadic_tuple_variant(
     e: &KotlinEmitter,
     pat: &Option<fp_core::ast::BPattern>,
-) -> Option<(String, String)> {
+) -> Option<(String, Vec<(String, String)>)> {
     let p = pat.as_ref()?;
     let PatternKind::TupleStruct(ts) = &p.kind else {
         return None;
     };
-    if ts.patterns.len() != 1 {
+    if pattern_portable_op(pat).is_some() {
         return None;
     }
     let raw = ts.name.to_string();
-    if !raw.contains("::") {
+    let bindings = ts
+        .patterns
+        .iter()
+        .map(|pattern| match &unwrap_ref_pattern(pattern).kind {
+            PatternKind::Ident(id) => Some(id.ident.name.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if bindings.is_empty() {
         return None;
     }
-    let simple = raw.rsplit("::").next().unwrap_or(&raw);
-    if matches!(simple, "Some" | "Ok" | "Err" | "None") {
-        return None;
-    }
-    let binding = match &unwrap_ref_pattern(&ts.patterns[0]).kind {
-        PatternKind::Ident(id) => id.ident.name.clone(),
-        _ => return None,
-    };
     let variant_path = resolve_variant_kotlin_path(e, &raw);
-    Some((variant_path, binding))
+    let (enum_name, variant_name) = enum_variant_name_parts(e, &raw)?;
+    let fields = e
+        .enum_variant_payload_fields
+        .get(&enum_name)
+        .and_then(|variants| variants.get(&variant_name))?;
+    if fields.len() != bindings.len() {
+        return None;
+    }
+    Some((
+        variant_path,
+        bindings.into_iter().zip(fields.iter().cloned()).collect(),
+    ))
+}
+
+fn enum_variant_name_parts(e: &KotlinEmitter, raw_name: &str) -> Option<(String, String)> {
+    let segments: Vec<&str> = raw_name.split("::").flat_map(|s| s.split('.')).collect();
+    let variant_name = segments.last()?.to_string();
+    let enum_name = if segments.len() >= 2 {
+        segments[segments.len() - 2].to_string()
+    } else {
+        e.current_self_name.clone()?
+    };
+    Some((enum_name, variant_name))
 }
 
 /// Strip `ref`/`ref mut` wrapper patterns (`Some(ref mut file)`) to get at the
@@ -1288,7 +1323,8 @@ pub(super) fn render_value(val: &Value) -> String {
         Value::BigDecimal(v) => format_kt_decimal_literal(v.value.to_string()),
         Value::Char(v) => format!("'{}'", escape_char_for_kt(v.value)),
         Value::String(v) => format!("\"{}\"", escape_str_for_kt(&v.value)),
-        Value::Unit(_) | Value::Null(_) | Value::None(_) => "null".to_string(),
+        Value::Unit(_) => "Unit".to_string(),
+        Value::Null(_) | Value::None(_) => "null".to_string(),
         Value::Some(v) => render_value(&v.value),
         Value::Option(v) => v
             .value

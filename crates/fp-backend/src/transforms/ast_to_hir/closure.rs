@@ -271,6 +271,17 @@ impl ClosureLowering {
             "map_err" => 1,
             _ => return (None, None),
         };
+        if sel.field.name.as_str() == "map_err" {
+            // Kotlin's Result exposes failures as Throwable. The source
+            // error parameter can be unconstrained and therefore lift as
+            // Any, but a Kotlin mapError callback must never receive Any?.
+            return (
+                Some(ast::Ty::path(ast::Path::plain(vec![ast::Ident::new(
+                    "Throwable",
+                )]))),
+                None,
+            );
+        }
         let (receiver_ty, by_ref) = self.receiver_ty_for_closure_arg(&sel.obj);
         let Some(inner) = receiver_ty.and_then(|ty| Self::generic_type_arg_at(&ty, arg_index))
         else {
@@ -1001,14 +1012,6 @@ impl ClosureLowering {
                     self.rewrite_in_expr(&mut kwarg.value)?;
                 }
             }
-            ast::ExprKind::PortableOpCall(call) => {
-                for arg in &mut call.args {
-                    self.rewrite_in_expr(arg)?;
-                }
-                for kwarg in &mut call.kwargs {
-                    self.rewrite_in_expr(&mut kwarg.value)?;
-                }
-            }
             ast::ExprKind::Paren(paren) => self.rewrite_in_expr(paren.expr.as_mut())?,
             ast::ExprKind::IntrinsicContainer(_) => {
                 unreachable!("intrinsic collections should have been expanded")
@@ -1337,14 +1340,6 @@ impl CaptureCollector {
             ast::ExprKind::SplatDict(dict) => self.visit(dict.dict.as_ref()),
             ast::ExprKind::Item(item) => self.visit_item(item.as_ref()),
             ast::ExprKind::IntrinsicCall(call) => {
-                for arg in &call.args {
-                    self.visit(arg);
-                }
-                for kwarg in &call.kwargs {
-                    self.visit(&kwarg.value);
-                }
-            }
-            ast::ExprKind::PortableOpCall(call) => {
                 for arg in &call.args {
                     self.visit(arg);
                 }
@@ -1681,14 +1676,6 @@ impl CaptureReplacer {
                 self.visit(&mut new_expr);
                 new_expr.id = expr.id();
                 *expr = new_expr;
-            }
-            ast::ExprKind::PortableOpCall(call) => {
-                for arg in &mut call.args {
-                    self.visit(arg);
-                }
-                for kwarg in &mut call.kwargs {
-                    self.visit(&mut kwarg.value);
-                }
             }
             ast::ExprKind::Id(_) | ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
         }

@@ -357,15 +357,6 @@ impl PrettyPrintable for ast::Expr {
                     }
                 })
             }
-            ast::ExprKind::PortableOpCall(call) => {
-                ctx.write_line(format!("portable_op {}{}", call.op.name(), suffix))?;
-                ctx.with_indent(|ctx| {
-                    for arg in &call.args {
-                        arg.fmt_pretty(f, ctx)?;
-                    }
-                    Ok(())
-                })
-            }
             ast::ExprKind::Quote(q) => {
                 let kind = q.kind.map(|k| format!(" {:?}", k)).unwrap_or_default();
                 ctx.write_line(format!("quote{}{}", kind, suffix))?;
@@ -1361,15 +1352,6 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             format!("{}..{}", start, end)
         }
         ast::ExprKind::FormatString(template) => render_format_template(template),
-        ast::ExprKind::PortableOpCall(call) => format!(
-            "{}({})",
-            call.op.name(),
-            call.args
-                .iter()
-                .map(render_expr_inline)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
         ast::ExprKind::Return(_) => "return <expr>".into(),
         ast::ExprKind::Break(_) => "break <expr>".into(),
         ast::ExprKind::Continue(_) => "continue".into(),
