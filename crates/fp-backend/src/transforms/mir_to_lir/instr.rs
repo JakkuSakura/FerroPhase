@@ -2804,15 +2804,11 @@ impl MirToLirLowerer {
                         self.function_package_ids.insert(name.clone(), package_id);
                     }
                     let mut value = self.function_value(name.clone())?;
-                    // Carry the owning package together with the canonical
-                    // emitted symbol. A bare name is insufficient for
-                    // comptime/interpreter lookup, while formatting a DefId
-                    // as `package:3` produces an identity rather than a
-                    // linkable native symbol.
-                    value.kind = lir::LirValueKind::Function(lir::LirFunctionRef::Package {
-                        package_id: def_id.package_id.clone(),
-                        name: lir::Name::new(name),
-                    });
+                    // Keep the resolved definition identity through LIR.
+                    // Names are only used above to obtain the function
+                    // signature; they must not become the callable identity.
+                    value.kind =
+                        lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id.clone()));
                     Ok(value)
                 }
                 mir::ConstantKind::ExternFn(name) => {

@@ -10,18 +10,15 @@ impl MirToLirLowerer {
         def_id: &mir::DefId,
         ty: lir::LirType,
     ) -> Result<lir::LirConstant> {
-        let Some((package_id, name, _, _)) = self.function_signature_by_def_id(def_id) else {
+        if self.function_signature_by_def_id(def_id).is_none() {
             return Err(fp_core::error::Error::from(format!(
                 "missing MIR signature for function constant {}",
                 def_id
             )));
-        };
+        }
         Ok(lir::LirConstant::function_address(
             ty,
-            lir::LirFunctionRef::Package {
-                package_id,
-                name: lir::Name::new(name.as_str().to_owned()),
-            },
+            lir::LirFunctionRef::Definition(def_id.clone()),
         ))
     }
 

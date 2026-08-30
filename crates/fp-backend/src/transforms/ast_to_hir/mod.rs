@@ -557,9 +557,12 @@ impl AstToHirLowerer {
             .cloned()
             && previous != entry.res
         {
-            self.emit_error(
-                Span::new(self.current_file, 0, 0),
-                format!("duplicate definition `{leaf}` in the same namespace"),
+            self.add_error(
+                Diagnostic::error(format!(
+                    "duplicate definition `{leaf}` in the same namespace"
+                ))
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(Span::new(self.current_file, 0, 0)),
             );
         }
         self.package
@@ -983,10 +986,19 @@ impl AstToHirLowerer {
     }
 
     fn lookup_prelude_symbol(&self, name: &str, ns: hir::Namespace) -> Option<hir::Res> {
-        self.package
+        let mut matches = self
+            .package
             .module_tree
             .prelude_bindings(ns)
-            .find_map(|(bound_name, entry)| (bound_name == name).then(|| entry.res.clone()))
+            .filter(|(bound_name, _)| *bound_name == name)
+            .map(|(_, entry)| entry.res.clone());
+        let first = matches.next()?;
+        // Multiple distinct prelude bindings are ambiguous; do not make the
+        // result depend on HashMap iteration order.
+        if matches.any(|candidate| candidate != first) {
+            return None;
+        }
+        Some(first)
     }
 
     /// Lexical scope only (generic parameters, locals pushed by

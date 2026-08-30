@@ -267,6 +267,21 @@ impl LirInterpreter {
     /// shapes. A string is reconstructed only from the exact wide-pointer
     /// representation emitted for `&str`.
     pub fn read_typed_const_value(&self, value: Value, ty: &LirType) -> LirResult<Value> {
+        // Type values are represented as managed pointers in LIR. Their
+        // semantic value is the `Value::Type` stored behind the handle,
+        // regardless of whether an intermediate wrapper caused the declared
+        // return layout to be `Ptr<Void>` or an aggregate containing it.
+        if let Value::Pointer(pointer) = &value {
+            if let Some(handle) = Self::type_handle_index(*pointer)
+                .or_else(|| usize::try_from(pointer.value).ok())
+            {
+                if let Some(Value::Type(_)) = self.state.objects.get(handle) {
+                    return self.state.objects.get(handle).cloned().ok_or_else(|| {
+                        VmError::Runtime(format!("type handle {handle} is dangling"))
+                    });
+                }
+            }
+        }
         if matches!(
             ty,
             LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void)

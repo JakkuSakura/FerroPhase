@@ -92,10 +92,52 @@ pub fn lower_program_for_native(lir_program: &LirBlob) -> Result<LirBlob> {
     lir_program
         .functions
         .retain(|function| !function.name.as_str().starts_with("__fp_comptime_const_"));
+    resolve_definition_references(&mut lir_program);
     retain_reachable_functions(&mut lir_program);
     lower_phi_in_program(&mut lir_program)?;
     crate::jit::validate_native_program(&lir_program)?;
     Ok(lir_program)
+}
+
+/// Native assembly uses linkable symbols, while the shared LIR keeps
+/// language calls keyed by `DefId` for the interpreter and comptime. Resolve
+/// that identity against the already-emitted LIR function table at the
+/// native boundary; never stringify a `DefId` into an object-file symbol.
+fn resolve_definition_references(program: &mut LirBlob) {
+    let names: HashMap<fp_core::hir::DefId, fp_core::lir::Name> = program
+        .functions
+        .iter()
+        .filter_map(|function| function.def_id.clone().map(|def_id| (def_id, function.name.clone())))
+        .collect();
+    for function in &mut program.functions {
+        for block in &mut function.basic_blocks {
+            for instruction in &mut block.instructions {
+                if let LirInstructionKind::Call { function, args, .. } = &mut instruction.kind {
+                    resolve_value_reference(function, &names);
+                    for arg in args {
+                        resolve_value_reference(arg, &names);
+                    }
+                }
+            }
+            if let LirTerminator::Invoke { function, args, .. } = &mut block.terminator {
+                resolve_value_reference(function, &names);
+                for arg in args {
+                    resolve_value_reference(arg, &names);
+                }
+            }
+        }
+    }
+}
+
+fn resolve_value_reference(
+    value: &mut LirValue,
+    names: &HashMap<fp_core::hir::DefId, fp_core::lir::Name>,
+) {
+    if let fp_core::lir::LirValueKind::Function(LirFunctionRef::Definition(def_id)) = &value.kind {
+        if let Some(name) = names.get(def_id) {
+            value.kind = fp_core::lir::LirValueKind::Function(LirFunctionRef::Name(name.clone()));
+        }
+    }
 }
 
 fn retain_reachable_functions(program: &mut LirBlob) {
