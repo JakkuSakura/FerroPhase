@@ -665,14 +665,21 @@ impl CompilerDriver {
                 let hir_package = hir_package.borrow();
                 (hir_package.const_values(), hir_package.const_block_values())
             });
-        let (hir_program, package_exports, type_alias_exports) =
+        let (hir_package, package_exports, type_alias_exports) =
             self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
         package
             .borrow_mut()
             .type_alias_exports
             .extend(type_alias_exports);
-        self.state.borrow_mut().insert_hir(hir_program);
-        self.type_check_program(hir_package_id.clone(), package_exports)
+        let hir_package = Rc::new(RefCell::new(hir_package));
+        hir_package
+            .borrow_mut()
+            .hir_exports
+            .extend(package_exports.clone());
+        self.state
+            .borrow_mut()
+            .insert_hir_shared(hir_package);
+        self.type_check_program(hir_package_id.clone())
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -888,7 +895,6 @@ impl CompilerDriver {
     async fn type_check_program(
         &mut self,
         package_id: hir::PackageId,
-        package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let hir_program = self.state.borrow().hir_program_rc();
@@ -940,9 +946,12 @@ impl CompilerDriver {
                 ));
             }
         }
-        let package = checker.borrow().finish();
-        package.borrow_mut().hir_exports.extend(package_exports);
-        self.state.borrow_mut().insert_hir_shared(package);
+        // The checker has been operating on the package handle already
+        // installed by `compile_items_to_lir_units`. Keep that one shared
+        // package as the authoritative HIR; publishing the checker handle
+        // again would obscure the ownership/lifetime boundary and risks
+        // replacing state that later comptime queries have recorded.
+        let _package = checker.borrow().finish();
         Ok(())
     }
 
