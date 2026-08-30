@@ -84,6 +84,11 @@ pub struct LirInterpreter {
     host_functions: HostFunctionRegistry,
 }
 
+// `type` lowers to `Ptr(Void)`, but it is not an ordinary address. Keep its
+// object-table representation distinguishable from data/global pointers when
+// it crosses a local, aggregate field, or return slot.
+const TYPE_HANDLE_TAG: u64 = 1 << 63;
+
 fn json_to_runtime_value(value: serde_json::Value) -> LirResult<Value> {
     match value {
         serde_json::Value::Null => Ok(Value::null()),
@@ -262,6 +267,18 @@ impl LirInterpreter {
     /// shapes. A string is reconstructed only from the exact wide-pointer
     /// representation emitted for `&str`.
     pub fn read_typed_const_value(&self, value: Value, ty: &LirType) -> LirResult<Value> {
+        if matches!(
+            ty,
+            LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void)
+        ) {
+            if let Value::Pointer(pointer) = value {
+                if let Some(handle) = Self::type_handle_index(pointer) {
+                    return self.state.objects.get(handle).cloned().ok_or_else(|| {
+                        VmError::Runtime(format!("type handle {handle} is dangling"))
+                    });
+                }
+            }
+        }
         let LirType::Struct {
             name: Some(name),
             fields,
@@ -925,15 +942,14 @@ impl LirInterpreter {
         let typed = self.resolve_operand(val)?;
         match typed.value {
             Value::Type(value) => Ok(Value::Type(value)),
-            Value::Pointer(pointer) => self
-                .state
-                .objects
-                .get(
-                    usize::try_from(pointer.value)
-                        .map_err(|_| VmError::Runtime("negative managed object pointer".into()))?,
-                )
-                .cloned()
-                .ok_or_else(|| VmError::Runtime("managed object pointer is dangling".into())),
+            Value::Pointer(pointer) => {
+                let handle = Self::type_handle_index(pointer).or_else(|| {
+                    usize::try_from(pointer.value).ok()
+                }).ok_or_else(|| VmError::Runtime("invalid managed object pointer".into()))?;
+                self.state.objects.get(handle).cloned().ok_or_else(|| {
+                    VmError::Runtime(format!("managed object pointer {handle} is dangling"))
+                })
+            }
             value => Err(VmError::TypeMismatch {
                 expected: "managed object reference".into(),
                 found: format!("{value:?}"),
@@ -1627,9 +1643,14 @@ impl LirInterpreter {
         }
         if matches!(ty, LirType::Ptr(_)) {
             return match value {
+                Value::Type(value) => {
+                    let handle = self.state.objects.len() as u64;
+                    self.state.objects.push(Value::Type(value));
+                    Ok(TYPE_HANDLE_TAG | handle)
+                }
                 Value::Pointer(pointer) => Ok(pointer.value as u64),
                 Value::Null(_) => Ok(0),
-                value @ (Value::Type(_) | Value::String(_) | Value::Bytes(_)) => {
+                value @ (Value::String(_) | Value::Bytes(_)) => {
                     let handle = self.state.objects.len() as u64;
                     self.state.objects.push(value);
                     Ok(handle)
@@ -1846,6 +1867,11 @@ impl LirInterpreter {
             ty,
             LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..)
         )
+    }
+
+    fn type_handle_index(pointer: fp_core::ast::ValuePointer) -> Option<usize> {
+        let raw = pointer.value as u64;
+        (raw & TYPE_HANDLE_TAG != 0).then(|| (raw & !TYPE_HANDLE_TAG) as usize)
     }
 
     fn binop(

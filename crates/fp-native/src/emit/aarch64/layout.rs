@@ -10,6 +10,7 @@ pub(super) fn build_frame_layout(
     let mut max_call_args = 0usize;
     let mut max_vararg_stack = 0usize;
     let mut has_calls = false;
+    let mut max_const_agg_args = 0i32;
     let local_types = build_local_types(func);
     let mut alloca_info = Vec::new();
     let mut alloca_debug = Vec::new();
@@ -30,6 +31,7 @@ pub(super) fn build_frame_layout(
             vreg_ids.insert(inst.id);
             if let AsmInstructionKind::Call { function, args, .. } = &inst.kind {
                 has_calls = true;
+                let mut const_agg_args = 0i32;
                 let mut count = 0usize;
                 for arg in args {
                     count += call_arg_units(arg, reg_types, &local_types)?;
@@ -44,9 +46,11 @@ pub(super) fn build_frame_layout(
                                 .map_err(|error| Error::from(error.to_string()))?
                                 as i32;
                             const_agg_scratch_size = const_agg_scratch_size.max(align8(size));
+                            const_agg_args += 1;
                         }
                     }
                 }
+                max_const_agg_args = max_const_agg_args.max(const_agg_args);
                 max_call_args = max_call_args.max(count);
                 if let Some(start) = darwin_variadic_format_start(function, args) {
                     let bytes =
@@ -111,6 +115,14 @@ pub(super) fn build_frame_layout(
                 alloca_info.push((inst.id, bytes, align));
             }
         }
+    }
+
+    // Calls can contain aggregate constants indirectly through formatting or
+    // const-propagated expressions, so keep materialization scratch available
+    // for those values as well as direct aggregate arguments.
+    if has_calls {
+        const_agg_scratch_size = const_agg_scratch_size.max(16);
+        const_agg_scratch_size *= max_const_agg_args.max(1);
     }
 
     let reg_spill_size = (max_call_args.saturating_sub(8) * 8) as i32;
@@ -297,6 +309,11 @@ pub(super) fn build_frame_layout(
         alloca_offsets,
         sret_offset,
         const_agg_scratch_offset,
+        const_agg_scratch_stride: if max_const_agg_args > 0 {
+            const_agg_scratch_size / max_const_agg_args
+        } else {
+            16
+        },
         outgoing_size,
         frame_size,
     })
@@ -590,6 +607,7 @@ pub(super) struct FrameLayout {
     pub(super) alloca_offsets: HashMap<u32, i32>,
     pub(super) sret_offset: Option<i32>,
     pub(super) const_agg_scratch_offset: Option<i32>,
+    pub(super) const_agg_scratch_stride: i32,
     pub(super) outgoing_size: i32,
     pub(super) frame_size: i32,
 }

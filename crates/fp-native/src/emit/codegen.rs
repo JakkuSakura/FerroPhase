@@ -1,6 +1,9 @@
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirBlob, LirInstruction, LirInstructionKind, LirTerminator, LirValue};
+use fp_core::lir::{
+    LirBlob, LirFunctionRef, LirInstruction, LirInstructionKind, LirTerminator, LirValue,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
@@ -89,9 +92,121 @@ pub fn lower_program_for_native(lir_program: &LirBlob) -> Result<LirBlob> {
     lir_program
         .functions
         .retain(|function| !function.name.as_str().starts_with("__fp_comptime_const_"));
+    retain_reachable_functions(&mut lir_program);
     lower_phi_in_program(&mut lir_program)?;
     crate::jit::validate_native_program(&lir_program)?;
     Ok(lir_program)
+}
+
+fn retain_reachable_functions(program: &mut LirBlob) {
+    let by_name: HashMap<String, usize> = program
+        .functions
+        .iter()
+        .enumerate()
+        .filter(|(_, function)| !function.is_declaration)
+        .map(|(index, function)| (function.name.as_str().to_string(), index))
+        .collect();
+    let by_def_id: HashMap<fp_core::hir::DefId, usize> = program
+        .functions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, function)| function.def_id.clone().map(|def_id| (def_id, index)))
+        .collect();
+    let Some(&main_index) = by_name.get("main") else {
+        return;
+    };
+
+    let mut reachable = HashSet::new();
+    let mut work = VecDeque::from([main_index]);
+    while let Some(index) = work.pop_front() {
+        if !reachable.insert(index) {
+            continue;
+        }
+        let function = &program.functions[index];
+        for block in &function.basic_blocks {
+            for instruction in &block.instructions {
+                let mut refs = Vec::new();
+                collect_instruction_function_refs(&instruction.kind, &mut refs);
+                for function_ref in refs {
+                    match function_ref {
+                        LirFunctionRef::Name(name) => {
+                            if let Some(&target) = by_name.get(name.as_str()) {
+                                work.push_back(target);
+                            }
+                        }
+                        LirFunctionRef::Definition(def_id) => {
+                            if let Some(&target) = by_def_id.get(&def_id) {
+                                work.push_back(target);
+                            }
+                        }
+                        LirFunctionRef::Package { name, .. } => {
+                            if let Some(&target) = by_name.get(name.as_str()) {
+                                work.push_back(target);
+                            }
+                        }
+                    }
+                }
+            }
+            let mut refs = Vec::new();
+            collect_terminator_function_refs(&block.terminator, &mut refs);
+            for function_ref in refs {
+                match function_ref {
+                    LirFunctionRef::Name(name) => {
+                        if let Some(&target) = by_name.get(name.as_str()) {
+                            work.push_back(target);
+                        }
+                    }
+                    LirFunctionRef::Definition(def_id) => {
+                        if let Some(&target) = by_def_id.get(&def_id) {
+                            work.push_back(target);
+                        }
+                    }
+                    LirFunctionRef::Package { name, .. } => {
+                        if let Some(&target) = by_name.get(name.as_str()) {
+                            work.push_back(target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut index = 0usize;
+    program.functions.retain(|function| {
+        let keep = function.is_declaration
+            || reachable.contains(&index)
+            || function.name.as_str() == "main";
+        index += 1;
+        keep
+    });
+}
+
+fn collect_instruction_function_refs(kind: &LirInstructionKind, refs: &mut Vec<LirFunctionRef>) {
+    match kind {
+        LirInstructionKind::Call { function, args, .. } => {
+            collect_value_function_ref(function, refs);
+            args.iter().for_each(|value| collect_value_function_ref(value, refs));
+        }
+        _ => {}
+    }
+}
+
+fn collect_terminator_function_refs(terminator: &LirTerminator, refs: &mut Vec<LirFunctionRef>) {
+    if let LirTerminator::Invoke { function, args, .. } = terminator {
+        collect_value_function_ref(function, refs);
+        args.iter().for_each(|value| collect_value_function_ref(value, refs));
+    }
+}
+
+fn collect_value_function_ref(value: &LirValue, refs: &mut Vec<LirFunctionRef>) {
+    if let fp_core::lir::LirValueKind::Function(function) = &value.kind {
+        refs.push(function.clone());
+    }
+    if let fp_core::lir::LirValueKind::Constant(constant) = &value.kind {
+        if let fp_core::lir::LirConstantKind::FunctionAddress(function) = constant {
+            refs.push(function.clone());
+        }
+    }
 }
 fn is_call_arg_value(value: &LirValue) -> bool {
     matches!(

@@ -150,6 +150,7 @@ pub(super) fn emit_call(
             rodata_pool,
         )?;
     } else {
+        let mut const_agg_index = 0i32;
         for arg in args {
             if let AsmValue::Constant(AsmConstant::String(text)) = arg {
                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -212,9 +213,12 @@ pub(super) fn emit_call(
             ) = arg
             {
                 if is_large_aggregate(&arg_ty, &layout.data_layout) {
-                    let scratch_off = layout.const_agg_scratch_offset.ok_or_else(|| {
+                    let scratch_base = layout.const_agg_scratch_offset.ok_or_else(|| {
                         Error::from("missing scratch slot for constant aggregate argument")
                     })?;
+                    let scratch_off = scratch_base
+                        + const_agg_index * layout.const_agg_scratch_stride;
+                    const_agg_index += 1;
                     // X17 (not X16/X9/X10) because `store_constant_aggregate_to_reg`
                     // uses those internally as scratch while materializing each
                     // field — passing one of them as `base` would alias and

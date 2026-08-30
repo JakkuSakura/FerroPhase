@@ -94,6 +94,25 @@ pub(super) fn load_value(
             if matches!(ty, AsmType::I128) {
                 return Err(Error::from("use i128 helper to load 128-bit values"));
             }
+            if matches!(constant, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _))
+                && is_large_aggregate(&ty, &layout.data_layout)
+            {
+                let scratch = layout.const_agg_scratch_offset.ok_or_else(|| {
+                    Error::from("missing scratch slot for constant aggregate load")
+                })?;
+                emit_mov_reg(asm, dst, Reg::X31);
+                add_immediate_offset(asm, dst, scratch as i64);
+                store_constant_aggregate_to_reg(
+                    asm,
+                    &layout.data_layout,
+                    dst,
+                    constant,
+                    &ty,
+                    &mut Vec::new(),
+                    &mut HashMap::new(),
+                )?;
+                return Ok(());
+            }
             if let AsmConstant::GlobalRef(name, _, indices) = constant {
                 let addend = indices.iter().map(|idx| *idx as i64).sum();
                 emit_load_symbol_addr(asm, dst, name.as_str(), addend)?;

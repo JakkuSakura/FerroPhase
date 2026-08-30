@@ -838,7 +838,10 @@ fn emit_binop(
         AsmValue::Constant(constant) => {
             if matches!(
                 constant,
-                AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _)
+                AsmConstant::GlobalRef(_, _, _)
+                    | AsmConstant::FunctionRef(_, _)
+                    | AsmConstant::Struct(_, _)
+                    | AsmConstant::Array(_, _)
             ) {
                 load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
                 match op {
@@ -1149,6 +1152,16 @@ fn store_vararg_value(
     }
     if offset < 0 || offset + size > layout.outgoing_size {
         return Err(Error::from("outgoing vararg offset out of range"));
+    }
+    if let AsmType::Struct { fields, .. } = ty {
+        if fields.len() == 2 && matches!(fields.first(), Some(AsmType::Ptr(_))) {
+            // C varargs formatters consume a string slice as a C string
+            // pointer, not as the language's {ptr, len} aggregate.
+            load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+            emit_load_from_reg(asm, Reg::X16, Reg::X16);
+            emit_store_to_sp(asm, Reg::X16, offset);
+            return Ok(8);
+        }
     }
     if size <= 8 {
         store_outgoing_arg(asm, layout, offset, value, reg_types, local_types)?;

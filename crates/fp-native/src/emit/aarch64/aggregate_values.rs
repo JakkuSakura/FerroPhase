@@ -305,7 +305,6 @@ pub(super) fn emit_extract_value(
         _ => return Err(Error::from("unsupported ExtractValue aggregate source")),
     };
     let (field_offset, _field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;
-    let load_offset = src_offset + field_offset as i32;
     let result_ty = reg_types
         .get(&dst_id)
         .cloned()
@@ -316,33 +315,41 @@ pub(super) fn emit_extract_value(
             return Ok(());
         }
         if let Ok(dst_offset) = agg_offset(layout, dst_id) {
-            copy_sp_to_sp(asm, load_offset, dst_offset, field_size)?;
+            emit_load_from_sp(asm, Reg::X9, src_offset);
+            add_immediate_offset(asm, Reg::X9, field_offset as i64);
+            copy_reg_to_sp(asm, Reg::X9, dst_offset, field_size)?;
             emit_mov_reg(asm, Reg::X16, Reg::X31);
             add_immediate_offset(asm, Reg::X16, dst_offset as i64);
             store_vreg(asm, layout, dst_id, Reg::X16)?;
             asm.record_vreg_sp_offset(dst_id, dst_offset);
         } else {
             emit_mov_reg(asm, Reg::X16, Reg::X31);
-            add_immediate_offset(asm, Reg::X16, load_offset as i64);
+            emit_load_from_sp(asm, Reg::X9, src_offset);
+            add_immediate_offset(asm, Reg::X9, field_offset as i64);
+            emit_mov_reg(asm, Reg::X16, Reg::X9);
             store_vreg(asm, layout, dst_id, Reg::X16)?;
-            asm.record_vreg_sp_offset(dst_id, load_offset);
+            asm.record_vreg_sp_offset(dst_id, src_offset + field_offset as i32);
         }
         return Ok(());
     }
     if is_float_type(&result_ty) {
-        emit_load_float_from_sp(asm, FReg::V0, load_offset, &result_ty);
+        emit_load_from_sp(asm, Reg::X9, src_offset);
+        add_immediate_offset(asm, Reg::X9, field_offset as i64);
+        emit_load_float_from_reg(asm, FReg::V0, Reg::X9, &result_ty);
         store_vreg_float(asm, layout, dst_id, FReg::V0, &result_ty)?;
     } else {
+        emit_load_from_sp(asm, Reg::X9, src_offset);
+        add_immediate_offset(asm, Reg::X9, field_offset as i64);
         match result_ty {
-            AsmType::I1 => emit_load8u_from_sp(asm, Reg::X16, load_offset)?,
-            AsmType::I8 => emit_load8s_from_sp(asm, Reg::X16, load_offset)?,
-            AsmType::I16 => emit_load16s_from_sp(asm, Reg::X16, load_offset)?,
-            AsmType::I32 => emit_load32s_from_sp(asm, Reg::X16, load_offset)?,
+            AsmType::I1 => emit_load8u_from_reg(asm, Reg::X16, Reg::X9),
+            AsmType::I8 => emit_load8s_from_reg(asm, Reg::X16, Reg::X9),
+            AsmType::I16 => emit_load16s_from_reg(asm, Reg::X16, Reg::X9),
+            AsmType::I32 => emit_load32s_from_reg(asm, Reg::X16, Reg::X9),
             AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                emit_load_from_sp(asm, Reg::X16, load_offset);
+                emit_load_from_reg(asm, Reg::X16, Reg::X9);
             }
             _ if is_aggregate_type(&result_ty) && size_of(&result_ty) <= 8 => {
-                emit_load_from_sp(asm, Reg::X16, load_offset);
+                emit_load_from_reg(asm, Reg::X16, Reg::X9);
             }
             _ => {
                 return Err(Error::from(format!(
