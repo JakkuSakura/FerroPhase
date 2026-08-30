@@ -294,25 +294,6 @@ impl LirInterpreter {
                 let object = self.state.objects.get(handle).cloned().ok_or_else(|| {
                     VmError::Runtime(format!("aggregate handle {handle} is dangling"))
                 })?;
-                // A `type<_>` returned through an older aggregate wrapper can
-                // still be boxed as a one-field TypeBuilder value. Unbox its
-                // type handle at the semantic-value boundary.
-                if let Value::Struct(structure) = &object {
-                    for field in &structure.structural.fields {
-                        if let Value::Type(ty) = &field.value {
-                            return Ok(Value::Type(ty.clone()));
-                        }
-                        if let Value::Pointer(field_pointer) = &field.value {
-                            let field_handle = Self::type_handle_index(*field_pointer)
-                                .or_else(|| usize::try_from(field_pointer.value).ok());
-                            if let Some(Value::Type(ty)) =
-                                field_handle.and_then(|index| self.state.objects.get(index))
-                            {
-                                return Ok(Value::Type(ty.clone()));
-                            }
-                        }
-                    }
-                }
                 return Ok(object);
             }
         }
