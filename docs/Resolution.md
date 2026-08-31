@@ -1,11 +1,11 @@
 # Name Resolution in fp-backend
 
-This document describes the current name resolution architecture used when
-lowering AST to HIR (`crates/fp-backend/src/transforms/ast_to_hir/`), how it
-compares to rustc's `rustc_resolve`, and a target design for closing the one
-structural gap identified.
+This document describes the name-resolution architecture used by FerroPhase,
+how it compares to rustc's `rustc_resolve`, and the migration target. Name
+resolution is an AST-stage operation: macro expansion runs first, then an
+explicit AST resolver assigns identities, and only then does AST lower to HIR.
 
-## Current design
+## Current design (migration baseline)
 
 The resolver is `HirGenerator`
 (`crates/fp-backend/src/transforms/ast_to_hir/mod.rs`). It is already
@@ -14,9 +14,9 @@ matching the intent of "module-aware, namespaced, enum-returning" resolution.
 Concretely:
 
 - **Two namespaces** (type, value): `type_scopes` / `value_scopes` (lexical,
-  block/module scope stacks) and `global_type_defs` / `global_value_defs`
-  (flat maps keyed by fully-qualified path strings). This mirrors rustc's
-  `Namespace::{Type, Value, Macro}`, minus the macro namespace — see below.
+  block/module scope stacks) and namespace-indexed bindings in `ModuleTree`.
+  This is transitional; the target replaces these lowerer-owned maps with
+  `LocalScope` and a single symbol map on each `ModuleTree` node.
 - **Current-module tracking**: `module_path` plus `with_module_scope`
   (mod.rs:2168) push/pop a path stack around `predeclare_items` and
   `append_item`, so every resolution and visibility check
@@ -26,9 +26,9 @@ Concretely:
   `Def(DefId) | Local(HirId) | SelfTy | Module(Vec<String>) | Builtin(...)`.
   Close to rustc's `Res<Id>` (`Def(DefKind, DefId) | PrimTy | SelfTyParam |
   SelfTyAlias | SelfCtor | Local(Id) | ToolMod | NonMacroAttr | Err`).
-- **Modules as flat path sets**: `module_defs: HashSet<QualifiedPath>` records
-  which module paths exist, but there is no tree of `Module` nodes with
-  parent/child pointers — unlike rustc's `ModuleData` tree.
+- **Modules as a tree**: `ModuleTree` stores parent/child relationships and
+  namespace bindings, matching rustc's `ModuleData` shape and allowing direct
+  child lookup.
 - **Import resolution as fixpoint**: `resolve_pending_imports` (mod.rs:2003)
   collects all `use`/re-export bindings via
   `collect_pending_imports_recursive` (recursing into inline modules), then
@@ -36,36 +36,104 @@ Concretely:
   progress — the same shape as rustc's indeterminate-import worklist, needed
   to resolve multi-hop `pub use` chains and glob imports whose target module
   isn't fully known yet.
-- **No macro namespace**: `expand_item_macros` expands item-position
-  `macro_rules!` invocations into concrete items *before* any
-  definition/import pass runs, so macros never exist as an entity that later
-  resolution needs to look up. This is a deliberate simplification, not a gap.
+- **Macro expansion is currently global**: `expand_item_macros` and the
+  intrinsic normalizer still use a package-global macro-name map. This is a
+  known migration gap; the target stores specialized macro bindings in the
+  same symbol map as ordinary declarations and resolves them with module
+  context.
 
 ## Comparison with rustc
 
 | Concept | rustc (`rustc_resolve`) | fp-backend today |
 |---|---|---|
-| Module representation | Tree of `ModuleData` (parent + children) | Flat `HashSet<QualifiedPath>` (`module_defs`) |
-| Namespaces | Type, Value, Macro | Type, Value (macros expanded away pre-resolution) |
+| Module representation | Tree of `ModuleData` (parent + children) | `ModuleTree` with parent/child nodes and qualified-path index |
+| Namespaces | Type, Value, Macro | Type, Value today; Macro is being migrated into the shared symbol map |
 | Per-lookup result | `Res<Id>` enum | `hir::Res` enum (near-equivalent shape) |
-| Current-scope tracking | `Rib` stack per namespace | `module_path` + `with_module_scope` push/pop |
+| Current-scope tracking | `Rib` stack per namespace | `module_path` + lowerer-owned type/value stacks (transitional) |
 | Import resolution | Fixpoint loop over indeterminate imports | Fixpoint loop in `resolve_pending_imports` / `register_import_binding` |
 
-The one structural gap is the module tree: because modules are a flat set of
-path strings rather than tree nodes, operations like "what's a direct child
-of module M" (used by glob-import expansion, `expand_glob_import`, mod.rs:416)
-require scanning and filtering the flat `global_type_defs`/`global_value_defs`
-maps by path prefix, instead of a direct child lookup on a tree node.
+## Target architecture
+
+The target follows rustc's phase boundary and separates persistent module
+state from temporary local state:
+
+```text
+parse → macro expansion → AstResolver → AST→HIR lowering → type checking
+                         │
+                         ├── ModuleTree (persistent package state)
+                         └── LocalScope (temporary function/block state)
+```
+
+`HirPackage` owns one persistent `ModuleTree`. The existing tree remains the
+only module-scope owner; no `ModuleScope` wrapper is introduced. Each existing
+tree node stores one ordinary symbol map:
+
+```rust
+symbols: HashMap<Symbol, Vec<Binding>>
+```
+
+The vector retains all candidates for a spelling. Each `Binding` carries its
+namespace (`Type`, `Value`, or `Macro`) and semantic identity. Type/value
+bindings therefore share one key space without sharing a collision domain;
+macros are represented by a specialized `Binding::Macro(MacroBinding)`
+variant, not a second macro hashmap.
+
+`LocalScope` is the explicit counterpart for names whose lifetime is limited
+to a function or block:
+
+```rust
+struct LocalScope {
+    nodes: Vec<LocalScopeNode>,
+    current: LocalScopeId,
+}
+
+struct LocalScopeNode {
+    parent: Option<LocalScopeId>,
+    symbols: HashMap<Symbol, Vec<Binding>>,
+}
+```
+
+It owns parameters, locals, generic parameters, and block-local items. It is
+never persisted in the package's module tree.
+
+`AstResolver` owns the active `LocalScope`, borrows the package's
+`ModuleTree`, and records AST-node resolutions. `AstToHirLowerer` consumes
+those results; it does not perform lexical lookup, module lookup, import
+fallback, suffix scans, or alias-name recovery.
+
+Declaration and resolution behavior is configured, not stored, by
+language-specific `DeclarationRules` and `ResolutionRules`. The active
+`PackageProvider` supplies these values for the package's source language
+(alongside its intrinsic normalizer); a composite provider delegates them to
+its workspace/source provider. The scope structures own the `declare`,
+`resolve`, and `resolve_path` operations and do not choose a language policy
+themselves. Ambiguity is represented by retained candidates and returned as
+an explicit `ResolutionResult`, never by insertion-order selection.
+
+Aliases are ordinary type bindings with alias metadata and a resolved
+`DefId`/`Res`; dedicated alias hashmaps are not part of the target design.
+
+The migration baseline still has compatibility tables for transparent
+type-alias payloads and performs macro lookup during expansion; both are
+removed by the target architecture above. Import diagnostics now retain the
+originating `use` span. `ModuleTree` now
+retains an explicit ambiguity marker instead of overwriting competing
+bindings; lookups refuse to select a winner and callers recover with an
+error. Cross-package associated-item recovery uses a prebuilt,
+namespace-qualified leaf index with its own ambiguity markers; it no longer
+scans every package's exports or `def_paths` at query time. Transparent type
+aliases have HIR definition identities, while enum constructor paths follow
+the alias target to preserve the defining variant's `DefId`.
 
 ## Foundation landed: `ModuleTree`, `hir::Package`, `hir::Program`
 
 The building blocks for the target design below now exist in `fp-core`,
-**not yet consumed by `HirGenerator`'s own internals** — this section
-records what's real today versus what's still ahead.
+are consumed by `HirGenerator`'s lookup and import paths; this section
+records what remains to be migrated.
 
 - **`ModuleTree`** (`fp-core/src/hir/resolve.rs`) — a real tree of nodes,
-  each with `parent`, `children: HashMap<String, ModuleId>`, and
-  `bindings: [HashMap<String, Res>; 2]` indexed by the new `Namespace::{Type,
+  each with `parent`, `children: HashMap<String, ModuleId>`, namespace-indexed
+  bindings, and ambiguity markers indexed by the new `Namespace::{Type,
   Value}` enum. Operations (`ensure_module`, `module_exists`, `child`,
   `bind`/`lookup`, `children`) are all O(depth) or O(1) — no full-map scan.
   Own unit tests cover construction/lookup/child-listing in isolation.
@@ -93,14 +161,14 @@ prelude fallback lives on a reserved `ModuleTree::prelude()` node instead
 of its own pair of maps. `expand_glob_import` now lists a module's own
 value/type bindings via `ModuleTree::bindings(module, ns)` — a direct
 per-node lookup — instead of a scan over every global definition in the
-package filtered by qualified-path prefix; only `type_aliases` (a
-`type X = Y;` table with no per-entry visibility, deliberately left out of
-this migration) still needs that kind of scan. `lookup_symbol`/
+package filtered by qualified-path prefix; alias payloads remain in the
+lowerer's compatibility table, while `type_alias_children` provides a direct
+parent-module index for glob expansion. `lookup_symbol`/
 `tree_lookup_raw` are the surviving single entry points for a qualified-
 or bare-name key lookup, replacing the old `lookup_symbol(key, &flat_map)`
 signature with `lookup_symbol(key, namespace)` against the tree.
 
-**Still not done**: `HirGenerator` still builds `def_paths`/`op_defs`/
+**Existing non-resolver migration work**: `HirGenerator` still builds `def_paths`/`op_defs`/
 `intrinsic_defs`/`type_alias_targets`/`placeholder_defs` as private scratch
 fields and merges them into the final `hir::Package` at `transform_package`'s
 several return points (`program.X.extend(self.X.clone())`) — the
@@ -110,22 +178,30 @@ there internally, just now merging into a `Package` instead of the old
 hold a `Package` directly rather than querying `hir::Program`'s resolution
 methods (`def_path`, `type_alias_target`, `resolve`, ...).
 
-## Target design (still future work)
+## Migration steps
 
-1. **Rewire `HirGenerator` to hold `program: hir::Program` +
-   `current_package: PackageId`, writing directly into
-   `self.program.packages[&self.current_package]` throughout** — no private
-   scratch fields (`def_paths`/`op_defs`/`intrinsic_defs`/
-   `type_alias_targets`/`placeholder_defs`), no mirror/extend step at
-   `transform_package`'s return points.
-2. **Namespace enum stays two-valued** (already true — `Namespace::{Type,
-   Value}` exists, no macro namespace, since macros are already gone by
-   resolution time).
-3. **`hir::Res` stays as-is** — already close enough to rustc's `Res<Id>`.
-4. **`fp-typing`'s `path_ty` and `hir_to_ast`'s `HirToAstLifter` should query
-   `hir::Program`'s resolution methods** (`def_path`, `type_alias_target`,
-   ...) instead of indexing a package's fields directly, once they're
-   threaded a `Program` (today they hold a `Package` directly).
-5. **Import fixpoint loop keeps its current shape** (`resolve_pending_imports`,
-   `register_import_binding`) — already reading/writing the tree, unaffected
-   by this remaining step.
+1. Add `Binding`, specialized `MacroBinding`, `LocalScope`, namespace-aware
+   `ResolutionResult`, and immutable per-language `DeclarationRules`/
+   `ResolutionRules` configuration types in `fp-core`. Extend
+   `PackageProvider` with rule accessors; composite providers delegate to the
+   workspace provider.
+2. Replace the existing per-namespace binding maps with one
+   `HashMap<Symbol, Vec<Binding>>` directly on each existing `ModuleTree` node.
+   Do not add a `ModuleScope` wrapper or a separate macro hashmap. Move
+   module-owned alias payloads and lookup metadata into tree/package-owned
+   declaration records.
+3. Implement an explicit `AstResolver` in the AST→HIR subsystem. It performs
+   declaration collection, import fixed-point resolution, local-scope
+   resolution, macro lookup, path traversal, privacy checks, and records an
+   AST resolution table before HIR lowering begins.
+4. Remove lexical/module lookup logic and resolution maps from
+   `AstToHirLowerer`; make it consume resolver results while retaining only
+   HIR-construction state and unrelated lowering caches.
+5. Update `fp-lang`/`fp-rust` macro interfaces so macro expansion receives
+   module context and resolves specialized macro bindings from the shared
+   symbol map.
+6. Update type checking and HIR recovery to consume resolved `Res`/`DefId`
+   identities rather than retrying name lookup.
+7. Add unit and integration coverage for namespace coexistence, module/type
+   conflicts, local shadowing, import ambiguity, macro isolation, aliases,
+   explicit path prefixes, and every resolver consumer.
