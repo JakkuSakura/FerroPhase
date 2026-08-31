@@ -152,7 +152,23 @@ pub(super) fn ty_contains_quote(ty: &ast::Ty) -> bool {
             .iter()
             .any(|expr| expr_contains_quote_value(expr)),
         ast::Ty::Value(value) => value_contains_quote(value.value.as_ref()),
-        ast::Ty::Expr(expr) => expr_contains_quote_value(expr.as_ref()),
+        ast::Ty::Expr(expr) => {
+            // The parser represents a bare fragment annotation (`expr`,
+            // `stmt`, or `item`) as an identifier expression in some type
+            // positions, while `quote<expr>` is represented by `Ty::Quote`.
+            // Both spellings describe compile-time-only quote values and
+            // must follow the same drop path before ordinary type resolution
+            // sees the fragment keyword as a user type name.
+            if matches!(
+                expr.kind(),
+                ast::ExprKind::Name(ast::Name::Ident(ident))
+                    if matches!(ident.name.as_str(), "expr" | "stmt" | "item" | "type")
+            ) {
+                true
+            } else {
+                expr_contains_quote_value(expr.as_ref())
+            }
+        }
         ast::Ty::ConstBlock(block) => expr_contains_quote_value(block.expr.as_ref()),
         ast::Ty::Refinement(refinement) => ty_contains_quote(&refinement.base),
         ast::Ty::Literal(_)

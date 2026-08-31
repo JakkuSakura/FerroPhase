@@ -288,8 +288,7 @@ impl AstToHirLowerer {
                 expr_span,
             ),
             ExprKind::Name(_) => {
-                let value_path =
-                    self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?;
+                let value_path = self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?;
                 if matches!(value_path.res, Some(hir::Res::Def(_))) {
                     hir::ExprKind::Path(value_path)
                 } else {
@@ -1028,10 +1027,7 @@ impl AstToHirLowerer {
                         // no value-namespace binding, so preserve the
                         // resolver's type identity instead of passing an
                         // unresolved value path into MIR.
-                        if matches!(
-                            value.kind,
-                            hir::ExprKind::Path(hir::Path { res: None, .. })
-                        ) {
+                        if matches!(value.kind, hir::ExprKind::Path(hir::Path { res: None, .. })) {
                             if let ast::ExprKind::Name(_) = invoke.args[0].kind() {
                                 value = hir::Expr {
                                     hir_id: self.next_id(),
@@ -2337,11 +2333,10 @@ impl AstToHirLowerer {
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
-        local
-            .or_else(|| self.hir_program.find_export(&key))
-            // Keep value and type namespaces distinct. A value-position path
-            // must not silently resolve to a type merely because the value
-            // lookup failed; callers need an unresolved-name/namespace error.
+        local.or_else(|| self.hir_program.find_export(&key))
+        // Keep value and type namespaces distinct. A value-position path
+        // must not silently resolve to a type merely because the value
+        // lookup failed; callers need an unresolved-name/namespace error.
     }
 
     // make_path_segment moved to helpers.rs

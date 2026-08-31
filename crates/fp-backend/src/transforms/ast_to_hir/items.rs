@@ -80,7 +80,7 @@ impl AstToHirLowerer {
                 abi: self.map_abi(&func.sig.abi),
             };
 
-            if lower_body && !self.lowering_config.resolution_only {
+            if lower_body {
                 let body = self.transform_block_node_to_hir(&func.body)?;
 
                 let mut function = hir::Function::new(sig, Some(body), func.sig.is_const, false);

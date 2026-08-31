@@ -26,8 +26,10 @@ mod macro_expansion;
 mod patterns; // pattern lowering // shared path/name helpers
 mod predeclare;
 mod quote_detection;
+mod quote_expansion;
 mod structural;
 use quote_detection::*;
+use quote_expansion::expand_quote_splices;
 
 #[cfg(test)]
 mod tests;
@@ -1360,6 +1362,7 @@ impl AstToHirLowerer {
         // any one source module, so they're scoped to the package root.
         let mut lowered_items: Vec<ast::Item> =
             package.items.iter().map(|pi| pi.item.clone()).collect();
+        expand_quote_splices(&mut lowered_items)?;
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
         // `node.stats.as_ref().map_or(..)`) is frequently a struct defined
@@ -2112,20 +2115,22 @@ impl AstToHirLowerer {
                     // explicit `const { ... }` remains a const-block query,
                     // but it is the alias target rather than the alias item.
                     let target = self.transform_type_to_hir(&def_type.value)?;
-                    self.package.type_alias_targets.insert(
-                        alias_def_id.clone(),
-                        target,
-                    );
+                    let hir::TypeExprKind::ConstBlock(value_def_id, _) = &target.kind else {
+                        return Err(fp_core::error::Error::from(format!(
+                            "comptime type alias `{}` did not lower to a const block",
+                            def_type.name.name
+                        )));
+                    };
+                    let value_def_id = value_def_id.clone();
+                    self.package
+                        .type_alias_targets
+                        .insert(alias_def_id.clone(), target);
                     self.current_value_scope()
-                        .insert(
-                            def_type.name.name.clone(),
-                            hir::Res::Def(alias_def_id.clone()),
-                        );
-                    self.current_type_scope()
-                        .insert(
-                            def_type.name.name.clone(),
-                            hir::Res::Def(alias_def_id.clone()),
-                        );
+                        .insert(def_type.name.name.clone(), hir::Res::Def(value_def_id));
+                    self.current_type_scope().insert(
+                        def_type.name.name.clone(),
+                        hir::Res::Def(alias_def_id.clone()),
+                    );
                     Ok(hir::StmtKind::Item(hir::Item {
                         hir_id: self.next_id(),
                         visibility: hir::Visibility::Private,
@@ -2678,7 +2683,11 @@ impl AstToHirLowerer {
                 self.transform_type_to_hir(ty)?
             }
         } else {
-            self.create_unit_type()
+            hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                Span::new(self.current_file, 0, 0),
+            )
         };
 
         // A `const` item's initializer is already an implicitly const-

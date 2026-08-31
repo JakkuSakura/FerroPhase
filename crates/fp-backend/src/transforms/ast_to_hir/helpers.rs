@@ -1055,10 +1055,8 @@ impl AstToHirLowerer {
                         if !crate_root.is_empty() {
                             let mut rooted = crate_root;
                             rooted.extend(canonical.clone());
-                            canonical_res = self.lookup_global_res(
-                                &QualifiedPath::new(rooted),
-                                scope,
-                            );
+                            canonical_res =
+                                self.lookup_global_res(&QualifiedPath::new(rooted), scope);
                         }
                     }
                     if canonical_res.is_none() && canonical.len() > 1 {
@@ -1275,7 +1273,12 @@ impl AstToHirLowerer {
         if segments.len() > 1 {
             if let Some(hir::Res::Module(module_path)) = resolved.clone() {
                 let mut qualified = module_path;
-                qualified.extend(segments.iter().skip(1).map(|segment| segment.name.as_str().to_string()));
+                qualified.extend(
+                    segments
+                        .iter()
+                        .skip(1)
+                        .map(|segment| segment.name.as_str().to_string()),
+                );
                 if let Some(res) = self.lookup_global_res(&QualifiedPath::new(qualified), scope) {
                     resolved = Some(res);
                 }

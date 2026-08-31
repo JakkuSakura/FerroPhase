@@ -398,13 +398,21 @@ impl AstToHirLowerer {
                         // (STEP 1) runs strictly before STEP 2's import
                         // resolution — so defer exactly the same way,
                         // checked non-mutating before the first mutation.
+                        // A comptime-producing alias is lowered as an
+                        // expression-bearing type query.  Its expression
+                        // may use an import even when its outer syntax is a
+                        // `const { ... }` block, so checking only the first
+                        // name segment cannot detect the dependency.  Wait
+                        // until the import fixed point has run, just as we
+                        // do for an ordinary module-qualified alias RHS.
                         let defer = tolerant
-                            && type_alias_rhs_first_segment_name(&def_type.value)
-                                .map(|name| {
-                                    self.resolve_type_symbol(name).is_none()
-                                        && !is_primitive_type_name(name)
-                                })
-                                .unwrap_or(false);
+                            && (comptime_type_alias_rhs(&def_type.value).is_some()
+                                || type_alias_rhs_first_segment_name(&def_type.value)
+                                    .map(|name| {
+                                        self.resolve_type_symbol(name).is_none()
+                                            && !is_primitive_type_name(name)
+                                    })
+                                    .unwrap_or(false));
                         if defer {
                             self.pending_type_aliases
                                 .push((self.module_path.clone(), item.clone()));
