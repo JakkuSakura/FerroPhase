@@ -1,5 +1,4 @@
 use eyre::Result;
-use crate::materialize::KotlinMaterializer;
 use fp_core::ast::package::{AstPackage, PackageItem};
 use fp_core::ast::{
     AttrMeta, BExpr, BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, FormatArgRef,
@@ -8,7 +7,6 @@ use fp_core::ast::{
 };
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
-use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use std::collections::BTreeSet;
@@ -2519,11 +2517,6 @@ impl KotlinEmitter {
             Ty::Enum(en) => en.name.name.clone(),
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
             Ty::Expr(expr) => {
-                if let Ok(fp_core::intrinsics::MaterializeOutcome::Replaced(mapped)) =
-                    KotlinMaterializer.materialize_type_mapping(ty)
-                {
-                    return self.kotlin_type_from_ty(&mapped);
-                }
                 let name = expr_to_name(expr);
                 if let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() {
                     if let Some(segment) = path.last() {
@@ -2536,26 +2529,9 @@ impl KotlinEmitter {
                         }
                     }
                 }
-                // `to_vec_in<T>` is an internal Rust helper type emitted by
-                // collection materialization. It is not a Kotlin declaration;
-                // preserve the element type while lowering it to the mutable
-                // collection used by Rust Vec values.
                 let name = name.replace("::", ".");
                 let bare = name.rsplit('.').next().unwrap_or(&name);
-                if let Some(inner) = bare
-                    .strip_prefix("to_vec_in<")
-                    .and_then(|rest| rest.strip_suffix('>'))
-                {
-                    let element = split_top_level(inner, ',')
-                        .first()
-                        .map(|part| part.trim().to_string())
-                        .unwrap_or_else(|| "Any".to_string());
-                    format!("MutableList<{}>", element)
-                } else if bare.starts_with("Split<") {
-                    "List<String>".to_string()
-                } else {
-                    bare.to_string()
-                }
+                bare.to_string()
             }
             Ty::Unit(_) => "Unit".into(),
             Ty::Slice(sl) => format!("List<{}>", self.kotlin_type_from_ty(&sl.elem)),
@@ -3012,15 +2988,28 @@ mod tests {
 
     #[test]
     fn internal_vec_helper_type_is_never_emitted_as_kotlin_type() {
+        use fp_core::intrinsics::IntrinsicMaterializer;
         let emitter = KotlinEmitter::new();
         let ty = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
             "to_vec_in<str>",
         ))));
-        assert_eq!(emitter.kotlin_type_from_ty(&ty), "MutableList<String>");
+        let mapped = crate::materialize::KotlinMaterializer
+            .materialize_type_mapping(&ty)
+            .expect("materialize helper type");
+        let fp_core::intrinsics::MaterializeOutcome::Replaced(mapped) = mapped else {
+            panic!("expected helper type replacement");
+        };
+        assert_eq!(emitter.kotlin_type_from_ty(&mapped), "MutableList<String>");
         let split = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
             "Split<str>",
         ))));
-        assert_eq!(emitter.kotlin_type_from_ty(&split), "List<String>");
+        let mapped = crate::materialize::KotlinMaterializer
+            .materialize_type_mapping(&split)
+            .expect("materialize split type");
+        let fp_core::intrinsics::MaterializeOutcome::Replaced(mapped) = mapped else {
+            panic!("expected split type replacement");
+        };
+        assert_eq!(emitter.kotlin_type_from_ty(&mapped), "List<String>");
     }
 
     #[test]

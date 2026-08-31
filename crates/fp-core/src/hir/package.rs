@@ -988,7 +988,7 @@ mod tests {
 
     fn path_type(res: Res, name: &str) -> TypeExpr {
         TypeExpr::new(
-            HirId::new(OwnerId::root(), 1),
+            HirId::new(OwnerId::root(PackageId::new("test")), 1),
             TypeExprKind::Path(Path {
                 segments: vec![PathSegment {
                     name: name.into(),
@@ -1028,7 +1028,7 @@ mod tests {
         let param = DefId::new(PackageId::new("crate"), 3);
         let generics = Generics {
             params: vec![GenericParam {
-                hir_id: HirId::new(OwnerId::root(), 2),
+                hir_id: HirId::new(OwnerId::root(PackageId::new("test")), 2),
                 def_id: param.clone(),
                 name: "T".into(),
                 kind: GenericParamKind::Type { default: None },

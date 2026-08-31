@@ -11,6 +11,12 @@ mod types;
 use types::*;
 mod operations;
 pub use operations::KotlinMaterializer;
+
+/// Entry point for Kotlin target materialization. The shared framework owns
+/// AST traversal; KotlinMaterializer supplies only target-specific rewrites.
+pub(crate) fn materialize_kotlin_item(item: fp_core::ast::Item) -> Result<fp_core::ast::Item> {
+    fp_core::intrinsics::materialize_item(item, &KotlinMaterializer)
+}
 fn materialize_std_function(path: &[String], args: &[Expr]) -> Option<Expr> {
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
     match path.as_slice() {

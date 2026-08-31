@@ -1,5 +1,5 @@
 use super::*;
-use crate::materialize::KotlinMaterializer;
+use crate::materialize::{KotlinMaterializer, materialize_kotlin_item};
 use fp_core::ast::{BlockStmt, ExprKind, Ident, Item, ItemKind, Name, Path, Ty};
 use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome};
 use std::path::{Path as FsPath, PathBuf};
@@ -894,11 +894,7 @@ impl TargetBackend for KotlinBackend {
             })?;
             let mut compiled = compiled.borrow_mut();
             for pkg_item in &mut compiled.items {
-                pkg_item.item = fp_core::intrinsics::materialize_item(
-                    pkg_item.item.clone(),
-                    &crate::KotlinMaterializer,
-                )?;
-                materialize_kotlin_types(&mut pkg_item.item);
+                pkg_item.item = materialize_kotlin_item(pkg_item.item.clone())?;
             }
         }
         let package = workspace.package_source(package_id)?;
@@ -1659,8 +1655,42 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
 
     match last {
         "str" => Some(Ty::ident(Ident::new("String"))),
+        "bool" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Bool)),
+        "i8" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::I8,
+        ))),
         "u8" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
             fp_core::ast::TypeInt::U8,
+        ))),
+        "i16" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::I16,
+        ))),
+        "u16" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::U16,
+        ))),
+        "i32" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::I32,
+        ))),
+        "u32" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::U32,
+        ))),
+        "i64" | "isize" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::I64,
+        ))),
+        "u64" | "usize" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::U64,
+        ))),
+        "i128" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::I128,
+        ))),
+        "u128" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+            fp_core::ast::TypeInt::U128,
+        ))),
+        "f16" | "f32" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Decimal(
+            fp_core::ast::DecimalType::F32,
+        ))),
+        "f64" | "f128" => Some(Ty::Primitive(fp_core::ast::TypePrimitive::Decimal(
+            fp_core::ast::DecimalType::F64,
         ))),
         // The Kotlin emitter does not declare Rust generic parameters. A
         // source-level `T` that survives into a type annotation must become a

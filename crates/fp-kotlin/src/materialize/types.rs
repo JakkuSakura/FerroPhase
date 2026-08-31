@@ -1,5 +1,55 @@
 use super::*;
 
+/// Converts Rust primitive spellings that arrive as unresolved AST names into
+/// the shared AST primitive forms. The framework applies this hook to the
+/// owned type tree; this function only maps the current node and never walks
+/// or mutates a caller-owned type.
+pub(super) fn materialize_rust_alias(ty: Ty) -> Ty {
+    let name = match &ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(Name::Ident(name)) => Some(name.as_str()),
+            ExprKind::Name(Name::Path(path)) => Some(path.last().as_str()),
+            ExprKind::Name(Name::ParameterPath(path)) => {
+                path.last().map(|segment| segment.ident.as_str())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(name) = name else { return ty };
+    if let Some(inner) = name
+        .strip_prefix("to_vec_in<")
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        let element = if inner == "str" {
+            Ty::Primitive(TypePrimitive::String)
+        } else {
+            Ty::ident(Ident::new(inner))
+        };
+        return parameterized("MutableList", element);
+    }
+    if name.starts_with("Split<") {
+        return parameterized("List", Ty::Primitive(TypePrimitive::String));
+    }
+    match name {
+        "bool" => Ty::Primitive(TypePrimitive::Bool),
+        "i8" => Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+        "u8" => Ty::Primitive(TypePrimitive::Int(TypeInt::U8)),
+        "i16" => Ty::Primitive(TypePrimitive::Int(TypeInt::I16)),
+        "u16" => Ty::Primitive(TypePrimitive::Int(TypeInt::U16)),
+        "i32" => Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+        "u32" => Ty::Primitive(TypePrimitive::Int(TypeInt::U32)),
+        "i64" | "isize" => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        "u64" | "usize" => Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
+        "i128" => Ty::Primitive(TypePrimitive::Int(TypeInt::I128)),
+        "u128" => Ty::Primitive(TypePrimitive::Int(TypeInt::U128)),
+        "f16" | "f32" => Ty::Primitive(TypePrimitive::Decimal(fp_core::ast::DecimalType::F32)),
+        "f64" | "f128" => Ty::Primitive(TypePrimitive::Decimal(fp_core::ast::DecimalType::F64)),
+        "str" => Ty::Primitive(TypePrimitive::String),
+        _ => ty,
+    }
+}
+
 pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
     match &mut ty {
         Ty::Reference(r) => r.ty = Box::new(materialize_aliases(*r.ty.clone())),

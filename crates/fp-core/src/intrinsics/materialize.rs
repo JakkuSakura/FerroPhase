@@ -40,6 +40,7 @@ pub fn materialize_item(
             ast::ItemKind::Impl(impl_block)
         }
         ast::ItemKind::DefFunction(mut func) => {
+            materialize_signature(&mut func.sig, strategy)?;
             func.body = materialize_block(func.body, strategy)?;
             ast::ItemKind::DefFunction(func)
         }
@@ -52,27 +53,158 @@ pub fn materialize_item(
             ast::ItemKind::DefStatic(def)
         }
         ast::ItemKind::Expr(expr) => ast::ItemKind::Expr(materialize_expr(expr, strategy)?),
-        ast::ItemKind::DefStruct(_)
-        | ast::ItemKind::DefStructural(_)
-        | ast::ItemKind::DefEnum(_)
-        | ast::ItemKind::DefType(_)
-        | ast::ItemKind::OpaqueType(_)
-        | ast::ItemKind::DeclConst(_)
-        | ast::ItemKind::DeclStatic(_)
-        | ast::ItemKind::DeclFunction(_)
-        | ast::ItemKind::DeclType(_)
+        ast::ItemKind::DefStruct(mut def) => {
+            materialize_struct_fields(&mut def.value.fields, strategy)?;
+            ast::ItemKind::DefStruct(def)
+        }
+        ast::ItemKind::DefStructural(mut def) => {
+            materialize_struct_fields(&mut def.value.fields, strategy)?;
+            ast::ItemKind::DefStructural(def)
+        }
+        ast::ItemKind::DefEnum(mut def) => {
+            for variant in &mut def.value.variants {
+                variant.value = materialize_ty(variant.value.clone(), strategy)?;
+            }
+            ast::ItemKind::DefEnum(def)
+        }
+        ast::ItemKind::DefType(mut def) => {
+            def.value = materialize_ty(def.value, strategy)?;
+            ast::ItemKind::DefType(def)
+        }
+        ast::ItemKind::OpaqueType(_)
         | ast::ItemKind::Import(_)
-        | ast::ItemKind::DefTrait(_)
         | ast::ItemKind::ConstBlock(_)
         | ast::ItemKind::PrecompiledAsm(_)
         | ast::ItemKind::PrecompiledLir(_)
         | ast::ItemKind::PrecompiledArtifact(_) => kind,
+        ast::ItemKind::DeclConst(mut def) => {
+            def.ty = materialize_ty(def.ty, strategy)?;
+            if let Some(ty) = def.ty_annotation.take() {
+                def.ty_annotation = Some(materialize_ty(ty, strategy)?);
+            }
+            ast::ItemKind::DeclConst(def)
+        }
+        ast::ItemKind::DeclStatic(mut def) => {
+            def.ty = materialize_ty(def.ty, strategy)?;
+            if let Some(ty) = def.ty_annotation.take() {
+                def.ty_annotation = Some(materialize_ty(ty, strategy)?);
+            }
+            ast::ItemKind::DeclStatic(def)
+        }
+        ast::ItemKind::DeclFunction(mut def) => {
+            materialize_signature(&mut def.sig, strategy)?;
+            ast::ItemKind::DeclFunction(def)
+        }
+        ast::ItemKind::DeclType(mut def) => {
+            if let Some(ty) = def.ty_annotation.take() {
+                def.ty_annotation = Some(materialize_ty(ty, strategy)?);
+            }
+            ast::ItemKind::DeclType(def)
+        }
+        ast::ItemKind::DefTrait(mut def) => {
+            let mut items = Vec::with_capacity(def.items.len());
+            for child in def.items {
+                items.push(materialize_item(child, strategy)?);
+            }
+            def.items = items;
+            ast::ItemKind::DefTrait(def)
+        }
     };
     Ok(ast::Item {
         id,
         span,
         kind: new_kind,
     })
+}
+
+fn materialize_signature(
+    signature: &mut ast::FunctionSignature,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<()> {
+    for param in &mut signature.params {
+        param.ty = materialize_ty(param.ty.clone(), strategy)?;
+        if let Some(ty) = param.ty_annotation.take() {
+            param.ty_annotation = Some(materialize_ty(ty, strategy)?);
+        }
+    }
+    if let Some(ty) = signature.ret_ty.take() {
+        signature.ret_ty = Some(materialize_ty(ty, strategy)?);
+    }
+    Ok(())
+}
+
+fn materialize_struct_fields(
+    fields: &mut [ast::StructuralField],
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<()> {
+    for field in fields {
+        field.value = materialize_ty(field.value.clone(), strategy)?;
+    }
+    Ok(())
+}
+
+fn materialize_ty(
+    ty: ast::Ty,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::Ty> {
+    let ty = match strategy.materialize_type_mapping(&ty)? {
+        crate::intrinsics::MaterializeOutcome::Replaced(ty) => ty,
+        crate::intrinsics::MaterializeOutcome::Unchanged => ty,
+    };
+    match ty {
+        ast::Ty::Expr(mut expr) => {
+            if let ast::ExprKind::Name(ast::Name::ParameterPath(path)) = expr.kind_mut() {
+                for segment in &mut path.segments {
+                    let args = std::mem::take(&mut segment.args);
+                    segment.args = args
+                        .into_iter()
+                        .map(|arg| materialize_ty(arg, strategy))
+                        .collect::<CoreResult<Vec<_>>>()?;
+                }
+            }
+            Ok(ast::Ty::Expr(expr))
+        }
+        ast::Ty::Reference(mut reference) => {
+            reference.ty = Box::new(materialize_ty(*reference.ty, strategy)?);
+            Ok(ast::Ty::Reference(reference))
+        }
+        ast::Ty::RawPtr(mut pointer) => {
+            pointer.ty = Box::new(materialize_ty(*pointer.ty, strategy)?);
+            Ok(ast::Ty::RawPtr(pointer))
+        }
+        ast::Ty::Vec(mut vector) => {
+            vector.ty = Box::new(materialize_ty(*vector.ty, strategy)?);
+            Ok(ast::Ty::Vec(vector))
+        }
+        ast::Ty::Slice(mut slice) => {
+            slice.elem = Box::new(materialize_ty(*slice.elem, strategy)?);
+            Ok(ast::Ty::Slice(slice))
+        }
+        ast::Ty::Array(mut array) => {
+            array.elem = Box::new(materialize_ty(*array.elem, strategy)?);
+            Ok(ast::Ty::Array(array))
+        }
+        ast::Ty::Tuple(mut tuple) => {
+            tuple.types = tuple
+                .types
+                .into_iter()
+                .map(|ty| materialize_ty(ty, strategy))
+                .collect::<CoreResult<Vec<_>>>()?;
+            Ok(ast::Ty::Tuple(tuple))
+        }
+        ast::Ty::Function(mut function) => {
+            function.params = function
+                .params
+                .into_iter()
+                .map(|ty| materialize_ty(ty, strategy))
+                .collect::<CoreResult<Vec<_>>>()?;
+            if let Some(ret) = function.ret_ty.take() {
+                function.ret_ty = Some(Box::new(materialize_ty(*ret, strategy)?));
+            }
+            Ok(ast::Ty::Function(function))
+        }
+        other => Ok(other),
+    }
 }
 
 pub fn materialize_block(
@@ -104,6 +236,7 @@ pub fn materialize_stmt(
             Ok(ast::BlockStmt::Expr(expr_stmt))
         }
         ast::BlockStmt::Let(mut stmt_let) => {
+            materialize_pattern_types(&mut stmt_let.pat, strategy)?;
             if let Some(init) = stmt_let.init {
                 stmt_let.init = Some(materialize_expr(init, strategy)?);
                 if let Some(diverge) = stmt_let.diverge {
@@ -124,6 +257,59 @@ pub fn materialize_stmt(
             Ok(ast::BlockStmt::Defer(stmt_defer))
         }
         ast::BlockStmt::Noop => Ok(ast::BlockStmt::Noop),
+    }
+}
+
+fn materialize_pattern_types(
+    pattern: &mut ast::Pattern,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<()> {
+    match pattern.kind_mut() {
+        ast::PatternKind::Bind(bind) => materialize_pattern_types(&mut bind.pattern, strategy),
+        ast::PatternKind::Tuple(tuple) => tuple
+            .patterns
+            .iter_mut()
+            .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
+        ast::PatternKind::TupleStruct(tuple) => tuple
+            .patterns
+            .iter_mut()
+            .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
+        ast::PatternKind::Struct(structure) => {
+            structure.fields.iter_mut().try_for_each(|field| {
+                if let Some(pattern) = &mut field.rename {
+                    materialize_pattern_types(pattern, strategy)?;
+                }
+                Ok(())
+            })
+        }
+        ast::PatternKind::Structural(structure) => structure.fields.iter_mut().try_for_each(|field| {
+            if let Some(pattern) = &mut field.rename {
+                materialize_pattern_types(pattern, strategy)?;
+            }
+            Ok(())
+        }),
+        ast::PatternKind::Box(pattern) => materialize_pattern_types(&mut pattern.pattern, strategy),
+        ast::PatternKind::Ref(pattern) => materialize_pattern_types(&mut pattern.pattern, strategy),
+        ast::PatternKind::Variant(variant) => {
+            if let Some(pattern) = &mut variant.pattern {
+                materialize_pattern_types(pattern, strategy)?;
+            }
+            Ok(())
+        }
+        ast::PatternKind::Quote(_) => Ok(()),
+        ast::PatternKind::QuotePlural(pattern) => pattern
+            .patterns
+            .iter_mut()
+            .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
+        ast::PatternKind::Type(pattern) => {
+            pattern.ty = materialize_ty(pattern.ty.clone(), strategy)?;
+            materialize_pattern_types(&mut pattern.pat, strategy)
+        }
+        ast::PatternKind::Or(pattern) => pattern
+            .patterns
+            .iter_mut()
+            .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
+        ast::PatternKind::Ident(_) | ast::PatternKind::Wildcard(_) => Ok(()),
     }
 }
 
@@ -197,6 +383,9 @@ pub fn materialize_expr(
             }
             let mut cases = Vec::with_capacity(match_expr.cases.len());
             for mut case in match_expr.cases {
+                if let Some(pattern) = &mut case.pat {
+                    materialize_pattern_types(pattern, strategy)?;
+                }
                 case.cond = Box::new(materialize_expr(*case.cond, strategy)?);
                 if let Some(guard) = case.guard {
                     case.guard = Some(Box::new(materialize_expr(*guard, strategy)?));
@@ -386,6 +575,12 @@ pub fn materialize_expr(
             ast::Expr::new(ast::ExprKind::Break(expr_break))
         }
         ast::ExprKind::Closure(mut closure) => {
+            for pattern in &mut closure.params {
+                materialize_pattern_types(pattern, strategy)?;
+            }
+            if let Some(ret_ty) = closure.ret_ty.take() {
+                closure.ret_ty = Some(Box::new(materialize_ty(*ret_ty, strategy)?));
+            }
             closure.body = Box::new(materialize_expr_in_statement_scope(
                 *closure.body,
                 strategy,
@@ -486,6 +681,7 @@ pub fn materialize_expr(
         }
         ast::ExprKind::Cast(mut expr_cast) => {
             expr_cast.expr = Box::new(materialize_expr(*expr_cast.expr, strategy)?);
+            expr_cast.ty = materialize_ty(expr_cast.ty, strategy)?;
             ast::Expr::new(ast::ExprKind::Cast(expr_cast))
         }
         ast::ExprKind::Async(mut expr_async) => {

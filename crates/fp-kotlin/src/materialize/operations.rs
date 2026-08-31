@@ -8,7 +8,7 @@ pub struct KotlinMaterializer;
 
 impl KotlinMaterializer {
     fn materialize_type_mapping(&self, ty: &Ty) -> Result<MaterializeOutcome<Ty>> {
-        let materialized = materialize_aliases(materialize_jvm_type(ty.clone()));
+        let materialized = materialize_aliases(materialize_jvm_type(materialize_rust_alias(ty.clone())));
         if materialized == *ty { Ok(MaterializeOutcome::Unchanged) } else { Ok(MaterializeOutcome::Replaced(materialized)) }
     }
 
