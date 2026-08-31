@@ -2278,7 +2278,6 @@ impl AstToHirLowerer {
                 self.hir_program
                     .resolve_external_path(path, scope.namespace())
             })
-            .or_else(|| self.hir_program.find_export(&key))
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {
                     self.lookup_symbol(&key, hir::Namespace::Type)

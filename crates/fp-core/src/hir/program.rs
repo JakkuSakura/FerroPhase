@@ -854,16 +854,57 @@ impl HirProgram {
         &self,
         path: &crate::ast::path::QualifiedPath,
     ) -> Option<crate::ast::path::QualifiedPath> {
-        let crate_name = path.head()?;
-        let package = self
-            .packages_by_crate_name
-            .get(crate_name)
-            .and_then(|package_id| self.packages.get(package_id))?;
-        package
-            .borrow()
-            .module_tree
-            .module_exists_crate_path(crate_name, path)
-            .then(|| path.clone())
+        let crate_name = path.head()?.to_string();
+        let package_id = self.packages_by_crate_name.get(&crate_name)?.clone();
+        let mut package = self.packages.get(&package_id)?.clone();
+        let rooted = package.borrow().module_tree.module_exists(
+            &crate::ast::path::QualifiedPath::new(vec![crate_name.clone()]),
+        );
+        let first = usize::from(rooted);
+        let mut current = if rooted {
+            crate::ast::path::QualifiedPath::new(vec![crate_name])
+        } else {
+            crate::ast::path::QualifiedPath::new(Vec::new())
+        };
+
+        for segment in &path.segments[first..] {
+            let candidate = current.with_segment(segment.clone());
+            let alias = {
+                let package_ref = package.borrow();
+                let module = package_ref.module_tree.module_id(&current)?;
+                package_ref
+                    .module_tree
+                    .lookup(module, resolve::Namespace::Value, segment)
+                    .cloned()
+                    .or_else(|| {
+                        package_ref
+                            .module_tree
+                            .lookup(module, resolve::Namespace::Type, segment)
+                            .cloned()
+                    })
+            };
+            if let Some(resolve::SymbolEntry {
+                res: Res::Module(target),
+                export,
+                ..
+            }) = alias
+            {
+                if !export.can_access(&[]) {
+                    return None;
+                }
+                let target_root = target.first()?.clone();
+                let target_id = self.packages_by_crate_name.get(&target_root)?;
+                package = self.packages.get(target_id)?.clone();
+                current = crate::ast::path::QualifiedPath::new(target);
+                continue;
+            }
+            if package.borrow().module_tree.module_exists(&candidate) {
+                current = candidate;
+                continue;
+            }
+            return None;
+        }
+        Some(current)
     }
 
     /// Public direct members of an external module, used to expand a Rust
@@ -874,21 +915,24 @@ impl HirProgram {
         &self,
         path: &crate::ast::path::QualifiedPath,
     ) -> Option<Vec<String>> {
-        let crate_name = path.head()?;
+        let canonical = self.resolve_external_module_path(path)?;
+        let crate_name = canonical.head()?.to_string();
         let package = self
             .packages_by_crate_name
-            .get(crate_name)
+            .get(&crate_name)
             .and_then(|package_id| self.packages.get(package_id))?;
         let package = package.borrow();
         let rooted = package
             .module_tree
             .module_exists(&crate::ast::path::QualifiedPath::new(vec![
-                crate_name.to_string(),
+                crate_name.clone(),
             ]));
         let internal = if rooted {
-            path.clone()
+            canonical
         } else {
-            crate::ast::path::QualifiedPath::new(path.segments.iter().skip(1).cloned().collect())
+            crate::ast::path::QualifiedPath::new(
+                canonical.segments.iter().skip(1).cloned().collect(),
+            )
         };
         let module = package.module_tree.module_id(&internal)?;
         let mut names = std::collections::BTreeSet::new();
@@ -1197,6 +1241,14 @@ mod tests {
             resolved.map(|entry| entry.res),
             Some(Res::Def(def_id)) if def_id == formatter
         ));
+        assert_eq!(
+            program.resolve_external_module_path(&qpath(&["std", "fmt"])),
+            Some(qpath(&["alloc", "fmt"]))
+        );
+        assert_eq!(
+            program.external_module_member_names(&qpath(&["std", "fmt"])),
+            Some(vec!["Formatter".to_string()])
+        );
     }
 
     #[test]
