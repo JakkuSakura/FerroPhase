@@ -263,6 +263,9 @@ fn skip_to_next_boundary(cur: &mut Cursor) {
         if is_decl_start_keyword(t) {
             return;
         }
+        if t == "@" {
+            return;
+        }
         cur.bump();
     }
 }
@@ -272,7 +275,7 @@ fn is_decl_start_keyword(kw: &str) -> bool {
         kw,
         "fun" | "class" | "interface" | "object" | "val" | "var" | "typealias"
     ) || MODIFIER_KEYWORDS.contains(&kw)
-        || matches!(kw, "enum" | "companion" | "value")
+        || matches!(kw, "enum" | "companion" | "value" | "@")
 }
 
 /// Captured state from `skip_annotations_and_modifiers`.

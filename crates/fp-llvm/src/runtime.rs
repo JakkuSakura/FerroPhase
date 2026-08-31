@@ -6,7 +6,9 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
-use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome, ensure_function_decl, make_function_decl};
+use fp_core::intrinsics::{
+    IntrinsicMaterializer, MaterializeOutcome, ensure_function_decl, make_function_decl,
+};
 use fp_core::span::Span;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.

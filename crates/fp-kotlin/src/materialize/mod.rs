@@ -22,6 +22,7 @@ impl PortableCallRef for &PortableOpCall {
         self
     }
 }
+
 use fp_core::ops::BinOpKind;
 mod types;
 use types::*;
@@ -33,75 +34,6 @@ pub use operations::KotlinMaterializer;
 pub(crate) fn materialize_kotlin_item(item: fp_core::ast::Item) -> Result<fp_core::ast::Item> {
     fp_core::intrinsics::materialize_item(item, &KotlinMaterializer)
 }
-fn materialize_std_function(path: &[String], args: &[Expr]) -> Option<Expr> {
-    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    match path.as_slice() {
-        ["std", "fs", "read_to_string"] => Some(run_catching(invoke_static_method(
-            &["java", "nio", "file", "Files"],
-            "readString",
-            args.to_vec(),
-        ))),
-        ["std", "fs", "read"] => Some(run_catching(invoke_static_method(
-            &["java", "nio", "file", "Files"],
-            "readAllBytes",
-            args.to_vec(),
-        ))),
-        ["std", "fs", "read_dir"] => Some(runtime_method("readDirectory", args.to_vec())),
-        ["std", "fs", "create_dir"] => Some(runtime_method("createDirectory", args.to_vec())),
-        ["std", "fs", "create_dir_all"] => Some(runtime_method("createDirectories", args.to_vec())),
-        ["std", "fs", "canonicalize"] => Some(runtime_method("canonicalize", args.to_vec())),
-        ["std", "fs", "remove_file"] => Some(run_catching(unit_block(invoke_static_method(
-            &["java", "nio", "file", "Files"],
-            "delete",
-            args.to_vec(),
-        )))),
-        ["std", "fs", "remove_dir_all"] => Some(run_catching(runtime_method(
-            "deleteRecursively",
-            args.to_vec(),
-        ))),
-        ["std", "fs", "File", "create"] => Some(runtime_method("createFile", args.to_vec())),
-        ["std", "process", "Command", "new"] => Some(runtime_method("command", args.to_vec())),
-        ["std", "io", "Error", "new"] => args
-            .last()
-            .cloned()
-            .map(|error| runtime_method("ioError", vec![error])),
-        ["std", "io", "ErrorKind", variant] => Some(runtime_method(
-            "ioError",
-            vec![Expr::value(Value::string((*variant).to_owned()))],
-        )),
-        _ => None,
-    }
-}
-
-fn invoke_name_segments(name: &Name) -> Vec<String> {
-    match name {
-        Name::Ident(ident) => vec![ident.as_str().to_owned()],
-        Name::Path(path) => path
-            .segments
-            .iter()
-            .map(|segment| segment.as_str().to_owned())
-            .collect(),
-        Name::ParameterPath(path) => path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.as_str().to_owned())
-            .collect(),
-    }
-}
-
-fn is_io_constructor(target: &ExprInvokeTarget) -> bool {
-    let name = match target {
-        ExprInvokeTarget::Function(Name::Ident(name)) => name.as_str(),
-        ExprInvokeTarget::Function(Name::Path(path)) => path.last().as_str(),
-        ExprInvokeTarget::Function(Name::ParameterPath(path)) => path
-            .last()
-            .map(|segment| segment.ident.as_str())
-            .unwrap_or(""),
-        _ => return false,
-    };
-    name == "Io"
-}
-
 fn assign_byte_vector(target: Expr, value: Expr) -> Expr {
     Expr::new(ExprKind::Assign(ExprAssign {
         span: Default::default(),

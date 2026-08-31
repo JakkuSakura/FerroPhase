@@ -10,6 +10,7 @@ package kotlin
  * The `String` class represents character strings. All string literals in Kotlin programs, such as `"abc"`, are
  * implemented as instances of this class.
  */
+@Op(class = "str")
 public expect class String : Comparable<String>, CharSequence {
     public companion object {}
 
@@ -53,5 +54,6 @@ public expect class String : Comparable<String>, CharSequence {
     public override fun equals(other: Any?): Boolean
 
     @kotlin.internal.IntrinsicConstEvaluation
+    @Op(method = "to_string")
     public override fun toString(): String
 }

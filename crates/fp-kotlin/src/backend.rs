@@ -39,6 +39,20 @@ fn collect_kotlin_operation_decls(
                 Path::plain(path.into_iter().map(Ident::new).collect()),
             );
         }
+        if let (Some(op_class), Some(op_method)) = (
+            declaration.op_class.as_deref(),
+            declaration.op_method.as_deref(),
+        ) {
+            let mut path = module_path.to_vec();
+            path.push(declaration.name.clone());
+            registry.insert_method_declaration(
+                op_class,
+                op_method,
+                declaration.params.len(),
+                fp_core::intrinsics::ResultTypeRule::NotStaticallyKnowable,
+                Path::plain(path.into_iter().map(Ident::new).collect()),
+            );
+        }
         if let Some(op_class) = declaration.op_class.as_deref() {
             for member in &declaration.members {
                 let Some(op_method) = member.op_method.as_deref() else {
@@ -50,7 +64,7 @@ fn collect_kotlin_operation_decls(
                 registry.insert_method_declaration(
                     op_class,
                     op_method,
-                    1,
+                    member.params.len(),
                     fp_core::intrinsics::ResultTypeRule::NotStaticallyKnowable,
                     Path::plain(path.into_iter().map(Ident::new).collect()),
                 );
@@ -275,9 +289,9 @@ mod tests {
     };
 
     use super::{
-        collect_kotlin_operation_decls, create_staging_directory, kotlin_package_name,
-        kotlin_runtime_source, materialize_io_error_constructor, materialize_kotlin_ty,
-        materialize_kotlin_types, publish_staged_workspace, remove_path,
+        collect_kotlin_operation_decls, create_staging_directory, kotlin_operation_registry,
+        kotlin_package_name, kotlin_runtime_source, materialize_io_error_constructor,
+        materialize_kotlin_ty, materialize_kotlin_types, publish_staged_workspace, remove_path,
     };
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -314,7 +328,35 @@ mod tests {
         };
         let mut registry = fp_core::lang::LangItemRegistry::default();
         collect_kotlin_operation_decls(&[class], &["kotlin".to_string()], &mut registry);
-        assert!(registry.get_op_path("unwrap_or").is_some());
+        assert!(
+            registry
+                .resolve_operation(fp_core::lang::OperationSelector::DeclarationKey(
+                    "Option.unwrap_or"
+                ))
+                .is_some()
+        );
+        assert!(registry.get_op_path("unwrap_or").is_none());
+    }
+
+    #[test]
+    fn vendored_kotlin_std_registers_native_portable_operations() {
+        let registry = kotlin_operation_registry().expect("load Kotlin std operations");
+        for key in [
+            "Any.to_string",
+            "str.to_string",
+            "str.starts_with",
+            "str.ends_with",
+            "str.trim",
+            "str.trim_start",
+            "str.trim_end",
+        ] {
+            assert!(
+                registry
+                    .resolve_operation(fp_core::lang::OperationSelector::DeclarationKey(key))
+                    .is_some(),
+                "missing Kotlin std operation declaration: {key}"
+            );
+        }
     }
 
     fn test_workspace_root(name: &str) -> std::path::PathBuf {

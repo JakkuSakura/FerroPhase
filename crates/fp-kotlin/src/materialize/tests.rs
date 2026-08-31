@@ -45,6 +45,7 @@ fn test_registry() -> LangItemRegistry {
         "path_parent",
         "path_join",
         "path_file_name",
+        "path_to_path_buf",
         "path_to_string_lossy",
         "os_str_to_string_lossy",
         "dir_entry_path",
@@ -248,96 +249,6 @@ fn materializes_io_error_without_leaking_error_kind() {
 }
 
 #[test]
-fn materializes_io_constructor_payload_as_jvm_io_exception() {
-    let mut invoke = ExprInvoke {
-        span: Default::default(),
-        target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
-            Ident::new("ConfigError"),
-            Ident::new("Io"),
-        ]))),
-        args: vec![Expr::name(Name::ident("source"))],
-        kwargs: Vec::new(),
-    };
-
-    let materialized = KotlinMaterializer
-        .lower_invoke(invoke, &None)
-        .expect("materialize Io constructor")
-        .expect("replacement expression");
-
-    let ExprKind::Invoke(_) = materialized.kind() else {
-        panic!("expected IOException adapter");
-    };
-    assert_eq!(
-        render_invoke_name(&materialized),
-        "RustKotlinRuntime.ioError"
-    );
-}
-
-#[test]
-fn materializes_unresolved_std_filesystem_functions_at_backend_boundary() {
-    let materializer = KotlinMaterializer;
-    for (path, expected) in [
-        (vec!["std", "fs", "read_to_string"], "runCatching"),
-        (vec!["std", "fs", "read"], "runCatching"),
-        (
-            vec!["std", "fs", "read_dir"],
-            "RustKotlinRuntime.readDirectory",
-        ),
-        (
-            vec!["std", "fs", "create_dir_all"],
-            "RustKotlinRuntime.createDirectories",
-        ),
-        (
-            vec!["std", "fs", "File", "create"],
-            "RustKotlinRuntime.createFile",
-        ),
-    ] {
-        let mut invoke = ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Function(Name::path(Path::plain(
-                path.iter().map(|segment| Ident::new(*segment)).collect(),
-            ))),
-            args: vec![Expr::name(Name::ident("path"))],
-            kwargs: Vec::new(),
-        };
-
-        let materialized = materializer
-            .lower_invoke(&mut invoke, &None)
-            .expect("materialize unresolved std filesystem call")
-            .expect("filesystem call replacement");
-        assert_eq!(
-            render_invoke_name(&materialized),
-            expected,
-            "path: {path:?}"
-        );
-    }
-}
-
-#[test]
-fn materializes_unresolved_std_process_command_constructor() {
-    let mut invoke = ExprInvoke {
-        span: Default::default(),
-        target: ExprInvokeTarget::Function(Name::path(Path::plain(
-            ["std", "process", "Command", "new"]
-                .into_iter()
-                .map(Ident::new)
-                .collect(),
-        ))),
-        args: vec![Expr::value(Value::string("git".to_string()))],
-        kwargs: Vec::new(),
-    };
-
-    let materialized = KotlinMaterializer
-        .lower_invoke(&mut invoke, &None)
-        .expect("materialize unresolved std process call")
-        .expect("process constructor replacement");
-    assert_eq!(
-        render_invoke_name(&materialized),
-        "RustKotlinRuntime.command"
-    );
-}
-
-#[test]
 fn materializes_str_parse_as_typed_kotlin_result() {
     let registry = test_registry();
     let mut call = PortableOpCall {
@@ -470,40 +381,6 @@ fn materializes_result_operations_through_the_runtime() {
 }
 
 #[test]
-fn materializes_unresolved_result_methods_through_the_runtime() {
-    let materializer = KotlinMaterializer;
-    for (method, expected) in [
-        ("map_err", "RustKotlinRuntime.mapError"),
-        ("is_ok", "RustKotlinRuntime.resultIsSuccess"),
-        ("is_err", "RustKotlinRuntime.resultIsFailure"),
-        ("ok", "RustKotlinRuntime.resultOkValue"),
-        ("err", "RustKotlinRuntime.resultErrValue"),
-    ] {
-        let mut invoke = ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Method(ExprSelect {
-                span: Default::default(),
-                obj: Box::new(Expr::name(Name::ident("result"))),
-                field: Ident::new(method),
-                generic_args: Vec::new(),
-                select: ExprSelectType::Method,
-            }),
-            args: vec![Expr::name(Name::ident("mapper"))],
-            kwargs: Vec::new(),
-        };
-        let materialized = materializer
-            .lower_invoke(&mut invoke, &None)
-            .expect("materialize unresolved Result method")
-            .expect("Result method replacement");
-        assert_eq!(
-            render_invoke_name(&materialized),
-            expected,
-            "method: {method}"
-        );
-    }
-}
-
-#[test]
 fn materializes_kotlin_result_status_properties_through_the_runtime() {
     let materializer = KotlinMaterializer;
     for (field, expected) in [
@@ -530,7 +407,7 @@ fn materializes_kotlin_result_status_properties_through_the_runtime() {
 }
 
 #[test]
-fn serializes_unresolved_result_operations_through_runtime_adapters() {
+fn leaves_unresolved_result_operations_for_resolution() {
     let map_err = Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
         target: ExprInvokeTarget::Method(ExprSelect {
@@ -585,20 +462,14 @@ fn serializes_unresolved_result_operations_through_runtime_adapters() {
         .serialize_file(&file)
         .expect("serialize unresolved Result operations");
     assert!(
-        rendered.contains("RustKotlinRuntime.mapError("),
+        rendered.contains("result.map_err(convert_error)"),
         "{rendered}"
     );
     assert!(
         rendered.contains("RustKotlinRuntime.resultIsSuccess(result)"),
         "{rendered}"
     );
-    assert!(
-        rendered.contains("RustKotlinRuntime.resultOkValue(result)"),
-        "{rendered}"
-    );
-    assert!(!rendered.contains(".map_err("), "{rendered}");
-    assert!(!rendered.contains(".ok()"), "{rendered}");
-    assert!(!rendered.contains(".isSuccess"), "{rendered}");
+    assert!(rendered.contains("result.ok()"), "{rendered}");
 }
 
 #[test]
@@ -643,29 +514,6 @@ fn materializes_owned_values_without_rust_copy_methods() {
         render_invoke_name(&cloned),
         "RustKotlinRuntime.bytesFromIterable"
     );
-
-    for method in ["copy", "into_owned", "to_owned"] {
-        let mut invoke = ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Method(ExprSelect {
-                span: Default::default(),
-                obj: Box::new(Expr::name(Name::ident("bytes"))),
-                field: Ident::new(method),
-                generic_args: Vec::new(),
-                select: ExprSelectType::Method,
-            }),
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        };
-        let materialized = KotlinMaterializer
-            .lower_invoke(&mut invoke, &bytes_ty)
-            .expect("materialize ownership method")
-            .expect("ownership replacement");
-        assert_eq!(
-            render_invoke_name(&materialized),
-            "RustKotlinRuntime.bytesFromIterable"
-        );
-    }
 }
 
 #[test]
@@ -962,57 +810,6 @@ fn materializes_jvm_nio_intrinsics_with_kotlin_result_shapes() {
 }
 
 #[test]
-fn materializes_path_and_process_methods_through_runtime_adapters() {
-    let materializer = KotlinMaterializer;
-    for (method, args, expected) in [
-        ("resolve", 1, "receiver.resolve"),
-        ("exists", 0, "java.nio.file.Files.exists"),
-        ("arg", 1, "RustKotlinRuntime.commandArg"),
-        ("args", 1, "RustKotlinRuntime.commandArgs"),
-        ("current_dir", 1, "RustKotlinRuntime.commandCurrentDir"),
-        ("stdin", 1, "RustKotlinRuntime.commandStdin"),
-        ("stdout", 1, "RustKotlinRuntime.commandStdout"),
-        ("stderr", 1, "RustKotlinRuntime.commandStderr"),
-        ("spawn", 0, "RustKotlinRuntime.commandSpawn"),
-        ("output", 0, "RustKotlinRuntime.commandOutput"),
-        ("status", 0, "RustKotlinRuntime.commandStatus"),
-        ("kill", 0, "RustKotlinRuntime.childKill"),
-        ("wait", 0, "RustKotlinRuntime.childWait"),
-        ("try_wait", 0, "RustKotlinRuntime.childTryWait"),
-        (
-            "wait_with_output",
-            0,
-            "RustKotlinRuntime.childWaitWithOutput",
-        ),
-        ("success", 0, "RustKotlinRuntime.exitStatusSuccess"),
-    ] {
-        let mut invoke = ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Method(ExprSelect {
-                span: Default::default(),
-                obj: Box::new(Expr::name(Name::ident("receiver"))),
-                field: Ident::new(method),
-                generic_args: Vec::new(),
-                select: ExprSelectType::Method,
-            }),
-            args: (0..args)
-                .map(|index| Expr::name(Name::ident(format!("arg_{index}"))))
-                .collect(),
-            kwargs: Vec::new(),
-        };
-        let materialized = materializer
-            .lower_invoke(&mut invoke, &None)
-            .expect("materialize Path or process method")
-            .expect("runtime adapter replacement");
-        assert_eq!(
-            render_invoke_name(&materialized),
-            expected,
-            "method: {method}"
-        );
-    }
-}
-
-#[test]
 fn materializes_process_operations_through_the_runtime_model() {
     let registry = test_registry();
     let materializer = KotlinMaterializer;
@@ -1178,59 +975,6 @@ fn materializes_byte_collection_conversion_with_kotlin_array_api() {
             .expect("byte collection replacement");
         assert_eq!(render_invoke_name(&materialized), "values.toByteArray");
     }
-}
-
-#[test]
-fn materializes_kotlin_native_operations_from_ordinary_invokes() {
-    let materializer = KotlinMaterializer;
-
-    for (method, expected) in [
-        ("trim", "text.trim"),
-        ("trim_start", "text.trimStart"),
-        ("trim_end", "text.trimEnd"),
-        ("lines", "text.lines"),
-        ("starts_with", "text.startsWith"),
-        ("ends_with", "text.endsWith"),
-    ] {
-        let mut call = ExprInvoke {
-            span: Default::default(),
-            target: ExprInvokeTarget::Method(ExprSelect {
-                span: Default::default(),
-                obj: Box::new(Expr::name(Name::ident("text"))),
-                field: Ident::new(method),
-                generic_args: Vec::new(),
-                select: ExprSelectType::Method,
-            }),
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        };
-        let materialized = materializer
-            .lower_invoke(&mut call, &None)
-            .expect("materialize native operation")
-            .expect("native operation replacement");
-        assert_eq!(render_invoke_name(&materialized), expected);
-    }
-}
-
-#[test]
-fn materializes_option_is_none_as_a_null_check() {
-    let mut call = ExprInvoke {
-        span: Default::default(),
-        target: ExprInvokeTarget::Method(ExprSelect {
-            span: Default::default(),
-            obj: Box::new(Expr::name(Name::ident("value"))),
-            field: Ident::new("is_none"),
-            generic_args: Vec::new(),
-            select: ExprSelectType::Method,
-        }),
-        args: Vec::new(),
-        kwargs: Vec::new(),
-    };
-    let materialized = KotlinMaterializer
-        .lower_invoke(&mut call, &None)
-        .expect("materialize Option::is_none")
-        .expect("null-check replacement");
-    assert!(matches!(materialized.kind(), ExprKind::BinOp(_)));
 }
 
 #[test]

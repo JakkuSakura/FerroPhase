@@ -178,6 +178,7 @@ public fun CharSequence.trim(): CharSequence = trim(Char::isWhitespace)
  * Returns a string having leading and trailing whitespace removed.
  */
 @kotlin.internal.InlineOnly
+@Op(class = "str", method = "trim")
 public inline fun String.trim(): String = (this as CharSequence).trim().toString()
 
 /**
@@ -189,6 +190,7 @@ public fun CharSequence.trimStart(): CharSequence = trimStart(Char::isWhitespace
  * Returns a string having leading whitespace removed.
  */
 @kotlin.internal.InlineOnly
+@Op(class = "str", method = "trim_start")
 public inline fun String.trimStart(): String = (this as CharSequence).trimStart().toString()
 
 /**
@@ -200,6 +202,7 @@ public fun CharSequence.trimEnd(): CharSequence = trimEnd(Char::isWhitespace)
  * Returns a string having trailing whitespace removed.
  */
 @kotlin.internal.InlineOnly
+@Op(class = "str", method = "trim_end")
 public inline fun String.trimEnd(): String = (this as CharSequence).trimEnd().toString()
 
 /**
@@ -888,6 +891,7 @@ public fun CharSequence.endsWith(char: Char, ignoreCase: Boolean = false): Boole
 /**
  * Returns `true` if this char sequence starts with the specified prefix.
  */
+@Op(class = "str", method = "starts_with")
 public fun CharSequence.startsWith(prefix: CharSequence, ignoreCase: Boolean = false): Boolean {
     if (!ignoreCase && this is String && prefix is String)
         return this.startsWith(prefix)
@@ -908,6 +912,7 @@ public fun CharSequence.startsWith(prefix: CharSequence, startIndex: Int, ignore
 /**
  * Returns `true` if this char sequence ends with the specified suffix.
  */
+@Op(class = "str", method = "ends_with")
 public fun CharSequence.endsWith(suffix: CharSequence, ignoreCase: Boolean = false): Boolean {
     if (!ignoreCase && this is String && suffix is String)
         return this.endsWith(suffix)

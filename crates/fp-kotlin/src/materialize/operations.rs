@@ -1,15 +1,18 @@
 use super::*;
 
+#[cfg(test)]
 trait IntoMaterialized<T> {
     fn into_materialized(self) -> T;
 }
 
+#[cfg(test)]
 impl<T: Clone> IntoMaterialized<T> for T {
     fn into_materialized(self) -> T {
         self
     }
 }
 
+#[cfg(test)]
 impl<T: Clone> IntoMaterialized<T> for &mut T {
     fn into_materialized(self) -> T {
         self.clone()
@@ -370,140 +373,6 @@ impl KotlinMaterializer {
         }
     }
 
-    pub(crate) fn lower_invoke_core(
-        &self,
-        mut invoke: ExprInvoke,
-        ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        // Rust error constructors retain concrete payload types, while Kotlin
-        // Result callbacks expose Throwable. Normalize this payload at the
-        // target materialization boundary, before syntax serialization.
-        if is_io_constructor(&invoke.target) && invoke.args.len() == 1 {
-            let error = invoke.args.pop().expect("one Io constructor argument");
-            return Ok(Some(runtime_method("ioError", vec![error])));
-        }
-        // Keep Rust standard-library constructors target-independent until this
-        // backend boundary.  Unresolved dependency HIR may leave these as
-        // ordinary function paths, so relying only on the portable-op registry
-        // would leak `ProcessBuilder`/`Path` spellings into Kotlin.
-        if let ExprInvokeTarget::Function(name) = &invoke.target {
-            let path = invoke_name_segments(name);
-            if path.as_slice() == ["IOException"] {
-                return Ok(Some(runtime_method("ioError", invoke.args.clone())));
-            }
-            if let Some(replacement) = materialize_std_function(&path, &invoke.args) {
-                return Ok(Some(replacement));
-            }
-            let last = path.last().map(String::as_str).unwrap_or_default();
-            if last == "create_dir_all" {
-                return Ok(Some(runtime_method(
-                    "createDirectories",
-                    invoke.args.clone(),
-                )));
-            }
-            let owner = path
-                .iter()
-                .rev()
-                .nth(1)
-                .map(String::as_str)
-                .unwrap_or_default();
-            if last == "new" && owner == "Command" {
-                return Ok(Some(runtime_method("command", invoke.args.clone())));
-            }
-            if matches!(last, "from" | "new") && matches!(owner, "Path" | "PathBuf") {
-                return Ok(Some(invoke_static_method(
-                    &["java", "nio", "file", "Paths"],
-                    "get",
-                    invoke.args.clone(),
-                )));
-            }
-            if owner == "thread" || owner == "Thread" {
-                if last == "sleep" {
-                    return Ok(Some(runtime_method("sleep", invoke.args.clone())));
-                }
-            }
-        }
-        let ExprInvokeTarget::Method(select) = &invoke.target else {
-            return Ok(None);
-        };
-        let receiver = (*select.obj).clone();
-        let replacement = match select.field.as_str() {
-            "trim" => invoke_method(receiver, "trim", invoke.args.clone()),
-            "trim_end" => invoke_method(receiver, "trimEnd", invoke.args.clone()),
-            "trim_start" => invoke_method(receiver, "trimStart", invoke.args.clone()),
-            "starts_with" => invoke_method(receiver, "startsWith", invoke.args.clone()),
-            "ends_with" => invoke_method(receiver, "endsWith", invoke.args.clone()),
-            "lines" => invoke_method(receiver, "lines", invoke.args.clone()),
-            "char_indices" => runtime_method("charIndices", vec![receiver]),
-            "split_at" => runtime_method(
-                "splitAt",
-                std::iter::once(receiver)
-                    .chain(invoke.args.clone())
-                    .collect(),
-            ),
-            "strip_prefix" => runtime_method(
-                "stripPrefix",
-                std::iter::once(receiver)
-                    .chain(invoke.args.clone())
-                    .collect(),
-            ),
-            "is_letter_or_digit" => invoke_method(receiver, "isLetterOrDigit", invoke.args.clone()),
-            "is_ascii_hexdigit" => runtime_method("charIsAsciiHexDigit", vec![receiver]),
-            "is_ascii_digit" => runtime_method("charIsAsciiDigit", vec![receiver]),
-            "is_ascii_alphabetic" => runtime_method("charIsAsciiAlphabetic", vec![receiver]),
-            "is_alphabetic" => runtime_method("charIsAlphabetic", vec![receiver]),
-            "is_whitespace" => runtime_method("charIsWhitespace", vec![receiver]),
-            "is_digit" => runtime_method(
-                "charIsDigit",
-                std::iter::once(receiver)
-                    .chain(invoke.args.clone())
-                    .collect(),
-            ),
-            "to_owned" => kotlin_owned_value(receiver, ty),
-            "to_string" => invoke_method(receiver, "toString", invoke.args.clone()),
-            "is_none" => Expr::new(ExprKind::BinOp(ExprBinOp {
-                span: Default::default(),
-                kind: BinOpKind::Eq,
-                lhs: Box::new(receiver),
-                rhs: Box::new(Expr::value(Value::Null(Default::default()))),
-            })),
-            "position" => invoke_method(receiver, "indexOfFirst", invoke.args.clone()),
-            "clone" | "copy" | "into_owned" => kotlin_owned_value(receiver, ty),
-            "resolve" => invoke_method(receiver, "resolve", invoke.args.clone()),
-            "exists" => {
-                invoke_static_method(&["java", "nio", "file", "Files"], "exists", vec![receiver])
-            }
-            "arg" => runtime_method("commandArg", vec![receiver, invoke.args[0].clone()]),
-            "args" => runtime_method("commandArgs", vec![receiver, invoke.args[0].clone()]),
-            "current_dir" => {
-                runtime_method("commandCurrentDir", vec![receiver, invoke.args[0].clone()])
-            }
-            "stdin" => runtime_method("commandStdin", vec![receiver, invoke.args[0].clone()]),
-            "stdout" => runtime_method("commandStdout", vec![receiver, invoke.args[0].clone()]),
-            "stderr" => runtime_method("commandStderr", vec![receiver, invoke.args[0].clone()]),
-            "spawn" => runtime_method("commandSpawn", vec![receiver]),
-            "output" => runtime_method("commandOutput", vec![receiver]),
-            "status" => runtime_method("commandStatus", vec![receiver]),
-            "kill" => runtime_method("childKill", vec![receiver]),
-            "wait" => runtime_method("childWait", vec![receiver]),
-            "try_wait" => runtime_method("childTryWait", vec![receiver]),
-            "wait_with_output" => runtime_method("childWaitWithOutput", vec![receiver]),
-            "success" => runtime_method("exitStatusSuccess", vec![receiver]),
-            "isSuccess" => runtime_method("resultIsSuccess", vec![receiver]),
-            "isFailure" => runtime_method("resultIsFailure", vec![receiver]),
-            "map_err" => runtime_method(
-                "mapError",
-                vec![receiver, result_error_mapping(invoke.args.first().cloned())],
-            ),
-            "is_ok" => runtime_method("resultIsSuccess", vec![receiver]),
-            "is_err" => runtime_method("resultIsFailure", vec![receiver]),
-            "ok" => runtime_method("resultOkValue", vec![receiver]),
-            "err" => runtime_method("resultErrValue", vec![receiver]),
-            _ => return Ok(None),
-        };
-        Ok(Some(replacement))
-    }
-
     pub(crate) fn lower_select_core(
         &self,
         select: ExprSelect,
@@ -608,6 +477,7 @@ impl KotlinMaterializer {
         Ok(Some(expression))
     }
 
+    #[cfg(test)]
     pub(crate) fn lower_portable_operation(
         &self,
         call: impl IntoMaterialized<PortableOpCall>,
@@ -616,14 +486,7 @@ impl KotlinMaterializer {
         self.lower_portable_operation_core(call.into_materialized(), ty)
     }
 
-    pub(crate) fn lower_invoke(
-        &self,
-        invoke: impl IntoMaterialized<ExprInvoke>,
-        ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        self.lower_invoke_core(invoke.into_materialized(), ty)
-    }
-
+    #[cfg(test)]
     pub(crate) fn lower_select(
         &self,
         select: impl IntoMaterialized<ExprSelect>,
@@ -632,14 +495,7 @@ impl KotlinMaterializer {
         self.lower_select_core(select.into_materialized(), ty)
     }
 
-    pub(crate) fn lower_await(
-        &self,
-        expr: impl IntoMaterialized<ExprAwait>,
-        ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        self.lower_await_core(expr.into_materialized(), ty)
-    }
-
+    #[cfg(test)]
     pub(crate) fn lower_intrinsic_call(
         &self,
         call: impl IntoMaterialized<ExprIntrinsicCall>,
@@ -648,6 +504,7 @@ impl KotlinMaterializer {
         self.lower_intrinsic_call_core(call.into_materialized(), ty)
     }
 
+    #[cfg(test)]
     pub(crate) fn lower_intrinsic_container(
         &self,
         container: impl IntoMaterialized<ExprIntrinsicContainer>,
@@ -663,15 +520,6 @@ impl IntrinsicMaterializer for KotlinMaterializer {
     }
     fn materialize_type_mapping(&self, ty: &Ty) -> Result<MaterializeOutcome<Ty>> {
         self.materialize_type_mapping(ty)
-    }
-    fn materialize_invoke_expression(
-        &self,
-        invoke: ExprInvoke,
-        ty: &TySlot,
-    ) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self
-            .lower_invoke_core(invoke, ty)?
-            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
     fn materialize_select_expression(
         &self,

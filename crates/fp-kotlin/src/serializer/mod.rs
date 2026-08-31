@@ -2646,6 +2646,7 @@ mod tests {
     fn result_match_uses_resolved_operation_identity_not_variant_name() {
         let mut registry = LangItemRegistry::default();
         registry.insert_op("result_ok", Path::plain(vec![Ident::new("result_ok")]));
+        registry.insert_op("result_err", Path::plain(vec![Ident::new("result_err")]));
         let success = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
             name: fp_core::ast::Name::ident("success_spelling_is_irrelevant"),
             patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(

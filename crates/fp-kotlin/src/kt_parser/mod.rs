@@ -40,10 +40,13 @@ pub fn load_std_declarations(
 ) -> Option<Vec<(std::path::PathBuf, Vec<KtDecl>)>> {
     fp_core::embedded_std::load_sources::<KotlinStd>("kt")?
         .into_iter()
-        .map(|(relative, source)| {
-            Some((relative, parse_declarations(&source, diagnostics).ok()?))
+        .filter_map(|(relative, source)| {
+            parse_declarations(&source, diagnostics)
+                .ok()
+                .map(|declarations| (relative, declarations))
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[cfg(test)]
@@ -236,19 +239,5 @@ mod tests {
             total_decls,
             total_warnings
         );
-    }
-
-    fn collect_kt_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect_kt_files(&path, out);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("kt") {
-                out.push(path);
-            }
-        }
     }
 }
