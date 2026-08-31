@@ -486,8 +486,17 @@ pub enum AggregateKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContainerKind {
-    List { elem_ty: Ty, len: u64 },
-    Map { key_ty: Ty, value_ty: Ty, len: u64 },
+    /// Runtime sequence operations. The element count and type describe the
+    /// operation; constant sequence payloads use `ConstValue::Array`.
+    List {
+        elem_ty: Ty,
+        len: u64,
+    },
+    Map {
+        key_ty: Ty,
+        value_ty: Ty,
+        len: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -549,12 +558,10 @@ pub enum ConstValue {
     Null,
     FnDef(DefId, ty::SubstsRef),
     Tuple(Vec<ConstValue>),
+    /// A sequence payload. Its enclosing `Constant::ty` determines whether
+    /// it is materialized as a fixed array, slice, or collection value.
     Array(Vec<ConstValue>),
     Struct(Vec<ConstValue>),
-    List {
-        elements: Vec<ConstValue>,
-        elem_ty: ty::Ty,
-    },
     Map {
         entries: Vec<(ConstValue, ConstValue)>,
         key_ty: ty::Ty,

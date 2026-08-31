@@ -462,6 +462,77 @@ impl HirToMirLowerer {
         self.hir_program.const_block_value(def_id)
     }
 
+    /// Materialize the compile-time value represented by a nominal type name.
+    /// A type used as an argument to ordinary std code, such as
+    /// `TypeBuilder::from(Point3D)`, is the language's normal `type` value;
+    /// it is not a compiler-owned `TypeBuilder` operation.
+    pub(crate) fn type_value_for_def(&self, def_id: hir::DefId) -> Option<Value> {
+        let item = self.hir_item(def_id)?;
+        let hir::ItemKind::Struct(def) = item.kind else {
+            return None;
+        };
+        let fields = def
+            .fields
+            .iter()
+            .map(|field| {
+                Some(fp_core::ast::StructuralField::new(
+                    fp_core::ast::Ident::new(field.name.as_str()),
+                    self.ast_type_from_hir(&field.ty)?,
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Value::Type(fp_core::ast::Ty::Struct(
+            fp_core::ast::TypeStruct {
+                name: fp_core::ast::Ident::new(def.name.as_str()),
+                generics_params: Vec::new(),
+                repr: def.repr.clone(),
+                fields,
+            },
+        )))
+    }
+
+    fn ast_type_from_hir(&self, ty: &hir::TypeExpr) -> Option<fp_core::ast::Ty> {
+        match &ty.kind {
+            hir::TypeExprKind::Primitive(primitive) => {
+                Some(fp_core::ast::Ty::Primitive(*primitive))
+            }
+            hir::TypeExprKind::Ref(inner) => Some(fp_core::ast::Ty::Reference(
+                fp_core::ast::TypeReference {
+                    ty: Box::new(self.ast_type_from_hir(inner)?),
+                    mutability: None,
+                    lifetime: None,
+                }
+                .into(),
+            )),
+            hir::TypeExprKind::Ptr { inner, mutable } => Some(fp_core::ast::Ty::RawPtr(
+                fp_core::ast::TypeRawPtr {
+                    ty: Box::new(self.ast_type_from_hir(inner)?),
+                    mutability: Some(*mutable),
+                }
+                .into(),
+            )),
+            hir::TypeExprKind::Tuple(elements) => Some(fp_core::ast::Ty::Tuple(
+                fp_core::ast::TypeTuple {
+                    types: elements
+                        .iter()
+                        .map(|element| self.ast_type_from_hir(element))
+                        .collect::<Option<Vec<_>>>()?,
+                }
+                .into(),
+            )),
+            hir::TypeExprKind::Slice(inner) => Some(fp_core::ast::Ty::Slice(
+                fp_core::ast::TypeSlice {
+                    elem: Box::new(self.ast_type_from_hir(inner)?),
+                }
+                .into(),
+            )),
+            hir::TypeExprKind::Path(path) if path.segments.len() == 1 => Some(
+                fp_core::ast::Ty::ident(fp_core::ast::Ident::new(path.segments[0].name.as_str())),
+            ),
+            _ => None,
+        }
+    }
+
     /// Point `DefId` lookup straight off `hir_program` — the current package
     /// is always one of `hir_program`'s own packages (see `new`/`transform`,
     /// which both insert it), so there is no separate "current package
@@ -1007,15 +1078,17 @@ impl HirToMirLowerer {
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `transform_comptime_request` — see that
         // function's own comment for the full rationale.
-        self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
-            program
-                .def_map
-                .keys()
-                .cloned()
-                .max()
-                .unwrap_or(hir::DefId::local(0))
-                .saturating_add(1),
-        );
+        let next_synthetic_id = program
+            .def_map
+            .keys()
+            .cloned()
+            .max()
+            .unwrap_or_else(|| hir::DefId::new(program.id.clone(), 0))
+            .saturating_add(1);
+        let mut mir_package = self.mir_package.borrow_mut();
+        mir_package.set_next_synthetic_hir_def_id(next_synthetic_id.clone());
+        mir_package.set_next_synthetic_def_id(next_synthetic_id);
+        drop(mir_package);
 
         for item in &program.items {
             match &item.kind {
@@ -1180,15 +1253,17 @@ impl HirToMirLowerer {
         let current_package = current_package.borrow().clone();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `lower_program`/`transform_comptime_request`.
-        self.mir_package.borrow_mut().set_next_synthetic_hir_def_id(
-            current_package
-                .def_map
-                .keys()
-                .cloned()
-                .max()
-                .unwrap_or(hir::DefId::local(0))
-                .saturating_add(1),
-        );
+        let next_synthetic_id = current_package
+            .def_map
+            .keys()
+            .cloned()
+            .max()
+            .unwrap_or_else(|| hir::DefId::new(current_package.id.clone(), 0))
+            .saturating_add(1);
+        let mut mir_package = self.mir_package.borrow_mut();
+        mir_package.set_next_synthetic_hir_def_id(next_synthetic_id.clone());
+        mir_package.set_next_synthetic_def_id(next_synthetic_id);
+        drop(mir_package);
         for item in &current_package.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
@@ -1354,13 +1429,7 @@ impl HirToMirLowerer {
             is_host: false,
         };
         let key = self.const_key(name.as_str(), body.span);
-        let mir_item = self.lower_executable_const(
-            def_id,
-            &konst,
-            ty,
-            key,
-            Some(block.hir_id),
-        )?;
+        let mir_item = self.lower_executable_const(def_id, &konst, ty, key, Some(block.hir_id))?;
         self.extra_items.push(mir_item);
         Ok(())
     }
@@ -3929,7 +3998,19 @@ impl HirToMirLowerer {
                     mir::ty::GenericArg::Lifetime(_) | mir::ty::GenericArg::Const(_) => None,
                 })
                 .collect::<Vec<_>>(),
-            _ => Vec::new(),
+            // Struct values use their flattened tuple representation in MIR,
+            // so a field projection does not always retain the nominal
+            // `Adt`'s generic arguments. Recover the exact instance that
+            // produced this shape from the reverse layout index instead of
+            // treating a generic struct as a zero-argument struct.
+            _ => self
+                .mir_package
+                .borrow()
+                .struct_layouts_by_ty
+                .get(struct_ty)
+                .filter(|key| key.def_id == def_id)
+                .map(|key| key.args.clone())
+                .unwrap_or_default(),
         };
         let layout = self.struct_layout_for_instance(def_id, &type_args, span)?;
         let ty = layout.field_tys.get(idx)?.clone();
@@ -3991,9 +4072,6 @@ impl HirToMirLowerer {
     pub(crate) fn const_len_from_constant(&self, constant: &mir::Constant) -> Option<u64> {
         match &constant.literal {
             mir::ConstantKind::Str(value) => Some(value.len() as u64),
-            mir::ConstantKind::Val(mir::ConstValue::List { elements, .. }) => {
-                Some(elements.len() as u64)
-            }
             mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => Some(elements.len() as u64),
             mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }) => {
                 Some(entries.len() as u64)
@@ -4011,34 +4089,26 @@ impl HirToMirLowerer {
     ) -> Option<(mir::Constant, Ty)> {
         let key = self.lower_const_value(index, None)?;
         match &constant.literal {
-            mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
-                let idx = match key {
-                    mir::ConstValue::Int(value) if value >= 0 => value as usize,
-                    mir::ConstValue::UInt(value) => value as usize,
-                    _ => {
-                        self.emit_error(span, "list index must be a non-negative integer");
-                        return None;
-                    }
-                };
-                let value = elements.get(idx)?;
-                let constant = self.const_value_to_constant(span, value, elem_ty);
-                Some((constant, elem_ty.clone()))
-            }
             mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => {
                 let idx = match key {
                     mir::ConstValue::Int(value) if value >= 0 => value as usize,
                     mir::ConstValue::UInt(value) => value as usize,
                     _ => {
-                        self.emit_error(span, "array index must be a non-negative integer");
+                        self.emit_error(span, "sequence index must be a non-negative integer");
                         return None;
                     }
                 };
-                let TyKind::Array(elem_ty, _) = &constant.ty.kind else {
-                    return None;
+                let elem_ty = match &constant.ty.kind {
+                    TyKind::Array(elem_ty, _) | TyKind::Slice(elem_ty) => elem_ty.as_ref(),
+                    TyKind::Adt(_, substs) => substs.iter().find_map(|subst| match subst {
+                        mir::ty::GenericArg::Type(elem_ty) => Some(elem_ty),
+                        _ => None,
+                    })?,
+                    _ => return None,
                 };
                 let value = elements.get(idx)?;
                 let constant = self.const_value_to_constant(span, value, elem_ty);
-                Some((constant, (*elem_ty.clone()).clone()))
+                Some((constant, elem_ty.clone()))
             }
             mir::ConstantKind::Val(mir::ConstValue::Map {
                 entries,
@@ -4084,8 +4154,9 @@ impl HirToMirLowerer {
             mir::ConstValue::Float(value) => mir::ConstantKind::Float(*value),
             mir::ConstValue::Str(value) => mir::ConstantKind::Str(value.clone()),
             mir::ConstValue::Null => mir::ConstantKind::Null,
-            mir::ConstValue::FnDef(def_id, substs) =>
-                mir::ConstantKind::FnDef(def_id.clone(), substs.clone()),
+            mir::ConstValue::FnDef(def_id, substs) => {
+                mir::ConstantKind::FnDef(def_id.clone(), substs.clone())
+            }
             _ => mir::ConstantKind::Val(value.clone()),
         };
         mir::Constant {

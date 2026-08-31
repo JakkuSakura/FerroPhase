@@ -247,10 +247,28 @@ impl MirPackage {
         id
     }
 
-    /// Re-seeds the synthetic HIR `DefId` counter (see `HirToMirLowerer`'s
-    /// callers, which seed it past the package's own real `DefId`s).
+    /// Seeds the synthetic HIR `DefId` counter past the package's real
+    /// definitions. Keep it monotonic across lowering passes.
     pub fn set_next_synthetic_hir_def_id(&mut self, id: DefId) {
-        self.id_counters.next_synthetic_hir_def_id = id;
+        let current = &self.id_counters.next_synthetic_hir_def_id;
+        if current.package_id.as_str().is_empty()
+            || (current.package_id == id.package_id && current.index < id.index)
+        {
+            self.id_counters.next_synthetic_hir_def_id = id;
+        }
+    }
+
+    /// Seeds the synthetic MIR `DefId` counter with the owning package's
+    /// identity. Synthetic MIR types such as opaque enum payload slots are
+    /// still addressed by `DefId`, so the placeholder local ID must not be
+    /// published as part of a real package.
+    pub fn set_next_synthetic_def_id(&mut self, id: DefId) {
+        let current = &self.id_counters.next_synthetic_def_id;
+        if current.package_id.as_str().is_empty()
+            || (current.package_id == id.package_id && current.index < id.index)
+        {
+            self.id_counters.next_synthetic_def_id = id;
+        }
     }
 
     pub fn span(&self) -> super::Span {

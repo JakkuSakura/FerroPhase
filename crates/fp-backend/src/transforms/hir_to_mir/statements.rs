@@ -127,14 +127,15 @@ impl<'a> BodyBuilder<'a> {
             .expr_type(expr.hir_id.clone())
             .ok_or_else(|| {
                 fp_core::error::Error::from(format!(
-                    "missing HIR type for local initializer {}",
-                    expr.hir_id
+                    "missing HIR type for local initializer {} ({:?})",
+                    expr.hir_id, expr.kind
                 ))
             })?;
         let ty = super::expr::lower_hir_ty(&hir_ty).map_err(|error| {
             fp_core::error::Error::from(format!(
-                "cannot lower cached HIR type `{hir_ty:?}` for local initializer {}: {error}",
-                expr.hir_id
+                "cannot lower cached HIR type `{hir_ty:?}` for local initializer {} ({:?}): {error}",
+                expr.hir_id,
+                expr.kind,
             ))
         })?;
         // Same concern as `lower_type_expr`'s typeck-cache check: the type

@@ -452,7 +452,9 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
         mir::ConstantKind::Bool(value) => Ok(BytecodeConst::Bool(*value)),
         mir::ConstantKind::Str(value) => Ok(BytecodeConst::Str(value.clone())),
-        mir::ConstantKind::ExternFn(symbol) => Ok(BytecodeConst::Function(symbol.as_str().to_string())),
+        mir::ConstantKind::ExternFn(symbol) => {
+            Ok(BytecodeConst::Function(symbol.as_str().to_string()))
+        }
         mir::ConstantKind::FnDef(def_id, substs) => Err(BytecodeError::Lowering {
             message: format!(
                 "function definition reference {:?} with substitutions {:?} cannot be represented in bytecode",
@@ -460,7 +462,7 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
             ),
         }),
         mir::ConstantKind::Global(symbol) => Ok(BytecodeConst::Global(symbol.to_string())),
-        mir::ConstantKind::Val(value) => lower_const_value(value),
+        mir::ConstantKind::Val(value) => lower_const_value(value, Some(&constant.ty)),
         mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
             message: format!(
                 "type constant is not representable in bytecode: {:?}",
@@ -482,7 +484,10 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
     }
 }
 
-fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeError> {
+fn lower_const_value(
+    value: &mir::ConstValue,
+    ty: Option<&mir::Ty>,
+) -> Result<BytecodeConst, BytecodeError> {
     match value {
         mir::ConstValue::Unit => Ok(BytecodeConst::Unit),
         mir::ConstValue::Bool(value) => Ok(BytecodeConst::Bool(*value)),
@@ -493,23 +498,30 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
         mir::ConstValue::Null => Ok(BytecodeConst::Null),
         mir::ConstValue::Tuple(items) => items
             .iter()
-            .map(lower_const_value)
+            .map(|item| lower_const_value(item, None))
             .collect::<Result<Vec<_>, _>>()
             .map(BytecodeConst::Tuple),
-        mir::ConstValue::Array(items) => items
-            .iter()
-            .map(lower_const_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map(BytecodeConst::Array),
-        mir::ConstValue::List { elements, .. } => elements
-            .iter()
-            .map(lower_const_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map(BytecodeConst::List),
+        mir::ConstValue::Array(items) => {
+            let lowered = items
+                .iter()
+                .map(|item| lower_const_value(item, None))
+                .collect::<Result<Vec<_>, _>>()?;
+            if matches!(
+                ty.map(|ty| &ty.kind),
+                Some(fp_core::mir::ty::TyKind::Array(_, _))
+            ) {
+                Ok(BytecodeConst::Array(lowered))
+            } else {
+                Ok(BytecodeConst::List(lowered))
+            }
+        }
         mir::ConstValue::Map { entries, .. } => {
             let mut lowered = Vec::with_capacity(entries.len());
             for (key, value) in entries {
-                lowered.push((lower_const_value(key)?, lower_const_value(value)?));
+                lowered.push((
+                    lower_const_value(key, None)?,
+                    lower_const_value(value, None)?,
+                ));
             }
             Ok(BytecodeConst::Map(lowered))
         }

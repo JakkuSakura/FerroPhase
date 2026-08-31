@@ -635,12 +635,18 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
+        let rvalue = if layout.payload_tys.is_empty() {
+            // A payload-free enum is represented by its tag scalar.  Do not
+            // wrap the tag in a one-element tuple: that creates a value whose
+            // MIR shape disagrees with `layout.enum_ty` and loses explicit
+            // discriminants at later ABI lowering stages.
+            mir::Rvalue::Use(operands.into_iter().next().expect("enum tag operand"))
+        } else {
+            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands)
+        };
         self.push_statement(mir::Statement {
             source_info: span,
-            kind: mir::StatementKind::Assign(
-                place,
-                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
-            ),
+            kind: mir::StatementKind::Assign(place, rvalue),
         });
         Ok(())
     }

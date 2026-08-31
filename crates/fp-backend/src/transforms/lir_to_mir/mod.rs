@@ -173,10 +173,7 @@ impl LirToMir {
                         .iter()
                         .map(|value| self.value_to_const_value(value, elem_ty))
                         .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::List {
-                        elements: values,
-                        elem_ty: elem_ty.as_ref().clone(),
-                    })
+                    Some(mir::ConstValue::Array(values))
                 }
                 _ => None,
             },

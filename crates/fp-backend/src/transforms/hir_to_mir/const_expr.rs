@@ -149,7 +149,7 @@ impl HirToMirLowerer {
                 .and_then(|constant| self.const_index_value(expr.span, &constant, index))
                 .map(|(constant, _)| constant),
             hir::ExprKind::FieldAccess(base, field) => {
-                self.lower_const_field_access(base, field.as_str(), expr.span)
+                self.lower_const_field_access(base, field.as_str(), expr.span, constant_ty.as_ref())
             }
             hir::ExprKind::If(cond, then_expr, else_expr) => {
                 let branch = match self.lower_const_value(cond, None)? {
@@ -364,7 +364,7 @@ impl HirToMirLowerer {
                 .and_then(|constant| self.const_index_value(expr.span, &constant, index))
                 .and_then(|(constant, _)| self.const_value_from_constant(&constant)),
             hir::ExprKind::FieldAccess(base, field) => self
-                .lower_const_field_access(base, field.as_str(), expr.span)
+                .lower_const_field_access(base, field.as_str(), expr.span, None)
                 .and_then(|constant| self.const_value_from_constant(&constant)),
             hir::ExprKind::If(cond, then_expr, else_expr) => {
                 let branch = match self.lower_const_value(cond, None)? {
@@ -487,9 +487,6 @@ impl HirToMirLowerer {
         if matches_name("len") && args.is_empty() {
             return match &receiver_value {
                 mir::ConstValue::Str(text) => Some(mir::ConstValue::UInt(text.len() as u64)),
-                mir::ConstValue::List { elements, .. } => {
-                    Some(mir::ConstValue::UInt(elements.len() as u64))
-                }
                 mir::ConstValue::Array(elements) => {
                     Some(mir::ConstValue::UInt(elements.len() as u64))
                 }
@@ -532,6 +529,7 @@ impl HirToMirLowerer {
         base: &hir::Expr,
         field: &str,
         span: Span,
+        expected_ty: Option<&Ty>,
     ) -> Option<mir::Constant> {
         if let Some(constant) = self.lower_const_expr(base, None, None) {
             if let Some(field_value) =
@@ -549,7 +547,8 @@ impl HirToMirLowerer {
                 if method.as_str() == "field_type" && args.len() == 1 {
                     if let hir::ExprKind::IntrinsicCall(call) = &receiver.kind {
                         if call.kind == IntrinsicKind::TypeOf && call.callargs.len() == 1 {
-                            let hir::ExprKind::Path(type_path) = &call.callargs[0].value.kind else {
+                            let hir::ExprKind::Path(type_path) = &call.callargs[0].value.kind
+                            else {
                                 return None;
                             };
                             let hir::Res::Def(def_id) = type_path.res.as_ref()? else {
@@ -574,15 +573,18 @@ impl HirToMirLowerer {
                                 .clone();
                             let index = info.field_index.get(&field_name).copied()?;
                             let field_ty = self.lower_type_expr(&info.fields.get(index)?.ty);
-                            let name = self.display_type_name(&field_ty).or_else(|| match field_ty.kind {
-                                TyKind::Bool => Some("bool".to_string()),
-                                TyKind::Char => Some("char".to_string()),
-                                TyKind::Int(_) => Some("i64".to_string()),
-                                TyKind::Uint(_) => Some("u64".to_string()),
-                                TyKind::Float(_) => Some("f64".to_string()),
-                                TyKind::Slice(_) => Some("str".to_string()),
-                                _ => None,
-                            })?;
+                            let name =
+                                self.display_type_name(&field_ty).or_else(|| {
+                                    match field_ty.kind {
+                                        TyKind::Bool => Some("bool".to_string()),
+                                        TyKind::Char => Some("char".to_string()),
+                                        TyKind::Int(_) => Some("i64".to_string()),
+                                        TyKind::Uint(_) => Some("u64".to_string()),
+                                        TyKind::Float(_) => Some("f64".to_string()),
+                                        TyKind::Slice(_) => Some("str".to_string()),
+                                        _ => None,
+                                    }
+                                })?;
                             return Some(mir::Constant {
                                 span,
                                 ty: self.raw_string_ptr_ty(),
@@ -640,7 +642,7 @@ impl HirToMirLowerer {
                     .iter()
                     .map(|field| field.name.clone())
                     .collect::<Vec<_>>();
-                Some(self.string_list_constant(span, names))
+                self.reflection_fields_constant(span, &struct_info, names, expected_ty)
             }
             "methods" => {
                 let method_names = self
@@ -650,7 +652,7 @@ impl HirToMirLowerer {
                     .get(&struct_info.name)
                     .map(|methods| methods.keys().cloned().collect::<Vec<_>>())
                     .unwrap_or_default();
-                Some(self.string_list_constant(span, method_names))
+                self.reflection_string_list_constant(span, method_names, expected_ty)
             }
             "size" => {
                 let layout = self.struct_layout_for_instance(struct_def_id, &[], span)?;
@@ -745,8 +747,108 @@ impl HirToMirLowerer {
             span,
             ty: ty.clone(),
             user_ty: None,
-            literal: mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }),
+            literal: mir::ConstantKind::Val(mir::ConstValue::Array(elements)),
         }
+    }
+
+    fn list_constant_types(&mut self, target_ty: &Ty) -> Option<(Ty, Ty)> {
+        match &target_ty.kind {
+            TyKind::Slice(elem_ty) => Some((elem_ty.as_ref().clone(), target_ty.clone())),
+            TyKind::Array(elem_ty, _) => Some((elem_ty.as_ref().clone(), target_ty.clone())),
+            TyKind::Adt(_, substs) => substs.iter().find_map(|arg| match arg {
+                mir::ty::GenericArg::Type(elem_ty) => Some((elem_ty.clone(), target_ty.clone())),
+                _ => None,
+            }),
+            TyKind::Tuple(_) => {
+                let key = self
+                    .mir_package
+                    .borrow()
+                    .struct_layouts_by_ty
+                    .get(target_ty)
+                    .cloned()?;
+                key.args
+                    .first()
+                    .cloned()
+                    .map(|elem_ty| (elem_ty, target_ty.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    fn reflection_string_list_constant(
+        &mut self,
+        span: Span,
+        items: Vec<String>,
+        expected_ty: Option<&Ty>,
+    ) -> Option<mir::Constant> {
+        let Some(target_ty) = expected_ty else {
+            return Some(self.string_list_constant(span, items));
+        };
+        let Some((_elem_ty, target_ty)) = self.list_constant_types(target_ty) else {
+            self.emit_error(span, "reflection list has no concrete collection type");
+            return None;
+        };
+        let elements = items.into_iter().map(mir::ConstValue::Str).collect();
+        let literal = mir::ConstValue::Array(elements);
+        Some(mir::Constant {
+            span,
+            ty: target_ty,
+            user_ty: None,
+            literal: mir::ConstantKind::Val(literal),
+        })
+    }
+
+    fn reflection_fields_constant(
+        &mut self,
+        span: Span,
+        struct_info: &mir::StructDefinition,
+        names: Vec<String>,
+        expected_ty: Option<&Ty>,
+    ) -> Option<mir::Constant> {
+        let Some(target_ty) = expected_ty else {
+            return Some(self.string_list_constant(span, names));
+        };
+        let Some((field_ty, target_ty)) = self.list_constant_types(target_ty) else {
+            self.emit_error(
+                span,
+                "reflection field list has no concrete collection type",
+            );
+            return None;
+        };
+        let field_ty = self.nominalize_struct_ty(field_ty);
+        match &field_ty.kind {
+            TyKind::Adt(_, _) => {}
+            _ => {
+                self.emit_error(span, "reflection field list has no StructField type");
+                return None;
+            }
+        }
+        let mut elements = Vec::with_capacity(struct_info.fields.len());
+        for (name, field) in names.into_iter().zip(&struct_info.fields) {
+            let field_value_ty = self.lower_type_expr(&field.ty);
+            let type_name =
+                self.display_type_name(&field_value_ty)
+                    .or_else(|| match field_value_ty.kind {
+                        TyKind::Bool => Some("bool".to_string()),
+                        TyKind::Char => Some("char".to_string()),
+                        TyKind::Int(_) => Some("i64".to_string()),
+                        TyKind::Uint(_) => Some("u64".to_string()),
+                        TyKind::Float(_) => Some("f64".to_string()),
+                        TyKind::Slice(_) => Some("str".to_string()),
+                        _ => None,
+                    })?;
+            elements.push(mir::ConstValue::Struct(vec![
+                mir::ConstValue::Str(name),
+                mir::ConstValue::Struct(vec![mir::ConstValue::Str(type_name)]),
+            ]));
+        }
+        let literal = mir::ConstValue::Array(elements);
+        Some(mir::Constant {
+            span,
+            ty: target_ty,
+            user_ty: None,
+            literal: mir::ConstantKind::Val(literal),
+        })
     }
 
     pub(super) fn const_value_from_constant(
@@ -766,7 +868,7 @@ impl HirToMirLowerer {
 
     pub(super) fn const_string_items(value: &mir::ConstValue) -> Option<Vec<String>> {
         let items = match value {
-            mir::ConstValue::List { elements, .. } | mir::ConstValue::Array(elements) => elements,
+            mir::ConstValue::Array(elements) => elements,
             mir::ConstValue::Tuple(fields) => fields,
             _ => return None,
         };
@@ -832,10 +934,7 @@ impl HirToMirLowerer {
                     span,
                     ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
-                        elements: lowered,
-                        elem_ty: elem_ty.clone(),
-                    }),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered)),
                 })
             }
             ConstContainerArgs::Map { key_ty, value_ty } => {
@@ -895,10 +994,7 @@ impl HirToMirLowerer {
                     span,
                     ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Val(mir::ConstValue::List {
-                        elements,
-                        elem_ty: elem_ty.clone(),
-                    }),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(elements)),
                 })
             }
             ConstContainerArgs::Map { .. } => None,

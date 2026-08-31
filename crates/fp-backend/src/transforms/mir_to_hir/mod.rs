@@ -69,13 +69,6 @@ impl MirToHir {
                     .collect::<Option<Vec<_>>>()?;
                 Some(hir::Value::List(fp_core::ast::ValueList::new(values)))
             }
-            mir::ConstValue::List { elements, .. } => {
-                let values = elements
-                    .iter()
-                    .map(Self::const_value_to_value)
-                    .collect::<Option<Vec<_>>>()?;
-                Some(hir::Value::List(fp_core::ast::ValueList::new(values)))
-            }
             // No `Value::Map` constructor exists to convert into — an
             // honest "can't convert this" rather than a placeholder.
             mir::ConstValue::Map { .. } => None,

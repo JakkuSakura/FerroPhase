@@ -376,12 +376,12 @@ impl<'a> BodyBuilder<'a> {
         let place = mir::Place::from_local(local_id);
         let container_kind = match &value.operand {
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
-                    Some(mir::ContainerKind::List {
-                        elem_ty: elem_ty.clone(),
+                mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => self
+                    .expect_array_element_ty(&value.ty)
+                    .map(|elem_ty| mir::ContainerKind::List {
+                        elem_ty,
                         len: elements.len() as u64,
-                    })
-                }
+                    }),
                 mir::ConstantKind::Val(mir::ConstValue::Map {
                     entries,
                     key_ty,
@@ -459,12 +459,12 @@ impl<'a> BodyBuilder<'a> {
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let container_kind = match &value.operand {
                     mir::Operand::Constant(constant) => match &constant.literal {
-                        mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }) => {
-                            Some(mir::ContainerKind::List {
-                                elem_ty: elem_ty.clone(),
+                        mir::ConstantKind::Val(mir::ConstValue::Array(elements)) => self
+                            .expect_array_element_ty(&value.ty)
+                            .map(|elem_ty| mir::ContainerKind::List {
+                                elem_ty,
                                 len: elements.len() as u64,
-                            })
-                        }
+                            }),
                         mir::ConstantKind::Val(mir::ConstValue::Map {
                             entries,
                             key_ty,
@@ -1049,7 +1049,10 @@ impl<'a> BodyBuilder<'a> {
                     expected_ty.kind,
                     TyKind::Bool | TyKind::Int(_) | TyKind::Uint(_)
                 )
-                .then(|| self.lowering.lower_const_expr(expr, Some(expected_ty), None))
+                .then(|| {
+                    self.lowering
+                        .lower_const_expr(expr, Some(expected_ty), None)
+                })
                 .flatten();
                 if let Some(constant) = const_result {
                     self.push_statement(mir::Statement {
@@ -1251,17 +1254,10 @@ impl<'a> BodyBuilder<'a> {
                                         map_key_ty = Some(key_ty.clone());
                                         map_value_ty = Some(value_ty.clone());
                                     }
-                                    mir::ConstValue::List { elements, elem_ty } => {
-                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                            if fields.len() == 2 {
-                                                map_len = Some(elements.len() as u64);
-                                                map_key_ty = Some((*fields[0].clone()).clone());
-                                                map_value_ty = Some((*fields[1].clone()).clone());
-                                            }
-                                        }
-                                    }
                                     mir::ConstValue::Array(elements) => {
-                                        if let TyKind::Array(elem_ty, _) = &const_info.ty.kind {
+                                        if let Some(elem_ty) =
+                                            self.expect_array_element_ty(&const_info.ty)
+                                        {
                                             if let TyKind::Tuple(fields) = &elem_ty.kind {
                                                 if fields.len() == 2 {
                                                     map_len = Some(elements.len() as u64);
@@ -1505,13 +1501,18 @@ impl<'a> BodyBuilder<'a> {
                                             map_key_ty = Some(key_ty.clone());
                                             map_value_ty = Some(value_ty.clone());
                                         }
-                                        mir::ConstValue::List { elements, elem_ty } => {
+                                        mir::ConstValue::Array(elements) => {
                                             map_len = Some(elements.len() as u64);
-                                            if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                                if fields.len() == 2 {
-                                                    map_key_ty = Some((*fields[0].clone()).clone());
-                                                    map_value_ty =
-                                                        Some((*fields[1].clone()).clone());
+                                            if let Some(elem_ty) =
+                                                self.expect_array_element_ty(&receiver_info.ty)
+                                            {
+                                                if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                                    if fields.len() == 2 {
+                                                        map_key_ty =
+                                                            Some((*fields[0].clone()).clone());
+                                                        map_value_ty =
+                                                            Some((*fields[1].clone()).clone());
+                                                    }
                                                 }
                                             }
                                         }

@@ -102,11 +102,12 @@ impl MirToLirLowerer {
                     // pointer wrappers such as `CStr` retain their
                     // thin-pointer ABI in every lowering phase.
                     let definition_is_opaque_wrapper =
-                        adt.variants.first().is_some_and(|variant| {
-                            variant.fields.is_empty()
-                                || (variant.fields.len() == 1
-                                    && matches!(variant.fields[0].ty.kind, TyKind::RawPtr(_)))
-                        });
+                        !adt.flags.contains(mir::ty::AdtFlags::IS_ENUM)
+                            && adt.variants.first().is_some_and(|variant| {
+                                variant.fields.is_empty()
+                                    || (variant.fields.len() == 1
+                                        && matches!(variant.fields[0].ty.kind, TyKind::RawPtr(_)))
+                            });
                     let is_opaque_wrapper = cached_opaque_wrapper || definition_is_opaque_wrapper;
                     if is_opaque_wrapper {
                         lir::LirType::Ptr(Box::new(lir::LirType::I8))

@@ -468,7 +468,9 @@ impl MirToLirLowerer {
                 Ok(self.const_string_ptr(value))
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::null(self.lir_type_from_ty(ty))),
-            mir::ConstValue::FnDef(def_id, _) => self.lir_function_constant(def_id, self.lir_type_from_ty(ty)),
+            mir::ConstValue::FnDef(def_id, _) => {
+                self.lir_function_constant(def_id, self.lir_type_from_ty(ty))
+            }
             // `ty.kind` isn't always `TyKind::Tuple` for a `ConstValue::
             // Tuple` payload — `fp-interpret` stores every register-
             // resident aggregate this way regardless of nominal type, so a
@@ -489,22 +491,11 @@ impl MirToLirLowerer {
                 )
             }
             mir::ConstValue::Array(elements) => {
-                let elem_ty = match &ty.kind {
-                    TyKind::Array(inner, _) => inner.as_ref(),
-                    _ => {
-                        return Err(fp_core::error::Error::from(format!(
-                            "array constant requires array type hint, got `{ty}`"
-                        )));
-                    }
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.const_value_to_lir_constant(element, elem_ty)?);
-                }
-                Ok(lir::LirConstant::aggregate(
-                    self.lir_type_from_ty(ty),
-                    lir::LirConstantAggregate::Array(lowered),
-                ))
+                let target_ty = self.lir_type_from_ty(ty);
+                self.const_value_to_lir_constant_with_lir_type(
+                    &mir::ConstValue::Array(elements.clone()),
+                    &target_ty,
+                )
             }
             mir::ConstValue::Struct(fields) => {
                 let lir_ty = self.lir_type_from_ty(ty);
@@ -538,31 +529,6 @@ impl MirToLirLowerer {
                 Ok(lir::LirConstant::aggregate(
                     lir_ty,
                     lir::LirConstantAggregate::Struct(lowered),
-                ))
-            }
-            mir::ConstValue::List { elements, elem_ty } => {
-                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(self.const_value_to_lir_constant(element, elem_ty)?);
-                }
-                let data_global = self.allocate_const_array_global(elem_lir_ty.clone(), lowered);
-                let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
-                let ptr_const = lir::LirConstant::get_element_ptr(
-                    ptr_ty,
-                    lir::LirConstant::global_address(
-                        lir::LirType::Ptr(Box::new(elem_lir_ty.clone())),
-                        data_global.name.clone(),
-                    ),
-                    Vec::new(),
-                    true,
-                );
-                let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                let len_const =
-                    self.unsigned_constant(&lir::LirType::I64, elements.len() as u64)?;
-                Ok(lir::LirConstant::aggregate(
-                    slice_ty,
-                    lir::LirConstantAggregate::Struct(vec![ptr_const, len_const]),
                 ))
             }
             mir::ConstValue::Map {
@@ -642,23 +608,69 @@ impl MirToLirLowerer {
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::null(lir_ty.clone())),
             mir::ConstValue::FnDef(def_id, _) => self.lir_function_constant(def_id, lir_ty.clone()),
-            mir::ConstValue::Array(elements) => {
-                let lir::LirType::Array(elem_ty, _len) = lir_ty else {
-                    return Err(fp_core::error::Error::from(
-                        "array constant requires an array type in LIR",
-                    ));
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for element in elements {
-                    lowered.push(
-                        self.const_value_to_lir_constant_with_lir_type(element, elem_ty.as_ref())?,
-                    );
+            mir::ConstValue::Array(elements) => match lir_ty {
+                lir::LirType::Array(elem_ty, len) => {
+                    if *len != elements.len() as u64 {
+                        return Err(fp_core::error::Error::from(format!(
+                            "array constant length mismatch: declared {}, got {}",
+                            len,
+                            elements.len()
+                        )));
+                    }
+                    let lowered = elements
+                        .iter()
+                        .map(|element| {
+                            self.const_value_to_lir_constant_with_lir_type(element, elem_ty)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(lir::LirConstant::aggregate(
+                        lir_ty.clone(),
+                        lir::LirConstantAggregate::Array(lowered),
+                    ))
                 }
-                Ok(lir::LirConstant::aggregate(
-                    lir_ty.clone(),
-                    lir::LirConstantAggregate::Array(lowered),
-                ))
-            }
+                lir::LirType::Struct { fields, .. } => {
+                    let Some(lir::LirType::Ptr(elem_ty)) = fields.first() else {
+                        return Err(fp_core::error::Error::from(
+                            "sequence constant requires a pointer in its first field",
+                        ));
+                    };
+                    if !matches!(fields.len(), 2 | 3) {
+                        return Err(fp_core::error::Error::from(format!(
+                            "sequence constant requires a 2- or 3-field representation, got {} fields",
+                            fields.len()
+                        )));
+                    }
+                    let lowered = elements
+                        .iter()
+                        .map(|element| {
+                            self.const_value_to_lir_constant_with_lir_type(element, elem_ty)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let data_global =
+                        self.allocate_const_array_global(elem_ty.as_ref().clone(), lowered);
+                    let ptr_const = lir::LirConstant::get_element_ptr(
+                        fields[0].clone(),
+                        lir::LirConstant::global_address(
+                            lir::LirType::Ptr(elem_ty.clone()),
+                            data_global.name.clone(),
+                        ),
+                        Vec::new(),
+                        true,
+                    );
+                    let len_const = self.unsigned_constant(&fields[1], elements.len() as u64)?;
+                    let mut values = vec![ptr_const, len_const];
+                    if fields.len() == 3 {
+                        values.push(self.unsigned_constant(&fields[2], elements.len() as u64)?);
+                    }
+                    Ok(lir::LirConstant::aggregate(
+                        lir_ty.clone(),
+                        lir::LirConstantAggregate::Struct(values),
+                    ))
+                }
+                _ => Err(fp_core::error::Error::from(
+                    "sequence constant requires an array or slice/collection struct type in LIR",
+                )),
+            },
             mir::ConstValue::Tuple(elements) => {
                 let lir::LirType::Struct { fields, .. } = lir_ty else {
                     return Err(fp_core::error::Error::from(
@@ -714,9 +726,9 @@ impl MirToLirLowerer {
                     lir::LirConstantAggregate::Struct(lowered),
                 ))
             }
-            mir::ConstValue::List { .. } | mir::ConstValue::Map { .. } => Err(
-                fp_core::error::Error::from("container constants require MIR type information"),
-            ),
+            mir::ConstValue::Map { .. } => Err(fp_core::error::Error::from(
+                "map constants require MIR type information",
+            )),
         }
     }
 
@@ -725,7 +737,16 @@ impl MirToLirLowerer {
         elem_ty: lir::LirType,
         elements: Vec<lir::LirConstant>,
     ) -> lir::LirGlobal {
-        let name = lir::Name::new(format!("__const_data_{}", self.const_global_counter));
+        let package = MirToLirLowerer::sanitize_symbol(self.package_id.as_str());
+        let function = self
+            .current_function
+            .as_ref()
+            .map(|function| MirToLirLowerer::sanitize_symbol(function.name.as_str()))
+            .unwrap_or_else(|| "module".to_string());
+        let name = lir::Name::new(format!(
+            "__const_data_{package}_{function}_g{}_{}",
+            self.const_global_namespace, self.const_global_counter
+        ));
         self.const_global_counter += 1;
         let array_ty = lir::LirType::Array(Box::new(elem_ty), elements.len() as u64);
         let initializer_constant = lir::LirConstant::aggregate(

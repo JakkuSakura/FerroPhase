@@ -6,12 +6,15 @@ use fp_core::{lir, mir};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // Internal submodules; items are used via inherent methods
 
+static NEXT_CONST_GLOBAL_NAMESPACE: AtomicU64 = AtomicU64::new(0);
+
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct MirToLirLowerer {
-    package_id: fp_core::ast::package::PackageId,
+    pub(super) package_id: fp_core::ast::package::PackageId,
     pub(super) data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
     pub(super) next_label: u32,
@@ -20,6 +23,7 @@ pub struct MirToLirLowerer {
     pub(crate) const_values: HashMap<mir::LocalId, lir::LirConstant>,
     pub(super) extra_globals: Vec<lir::LirGlobal>,
     pub(super) const_global_counter: u64,
+    pub(super) const_global_namespace: u64,
     pub(super) const_string_globals: HashMap<String, lir::Name>,
     pub(super) local_types: Vec<Ty>,
     pub(super) current_return_type: Option<lir::LirType>,
@@ -109,6 +113,15 @@ impl MirToLirLowerer {
         mir_program: Rc<mir::MirProgram>,
         lir_program: Rc<lir::LirProgram>,
     ) -> Self {
+        let const_global_counter = lir_program
+            .packages
+            .values()
+            .flat_map(|package| package.blobs.iter())
+            .flat_map(|blob| blob.globals.iter())
+            .filter_map(|global| global.name.as_str().rsplit('_').next()?.parse::<u64>().ok())
+            .max()
+            .map_or(0, |value| value.saturating_add(1));
+        let const_global_namespace = NEXT_CONST_GLOBAL_NAMESPACE.fetch_add(1, Ordering::Relaxed);
         Self {
             package_id: fp_core::ast::package::PackageId::new(""),
             data_layout,
@@ -118,7 +131,8 @@ impl MirToLirLowerer {
             current_function: None,
             const_values: HashMap::new(),
             extra_globals: Vec::new(),
-            const_global_counter: 0,
+            const_global_counter,
+            const_global_namespace,
             const_string_globals: HashMap::new(),
             local_types: Vec::new(),
             current_return_type: None,
@@ -525,6 +539,18 @@ impl MirToLirLowerer {
             TyKind::Slice(inner) | TyKind::Array(inner, _) => self.contains_unresolved_param(inner),
             TyKind::Tuple(elements) => elements.iter().any(|e| self.contains_unresolved_param(e)),
             TyKind::Adt(adt, substs) => {
+                // Heterogeneous enum payload slots are represented by a
+                // synthetic one-variant ADT.  Their storage is deliberately
+                // opaque, but the payload size is already known to this
+                // package, so this is a concrete ABI type rather than an
+                // unresolved generic.
+                if adt.variants.len() == 1
+                    && self
+                        .lookup_opaque_payload_size(adt.variants[0].ident.as_str())
+                        .is_some()
+                {
+                    return false;
+                }
                 let substs_types: Vec<mir::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1077,12 +1103,7 @@ impl MirToLirLowerer {
                 let result_ty = destination_lir_ty
                     .clone()
                     .ok_or_else(|| fp_core::error::Error::from("len has no destination type"))?;
-                let value = self.extract_slice_field(
-                    source,
-                    1,
-                    result_ty,
-                    &mut instructions,
-                );
+                let value = self.extract_slice_field(source, 1, result_ty, &mut instructions);
                 if let PlaceAccess::Address(addr) = &target_access {
                     instructions.push(lir::LirInstruction {
                         id: self.next_id(),
@@ -2539,108 +2560,104 @@ impl MirToLirLowerer {
                 if matches!(target_ty, lir::LirType::Void) {
                     result_value =
                         Some(lir::LirValue::constant(lir::LirConstant::undef(target_ty)));
-                    return Ok(instructions);
-                }
-
-                let is_type_handle = |ty: &lir::LirType| {
-                    matches!(ty, lir::LirType::Ptr(pointee) if matches!(pointee.as_ref(), lir::LirType::Void))
-                };
-                if is_type_handle(&operand_value.ty) && is_type_handle(&target_ty) {
-                    let instr_id = self.next_id();
-                    instructions.push(lir::LirInstruction {
-                        id: instr_id,
-                        kind: lir::LirInstructionKind::ComptimeOp(lir::ComptimeOp::IntoType {
-                            value: operand_value,
-                        }),
-                        result: Some(lir::LirRegister {
+                } else {
+                    let is_type_handle = |ty: &lir::LirType| matches!(ty, lir::LirType::Ptr(pointee) if matches!(pointee.as_ref(), lir::LirType::Void));
+                    if is_type_handle(&operand_value.ty) && is_type_handle(&target_ty) {
+                        let instr_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
                             id: instr_id,
-                            ty: target_ty.clone(),
-                        }),
-                        debug_info: None,
-                    });
-                    result_value = Some(lir::LirValue::register(instr_id, target_ty));
-                    return Ok(instructions);
-                }
-
-                {
-                    let src_ty = operand_value.ty.clone();
-                    let target_is_ptr = matches!(target_ty, lir::LirType::Ptr(_));
-                    if self.is_float_type(&src_ty) && target_is_ptr {
-                        let int_ty = lir::LirType::I64;
-                        let fp_to_int_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: fp_to_int_id,
-                            kind: lir::LirInstructionKind::FPToSI(
-                                operand_value.clone(),
-                                int_ty.clone(),
-                            ),
+                            kind: lir::LirInstructionKind::ComptimeOp(lir::ComptimeOp::IntoType {
+                                value: operand_value,
+                            }),
                             result: Some(lir::LirRegister {
+                                id: instr_id,
+                                ty: target_ty.clone(),
+                            }),
+                            debug_info: None,
+                        });
+                        result_value = Some(lir::LirValue::register(instr_id, target_ty));
+                    } else {
+                        let src_ty = operand_value.ty.clone();
+                        let target_is_ptr = matches!(target_ty, lir::LirType::Ptr(_));
+                        if self.is_float_type(&src_ty) && target_is_ptr {
+                            let int_ty = lir::LirType::I64;
+                            let fp_to_int_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
                                 id: fp_to_int_id,
-                                ty: int_ty.clone(),
-                            }),
-                            debug_info: None,
-                        });
-                        let ptr_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: ptr_id,
-                            kind: lir::LirInstructionKind::IntToPtr(lir::LirValue::register(
-                                fp_to_int_id,
-                                int_ty.clone(),
-                            )),
-                            result: Some(lir::LirRegister {
+                                kind: lir::LirInstructionKind::FPToSI(
+                                    operand_value.clone(),
+                                    int_ty.clone(),
+                                ),
+                                result: Some(lir::LirRegister {
+                                    id: fp_to_int_id,
+                                    ty: int_ty.clone(),
+                                }),
+                                debug_info: None,
+                            });
+                            let ptr_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
                                 id: ptr_id,
-                                ty: target_ty.clone(),
-                            }),
-                            debug_info: None,
-                        });
-                        result_value = Some(lir::LirValue::register(ptr_id, target_ty));
-                        return Ok(instructions);
-                    }
-                    if matches!(src_ty, lir::LirType::Ptr(_)) && self.is_float_type(&target_ty) {
-                        let int_ty = lir::LirType::I64;
-                        let ptr_to_int_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: ptr_to_int_id,
-                            kind: lir::LirInstructionKind::PtrToInt(operand_value.clone()),
-                            result: Some(lir::LirRegister {
+                                kind: lir::LirInstructionKind::IntToPtr(lir::LirValue::register(
+                                    fp_to_int_id,
+                                    int_ty.clone(),
+                                )),
+                                result: Some(lir::LirRegister {
+                                    id: ptr_id,
+                                    ty: target_ty.clone(),
+                                }),
+                                debug_info: None,
+                            });
+                            result_value = Some(lir::LirValue::register(ptr_id, target_ty));
+                        } else if matches!(src_ty, lir::LirType::Ptr(_))
+                            && self.is_float_type(&target_ty)
+                        {
+                            let int_ty = lir::LirType::I64;
+                            let ptr_to_int_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
                                 id: ptr_to_int_id,
-                                ty: int_ty.clone(),
-                            }),
-                            debug_info: None,
-                        });
-                        let fp_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: fp_id,
-                            kind: lir::LirInstructionKind::SIToFP(
-                                lir::LirValue::register(ptr_to_int_id, int_ty.clone()),
-                                target_ty.clone(),
-                            ),
-                            result: Some(lir::LirRegister {
+                                kind: lir::LirInstructionKind::PtrToInt(operand_value.clone()),
+                                result: Some(lir::LirRegister {
+                                    id: ptr_to_int_id,
+                                    ty: int_ty.clone(),
+                                }),
+                                debug_info: None,
+                            });
+                            let fp_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
                                 id: fp_id,
-                                ty: target_ty.clone(),
-                            }),
-                            debug_info: None,
-                        });
-                        result_value = Some(lir::LirValue::register(fp_id, target_ty));
-                        return Ok(instructions);
+                                kind: lir::LirInstructionKind::SIToFP(
+                                    lir::LirValue::register(ptr_to_int_id, int_ty.clone()),
+                                    target_ty.clone(),
+                                ),
+                                result: Some(lir::LirRegister {
+                                    id: fp_id,
+                                    ty: target_ty.clone(),
+                                }),
+                                debug_info: None,
+                            });
+                            result_value = Some(lir::LirValue::register(fp_id, target_ty));
+                        } else {
+                            let instr_id = self.next_id();
+                            let instr_kind = self.lower_cast(
+                                cast_kind.clone(),
+                                operand_value.clone(),
+                                target_ty.clone(),
+                            );
+
+                            instructions.push(lir::LirInstruction {
+                                id: instr_id,
+                                kind: instr_kind,
+                                result: Some(lir::LirRegister {
+                                    id: instr_id,
+                                    ty: target_ty.clone(),
+                                }),
+                                debug_info: None,
+                            });
+
+                            result_value = Some(lir::LirValue::register(instr_id, target_ty));
+                        }
                     }
                 }
-
-                let instr_id = self.next_id();
-                let instr_kind =
-                    self.lower_cast(cast_kind.clone(), operand_value.clone(), target_ty.clone());
-
-                instructions.push(lir::LirInstruction {
-                    id: instr_id,
-                    kind: instr_kind,
-                    result: Some(lir::LirRegister {
-                        id: instr_id,
-                        ty: target_ty.clone(),
-                    }),
-                    debug_info: None,
-                });
-
-                result_value = Some(lir::LirValue::register(instr_id, target_ty));
             }
             _ => {
                 instructions.push(lir::LirInstruction {
@@ -2807,8 +2824,9 @@ impl MirToLirLowerer {
                     // Keep the resolved definition identity through LIR.
                     // Names are only used above to obtain the function
                     // signature; they must not become the callable identity.
-                    value.kind =
-                        lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id.clone()));
+                    value.kind = lir::LirValueKind::Function(lir::LirFunctionRef::Definition(
+                        def_id.clone(),
+                    ));
                     Ok(value)
                 }
                 mir::ConstantKind::ExternFn(name) => {
@@ -4384,6 +4402,7 @@ impl MirToLirLowerer {
             .iter()
             .enumerate()
             .map(|(idx, decl)| {
+                if format!("{:?}", decl.ty).contains("Error") {}
                 if matches!(decl.ty.kind, mir::ty::TyKind::Infer(_)) {
                     panic!(
                         "MIR-to-LIR ICE: unresolved local type at local {idx}: {:?}",
@@ -4710,6 +4729,11 @@ impl MirToLirLowerer {
         }
 
         if let Some(local) = self.return_local {
+            // The return local is a control-flow join point.  Its register-map
+            // entry is only the value seen while lowering whichever predecessor
+            // happened to be visited first; using it here would turn a match or
+            // loop into a constant first-arm return.  The local's storage is the
+            // authoritative value because every predecessor writes that place.
             if let Some(storage) = self.local_storage.get(&local) {
                 let ptr_value = storage.ptr_value.clone();
                 let element_ty = storage.element_type.clone();

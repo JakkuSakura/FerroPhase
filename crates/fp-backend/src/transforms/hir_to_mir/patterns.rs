@@ -118,6 +118,11 @@ impl<'a> BodyBuilder<'a> {
                     }
 
                     let mut tag_place = base_place.clone();
+                    // Every enum has a canonical tag field, including a
+                    // fieldless enum.  `payload_tys` describes only the
+                    // optional payload slots and is empty for a C-like enum;
+                    // it must not make the whole `{ tag }` value participate
+                    // in a scalar discriminant comparison.
                     tag_place
                         .projection
                         .push(mir::PlaceElem::Field(0, layout.tag_ty.clone()));

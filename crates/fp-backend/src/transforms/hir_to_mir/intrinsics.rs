@@ -778,7 +778,9 @@ impl<'a> BodyBuilder<'a> {
                         span,
                         ty: fn_ty.clone(),
                         user_ty: None,
-                        literal: mir::ConstantKind::ExternFn(mir::Symbol::new("fp_panic".to_string())),
+                        literal: mir::ConstantKind::ExternFn(mir::Symbol::new(
+                            "fp_panic".to_string(),
+                        )),
                     });
                     let args = vec![message_operand.operand];
 
@@ -1491,7 +1493,6 @@ impl<'a> BodyBuilder<'a> {
         if !matches!(
             value,
             mir::ConstValue::Array(_)
-                | mir::ConstValue::List { .. }
                 | mir::ConstValue::Map { .. }
                 | mir::ConstValue::Tuple(_)
                 | mir::ConstValue::Struct(_)
@@ -1547,13 +1548,6 @@ impl<'a> BodyBuilder<'a> {
                     elements.push(self.const_value_to_ast_value(element)?);
                 }
                 Some(Value::List(ValueList::new(elements)))
-            }
-            mir::ConstValue::List { elements, .. } => {
-                let mut items = Vec::with_capacity(elements.len());
-                for element in elements {
-                    items.push(self.const_value_to_ast_value(element)?);
-                }
-                Some(Value::List(ValueList::new(items)))
             }
             mir::ConstValue::Map { entries, .. } => {
                 let mut items = Vec::with_capacity(entries.len());

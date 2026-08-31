@@ -1260,17 +1260,10 @@ impl<'a> BodyBuilder<'a> {
                                     map_key_ty = Some(key_ty.clone());
                                     map_value_ty = Some(value_ty.clone());
                                 }
-                                mir::ConstValue::List { elements, elem_ty } => {
-                                    if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                        if fields.len() == 2 {
-                                            map_len = Some(elements.len() as u64);
-                                            map_key_ty = Some((*fields[0].clone()).clone());
-                                            map_value_ty = Some((*fields[1].clone()).clone());
-                                        }
-                                    }
-                                }
                                 mir::ConstValue::Array(elements) => {
-                                    if let TyKind::Array(elem_ty, _) = &const_info.ty.kind {
+                                    if let Some(elem_ty) =
+                                        self.expect_array_element_ty(&const_info.ty)
+                                    {
                                         if let TyKind::Tuple(fields) = &elem_ty.kind {
                                             if fields.len() == 2 {
                                                 map_len = Some(elements.len() as u64);
@@ -1340,17 +1333,10 @@ impl<'a> BodyBuilder<'a> {
                                 map_key_ty = Some(key_ty.clone());
                                 map_value_ty = Some(value_ty.clone());
                             }
-                            mir::ConstValue::List { elements, elem_ty } => {
-                                if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                    if fields.len() == 2 {
-                                        map_len = Some(elements.len() as u64);
-                                        map_key_ty = Some((*fields[0].clone()).clone());
-                                        map_value_ty = Some((*fields[1].clone()).clone());
-                                    }
-                                }
-                            }
                             mir::ConstValue::Array(elements) => {
-                                if let TyKind::Array(elem_ty, _) = &container_info.ty.kind {
+                                if let Some(elem_ty) =
+                                    self.expect_array_element_ty(&container_info.ty)
+                                {
                                     if let TyKind::Tuple(fields) = &elem_ty.kind {
                                         if fields.len() == 2 {
                                             map_len = Some(elements.len() as u64);
@@ -3035,13 +3021,13 @@ impl<'a> BodyBuilder<'a> {
         // example `TypeBuilder::new`) to the concrete impl member.  Consume
         // that identity directly; MIR must not rediscover the member through
         // a `struct_methods["Type"]["method"]` name lookup.
-        if let Some(method_def_id) =
-            self.lowering
-                .typeck_method_resolution(call_hir_id.clone())
-                .or_else(|| {
-                    self.lowering
-                        .typeck_method_resolution(callee.hir_id.clone())
-                })
+        if let Some(method_def_id) = self
+            .lowering
+            .typeck_method_resolution(call_hir_id.clone())
+            .or_else(|| {
+                self.lowering
+                    .typeck_method_resolution(callee.hir_id.clone())
+            })
         {
             if let Some(info) = self.lowering.ensure_method_info(method_def_id.clone()) {
                 self.lowering.ensure_method_lowered(method_def_id.clone())?;
@@ -3140,9 +3126,11 @@ impl<'a> BodyBuilder<'a> {
                         return None;
                     };
                     let path = program.def_path(item.def_id.clone())?;
-                    (path.segments.iter().map(|segment| segment.as_str()).eq(
-                        requested.iter().map(String::as_str),
-                    ))
+                    (path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.as_str())
+                        .eq(requested.iter().map(String::as_str)))
                     .then_some(item.def_id)
                 })
             });
@@ -3418,9 +3406,7 @@ impl<'a> BodyBuilder<'a> {
                     // a comptime intrinsic argument. Its target's completed
                     // const-block result is the authoritative type handle;
                     // do not lower the alias again or recover it by name.
-                    let direct_type_value = self
-                        .lowering
-                        .typeck_const_block_value(def_id.clone());
+                    let direct_type_value = self.lowering.typeck_const_block_value(def_id.clone());
                     if let Some(Value::Type(value)) = direct_type_value {
                         let ty = HirToMirLowerer::type_ty();
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
@@ -3437,35 +3423,24 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if let Some(target) = self
-                        .lowering
-                        .hir_program
-                        .type_alias_target(def_id.clone())
+                    if resolved_path.segments.len() == 1
+                        && let Some(Value::Type(value)) =
+                            self.lowering.type_value_for_def(def_id.clone())
                     {
-                        let value = match target.kind {
-                            hir::TypeExprKind::ConstBlock(const_def_id, _) => self
-                                .lowering
-                                .hir_program
-                                .const_value(const_def_id),
-                            _ => None,
-                        }
-                        .or_else(|| self.lowering.typeck_const_block_value(def_id.clone()));
-                        if let Some(Value::Type(value)) = value {
-                            let ty = HirToMirLowerer::type_ty();
-                            let local_id = self.allocate_temp(ty.clone(), expr.span);
-                            let local_place = mir::Place::from_local(local_id);
-                            self.push_statement(mir::Statement {
-                                source_info: expr.span,
-                                kind: mir::StatementKind::Assign(
-                                    local_place.clone(),
-                                    mir::Rvalue::TypeValue(value),
-                                ),
-                            });
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::copy(local_place),
-                                ty,
-                            });
-                        }
+                        let ty = HirToMirLowerer::type_ty();
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let local_place = mir::Place::from_local(local_id);
+                        self.push_statement(mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                local_place.clone(),
+                                mir::Rvalue::TypeValue(value),
+                            ),
+                        });
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(local_place),
+                            ty,
+                        });
                     }
                     if has_explicit_args {
                         if let Some(function) = self.lowering.generic_function_def(def_id) {
@@ -3537,9 +3512,9 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let Some(konst) = self.const_items.get(def_id).cloned() {
                         let ty = self.lower_type_expr(&konst.ty);
-                        if let Some(constant) = self
-                            .lowering
-                            .lower_const_expr(&konst.body.value, Some(&ty), None)
+                        if let Some(constant) =
+                            self.lowering
+                                .lower_const_expr(&konst.body.value, Some(&ty), None)
                         {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(constant),
@@ -3592,11 +3567,10 @@ impl<'a> BodyBuilder<'a> {
                             });
                     if let Some(konst) = const_def_item {
                         let const_ty = self.lower_type_expr(&konst.ty);
-                        if let Some(constant) = self.lowering.lower_const_expr(
-                            &konst.body.value,
-                            Some(&const_ty),
-                            None,
-                        ) {
+                        if let Some(constant) =
+                            self.lowering
+                                .lower_const_expr(&konst.body.value, Some(&const_ty), None)
+                        {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(constant),
                                 ty: const_ty,
@@ -4047,18 +4021,10 @@ impl<'a> BodyBuilder<'a> {
                                             *entry_value_ty = map_value_ty.clone();
                                             value_ty = map_value_ty.clone();
                                         }
-                                        mir::ConstValue::List { elements, elem_ty } => {
-                                            if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                                if fields.len() == 2 {
-                                                    *len = elements.len() as u64;
-                                                    *key_ty = (*fields[0].clone()).clone();
-                                                    *entry_value_ty = (*fields[1].clone()).clone();
-                                                    value_ty = (*fields[1].clone()).clone();
-                                                }
-                                            }
-                                        }
                                         mir::ConstValue::Array(elements) => {
-                                            if let TyKind::Array(elem_ty, _) = &base_info.ty.kind {
+                                            if let Some(elem_ty) =
+                                                self.expect_array_element_ty(&base_info.ty)
+                                            {
                                                 if let TyKind::Tuple(fields) = &elem_ty.kind {
                                                     if fields.len() == 2 {
                                                         *len = elements.len() as u64;
@@ -4439,6 +4405,23 @@ impl<'a> BodyBuilder<'a> {
                             },
                         });
                     };
+
+                    if let Some(constant) = self.lowering.lower_const_expr(arg, None, None) {
+                        if let Some(len) = self.lowering.const_len_from_constant(&constant) {
+                            let len_ty = Ty {
+                                kind: TyKind::Uint(UintTy::Usize),
+                            };
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    ty: len_ty.clone(),
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::UInt(len),
+                                }),
+                                ty: len_ty,
+                            });
+                        }
+                    }
 
                     if let Some(local_id) = self.local_id_from_expr(arg) {
                         if let Some(kind) = self.container_locals.get(&local_id).cloned() {
