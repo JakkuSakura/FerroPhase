@@ -54,18 +54,28 @@ impl LirInterpreter {
             };
             let handle = usize::try_from(pointer.value)
                 .map_err(|_| VmError::Runtime("negative string pointer".into()))?;
-            let backing = self.state.objects.get(handle).ok_or_else(|| {
-                VmError::Runtime(format!("string handle {handle} is out of range"))
-            })?;
-            return match backing {
-                Value::String(string) => Ok(string.value.clone()),
-                Value::Bytes(bytes) => String::from_utf8(bytes.value.as_ref().to_vec())
-                    .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string: {error}"))),
-                other => Err(VmError::TypeMismatch {
-                    expected: "string backing object".into(),
-                    found: format!("{other:?}"),
-                }),
-            };
+            if let Some(backing) = self.state.objects.get(handle) {
+                return match backing {
+                    Value::String(string) => Ok(string.value.clone()),
+                    Value::Bytes(bytes) => String::from_utf8(bytes.value.as_ref().to_vec())
+                        .map_err(|error| {
+                            VmError::Runtime(format!("invalid UTF-8 string: {error}"))
+                        }),
+                    other => Err(VmError::TypeMismatch {
+                        expected: "string backing object".into(),
+                        found: format!("{other:?}"),
+                    }),
+                };
+            }
+
+            // Native lowering passes the first field of a `&str` fat pointer
+            // to printf-style intrinsics.  A global string literal therefore
+            // arrives here as a virtual-memory address rather than an object
+            // handle.  Read that representation as the NUL-terminated
+            // backing bytes used by the native ABI.
+            let bytes = self.state.mem.load_c_string(pointer.value as u64)?;
+            return String::from_utf8(bytes)
+                .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string: {error}")));
         }
         if let LirType::Struct {
             fields,

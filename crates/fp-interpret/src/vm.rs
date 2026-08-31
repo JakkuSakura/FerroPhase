@@ -213,14 +213,16 @@ impl RegFile {
 }
 
 pub struct StackFrame {
+    pub func_name: String,
     pub caller_sp: u64,
     pub saved_regs: HashMap<RegisterId, u64>,
     pub local_offsets: HashMap<u32, u64>,
 }
 
 impl StackFrame {
-    pub fn new(caller_sp: u64) -> Self {
+    pub fn new(func_name: String, caller_sp: u64) -> Self {
         Self {
+            func_name,
             caller_sp,
             saved_regs: HashMap::new(),
             local_offsets: HashMap::new(),
@@ -247,9 +249,9 @@ impl ThreadState {
         }
     }
 
-    pub fn push_frame(&mut self, _func_name: String) {
+    pub fn push_frame(&mut self, func_name: String) {
         let sp = self.regs.sp();
-        self.call_stack.push(StackFrame::new(sp));
+        self.call_stack.push(StackFrame::new(func_name, sp));
     }
 
     pub fn pop_frame(&mut self) {

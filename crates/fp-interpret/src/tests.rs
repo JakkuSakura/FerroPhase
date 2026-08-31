@@ -229,6 +229,90 @@ fn preserves_type_handle_argument_after_aggregate_arguments() {
 }
 
 #[test]
+fn preserves_type_handle_through_return_storage() {
+    use fp_core::ast::{Ty, TypePrimitive};
+
+    let type_handle_ty = LirType::Ptr(Box::new(LirType::Void));
+    let stack_pointer_ty = LirType::Ptr(Box::new(type_handle_ty.clone()));
+    let f = LirFunction {
+        def_id: None,
+        name: Name::new("returns_type_handle"),
+        signature: sig(
+            std::slice::from_ref(&type_handle_ty),
+            type_handle_ty.clone(),
+        ),
+        basic_blocks: vec![bb(
+            0,
+            vec![
+                LirInstruction {
+                    id: 10,
+                    kind: LirInstructionKind::Alloca {
+                        size: int(8),
+                        alignment: 8,
+                    },
+                    result: Some(LirRegister {
+                        id: 10,
+                        ty: stack_pointer_ty.clone(),
+                    }),
+                    debug_info: None,
+                },
+                LirInstruction {
+                    id: 11,
+                    kind: LirInstructionKind::Store {
+                        value: LirValue::local(1, type_handle_ty.clone()),
+                        address: LirValue::register(10, stack_pointer_ty.clone()),
+                        alignment: Some(8),
+                        volatile: false,
+                    },
+                    result: None,
+                    debug_info: None,
+                },
+                LirInstruction {
+                    id: 12,
+                    kind: LirInstructionKind::Load {
+                        address: LirValue::register(10, stack_pointer_ty),
+                        alignment: Some(8),
+                        volatile: false,
+                    },
+                    result: Some(LirRegister {
+                        id: 12,
+                        ty: type_handle_ty.clone(),
+                    }),
+                    debug_info: None,
+                },
+            ],
+            ret(LirValue::register(12, type_handle_ty)),
+        )],
+        locals: vec![
+            fp_core::lir::LirLocal {
+                id: 0,
+                ty: LirType::Ptr(Box::new(LirType::Void)),
+                name: None,
+                is_argument: false,
+            },
+            fp_core::lir::LirLocal {
+                id: 1,
+                ty: LirType::Ptr(Box::new(LirType::Void)),
+                name: None,
+                is_argument: true,
+            },
+        ],
+        stack_slots: vec![],
+        calling_convention: CallingConvention::C,
+        linkage: fp_core::lir::Linkage::Internal,
+        is_declaration: false,
+    };
+
+    let expected = Value::Type(Ty::Primitive(TypePrimitive::i64()));
+    assert_eq!(
+        LirInterpreter::new()
+            .run_function(&f, std::slice::from_ref(&expected))
+            .expect("type handle survives return storage"),
+        expected
+    );
+}
+
+#[test]
 fn constant() {
     let f = LirFunction {
         def_id: None,

@@ -267,46 +267,21 @@ impl LirInterpreter {
     /// shapes. A string is reconstructed only from the exact wide-pointer
     /// representation emitted for `&str`.
     pub fn read_typed_const_value(&self, value: Value, ty: &LirType) -> LirResult<Value> {
-        // Type values are represented as managed pointers in LIR. Their
-        // semantic value is the `Value::Type` stored behind the handle,
-        // regardless of whether an intermediate wrapper caused the declared
-        // return layout to be `Ptr<Void>` or an aggregate containing it.
+        // Type values are represented as tagged managed pointers in LIR.
+        // Recover only that explicit representation; untagged pointers are
+        // ordinary runtime pointers and must never be guessed to be types.
         if let Value::Pointer(pointer) = &value {
-            if let Some(handle) = Self::type_handle_index(*pointer)
-                .or_else(|| usize::try_from(pointer.value).ok())
-            {
-                if let Some(Value::Type(_)) = self.state.objects.get(handle) {
-                    return self.state.objects.get(handle).cloned().ok_or_else(|| {
-                        VmError::Runtime(format!("type handle {handle} is dangling"))
-                    });
-                }
-                if let Some(Value::Struct(structure)) = self.state.objects.get(handle) {
-                    for field in &structure.structural.fields {
-                        if let Value::Type(ty) = &field.value {
-                            return Ok(Value::Type(ty.clone()));
-                        }
-                    }
-                }
-            }
-            if Self::is_aggregate_runtime_type(ty) {
-                let handle = usize::try_from(pointer.value)
-                    .map_err(|_| VmError::Runtime("negative aggregate handle".into()))?;
-                let object = self.state.objects.get(handle).cloned().ok_or_else(|| {
-                    VmError::Runtime(format!("aggregate handle {handle} is dangling"))
-                })?;
-                return Ok(object);
-            }
-        }
-        if matches!(
-            ty,
-            LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void)
-        ) {
-            if let Value::Pointer(pointer) = value {
-                if let Some(handle) = Self::type_handle_index(pointer) {
-                    return self.state.objects.get(handle).cloned().ok_or_else(|| {
-                        VmError::Runtime(format!("type handle {handle} is dangling"))
-                    });
-                }
+            if let Some(handle) = Self::type_handle_index(*pointer) {
+                return match self.state.objects.get(handle) {
+                    Some(Value::Type(value)) => Ok(Value::Type(value.clone())),
+                    Some(other) => Err(VmError::TypeMismatch {
+                        expected: "type value behind tagged handle".into(),
+                        found: format!("{other:?}"),
+                    }),
+                    None => Err(VmError::Runtime(format!(
+                        "type handle {handle} is dangling"
+                    ))),
+                };
             }
         }
         let LirType::Struct {
@@ -569,12 +544,33 @@ impl LirInterpreter {
                 self.store_value_at(addr, &ty, &runtime_value)
             }
             LirInstructionKind::Load { address, .. } => {
-                let addr = self.resolve_addr(address)?;
                 let ty = &instr
                     .result
                     .as_ref()
                     .ok_or_else(|| VmError::Runtime("load instruction has no result type".into()))?
                     .ty;
+                let storage_addr = self.resolve_addr(address)?;
+                // `Local` operands denote the local's storage address, while
+                // native aggregate arguments are represented as a pointer in
+                // that storage.  A large aggregate load such as
+                // `Load(Local(arg), Aggregate)` therefore has one extra
+                // indirection: read the pointer from the argument slot, then
+                // read the aggregate it points at.  A scalar/pointer load
+                // from the same slot remains a normal direct load.
+                let addr = if matches!(
+                    &address.kind,
+                    LirValueKind::Local(_) | LirValueKind::StackSlot(_)
+                ) && matches!(&address.ty, LirType::Ptr(pointee) if pointee.as_ref() == ty)
+                {
+                    let pointer = self.load_value_at(storage_addr, &address.ty)?;
+                    self.expect_pointer(&TypedValue {
+                        ty: address.ty.clone(),
+                        value: pointer,
+                    })?
+                    .value as u64
+                } else {
+                    storage_addr
+                };
                 let value = self.load_value_at(addr, ty)?;
                 self.write_typed_result(dst, ty, value)
             }
@@ -973,9 +969,8 @@ impl LirInterpreter {
         match typed.value {
             Value::Type(value) => Ok(Value::Type(value)),
             Value::Pointer(pointer) => {
-                let handle = Self::type_handle_index(pointer).or_else(|| {
-                    usize::try_from(pointer.value).ok()
-                }).ok_or_else(|| VmError::Runtime("invalid managed object pointer".into()))?;
+                let handle = Self::type_handle_index(pointer)
+                    .ok_or_else(|| VmError::Runtime("invalid untagged type handle".into()))?;
                 self.state.objects.get(handle).cloned().ok_or_else(|| {
                     VmError::Runtime(format!("managed object pointer {handle} is dangling"))
                 })
@@ -1474,7 +1469,13 @@ impl LirInterpreter {
             }
             _ => self.resolve_aggregate_value(aggregate, &aggregate_ty)?,
         };
-        let element_value = self.resolve_runtime_value(element, &element_ty)?;
+        // `type` values use `Ptr(Void)` at the LIR boundary but retain their
+        // semantic `Value::Type` while they are in an interpreter local or
+        // register.  Resolving through the generic pointer path would demand
+        // a `Value::Pointer` and lose that distinction before the aggregate
+        // is stored.  `resolve_operand` preserves the tagged semantic value;
+        // ordinary pointer operands still resolve to `Value::Pointer`.
+        let element_value = self.resolve_operand(element)?.value;
         Self::aggregate_insert(&mut aggregate_value, &element_ty, indices, element_value)?;
         self.write_typed_result(dst, &aggregate_ty, aggregate_value)
     }
@@ -3923,12 +3924,23 @@ impl LirInterpreter {
             // typed value on a load instead of exposing its pool handle as
             // an ordinary pointer.
             LirType::Ptr(pointee) if matches!(pointee.as_ref(), LirType::Void) => {
-                match self.state.objects.get(raw as usize) {
-                    Some(Value::Type(value)) => Ok(Value::Type(value.clone())),
-                    _ => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
-                        raw as i64,
-                    ))),
+                if let Some(handle) =
+                    (raw & TYPE_HANDLE_TAG != 0).then(|| (raw & !TYPE_HANDLE_TAG) as usize)
+                {
+                    return match self.state.objects.get(handle) {
+                        Some(Value::Type(value)) => Ok(Value::Type(value.clone())),
+                        Some(other) => Err(VmError::TypeMismatch {
+                            expected: "type value behind tagged handle".into(),
+                            found: format!("{other:?}"),
+                        }),
+                        None => Err(VmError::Runtime(format!(
+                            "type handle {handle} is dangling"
+                        ))),
+                    };
                 }
+                Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
+                    raw as i64,
+                )))
             }
             LirType::Ptr(_) => Ok(Value::Pointer(fp_core::ast::ValuePointer::managed(
                 raw as i64,
