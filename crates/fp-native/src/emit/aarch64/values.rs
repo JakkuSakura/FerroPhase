@@ -94,8 +94,10 @@ pub(super) fn load_value(
             if matches!(ty, AsmType::I128) {
                 return Err(Error::from("use i128 helper to load 128-bit values"));
             }
-            if matches!(constant, AsmConstant::Struct(_, _) | AsmConstant::Array(_, _))
-                && is_large_aggregate(&ty, &layout.data_layout)
+            if matches!(
+                constant,
+                AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)
+            ) && is_large_aggregate(&ty, &layout.data_layout)
             {
                 let scratch = layout.const_agg_scratch_offset.ok_or_else(|| {
                     Error::from("missing scratch slot for constant aggregate load")

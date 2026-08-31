@@ -216,8 +216,8 @@ pub(super) fn emit_call(
                     let scratch_base = layout.const_agg_scratch_offset.ok_or_else(|| {
                         Error::from("missing scratch slot for constant aggregate argument")
                     })?;
-                    let scratch_off = scratch_base
-                        + const_agg_index * layout.const_agg_scratch_stride;
+                    let scratch_off =
+                        scratch_base + const_agg_index * layout.const_agg_scratch_stride;
                     const_agg_index += 1;
                     // X17 (not X16/X9/X10) because `store_constant_aggregate_to_reg`
                     // uses those internally as scratch while materializing each

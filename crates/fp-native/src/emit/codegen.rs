@@ -107,7 +107,12 @@ fn resolve_definition_references(program: &mut LirBlob) {
     let names: HashMap<fp_core::hir::DefId, fp_core::lir::Name> = program
         .functions
         .iter()
-        .filter_map(|function| function.def_id.clone().map(|def_id| (def_id, function.name.clone())))
+        .filter_map(|function| {
+            function
+                .def_id
+                .clone()
+                .map(|def_id| (def_id, function.name.clone()))
+        })
         .collect();
     for function in &mut program.functions {
         for block in &mut function.basic_blocks {
@@ -227,7 +232,8 @@ fn collect_instruction_function_refs(kind: &LirInstructionKind, refs: &mut Vec<L
     match kind {
         LirInstructionKind::Call { function, args, .. } => {
             collect_value_function_ref(function, refs);
-            args.iter().for_each(|value| collect_value_function_ref(value, refs));
+            args.iter()
+                .for_each(|value| collect_value_function_ref(value, refs));
         }
         _ => {}
     }
@@ -236,7 +242,8 @@ fn collect_instruction_function_refs(kind: &LirInstructionKind, refs: &mut Vec<L
 fn collect_terminator_function_refs(terminator: &LirTerminator, refs: &mut Vec<LirFunctionRef>) {
     if let LirTerminator::Invoke { function, args, .. } = terminator {
         collect_value_function_ref(function, refs);
-        args.iter().for_each(|value| collect_value_function_ref(value, refs));
+        args.iter()
+            .for_each(|value| collect_value_function_ref(value, refs));
     }
 }
 
