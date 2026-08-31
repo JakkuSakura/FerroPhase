@@ -63,9 +63,8 @@ fn collect_fp_files(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) 
             continue;
         }
 
-        // Cargo does not reliably invalidate a build when only a file inside
-        // a watched directory changes. Track each embedded source explicitly
-        // so std changes regenerate the embedded provider.
+        // Track each embedded source file so edits rebuild the generated
+        // bundle even when the directory mtime is unchanged.
         println!("cargo:rerun-if-changed={}", path.display());
 
         let relative = path

@@ -11,6 +11,7 @@ pub mod collections;
 pub mod container;
 pub mod context;
 pub mod diagnostics;
+pub mod embedded_std;
 pub mod error;
 pub mod executor;
 pub mod frontend;

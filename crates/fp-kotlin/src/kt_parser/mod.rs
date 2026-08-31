@@ -10,7 +10,41 @@
 mod decl;
 mod lexer;
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "std/kotlin/"]
+struct KotlinStd;
+
+impl fp_core::embedded_std::SourceBundle for KotlinStd {
+    fn paths() -> &'static [&'static str] {
+        Box::leak(
+            <Self as rust_embed::RustEmbed>::iter()
+                .map(|p| Box::leak(p.into_owned().into_boxed_str()) as &'static str)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        )
+    }
+    fn get(path: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+        <Self as rust_embed::RustEmbed>::get(path).map(|f| f.data)
+    }
+}
+
 pub use decl::{KtDecl, KtDeclKind, KtParam, KtParseError, KtType, parse_declarations};
+
+/// Load and parse the vendored Kotlin stdlib declarations.
+///
+/// This is the canonical stdlib loading path used by Kotlin tooling.  Paths
+/// are returned relative to the `kotlin` package root so consumers can build
+/// declaration paths without reimplementing filesystem traversal.
+pub fn load_std_declarations(
+    diagnostics: &fp_core::diagnostics::DiagnosticManager,
+) -> Option<Vec<(std::path::PathBuf, Vec<KtDecl>)>> {
+    fp_core::embedded_std::load_sources::<KotlinStd>("kt")?
+        .into_iter()
+        .map(|(relative, source)| {
+            Some((relative, parse_declarations(&source, diagnostics).ok()?))
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -170,31 +204,16 @@ mod tests {
     /// recovered. Run with `-- --nocapture` to see the summary.
     #[test]
     fn measures_vendored_stdlib_parse_coverage() {
-        let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std/kotlin");
-        if !std_root.exists() {
-            eprintln!("skipping: {std_root:?} not present");
-            return;
-        }
-        let mut files = Vec::new();
-        collect_kt_files(&std_root, &mut files);
-        files.sort();
-
         let mgr = DiagnosticManager::new();
         let mut clean = 0usize;
         let mut with_warnings = 0usize;
         let mut hard_errors = 0usize;
         let mut total_decls = 0usize;
 
-        for path in &files {
-            let src = match std::fs::read_to_string(path) {
-                Ok(s) => s,
-                Err(_) => {
-                    hard_errors += 1;
-                    continue;
-                }
-            };
+        let files = fp_core::embedded_std::load_sources::<KotlinStd>("kt").unwrap_or_default();
+        for (_path, src) in &files {
             let before = mgr.snapshot();
-            match parse_declarations(&src, &mgr) {
+            match parse_declarations(src, &mgr) {
                 Ok(decls) => {
                     total_decls += decls.len();
                     if mgr.diagnostics_since(before).is_empty() {

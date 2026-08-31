@@ -29,7 +29,17 @@ pub fn contains(path: &Path) -> bool {
 pub fn read(path: &Path) -> Option<&'static str> {
     let relative = path.strip_prefix(Path::new(VIRTUAL_ROOT)).ok()?;
     let normalized = normalize_relative_path(relative)?;
-    generated::get(&normalized)
+    fp_core::embedded_std::read_source::<Bundle>(&normalized)
+}
+
+struct Bundle;
+impl fp_core::embedded_std::SourceBundle for Bundle {
+    fn paths() -> &'static [&'static str] {
+        generated::PATHS
+    }
+    fn get(path: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+        generated::get(path).map(|s| std::borrow::Cow::Borrowed(s.as_bytes()))
+    }
 }
 
 /// All embedded std source file paths relative to the virtual root.

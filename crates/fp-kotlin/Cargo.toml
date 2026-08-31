@@ -10,5 +10,6 @@ itertools = "0.13"
 eyre = "0.6.12"
 winnow = "0.6"
 thiserror = "2.0.17"
+rust-embed = "8"
 
 [dev-dependencies]
