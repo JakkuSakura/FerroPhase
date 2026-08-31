@@ -155,12 +155,9 @@ fn lower_method(method: ParsedMethod) -> Result<LirFunction> {
                 current_label = Some(Name::new(label));
             }
             ParsedLine::Instr(text) => {
-                if let Some(term) = try_parse_terminator(
-                    &text,
-                    &mut stack,
-                    &label_to_block,
-                    current_block_id + 1,
-                )? {
+                if let Some(term) =
+                    try_parse_terminator(&text, &mut stack, &label_to_block, current_block_id + 1)?
+                {
                     blocks.push(LirBasicBlock {
                         id: current_block_id,
                         label: current_label.take(),
@@ -327,7 +324,8 @@ fn parse_stack_instruction(
     }
     if let Some(rest) = line
         .strip_prefix("ldloc.")
-        .or_else(|| line.strip_prefix("ldloc ")) {
+        .or_else(|| line.strip_prefix("ldloc "))
+    {
         let id = rest
             .trim()
             .parse::<u32>()
@@ -337,7 +335,8 @@ fn parse_stack_instruction(
     }
     if let Some(rest) = line
         .strip_prefix("stloc.")
-        .or_else(|| line.strip_prefix("stloc ")) {
+        .or_else(|| line.strip_prefix("stloc "))
+    {
         let id = rest
             .trim()
             .parse::<u32>()
@@ -408,27 +407,24 @@ mod tests {
         let LirInstructionKind::Store { address, .. } = &instructions[0].kind else {
             panic!("expected stloc to lower to Store");
         };
-        assert!(matches!(
-            address.kind,
-            fp_core::lir::LirValueKind::Local(0)
-        ));
+        assert!(matches!(address.kind, fp_core::lir::LirValueKind::Local(0)));
     }
 
     #[test]
     fn unknown_instruction_is_rejected() {
-        let result = parse_cil_program(
-            ".method public static int32 'main'() cil managed {\nfoo\nret\n}\n",
-        );
+        let result =
+            parse_cil_program(".method public static int32 'main'() cil managed {\nfoo\nret\n}\n");
         assert!(result.is_err());
     }
 
     #[test]
     fn emitted_cil_round_trips_and_executes() {
-        use fp_core::mir::{self, BasicBlockData, Body, BodyId, Constant, ConstantKind,
-            Function, FunctionSig, Item, ItemKind, LocalDecl, LocalInfo, MirCodeUnit,
-            Mutability, Operand, Rvalue, Statement, StatementKind, Terminator,
-            TerminatorKind, Symbol};
         use fp_core::mir::ty::{Abi, IntTy, Ty};
+        use fp_core::mir::{
+            self, BasicBlockData, Body, BodyId, Constant, ConstantKind, Function, FunctionSig,
+            Item, ItemKind, LocalDecl, LocalInfo, MirCodeUnit, Mutability, Operand, Rvalue,
+            Statement, StatementKind, Symbol, Terminator, TerminatorKind,
+        };
         use fp_core::span::Span;
 
         let span = Span::new(0, 0, 0);
@@ -447,7 +443,10 @@ mod tests {
                         })),
                     ),
                 }],
-                terminator: Some(Terminator { source_info: span, kind: TerminatorKind::Return }),
+                terminator: Some(Terminator {
+                    source_info: span,
+                    kind: TerminatorKind::Return,
+                }),
                 is_cleanup: false,
             }],
             vec![LocalDecl {
@@ -470,7 +469,10 @@ mod tests {
                 name: Symbol::new("main"),
                 def_id: None,
                 substs: Vec::new(),
-                sig: FunctionSig { inputs: Vec::new(), output: int_ty },
+                sig: FunctionSig {
+                    inputs: Vec::new(),
+                    output: int_ty,
+                },
                 body_id: BodyId(0),
                 abi: Abi::Rust,
                 is_extern: false,
@@ -480,7 +482,9 @@ mod tests {
 
         let cil = super::super::cil::emit_cil(&mir).expect("emit CIL");
         let lir = parse_cil_program(&cil).expect("parse emitted CIL");
-        let value = fp_interpret::LirInterpreter::new().run_main(&lir).expect("execute LIR");
+        let value = fp_interpret::LirInterpreter::new()
+            .run_main(&lir)
+            .expect("execute LIR");
         assert_eq!(value, fp_core::ast::Value::int(7));
     }
 }
