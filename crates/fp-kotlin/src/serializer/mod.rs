@@ -5,7 +5,6 @@ use fp_core::ast::{
     FormatTemplatePart, Item, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind,
     Name, Pattern, PatternKind, Ty, TypeInt, TypePrimitive, Value,
 };
-use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::intrinsics::calls::{KnownClass, KnownPackage};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
@@ -13,11 +12,9 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-mod backend;
 mod collections;
 mod expressions;
 mod identifiers;
-pub use backend::KotlinBackend;
 pub use collections::{
     collect_enum_field_names, collect_enum_variant_names, collect_enum_variant_payload_fields,
     collect_list_field_names, collect_mutated_field_names, collect_string_field_names,

@@ -1,5 +1,9 @@
-use super::*;
+use crate::serializer::*;
 use crate::materialize::{KotlinMaterializer, materialize_kotlin_item};
+use fp_core::ast::package::AstPackage;
+use fp_core::ast::Expr;
+use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
+use std::collections::{HashMap, HashSet};
 use fp_core::ast::{BlockStmt, ExprKind, Ident, Item, ItemKind, Name, Path, Ty};
 use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome};
 use std::path::{Path as FsPath, PathBuf};
