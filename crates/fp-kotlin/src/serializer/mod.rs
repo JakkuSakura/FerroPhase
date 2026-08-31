@@ -2562,7 +2562,7 @@ mod tests {
         ItemDefStruct, ItemDefTrait, ItemImpl, Path, Pattern, PatternIdent, PatternKind,
         PatternTupleStruct, ReprOptions, TypeBounds, TypeEnum, TypeInt, TypePrimitive, TypeTuple,
     };
-    use fp_core::intrinsics::PortableOpRegistry;
+    use fp_core::lang::LangItemRegistry;
 
     use super::*;
 
@@ -2644,7 +2644,8 @@ mod tests {
 
     #[test]
     fn result_match_uses_resolved_operation_identity_not_variant_name() {
-        let registry = PortableOpRegistry::builtin();
+        let mut registry = LangItemRegistry::default();
+        registry.insert_op("result_ok", Path::plain(vec![Ident::new("result_ok")]));
         let success = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
             name: fp_core::ast::Name::ident("success_spelling_is_irrelevant"),
             patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(

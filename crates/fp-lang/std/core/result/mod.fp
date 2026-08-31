@@ -11,7 +11,13 @@ pub fn Err<T, E>(error: E) -> Result<T, E> {
     Result::Err(error)
 }
 
+#[op(class = "Result")]
 impl<T, E> Result<T, E> {
+    #[op(method = "propagate")]
+    pub fn propagate(self) -> T {
+        self.unwrap()
+    }
+
     pub fn is_ok(&self) -> bool {
         match self {
             Result::Ok(_) => true,

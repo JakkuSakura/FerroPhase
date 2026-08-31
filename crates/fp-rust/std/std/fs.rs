@@ -381,6 +381,7 @@ pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
 /// ```
 #[stable(feature = "fs_read_write", since = "1.26.0")]
 #[intrinsic = "fs_read_to_string"]
+#[op(func = "fs_read_to_string")]
 pub fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
     fn inner(path: &Path) -> io::Result<String> {
         let mut file = File::open(path)?;
@@ -2679,6 +2680,7 @@ impl AsInner<fs_imp::DirEntry> for DirEntry {
 #[doc(alias = "rm", alias = "unlink", alias = "DeleteFile")]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[intrinsic = "fs_remove_file"]
+#[op(func = "fs_remove_file")]
 pub fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::remove_file(path.as_ref())
 }
@@ -3220,6 +3222,7 @@ pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 #[intrinsic = "fs_remove_dir_all"]
+#[op(func = "fs_remove_dir_all")]
 pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     fs_imp::remove_dir_all(path.as_ref())
 }

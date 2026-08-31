@@ -44,26 +44,3 @@ pub(super) fn name_to_string(name: &fp_core::ast::Name) -> String {
         }
     }
 }
-
-/// Splits `s` on `sep`, ignoring any `sep` nested inside `<...>`/`(...)` —
-/// e.g. `split_top_level("String, Vec<Int>", ',')` → `["String", " Vec<Int>"]`,
-/// not a bogus 3-way split on the inner comma.
-pub(super) fn split_top_level(s: &str, sep: char) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' | '(' => depth += 1,
-            '>' | ')' => depth -= 1,
-            c if c == sep && depth == 0 => {
-                parts.push(&s[start..i]);
-                start = i + c.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[start..]);
-    parts
-}
-

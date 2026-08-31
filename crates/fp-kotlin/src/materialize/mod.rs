@@ -6,6 +6,22 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome, PortableOpCall};
+
+trait PortableCallRef {
+    fn portable_call(&self) -> &PortableOpCall;
+}
+
+impl PortableCallRef for PortableOpCall {
+    fn portable_call(&self) -> &PortableOpCall {
+        self
+    }
+}
+
+impl PortableCallRef for &PortableOpCall {
+    fn portable_call(&self) -> &PortableOpCall {
+        self
+    }
+}
 use fp_core::ops::BinOpKind;
 mod types;
 use types::*;
@@ -275,8 +291,8 @@ fn throwable_pattern(ident: Ident) -> Pattern {
     )))
 }
 
-fn error_mapping(call: &PortableOpCall) -> Expr {
-    result_error_mapping(call.args.get(1).cloned())
+fn error_mapping(call: impl PortableCallRef) -> Expr {
+    result_error_mapping(call.portable_call().args.get(1).cloned())
 }
 
 fn result_error_mapping(mapper: Option<Expr>) -> Expr {
@@ -323,14 +339,15 @@ fn normalize_error_closure_params(closure: &mut ExprClosure) {
     };
 }
 
-fn result_constructor_arg(call: &PortableOpCall) -> Expr {
-    call.args
+fn result_constructor_arg(call: impl PortableCallRef) -> Expr {
+    call.portable_call()
+        .args
         .first()
         .cloned()
         .unwrap_or_else(|| Expr::value(Value::Null(Default::default())))
 }
 
-fn result_success_arg(call: &PortableOpCall) -> Expr {
+fn result_success_arg(call: impl PortableCallRef) -> Expr {
     let arg = result_constructor_arg(call);
     if matches!(arg.kind(), ExprKind::Value(value) if matches!(&**value, Value::Unit(_))) {
         Expr::name(Name::ident("Unit"))
@@ -339,8 +356,8 @@ fn result_success_arg(call: &PortableOpCall) -> Expr {
     }
 }
 
-fn portable_op_args_after_receiver(call: &PortableOpCall) -> Vec<Expr> {
-    call.args.iter().skip(1).cloned().collect()
+fn portable_op_args_after_receiver(call: impl PortableCallRef) -> Vec<Expr> {
+    call.portable_call().args.iter().skip(1).cloned().collect()
 }
 
 #[cfg(test)]

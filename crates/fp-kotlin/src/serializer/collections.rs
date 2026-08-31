@@ -181,7 +181,7 @@ fn collect_enum_fields_in_item(
 /// instead of re-deriving the name by string-manipulating its own
 /// (source-side, possibly differently-qualified) pattern text — the same
 /// "provider registers once, consumer looks up by identity" shape used
-/// for portable ops (`fp_core::lang::class_and_member_to_portable_op`), just keyed by this
+/// for portable ops, just keyed by this
 /// compile's own enum/variant *names* (unambiguous within one compile)
 /// rather than a cross-package `DefId` (which nothing on the `Pattern`/
 /// `Item` AST types carries — see `HirToAstLifter::lift_path`, which

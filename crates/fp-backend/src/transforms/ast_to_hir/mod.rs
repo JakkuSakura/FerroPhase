@@ -2483,7 +2483,7 @@ impl AstToHirLowerer {
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id.clone(), &func_def.visibility);
                 if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
-                    if let Some(op) = fp_core::lang::resolve_portable_op_tag(&tag) {
+                    if let Some(op) = self.lowering_config.operations.resolve(&tag) {
                         self.package.op_defs.insert(def_id.clone(), op);
                     }
                 }

@@ -1,13 +1,9 @@
-use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::Arc;
 
 /// How a portable op's result type relates to its call arguments — the
 /// data-driven replacement for what used to be a hand-grouped `match` over
-/// `OpKind` in `fp-typing::hir_typeck::check_high_level_op`. Adding a new
-/// portable op only ever means adding one `PortableOpDef` (see
-/// `PortableOpRegistry::builtin`) with the right rule here — no match arms
-/// to touch in `fp-typing`.
+/// `OpKind` in `fp-typing::hir_typeck::check_high_level_op`. Operation
+/// declarations provide this metadata through `LangItemRegistry`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ResultTypeRule {
     /// Result type is exactly argument `N`'s type (e.g. `x.as_ref()` drops
@@ -48,36 +44,25 @@ pub struct ArityShape {
     pub min_args: usize,
 }
 
-/// A portable op's full definition, as stored in a `PortableOpRegistry`.
-#[derive(Debug, Clone)]
-pub struct PortableOpDef {
-    pub name: Arc<str>,
-    pub arity: ArityShape,
-    pub result_rule: ResultTypeRule,
-}
-
-/// A resolved portable-op identity, carried on
-/// `CallKind::Op`/`hir::HirPackage::op_defs`/etc. Deliberately NOT a bare
-/// string: the only way to construct one is `PortableOpRegistry::resolve`,
-/// which looks the name up against the central registry and hands back the
-/// full definition — so every `PortableOp` in flight already carries its
-/// `arity`/`result_rule`, with no separate "look the name up later and hope
-/// someone remembered to check" step for consumers to skip or forget.
-///
-/// Derives structural `PartialEq`/`Eq`/`Hash` over all three fields (not
-/// just `name`) so `CallKind` (which embeds this) can itself derive them —
-/// needed for `CallKind`'s many pattern-position `const` shortcuts
-/// (`matches!(call.kind, CallKind::Println)`) across target-language
-/// backends, which require Rust's structural-match marker traits. This is
-/// equivalent in practice to name-only identity: `arity`/`result_rule` are
-/// always the same for a given `name` (both are resolved from the same
-/// registry entry — see `PortableOpRegistry::resolve`), so two
-/// same-named `PortableOp`s never actually differ in their other fields.
+/// A resolved portable-op identity carried through HIR and target
+/// materialization. The declaration registry that recognizes an `#[op]`
+/// attribute constructs this value; the core intrinsic layer deliberately
+/// has no catalog of operations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PortableOp {
     pub name: Arc<str>,
     pub arity: ArityShape,
     pub result_rule: ResultTypeRule,
+}
+
+impl PortableOp {
+    pub fn new(name: impl Into<String>, arity: ArityShape, result_rule: ResultTypeRule) -> Self {
+        Self {
+            name: Arc::from(name.into()),
+            arity,
+            result_rule,
+        }
+    }
 }
 
 // `Arc<str>` has no `serde` impl (no `rc` feature enabled workspace-wide);
@@ -119,215 +104,6 @@ impl<'de> serde::Deserialize<'de> for PortableOp {
 impl PortableOp {
     pub fn name(&self) -> &str {
         &self.name
-    }
-}
-
-/// The central, language-agnostic portable-op registry: given a canonical
-/// name, hands back the op's full definition. Every source/target
-/// language's own `#[op(...)]`/`@Op(...)` tag is expected to spell its name
-/// identically to an entry here (no fuzzy/synonym matching) — a mismatch is
-/// a straightforward lookup miss, surfaced by the caller as a "missing
-/// feature"/"unknown portable op" diagnostic, never silently ignored.
-#[derive(Debug, Clone, Default)]
-pub struct PortableOpRegistry {
-    defs: HashMap<Arc<str>, PortableOpDef>,
-}
-
-impl PortableOpRegistry {
-    pub fn from_defs(defs: impl IntoIterator<Item = PortableOpDef>) -> Self {
-        Self {
-            defs: defs.into_iter().map(|d| (d.name.clone(), d)).collect(),
-        }
-    }
-
-    pub fn resolve(&self, name: &str) -> Option<PortableOp> {
-        self.defs.get(name).map(|def| PortableOp {
-            name: def.name.clone(),
-            arity: def.arity,
-            result_rule: def.result_rule,
-        })
-    }
-
-    pub fn contains(&self, name: &str) -> bool {
-        self.defs.contains_key(name)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &PortableOpDef> {
-        self.defs.values()
-    }
-
-    /// The builtin, canonical registry — formalizes what used to be the
-    /// closed `OpKind` enum's variant list as data instead of code. Names
-    /// are unchanged from the old enum's `CallKind::name()` output (no
-    /// renaming, to avoid conflating a naming migration with this
-    /// representation rewrite).
-    pub fn builtin() -> Self {
-        Self::from_defs(builtin_portable_op_defs())
-    }
-}
-
-fn def(name: &'static str, receiver: bool, min_args: usize, rule: ResultTypeRule) -> PortableOpDef {
-    PortableOpDef {
-        name: Arc::from(name),
-        arity: ArityShape { receiver, min_args },
-        result_rule: rule,
-    }
-}
-
-fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
-    use ResultTypeRule::*;
-    vec![
-        def("default", false, 0, NotStaticallyKnowable),
-        def("from_str", false, 1, NotStaticallyKnowable),
-        def("option_some", false, 1, NotStaticallyKnowable),
-        def("option_none", false, 0, NotStaticallyKnowable),
-        def("option_unwrap", true, 1, NotStaticallyKnowable),
-        def("option_filter", true, 2, NotStaticallyKnowable),
-        // `Ok(x)` and `Err(e)` construct result values. A target decides how
-        // to represent `Result`, but it must retain the success/failure
-        // distinction through materialization and cannot erase errors.
-        def("result_ok", false, 1, ResultSuccess(0)),
-        def("result_err", false, 1, ResultFailure(0)),
-        // Rust's postfix `?` is a typed control-flow operation, not a
-        // serializer concern. The HIR-to-AST lifter emits this only after it
-        // has established that the operand is the standard `Result` ADT.
-        def("result_propagate", true, 1, NotStaticallyKnowable),
-        def("result_map", true, 2, NotStaticallyKnowable),
-        def("result_map_err", true, 2, NotStaticallyKnowable),
-        def("result_is_ok", true, 1, AlwaysBool),
-        def("result_is_err", true, 1, AlwaysBool),
-        def("result_ok_value", true, 1, NotStaticallyKnowable),
-        def("result_err_value", true, 1, NotStaticallyKnowable),
-        def("result_unwrap", true, 1, NotStaticallyKnowable),
-        def("result_unwrap_or", true, 2, SameAsArg(1)),
-        // Kotlin/JVM has no useful equivalent of Rust's ErrorKind payload.
-        // Targets preserve the actual error as a Throwable cause instead.
-        def("io_error_new", false, 2, NotStaticallyKnowable),
-        def("vec_new", false, 0, NotStaticallyKnowable),
-        def("vec_from", false, 1, NotStaticallyKnowable),
-        def("vec_push", true, 2, SameAsArg(0)),
-        def("vec_extend", true, 2, SameAsArg(0)),
-        def("vec_from_iter", false, 1, NotStaticallyKnowable),
-        // Slice cloning is a collection operation. `to_vec_in` differs only
-        // by Rust's allocator argument, which has no target-language meaning.
-        def("slice_to_vec", true, 1, NotStaticallyKnowable),
-        def("slice_to_vec_in", true, 2, NotStaticallyKnowable),
-        def("clone", true, 1, SameAsArg(0)),
-        def("as_ref", true, 1, SameAsArg(0)),
-        def("map_or", true, 3, SameAsArg(1)),
-        def("iter", true, 1, SameAsArg(0)),
-        def("collect", true, 1, NotStaticallyKnowable),
-        def("filter", true, 2, NotStaticallyKnowable),
-        def("find", true, 2, NotStaticallyKnowable),
-        def("unwrap_or", true, 2, SameAsArg(1)),
-        def("to_owned", true, 1, SameAsArg(0)),
-        def("as_str", true, 1, SameAsArg(0)),
-        def("to_string", true, 1, TargetNativeString),
-        def("and_then", true, 2, NotStaticallyKnowable),
-        def("split_whitespace", true, 1, NotStaticallyKnowable),
-        def("split", true, 2, NotStaticallyKnowable),
-        def("str_parse", true, 1, NotStaticallyKnowable),
-        def("str_char_indices", true, 1, NotStaticallyKnowable),
-        def("str_split_at", true, 2, NotStaticallyKnowable),
-        def("str_strip_prefix", true, 2, NotStaticallyKnowable),
-        def("slice_split_at", true, 2, NotStaticallyKnowable),
-        def("slice_strip_prefix", true, 2, NotStaticallyKnowable),
-        def("bool_then_some", true, 2, NotStaticallyKnowable),
-        def("range_inclusive_contains", true, 2, AlwaysBool),
-        def("as_deref", true, 1, SameAsArg(0)),
-        def("find_map", true, 2, NotStaticallyKnowable),
-        def("char_is_digit", true, 2, AlwaysBool),
-        def("char_is_alphabetic", true, 1, AlwaysBool),
-        def("char_is_whitespace", true, 1, AlwaysBool),
-        def("char_is_ascii_alphabetic", true, 1, AlwaysBool),
-        def("char_is_ascii_digit", true, 1, AlwaysBool),
-        def("char_is_ascii_hexdigit", true, 1, AlwaysBool),
-        // Parser-combinator operations retain source identity through typed
-        // lowering instead of relying on target serializer name rewrites.
-        def("winnow_alt", false, 1, NotStaticallyKnowable),
-        def("winnow_take_while", false, 2, NotStaticallyKnowable),
-        def("winnow_parse_next", true, 2, NotStaticallyKnowable),
-        def("winnow_map", true, 2, NotStaticallyKnowable),
-        def("winnow_verify", true, 2, NotStaticallyKnowable),
-        def("string_from_utf8_lossy", false, 1, TargetNativeString),
-        def("string_from_utf8", false, 1, TargetNativeString),
-        def("to_string", true, 1, TargetNativeString),
-        def("fs_read", false, 1, NotStaticallyKnowable),
-        def("fs_read_dir", false, 1, NotStaticallyKnowable),
-        def("fs_create_dir", false, 1, NotStaticallyKnowable),
-        def("fs_create_dir_all", false, 1, NotStaticallyKnowable),
-        def("file_create", false, 1, NotStaticallyKnowable),
-        def("fs_canonicalize", false, 1, NotStaticallyKnowable),
-        def("path_canonicalize", true, 1, NotStaticallyKnowable),
-        def("path_exists", true, 1, AlwaysBool),
-        def("path_parent", true, 1, NotStaticallyKnowable),
-        def("path_to_path_buf", true, 1, SameAsArg(0)),
-        def("path_join", true, 2, NotStaticallyKnowable),
-        def("path_file_name", true, 1, NotStaticallyKnowable),
-        def("path_to_string_lossy", true, 1, TargetNativeString),
-        def("dir_entry_path", true, 1, NotStaticallyKnowable),
-        def("dir_entry_file_type", true, 1, NotStaticallyKnowable),
-        def("dir_entry_file_name", true, 1, TargetNativeString),
-        def("file_type_is_dir", true, 1, AlwaysBool),
-        def("os_str_to_string_lossy", true, 1, TargetNativeString),
-        def("slice_join", true, 2, TargetNativeString),
-        def("write_all", true, 2, NotStaticallyKnowable),
-        def("option_take", true, 1, NotStaticallyKnowable),
-        def("duration_from_secs", false, 1, NotStaticallyKnowable),
-        def("duration_from_millis", false, 1, NotStaticallyKnowable),
-        def("command_new", false, 1, NotStaticallyKnowable),
-        def("command_arg", true, 2, SameAsArg(0)),
-        def("command_args", true, 2, SameAsArg(0)),
-        def("command_current_dir", true, 2, SameAsArg(0)),
-        def("command_stdin", true, 2, SameAsArg(0)),
-        def("command_stdout", true, 2, SameAsArg(0)),
-        def("command_stderr", true, 2, SameAsArg(0)),
-        def("command_spawn", true, 1, NotStaticallyKnowable),
-        def("command_output", true, 1, NotStaticallyKnowable),
-        def("command_status", true, 1, NotStaticallyKnowable),
-        def("stdio_piped", false, 0, NotStaticallyKnowable),
-        def("stdio_inherit", false, 0, NotStaticallyKnowable),
-        def("stdio_null", false, 0, NotStaticallyKnowable),
-        def("child_kill", true, 1, NotStaticallyKnowable),
-        def("child_wait", true, 1, NotStaticallyKnowable),
-        def("child_try_wait", true, 1, NotStaticallyKnowable),
-        def("child_wait_with_output", true, 1, NotStaticallyKnowable),
-        def("exit_status_success", true, 1, AlwaysBool),
-        def("process_new", false, 1, NotStaticallyKnowable),
-        def("process_shell", false, 1, NotStaticallyKnowable),
-        def("process_arg", true, 2, SameAsArg(0)),
-        def("process_args", true, 2, SameAsArg(0)),
-        def("process_current_dir", true, 2, SameAsArg(0)),
-        def("process_run", true, 1, NotStaticallyKnowable),
-        def("process_ok", true, 1, AlwaysBool),
-        def("process_output", true, 1, TargetNativeString),
-        def("process_status", true, 1, NotStaticallyKnowable),
-        def("tcp_stream_write", true, 2, NotStaticallyKnowable),
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PortableOpRegistry;
-
-    #[test]
-    fn kotlin_native_operations_are_not_portable_intrinsics() {
-        let registry = PortableOpRegistry::builtin();
-        for name in [
-            "trim",
-            "trim_start",
-            "trim_end",
-            "lines",
-            "starts_with",
-            "ends_with",
-            "is_none",
-            "position",
-        ] {
-            assert!(
-                !registry.contains(name),
-                "Kotlin-native operation {name} must not be an intrinsic"
-            );
-        }
     }
 }
 

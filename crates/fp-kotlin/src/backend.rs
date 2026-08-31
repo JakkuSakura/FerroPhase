@@ -1,11 +1,15 @@
+#[cfg(test)]
+use crate::materialize::KotlinMaterializer;
+use crate::materialize::materialize_kotlin_item;
 use crate::serializer::*;
-use crate::materialize::{KotlinMaterializer, materialize_kotlin_item};
 use fp_core::ast::package::AstPackage;
-use fp_core::ast::Expr;
+#[cfg(test)]
+use fp_core::ast::{BlockStmt, Expr, ExprKind, Item, ItemKind, Name, Ty};
+use fp_core::ast::{Ident, Path};
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
-use std::collections::{HashMap, HashSet};
-use fp_core::ast::{BlockStmt, ExprKind, Ident, Item, ItemKind, Name, Path, Ty};
+#[cfg(test)]
 use fp_core::intrinsics::{IntrinsicMaterializer, MaterializeOutcome};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -20,19 +24,6 @@ struct KotlinScan {
 }
 
 const RUNTIME_PROJECT: &str = "fp-kotlin-runtime";
-
-fn collect_kotlin_files(root: &FsPath, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_kotlin_files(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "kt") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
 
 fn collect_kotlin_operation_decls(
     declarations: &[crate::kt_parser::KtDecl],
@@ -53,18 +44,14 @@ fn collect_kotlin_operation_decls(
                 let Some(op_method) = member.op_method.as_deref() else {
                     continue;
                 };
-                let Some(operation) =
-                    fp_core::lang::class_and_member_to_portable_op(op_class, op_method)
-                else {
-                    continue;
-                };
                 let mut path = module_path.to_vec();
                 path.push(declaration.name.clone());
                 path.push(member.name.clone());
-                registry.insert_method_op(
+                registry.insert_method_declaration(
                     op_class,
                     op_method,
-                    operation,
+                    1,
+                    fp_core::intrinsics::ResultTypeRule::NotStaticallyKnowable,
                     Path::plain(path.into_iter().map(Ident::new).collect()),
                 );
             }
@@ -76,17 +63,9 @@ fn collect_kotlin_operation_decls(
 }
 
 fn kotlin_operation_registry() -> Option<fp_core::lang::LangItemRegistry> {
-    let root = FsPath::new(env!("CARGO_MANIFEST_DIR")).join("std/kotlin");
-    let mut files = Vec::new();
-    collect_kotlin_files(&root, &mut files).ok()?;
     let diagnostics = fp_core::diagnostics::DiagnosticManager::new();
     let mut registry = fp_core::lang::LangItemRegistry::default();
-    for file in files {
-        let source = std::fs::read_to_string(&file).ok()?;
-        let Ok(declarations) = crate::kt_parser::parse_declarations(&source, &diagnostics) else {
-            continue;
-        };
-        let relative = file.strip_prefix(&root).ok()?;
+    for (relative, declarations) in crate::kt_parser::load_std_declarations(&diagnostics)? {
         let mut module_path = vec!["kotlin".to_string()];
         if let Some(parent) = relative.parent() {
             module_path.extend(
@@ -1149,6 +1128,7 @@ fn kotlin_runtime_source(prefix: Option<&str>) -> String {
 
 /// Normalizes Rust type syntax into Kotlin's type model before serialization.
 /// The serializer receives only target-shaped types and prints them verbatim.
+#[cfg(test)]
 fn materialize_kotlin_types(item: &mut Item) {
     match item.kind_mut() {
         ItemKind::Module(module) => {
@@ -1211,11 +1191,13 @@ fn materialize_kotlin_types(item: &mut Item) {
     }
 }
 
+#[cfg(test)]
 fn materialize_struct_fields(fields: &mut [fp_core::ast::StructuralField]) {
     for field in fields {
         materialize_kotlin_ty(&mut field.value);
     }
 }
+#[cfg(test)]
 fn materialize_signature(sig: &mut fp_core::ast::FunctionSignature) {
     for param in &mut sig.params {
         materialize_kotlin_ty(&mut param.ty);
@@ -1227,6 +1209,7 @@ fn materialize_signature(sig: &mut fp_core::ast::FunctionSignature) {
         materialize_kotlin_ty(ty);
     }
 }
+#[cfg(test)]
 fn materialize_block(stmts: &mut [BlockStmt]) {
     for stmt in stmts {
         match stmt {
@@ -1253,6 +1236,7 @@ fn materialize_block(stmts: &mut [BlockStmt]) {
 /// placeholder, not a Kotlin declaration type; retain the initializer and let
 /// Kotlin infer its concrete runtime type instead of emitting `NonZero` or
 /// `ErrorKind` into generated source.
+#[cfg(test)]
 fn materialize_inferred_local_type(pattern: &mut fp_core::ast::Pattern) {
     let fp_core::ast::PatternKind::Type(typed) = pattern.kind() else {
         return;
@@ -1264,6 +1248,7 @@ fn materialize_inferred_local_type(pattern: &mut fp_core::ast::Pattern) {
     *pattern = replacement;
 }
 
+#[cfg(test)]
 fn requires_kotlin_inference(ty: &Ty) -> bool {
     match ty {
         Ty::Any(_) | Ty::InferVar(_) | Ty::Wildcard(_) | Ty::Unknown(_) => true,
@@ -1275,6 +1260,7 @@ fn requires_kotlin_inference(ty: &Ty) -> bool {
     }
 }
 
+#[cfg(test)]
 fn materialize_pattern(pattern: &mut fp_core::ast::Pattern) {
     use fp_core::ast::PatternKind;
 
@@ -1336,6 +1322,7 @@ fn materialize_pattern(pattern: &mut fp_core::ast::Pattern) {
     }
 }
 
+#[cfg(test)]
 fn materialize_expr_types(expr: &mut Expr) {
     match expr.kind_mut() {
         ExprKind::Block(block) => {
@@ -1543,6 +1530,7 @@ fn materialize_expr_types(expr: &mut Expr) {
 /// filesystem calls expose `Throwable`. Convert only the constructor payload
 /// at the backend boundary so generated sealed variants retain their declared
 /// `java.io.IOException` field type.
+#[cfg(test)]
 fn materialize_io_error_constructor(invoke: &mut fp_core::ast::ExprInvoke) {
     let fp_core::ast::ExprInvokeTarget::Function(Name::Path(path)) = &invoke.target else {
         return;
@@ -1557,6 +1545,7 @@ fn materialize_io_error_constructor(invoke: &mut fp_core::ast::ExprInvoke) {
         .push(kotlin_runtime_call("ioError", vec![error]));
 }
 
+#[cfg(test)]
 fn kotlin_runtime_call(name: &str, args: Vec<fp_core::ast::Expr>) -> fp_core::ast::Expr {
     fp_core::ast::Expr::new(ExprKind::Invoke(fp_core::ast::ExprInvoke {
         span: Default::default(),
@@ -1569,6 +1558,7 @@ fn kotlin_runtime_call(name: &str, args: Vec<fp_core::ast::Expr>) -> fp_core::as
     }))
 }
 
+#[cfg(test)]
 fn materialize_kotlin_ty(ty: &mut Ty) {
     if let Ok(MaterializeOutcome::Replaced(materialized)) =
         KotlinMaterializer.materialize_type_mapping(ty)
@@ -1631,6 +1621,7 @@ fn materialize_kotlin_ty(ty: &mut Ty) {
     }
 }
 
+#[cfg(test)]
 fn materialize_kotlin_type_arguments(name: &mut Name) {
     let Name::ParameterPath(path) = name else {
         return;
@@ -1647,6 +1638,7 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
 /// The serializer deliberately renders the target-shaped AST verbatim. Keep
 /// Rust aliases and generic conventions out of it so annotations generated by
 /// desugared standard-library calls remain valid Kotlin/JVM declarations.
+#[cfg(test)]
 fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     let (last, args) = match name {
         Name::Ident(ident) => (ident.as_str(), Vec::new()),
@@ -1723,6 +1715,7 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     }
 }
 
+#[cfg(test)]
 fn is_std_io_error(name: &Name) -> bool {
     let segments: Vec<&str> = match name {
         Name::Path(path) => path.segments.iter().map(Ident::as_str).collect(),
@@ -1739,6 +1732,7 @@ fn is_std_io_error(name: &Name) -> bool {
         && segments[segments.len() - 1] == "Error"
 }
 
+#[cfg(test)]
 fn kotlin_type_name(name: &Name) -> Option<&str> {
     match name {
         Name::Ident(ident) => Some(ident.as_str()),
@@ -1747,6 +1741,7 @@ fn kotlin_type_name(name: &Name) -> Option<&str> {
     }
 }
 
+#[cfg(test)]
 fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
     Ty::Expr(Box::new(Expr::name(Name::parameter_path(
         fp_core::ast::ParameterPath::new(
@@ -1762,6 +1757,7 @@ fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
 /// Rust vectors reach the target AST in two equivalent forms: the structural
 /// `Ty::Vec` form and a resolved nominal `alloc::vec::Vec<T>` path. Normalize
 /// both forms here so the serializer only ever receives Kotlin types.
+#[cfg(test)]
 fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
     if is_u8_type(element_ty) {
         return Ty::Expr(Box::new(Expr::name(Name::ident("ByteArray"))));
@@ -1777,6 +1773,7 @@ fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
     ))))
 }
 
+#[cfg(test)]
 fn is_u8_type(ty: &Ty) -> bool {
     matches!(
         ty,
@@ -1784,6 +1781,7 @@ fn is_u8_type(ty: &Ty) -> bool {
     )
 }
 
+#[cfg(test)]
 fn materialize_process_type(name: &mut Name) {
     let last = match name {
         Name::Ident(ident) => ident.as_str(),
@@ -1812,6 +1810,7 @@ fn materialize_process_type(name: &mut Name) {
 /// External APIs are represented by typed Rust declarations. Retain their
 /// target-native type identity before syntax serialization; calls themselves
 /// continue to lower through their registered intrinsic identities.
+#[cfg(test)]
 fn materialize_external_type(name: &mut Name) {
     let is_json_value = match name {
         Name::ParameterPath(path) => {
@@ -1842,6 +1841,7 @@ fn materialize_external_type(name: &mut Name) {
 /// Rust paths and OS strings are represented by JVM path/string values.  This
 /// is type materialization, so calls continue to lower exclusively through
 /// their portable operation identities.
+#[cfg(test)]
 fn materialize_jvm_path_type(name: &mut Name) {
     let last = match name {
         Name::Ident(ident) => ident.as_str(),

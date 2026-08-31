@@ -143,10 +143,7 @@ fn materialize_struct_fields(
     Ok(())
 }
 
-fn materialize_ty(
-    ty: ast::Ty,
-    strategy: &dyn IntrinsicMaterializer,
-) -> CoreResult<ast::Ty> {
+fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::Ty> {
     let ty = match strategy.materialize_type_mapping(&ty)? {
         crate::intrinsics::MaterializeOutcome::Replaced(ty) => ty,
         crate::intrinsics::MaterializeOutcome::Unchanged => ty,
@@ -274,7 +271,13 @@ fn materialize_pattern_types(
             .patterns
             .iter_mut()
             .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
-        ast::PatternKind::Struct(structure) => {
+        ast::PatternKind::Struct(structure) => structure.fields.iter_mut().try_for_each(|field| {
+            if let Some(pattern) = &mut field.rename {
+                materialize_pattern_types(pattern, strategy)?;
+            }
+            Ok(())
+        }),
+        ast::PatternKind::Structural(structure) => {
             structure.fields.iter_mut().try_for_each(|field| {
                 if let Some(pattern) = &mut field.rename {
                     materialize_pattern_types(pattern, strategy)?;
@@ -282,12 +285,6 @@ fn materialize_pattern_types(
                 Ok(())
             })
         }
-        ast::PatternKind::Structural(structure) => structure.fields.iter_mut().try_for_each(|field| {
-            if let Some(pattern) = &mut field.rename {
-                materialize_pattern_types(pattern, strategy)?;
-            }
-            Ok(())
-        }),
         ast::PatternKind::Box(pattern) => materialize_pattern_types(&mut pattern.pattern, strategy),
         ast::PatternKind::Ref(pattern) => materialize_pattern_types(&mut pattern.pattern, strategy),
         ast::PatternKind::Variant(variant) => {

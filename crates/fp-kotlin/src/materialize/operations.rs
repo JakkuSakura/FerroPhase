@@ -1,5 +1,21 @@
 use super::*;
 
+trait IntoMaterialized<T> {
+    fn into_materialized(self) -> T;
+}
+
+impl<T: Clone> IntoMaterialized<T> for T {
+    fn into_materialized(self) -> T {
+        self
+    }
+}
+
+impl<T: Clone> IntoMaterialized<T> for &mut T {
+    fn into_materialized(self) -> T {
+        self.clone()
+    }
+}
+
 /// Materializes fp-lang portable operations into Kotlin AST constructs.
 ///
 /// The Rust frontend supplies operation identity via `#[op]`; this target
@@ -8,13 +24,18 @@ pub struct KotlinMaterializer;
 
 impl KotlinMaterializer {
     fn materialize_type_mapping(&self, ty: &Ty) -> Result<MaterializeOutcome<Ty>> {
-        let materialized = materialize_aliases(materialize_jvm_type(materialize_rust_alias(ty.clone())));
-        if materialized == *ty { Ok(MaterializeOutcome::Unchanged) } else { Ok(MaterializeOutcome::Replaced(materialized)) }
+        let materialized =
+            materialize_aliases(materialize_jvm_type(materialize_rust_alias(ty.clone())));
+        if materialized == *ty {
+            Ok(MaterializeOutcome::Unchanged)
+        } else {
+            Ok(MaterializeOutcome::Replaced(materialized))
+        }
     }
 
-    pub(crate) fn lower_portable_operation(
+    pub(crate) fn lower_portable_operation_core(
         &self,
-        call: &mut PortableOpCall,
+        call: PortableOpCall,
         ty: &TySlot,
     ) -> Result<Option<Expr>> {
         let receiver = || {
@@ -167,7 +188,7 @@ impl KotlinMaterializer {
                 rhs: Box::new(Expr::value(Value::Null(Default::default()))),
             })))),
             "position" => {
-                let mut args = call.args.drain(..);
+                let mut args = call.args.into_iter();
                 let receiver = args
                     .next()
                     .unwrap_or_else(|| Expr::value(Value::Null(Default::default())));
@@ -349,13 +370,17 @@ impl KotlinMaterializer {
         }
     }
 
-    pub(crate) fn lower_invoke(&self, invoke: &mut ExprInvoke, ty: &TySlot) -> Result<Option<Expr>> {
+    pub(crate) fn lower_invoke_core(
+        &self,
+        mut invoke: ExprInvoke,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
         // Rust error constructors retain concrete payload types, while Kotlin
         // Result callbacks expose Throwable. Normalize this payload at the
         // target materialization boundary, before syntax serialization.
         if is_io_constructor(&invoke.target) && invoke.args.len() == 1 {
             let error = invoke.args.pop().expect("one Io constructor argument");
-            invoke.args.push(runtime_method("ioError", vec![error]));
+            return Ok(Some(runtime_method("ioError", vec![error])));
         }
         // Keep Rust standard-library constructors target-independent until this
         // backend boundary.  Unresolved dependency HIR may leave these as
@@ -370,6 +395,12 @@ impl KotlinMaterializer {
                 return Ok(Some(replacement));
             }
             let last = path.last().map(String::as_str).unwrap_or_default();
+            if last == "create_dir_all" {
+                return Ok(Some(runtime_method(
+                    "createDirectories",
+                    invoke.args.clone(),
+                )));
+            }
             let owner = path
                 .iter()
                 .rev()
@@ -473,7 +504,11 @@ impl KotlinMaterializer {
         Ok(Some(replacement))
     }
 
-    pub(crate) fn lower_select(&self, select: &mut ExprSelect, _ty: &TySlot) -> Result<Option<Expr>> {
+    pub(crate) fn lower_select_core(
+        &self,
+        select: ExprSelect,
+        _ty: &TySlot,
+    ) -> Result<Option<Expr>> {
         let receiver = (*select.obj).clone();
         let replacement = match select.field.as_str() {
             "isSuccess" | "is_ok" => runtime_method("resultIsSuccess", vec![receiver]),
@@ -483,13 +518,21 @@ impl KotlinMaterializer {
         Ok(Some(replacement))
     }
 
-    pub(crate) fn lower_await(&self, await_expr: &mut ExprAwait, _ty: &TySlot) -> Result<Option<Expr>> {
+    pub(crate) fn lower_await_core(
+        &self,
+        await_expr: ExprAwait,
+        _ty: &TySlot,
+    ) -> Result<Option<Expr>> {
         // Kotlin suspension is expressed by calling a `suspend` function
         // directly. The operand has already been materialized into that call.
         Ok(Some((*await_expr.base).clone()))
     }
 
-    pub(crate) fn lower_intrinsic_call(&self, call: &mut ExprIntrinsicCall, _ty: &TySlot) -> Result<Option<Expr>> {
+    pub(crate) fn lower_intrinsic_call_core(
+        &self,
+        call: ExprIntrinsicCall,
+        _ty: &TySlot,
+    ) -> Result<Option<Expr>> {
         let args = call.args.clone();
         let replacement = match call.kind {
             CallKind::FsReadToString => run_catching(invoke_static_method(
@@ -545,20 +588,15 @@ impl KotlinMaterializer {
         Ok(Some(replacement))
     }
 
-    pub(crate) fn lower_intrinsic_container(
+    pub(crate) fn lower_intrinsic_container_core(
         &self,
-        container: &mut ExprIntrinsicContainer,
+        container: ExprIntrinsicContainer,
         ty: &TySlot,
     ) -> Result<Option<Expr>> {
         if !is_byte_vector(ty) {
             return Ok(None);
         }
-        let expression = match std::mem::replace(
-            container,
-            ExprIntrinsicContainer::VecElements {
-                elements: Vec::new(),
-            },
-        ) {
+        let expression = match container {
             ExprIntrinsicContainer::VecElements { elements } => {
                 invoke_function("byteArrayOf", elements)
             }
@@ -569,27 +607,115 @@ impl KotlinMaterializer {
         };
         Ok(Some(expression))
     }
+
+    pub(crate) fn lower_portable_operation(
+        &self,
+        call: impl IntoMaterialized<PortableOpCall>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_portable_operation_core(call.into_materialized(), ty)
+    }
+
+    pub(crate) fn lower_invoke(
+        &self,
+        invoke: impl IntoMaterialized<ExprInvoke>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_invoke_core(invoke.into_materialized(), ty)
+    }
+
+    pub(crate) fn lower_select(
+        &self,
+        select: impl IntoMaterialized<ExprSelect>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_select_core(select.into_materialized(), ty)
+    }
+
+    pub(crate) fn lower_await(
+        &self,
+        expr: impl IntoMaterialized<ExprAwait>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_await_core(expr.into_materialized(), ty)
+    }
+
+    pub(crate) fn lower_intrinsic_call(
+        &self,
+        call: impl IntoMaterialized<ExprIntrinsicCall>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_intrinsic_call_core(call.into_materialized(), ty)
+    }
+
+    pub(crate) fn lower_intrinsic_container(
+        &self,
+        container: impl IntoMaterialized<ExprIntrinsicContainer>,
+        ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        self.lower_intrinsic_container_core(container.into_materialized(), ty)
+    }
 }
 
 impl IntrinsicMaterializer for KotlinMaterializer {
-    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities { crate::CAPABILITIES }
-    fn materialize_type_mapping(&self, ty: &Ty) -> Result<MaterializeOutcome<Ty>> { self.materialize_type_mapping(ty) }
-    fn materialize_invoke_expression(&self, invoke: ExprInvoke, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_invoke(&mut invoke.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        crate::CAPABILITIES
     }
-    fn materialize_select_expression(&self, select: ExprSelect, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_select(&mut select.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn materialize_type_mapping(&self, ty: &Ty) -> Result<MaterializeOutcome<Ty>> {
+        self.materialize_type_mapping(ty)
     }
-    fn materialize_await_expression(&self, expr: ExprAwait, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_await(&mut expr.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn materialize_invoke_expression(
+        &self,
+        invoke: ExprInvoke,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_invoke_core(invoke, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
-    fn materialize_intrinsic_call(&self, call: ExprIntrinsicCall, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_intrinsic_call(&mut call.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn materialize_select_expression(
+        &self,
+        select: ExprSelect,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_select_core(select, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
-    fn materialize_portable_operation(&self, call: PortableOpCall, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_portable_operation(&mut call.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn materialize_await_expression(
+        &self,
+        expr: ExprAwait,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_await_core(expr, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
-    fn materialize_intrinsic_container(&self, container: ExprIntrinsicContainer, ty: &TySlot) -> Result<MaterializeOutcome<Expr>> {
-        Ok(self.lower_intrinsic_container(&mut container.clone(), ty)?.map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    fn materialize_intrinsic_call(
+        &self,
+        call: ExprIntrinsicCall,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_intrinsic_call_core(call, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    }
+    fn materialize_portable_operation(
+        &self,
+        call: PortableOpCall,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_portable_operation_core(call, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
+    }
+    fn materialize_intrinsic_container(
+        &self,
+        container: ExprIntrinsicContainer,
+        ty: &TySlot,
+    ) -> Result<MaterializeOutcome<Expr>> {
+        Ok(self
+            .lower_intrinsic_container_core(container, ty)?
+            .map_or(MaterializeOutcome::Unchanged, MaterializeOutcome::Replaced))
     }
 }

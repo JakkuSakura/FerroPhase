@@ -318,7 +318,6 @@ pub trait IntrinsicMaterializer {
         Ok(MaterializeOutcome::Unchanged)
     }
 
-
     fn materialize_invoke_expression(
         &self,
         invoke: crate::ast::ExprInvoke,
@@ -327,7 +326,6 @@ pub trait IntrinsicMaterializer {
         let _ = (invoke, expr_ty);
         Ok(MaterializeOutcome::Unchanged)
     }
-
 
     fn materialize_select_expression(
         &self,
@@ -362,7 +360,6 @@ pub trait IntrinsicMaterializer {
         Ok(MaterializeOutcome::Unchanged)
     }
 
-
     fn materialize_intrinsic_call(
         &self,
         call: ExprIntrinsicCall,
@@ -371,7 +368,6 @@ pub trait IntrinsicMaterializer {
         let _ = (call, expr_ty);
         Ok(MaterializeOutcome::Unchanged)
     }
-
 
     fn materialize_portable_operation(
         &self,
@@ -382,7 +378,6 @@ pub trait IntrinsicMaterializer {
         Ok(MaterializeOutcome::Unchanged)
     }
 
-
     fn materialize_struct_expression(
         &self,
         struct_expr: ExprStruct,
@@ -392,7 +387,6 @@ pub trait IntrinsicMaterializer {
         Ok(MaterializeOutcome::Unchanged)
     }
 
-
     fn materialize_structural_expression(
         &self,
         struct_expr: ExprStructural,
@@ -401,7 +395,6 @@ pub trait IntrinsicMaterializer {
         let _ = (struct_expr, expr_ty);
         Ok(MaterializeOutcome::Unchanged)
     }
-
 
     fn materialize_intrinsic_container(
         &self,
@@ -516,8 +509,7 @@ mod lang_intrinsic;
 pub mod materialize;
 
 pub use calls::{
-    ArityShape, CallKind, IntrinsicKind, KnownClass, KnownPackage, PortableOp, PortableOpDef,
-    PortableOpRegistry, ResultTypeRule,
+    ArityShape, CallKind, IntrinsicKind, KnownClass, KnownPackage, PortableOp, ResultTypeRule,
 };
 pub use lang_intrinsic::{
     LangIntrinsic, LangIntrinsicCapability, LangIntrinsicSpec, lang_intrinsic_call_kind,

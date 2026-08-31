@@ -91,7 +91,10 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                 // `Option` and `Result` already use their Kotlin target names
                 // after JVM-name materialization. Option needs an explicit
                 // target AST marker because Kotlin expresses it with `?`.
-                "Option" => Some(parameterized("Nullable", args.into_iter().next().unwrap_or(Ty::ANY))),
+                "Option" => Some(parameterized(
+                    "Nullable",
+                    args.into_iter().next().unwrap_or(Ty::ANY),
+                )),
                 "Vec" | "to_vec" | "to_vec_in" | "slice_to_vec" | "slice_to_vec_in" => {
                     let element = args.into_iter().next().unwrap_or(Ty::ANY);
                     Some(if is_u8_type(&element) {
@@ -145,9 +148,21 @@ pub(super) fn materialize_jvm_type(mut ty: Ty) -> Ty {
             }
         }
         Ty::Array(array) => array.elem = Box::new(materialize_jvm_type(*array.elem.clone())),
-        Ty::Tuple(tuple) => tuple.types = tuple.types.iter().cloned().map(materialize_jvm_type).collect(),
+        Ty::Tuple(tuple) => {
+            tuple.types = tuple
+                .types
+                .iter()
+                .cloned()
+                .map(materialize_jvm_type)
+                .collect()
+        }
         Ty::Function(function) => {
-            function.params = function.params.iter().cloned().map(materialize_jvm_type).collect();
+            function.params = function
+                .params
+                .iter()
+                .cloned()
+                .map(materialize_jvm_type)
+                .collect();
             if let Some(ret) = &function.ret_ty {
                 function.ret_ty = Some(Box::new(materialize_jvm_type((**ret).clone())));
             }

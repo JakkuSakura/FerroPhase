@@ -633,6 +633,7 @@ impl CompilerDriver {
                 .with_intrinsic_normalizer(normalizer)
                 .with_lowering_config(HirLoweringConfig {
                     capabilities: self.state.borrow().backend_capabilities(),
+                    operations: self.state.borrow().source_operations().unwrap_or_default(),
                     resolution_only,
                 })
                 .with_workspace(self.state.borrow().workspace.clone());

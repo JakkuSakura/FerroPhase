@@ -32,11 +32,11 @@ impl PortableOpAstConverter {
     }
 
     pub fn convert(&self, call: PortableOpCall, expr_ty: &ast::TySlot) -> Option<Expr> {
-        let binding = self
-            .operations
-            .resolve_operation(fp_core::lang::OperationSelector::PortableName(
-                call.op.name(),
-            ))?;
+        let binding =
+            self.operations
+                .resolve_operation(fp_core::lang::OperationSelector::PortableName(
+                    call.op.name(),
+                ))?;
         let path = binding.path.clone();
         if call.op.arity.receiver {
             let (receiver, args) = call.args.split_first()?;
@@ -1002,9 +1002,15 @@ impl<'a> HirToAstLifter<'a> {
                     && self.portable_operations_enabled()
                     && self.is_standard_result_expr(&expr_try.expr) =>
             {
-                let op = fp_core::intrinsics::PortableOpRegistry::builtin()
-                    .resolve("result_propagate")
-                    .expect("result_propagate is a central portable operation");
+                let op = self
+                    .fp_operations
+                    .as_ref()
+                    .and_then(|operations| operations.resolve("Result.propagate"))
+                    .ok_or_else(|| {
+                        fp_core::error::Error::from(
+                            "fp-lang std does not declare Result.propagate for try expressions",
+                        )
+                    })?;
                 self.materialize_portable_op(
                     expr.span,
                     op,
@@ -2287,11 +2293,15 @@ mod tests {
 
     struct TestMaterializer;
 
+    fn test_operation(name: &str) -> fp_core::intrinsics::PortableOp {
+        let mut registry = fp_core::lang::LangItemRegistry::default();
+        registry.insert_op(name, ast::Path::plain(vec![ast::Ident::new(name)]));
+        registry.resolve(name).expect("test operation declaration")
+    }
+
     #[test]
     fn portable_op_converter_emits_target_ast_from_declared_path() {
-        let op = fp_core::intrinsics::PortableOpRegistry::builtin()
-            .resolve("fs_read")
-            .expect("builtin operation");
+        let op = test_operation("fs_read");
         let mut operations = fp_core::lang::LangItemRegistry::default();
         operations.insert_op(
             op.name(),
@@ -2324,9 +2334,7 @@ mod tests {
 
     #[test]
     fn portable_op_converter_emits_method_ast_from_declared_operation() {
-        let op = fp_core::intrinsics::PortableOpRegistry::builtin()
-            .resolve("option_unwrap")
-            .expect("builtin operation");
+        let op = test_operation("option_unwrap");
         let mut operations = fp_core::lang::LangItemRegistry::default();
         operations.insert_method_op(
             "Option",
@@ -2343,9 +2351,7 @@ mod tests {
             .convert(
                 PortableOpCall {
                     span: Span::null(),
-                    op: fp_core::intrinsics::PortableOpRegistry::builtin()
-                        .resolve("option_unwrap")
-                        .unwrap(),
+                    op: test_operation("option_unwrap"),
                     args: vec![Expr::name(Name::ident("value"))],
                     kwargs: Vec::new(),
                 },
@@ -2418,9 +2424,7 @@ mod tests {
         let mut package = hir::HirPackage::new(package_id.clone());
         package.op_defs.insert(
             associated_id.clone(),
-            fp_core::intrinsics::PortableOpRegistry::builtin()
-                .resolve("string_from_utf8_lossy")
-                .expect("builtin string operation"),
+            test_operation("string_from_utf8_lossy"),
         );
         package.record_method_resolution(call_id.clone(), associated_id);
         let call = hir::Expr {
@@ -2501,9 +2505,7 @@ mod tests {
         let mut package = hir::HirPackage::new(package_id.clone());
         package.op_defs.insert(
             function_id.clone(),
-            fp_core::intrinsics::PortableOpRegistry::builtin()
-                .resolve("string_from_utf8_lossy")
-                .expect("builtin string operation"),
+            test_operation("string_from_utf8_lossy"),
         );
         let call = hir::Expr {
             hir_id: call_id,
@@ -2639,7 +2641,16 @@ mod tests {
         let is_dir_call = method(36, receiver(37, "file_type", file_type_id), "is_dir");
 
         let mut package = hir::HirPackage::new(package_id.clone());
-        let registry = fp_core::intrinsics::PortableOpRegistry::builtin();
+        let mut registry = fp_core::lang::LangItemRegistry::default();
+        for name in [
+            "command_output",
+            "command_status",
+            "command_spawn",
+            "child_wait",
+            "child_wait_with_output",
+        ] {
+            registry.insert_op(name, ast::Path::plain(vec![ast::Ident::new(name)]));
+        }
         for (def_id, operation) in [
             (command_output_id.clone(), "command_output"),
             (command_status_id.clone(), "command_status"),

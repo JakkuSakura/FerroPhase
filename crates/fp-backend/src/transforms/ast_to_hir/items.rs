@@ -533,7 +533,9 @@ impl AstToHirLowerer {
                             fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
                         {
                             let op = impl_op_class.as_deref().and_then(|class| {
-                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                                self.lowering_config
+                                    .operations
+                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
                             });
                             if let Some(op) = op {
                                 self.package.op_defs.insert(method_def_id.clone(), op);
@@ -785,7 +787,9 @@ impl AstToHirLowerer {
                             fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
                         {
                             let op = trait_op_class.as_deref().and_then(|class| {
-                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                                self.lowering_config
+                                    .operations
+                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
                             });
                             if let Some(op) = op {
                                 self.package.op_defs.insert(method_def_id.clone(), op);
@@ -809,7 +813,9 @@ impl AstToHirLowerer {
                             fp_core::intrinsics::extract_op_attr(&func_decl.attrs, "method")
                         {
                             let op = trait_op_class.as_deref().and_then(|class| {
-                                fp_core::lang::class_and_member_to_portable_op(class, &tag)
+                                self.lowering_config
+                                    .operations
+                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
                             });
                             if let Some(op) = op {
                                 self.package.op_defs.insert(method_def_id.clone(), op);

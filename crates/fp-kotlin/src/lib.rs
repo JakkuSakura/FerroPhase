@@ -3,19 +3,18 @@
 //! Walks the FerroPhase AST and emits idiomatic Kotlin source code.
 //! Handles data classes, enum classes, functions, imports, and full expression trees.
 
-pub mod kt_parser;
 pub mod backend;
+pub mod kt_parser;
 pub mod materialize;
 pub mod package;
 pub mod serializer;
 
+pub use backend::KotlinBackend;
 pub use materialize::KotlinMaterializer;
 pub use package::KotlinPackageProvider;
-pub use backend::KotlinBackend;
 pub use serializer::{
-    KotlinSerializer, KotlinWorkspaceContext, collect_enum_field_names,
-    collect_enum_variant_names, collect_list_field_names, collect_mutated_field_names,
-    collect_string_field_names,
+    KotlinSerializer, KotlinWorkspaceContext, collect_enum_field_names, collect_enum_variant_names,
+    collect_list_field_names, collect_mutated_field_names, collect_string_field_names,
 };
 
 /// What Kotlin can express directly, for `HirLoweringConfig`/`ast_to_hir`'s
