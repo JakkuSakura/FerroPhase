@@ -62,7 +62,6 @@ impl SharedHirProgram {
             .unwrap_or_default()
     }
 
-
     pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
         self.0.borrow().refinement_hint(hir_id, slot)
     }
@@ -582,7 +581,6 @@ impl HirProgram {
     pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
         self.package(&def_id.package_id)?.anonymous_const(def_id)
     }
-
 
     pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
         if let Some(package) = self.package(&def_id.package_id) {

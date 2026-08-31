@@ -605,7 +605,17 @@ async fn run_compile_pipeline(
     // pipeline before compilation so the typed HIR is lowered exactly once.
     let needs_native_pipeline = matches!(
         target_name,
-        "native" | "cil" | "dotnet" | "jvm-bytecode" | "urcl" | "ebpf" | "goasm"
+        "native"
+            | "interpret"
+            | "llvm-text"
+            | "llvm-binary"
+            | "cranelift"
+            | "cil"
+            | "dotnet"
+            | "jvm-bytecode"
+            | "urcl"
+            | "ebpf"
+            | "goasm"
     );
     if needs_native_pipeline {
         session.driver().pipeline = fp_compiler::PipelineMode::Native;

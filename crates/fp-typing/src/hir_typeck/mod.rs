@@ -588,6 +588,63 @@ impl HirTypeChecker {
         item_checker.check_item(&item).await
     }
 
+    /// Type-check exactly one inherent/trait impl method by its resolved
+    /// member `DefId`. Dependency metadata is already HIR-shaped, but a
+    /// source-backed dependency may still need one method body lowered by a
+    /// consumer. Checking the containing impl wholesale would type-check
+    /// unrelated methods and turn their diagnostics into a false dependency
+    /// failure, so route the member through its owning impl and visit only
+    /// the selected function.
+    pub async fn typecheck_method(
+        checker: &Rc<RefCell<Self>>,
+        method_def_id: hir::DefId,
+    ) -> Result<()> {
+        let (generics, self_ty_expr, impl_items, function) = {
+            let checker_ref = checker.borrow();
+            let program = checker_ref.program_rc();
+            let owner_id = program.member_owner(method_def_id.clone()).ok_or_else(|| {
+                Error::from(format!("method {method_def_id} has no owning impl item"))
+            })?;
+            let item = program.item(owner_id).ok_or_else(|| {
+                Error::from(format!(
+                    "method {method_def_id} has no owning impl definition"
+                ))
+            })?;
+            let hir::ItemKind::Impl(impl_item) = item.kind else {
+                return Err(Error::from(format!(
+                    "method {method_def_id} owner is not an impl item"
+                )));
+            };
+            let member = impl_item
+                .items
+                .iter()
+                .find(|member| member.def_id == method_def_id)
+                .ok_or_else(|| {
+                    Error::from(format!("method {method_def_id} is not in its owning impl"))
+                })?;
+            let hir::ImplItemKind::Method(function) = &member.kind else {
+                return Err(Error::from(format!(
+                    "resolved member {method_def_id} is not a method"
+                )));
+            };
+            (
+                impl_item.generics.clone(),
+                impl_item.self_ty.clone(),
+                impl_item.items.clone(),
+                function.clone(),
+            )
+        };
+
+        let item_checker = Self::for_item(checker);
+        let mut scope = item_checker.with_generics(&generics);
+        let self_ty_hir_id = self_ty_expr.hir_id.clone();
+        let self_ty = scope.checked_impl_self_ty(&self_ty_expr).await?;
+        let mut scope = scope.with_self_type(self_ty);
+        let assoc_types = scope.impl_assoc_types(&impl_items, self_ty_hir_id).await?;
+        let mut scope = scope.with_assoc_types(assoc_types);
+        scope.check_function(&function).await
+    }
+
     /// Get-or-spawn the task that type-checks `def_id`, keyed so any number
     /// of dependents (another item's task, or the initial per-package
     /// spawn loop) share the same in-flight/completed attempt instead of
@@ -685,11 +742,20 @@ impl HirTypeChecker {
                             .record_const_type(item.def_id.clone(), declared_ty);
                         return Ok(());
                     }
-                    let mut scope = self.with_expected_expr_type(declared_ty.clone());
+                    let mut scope = if matches!(constant.ty.kind, hir::TypeExprKind::Infer) {
+                        self.clone()
+                    } else {
+                        self.with_expected_expr_type(declared_ty.clone())
+                    };
                     let body_ty = scope.check_body(&constant.body).await?;
+                    let const_ty = if matches!(constant.ty.kind, hir::TypeExprKind::Infer) {
+                        body_ty.clone()
+                    } else {
+                        declared_ty
+                    };
                     let package = self.package();
-                    package.record_type_expr_type(constant.ty.hir_id.clone(), body_ty.clone());
-                    package.record_const_type(item.def_id.clone(), declared_ty);
+                    package.record_type_expr_type(constant.ty.hir_id.clone(), const_ty.clone());
+                    package.record_const_type(item.def_id.clone(), const_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.with_generics(&impl_item.generics);
@@ -982,9 +1048,7 @@ impl HirTypeChecker {
                     // `usize_value == 0` does not become `usize` vs `i64`.
                     if lhs_literal && matches!(rhs.kind, TyKind::Int(_) | TyKind::Uint(_)) {
                         lhs = rhs.clone();
-                    } else if rhs_literal
-                        && matches!(lhs.kind, TyKind::Int(_) | TyKind::Uint(_))
-                    {
+                    } else if rhs_literal && matches!(lhs.kind, TyKind::Int(_) | TyKind::Uint(_)) {
                         rhs = lhs.clone();
                     }
                     let integer_literal = (lhs_literal
@@ -1766,8 +1830,22 @@ impl HirTypeChecker {
                     }
                 }
                 hir::ExprKind::Cast(value, target) => {
-                    self.check_expr(value).await?;
-                    self.check_type_expr(target).await?
+                    let value_ty = self.check_expr(value).await?;
+                    let target_ty = self.check_type_expr(target).await?;
+                    // `value as _` is an inference cast. For a reflected
+                    // type value, inference must preserve the concrete meta-
+                    // type instead of leaving an unconstrained `Infer` in
+                    // the checked body. This is what makes
+                    // `TypeBuilder::build(self) -> type<_> { self.ty as _ }`
+                    // a concrete type-valued function at the MIR/LIR
+                    // boundary.
+                    if matches!(target_ty.kind, TyKind::Infer(_))
+                        && matches!(value_ty.kind, TyKind::Type)
+                    {
+                        value_ty
+                    } else {
+                        target_ty
+                    }
                 }
                 hir::ExprKind::Struct(path, fields) => {
                     let ty = match self.enum_variant_ty(path).await? {
@@ -2837,6 +2915,17 @@ impl HirTypeChecker {
         })
     }
 
+    fn resolve_type_value(&self, def_id: hir::DefId) -> Option<fp_core::ast::Value> {
+        if let Some(value) = self.program.const_value(def_id.clone()) {
+            return Some(value);
+        }
+        let target = self.program.type_alias_target(def_id)?;
+        let hir::TypeExprKind::ConstBlock(const_def_id, _) = target.kind else {
+            return None;
+        };
+        self.program.const_value(const_def_id)
+    }
+
     async fn path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
         // `ast_to_hir` tags a non-nominal self-type shape (`&T`, `[T]`,
         // `fn(..) -> ..`, ...) with `Res::Builtin` instead of a `DefId`
@@ -2901,7 +2990,7 @@ impl HirTypeChecker {
             // `const_block_values` entry, so this only fires for the
             // comptime-local case; everything else falls through to the
             // ordinary `def_map`-based resolution below.
-            if self.program.const_block_value(def_id.clone()).is_none() {
+            if self.resolve_type_value(def_id.clone()).is_none() {
                 let target = self.program_rc().type_alias_target(def_id.clone());
                 if let Some(target) = target {
                     if matches!(target.kind, hir::TypeExprKind::ConstBlock(..)) {
@@ -2912,16 +3001,7 @@ impl HirTypeChecker {
                     }
                 }
             }
-            let alias_value = self
-                .program
-                .type_alias_target(def_id.clone())
-                .and_then(|target| match target.kind {
-                    hir::TypeExprKind::ConstBlock(const_def_id, _) => {
-                        self.program.const_value(const_def_id)
-                    }
-                    _ => None,
-                });
-            if let Some(value) = alias_value {
+            if let Some(value) = self.resolve_type_value(def_id.clone()) {
                 return Ok(match value {
                     fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
                         let fields: Vec<(hir::Symbol, Ty)> = struct_ty
@@ -3685,13 +3765,15 @@ impl HirTypeChecker {
             }
         };
         let def_id = &def_id;
+        if let Some(const_ty) = self.program_rc().const_type(def_id.clone()) {
+            return Ok(const_ty);
+        }
         // A comptime-generated type alias is a type value when referenced as
         // an expression (for example `type(Config)` or
         // `clone_struct!(Config)`). Its concrete ADT shape is consumed by
         // type-position paths; the expression-position type is the meta-type
         // itself, and must not be treated as an ordinary HIR item lookup.
-        if let Some(fp_core::ast::Value::Type(_)) = self.program.const_block_value(def_id.clone())
-        {
+        if let Some(fp_core::ast::Value::Type(_)) = self.program.const_block_value(def_id.clone()) {
             return Ok(Ty { kind: TyKind::Type });
         }
         // Type-relative value path (`Map::new(..)`, `T::default()`) —
@@ -4014,7 +4096,13 @@ impl HirTypeChecker {
                     }),
                 })
             }
-            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path).await,
+            // A nominal type name used as an expression is the language's
+            // compile-time type value (for example `TypeBuilder::from(Point)`
+            // receives `type`, not a runtime `Point`).  Constructor calls
+            // have already been handled above: tuple structs are callable
+            // and named structs use `ExprKind::Struct`, so this arm is only
+            // the bare type-value case.
+            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => Ok(Ty { kind: TyKind::Type }),
             hir::ItemKind::Const(constant)
                 if matches!(
                     constant.body.value.kind,

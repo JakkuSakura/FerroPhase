@@ -952,7 +952,6 @@ impl HirPackage {
         self.const_values()
     }
 
-
     /// Register an anonymous const body under its ordinary compiler DefId.
     pub fn add_anonymous_const(&mut self, def_id: DefId, block: Block) {
         self.anonymous_consts.get_mut().insert(def_id, block);
@@ -965,5 +964,4 @@ impl HirPackage {
     pub fn anonymous_consts(&self) -> HashMap<DefId, Block> {
         self.anonymous_consts.borrow().clone()
     }
-
 }

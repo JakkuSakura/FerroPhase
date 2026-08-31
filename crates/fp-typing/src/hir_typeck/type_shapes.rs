@@ -301,6 +301,22 @@ pub(super) fn primitive_path_ty(name: &str) -> Option<Ty> {
 pub(super) fn ast_value_ty_to_hir_ty(ty: &fp_core::ast::Ty) -> Option<Ty> {
     match ty {
         fp_core::ast::Ty::Primitive(primitive) => Some(primitive_ty(*primitive)),
+        // Surface parsing may preserve a primitive annotation as an
+        // identifier expression (`i64`, `str`) rather than as
+        // `Ty::Primitive`. TypeBuilder receives exactly those AST type values
+        // when a source struct is cloned and extended, so resolve the
+        // primitive spelling here before declaring the generated field type
+        // invalid.
+        fp_core::ast::Ty::Expr(expr) => match expr.kind() {
+            fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(ident)) => {
+                primitive_path_ty(ident.name.as_str())
+            }
+            fp_core::ast::ExprKind::Name(fp_core::ast::Name::Path(path)) => path
+                .segments
+                .last()
+                .and_then(|segment| primitive_path_ty(segment.name.as_str())),
+            _ => None,
+        },
         fp_core::ast::Ty::Reference(reference) => {
             ast_value_ty_to_hir_ty(&reference.ty).map(|inner| Ty {
                 kind: TyKind::Ref(ty::Region::ReStatic, Box::new(inner), ty::Mutability::Not),
