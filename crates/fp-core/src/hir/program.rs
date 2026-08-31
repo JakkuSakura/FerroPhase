@@ -705,16 +705,147 @@ impl HirProgram {
         path: &crate::ast::path::QualifiedPath,
         ns: resolve::Namespace,
     ) -> Option<resolve::SymbolEntry> {
-        let crate_name = path.head()?;
-        let package = self
-            .packages_by_crate_name
-            .get(crate_name)
-            .and_then(|package_id| self.packages.get(package_id))?;
-        package
+        let crate_name = path.head()?.to_string();
+        let package_id = self.packages_by_crate_name.get(&crate_name)?.clone();
+        let package = self.packages.get(&package_id)?.clone();
+
+        // Keep the package's ordinary module-tree lookup as the first and
+        // authoritative path. This is the normal rustc case and also
+        // handles the two representations used by providers (crate-rooted
+        // sysroot trees and crate-relative third-party trees).
+        if let Some(entry) = package
             .borrow()
             .module_tree
-            .lookup_crate_path(crate_name, path, ns)
+            .lookup_crate_path(&crate_name, path, ns)
             .cloned()
+        {
+            return Some(entry);
+        }
+        // A public module re-export is the one case that cannot be answered
+        // by the literal path lookup. Walk only intermediate segments,
+        // following `Res::Module` exactly as rustc resolves a module path,
+        // then perform one normal leaf lookup in the target package.
+        let rooted =
+            package
+                .borrow()
+                .module_tree
+                .module_exists(&crate::ast::path::QualifiedPath::new(vec![
+                    crate_name.clone(),
+                ]));
+        let mut current = if rooted {
+            crate::ast::path::QualifiedPath::new(vec![crate_name.clone()])
+        } else {
+            crate::ast::path::QualifiedPath::new(Vec::new())
+        };
+        let first = usize::from(rooted);
+        let segments = &path.segments[first..];
+        for (index, segment) in segments.iter().enumerate() {
+            let candidate = current.with_segment(segment.clone());
+            let is_last = index + 1 == segments.len();
+            if is_last {
+                let target_root = current.head()?.to_string();
+                let target_id = self.packages_by_crate_name.get(&target_root)?;
+                let target_package = self.packages.get(target_id)?.clone();
+                return target_package
+                    .borrow()
+                    .module_tree
+                    .lookup_crate_path(&target_root, &candidate, ns)
+                    .cloned();
+            }
+
+            let alias = {
+                let package_ref = package.borrow();
+                let module = package_ref.module_tree.module_id(&current)?;
+                package_ref
+                    .module_tree
+                    .lookup(module, resolve::Namespace::Value, segment)
+                    .cloned()
+                    .or_else(|| {
+                        package_ref
+                            .module_tree
+                            .lookup(module, resolve::Namespace::Type, segment)
+                            .cloned()
+                    })
+            };
+            if let Some(resolve::SymbolEntry {
+                res: Res::Module(target),
+                export,
+                ..
+            }) = alias
+            {
+                if !export.can_access(&[]) {
+                    return None;
+                }
+                let target_root = target.first()?.clone();
+                let target_id = self.packages_by_crate_name.get(&target_root)?;
+                let target_package = self.packages.get(target_id)?.clone();
+                current = crate::ast::path::QualifiedPath::new(target);
+                // The package handle changes with the alias target. Keep the
+                // lookup state explicit instead of consulting a global name map.
+                return Self::resolve_external_entry_from_alias(
+                    self,
+                    target_package,
+                    current,
+                    &segments[index + 1..],
+                    ns,
+                );
+            }
+            if package.borrow().module_tree.module_exists(&candidate) {
+                current = candidate;
+                continue;
+            }
+            return None;
+        }
+        None
+    }
+
+    fn resolve_external_entry_from_alias(
+        &self,
+        mut package: Rc<RefCell<HirPackage>>,
+        mut current: crate::ast::path::QualifiedPath,
+        segments: &[String],
+        ns: resolve::Namespace,
+    ) -> Option<resolve::SymbolEntry> {
+        for (index, segment) in segments.iter().enumerate() {
+            let candidate = current.with_segment(segment.clone());
+            if index + 1 == segments.len() {
+                let root = current.head()?.to_string();
+                return package
+                    .borrow()
+                    .module_tree
+                    .lookup_crate_path(&root, &candidate, ns)
+                    .cloned();
+            }
+            let alias = {
+                let package_ref = package.borrow();
+                let module = package_ref.module_tree.module_id(&current)?;
+                package_ref
+                    .module_tree
+                    .lookup(module, resolve::Namespace::Value, segment)
+                    .cloned()
+                    .or_else(|| {
+                        package_ref
+                            .module_tree
+                            .lookup(module, resolve::Namespace::Type, segment)
+                            .cloned()
+                    })
+            };
+            if let Some(resolve::SymbolEntry {
+                res: Res::Module(target),
+                ..
+            }) = alias
+            {
+                let root = target.first()?.clone();
+                let target_id = self.packages_by_crate_name.get(&root)?;
+                package = self.packages.get(target_id)?.clone();
+                current = crate::ast::path::QualifiedPath::new(target);
+            } else if package.borrow().module_tree.module_exists(&candidate) {
+                current = candidate;
+            } else {
+                return None;
+            }
+        }
+        None
     }
 
     /// Resolves an extern-prelude path as a module and returns its canonical
@@ -1015,5 +1146,94 @@ mod tests {
                 "skln_core::error::CoreError",
             ]
         );
+    }
+
+    #[test]
+    fn resolve_external_entry_follows_public_module_reexports() {
+        let qpath = |segments: &[&str]| {
+            crate::ast::path::QualifiedPath::new(
+                segments
+                    .iter()
+                    .map(|segment| (*segment).to_string())
+                    .collect(),
+            )
+        };
+        let alloc_id = PackageId::new("alloc");
+        let mut alloc = HirPackage::new(alloc_id.clone());
+        let alloc_fmt = alloc.module_tree.ensure_module(&qpath(&["alloc", "fmt"]));
+        let formatter = DefId::new(alloc_id.clone(), 1);
+        alloc.module_tree.bind(
+            alloc_fmt,
+            Namespace::Type,
+            "Formatter",
+            SymbolEntry {
+                res: Res::Def(formatter.clone()),
+                export: SymbolExport::Public,
+                path: Some(qpath(&["alloc", "fmt", "Formatter"])),
+            },
+        );
+
+        let std_id = PackageId::new("std");
+        let mut std = HirPackage::new(std_id);
+        let std_root = std.module_tree.ensure_module(&qpath(&["std"]));
+        std.module_tree.bind(
+            std_root,
+            Namespace::Value,
+            "fmt",
+            SymbolEntry {
+                res: Res::Module(vec!["alloc".to_string(), "fmt".to_string()]),
+                export: SymbolExport::Public,
+                path: Some(qpath(&["std", "fmt"])),
+            },
+        );
+
+        let mut program = HirProgram::new();
+        program.publish_package(alloc);
+        program.publish_package(std);
+
+        let resolved =
+            program.resolve_external_entry(&qpath(&["std", "fmt", "Formatter"]), Namespace::Type);
+        assert!(matches!(
+            resolved.map(|entry| entry.res),
+            Some(Res::Def(def_id)) if def_id == formatter
+        ));
+    }
+
+    #[test]
+    fn resolve_external_entry_descends_through_real_modules() {
+        let package_id = PackageId::new("std");
+        let mut package = HirPackage::new(package_id.clone());
+        let sync = package.module_tree.ensure_module(&QualifiedPath::new(vec![
+            "std".to_string(),
+            "sync".to_string(),
+        ]));
+        let arc = DefId::new(package_id, 9);
+        package.module_tree.bind(
+            sync,
+            Namespace::Type,
+            "Arc",
+            SymbolEntry {
+                res: Res::Def(arc.clone()),
+                export: SymbolExport::Public,
+                path: Some(QualifiedPath::new(vec![
+                    "std".to_string(),
+                    "sync".to_string(),
+                    "Arc".to_string(),
+                ])),
+            },
+        );
+
+        let mut program = HirProgram::new();
+        program.publish_package(package);
+        let path = QualifiedPath::new(vec![
+            "std".to_string(),
+            "sync".to_string(),
+            "Arc".to_string(),
+        ]);
+
+        assert!(matches!(
+            program.resolve_external_entry(&path, Namespace::Type),
+            Some(entry) if entry.res == Res::Def(arc)
+        ));
     }
 }

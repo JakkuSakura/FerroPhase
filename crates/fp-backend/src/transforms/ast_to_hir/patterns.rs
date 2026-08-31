@@ -17,12 +17,24 @@ impl AstToHirLowerer {
                 // the name already resolves, at module/prelude/workspace
                 // scope (never lexical — a pattern always introduces a
                 // fresh binding unless it names something truly global),
-                // to a portable-op-tagged def (`#[op(variant = "...")]`,
-                // e.g. `OptionNone`).
+                // to an enum variant or a portable-op-tagged definition.
+                // Enum variants imported with `use Enum::*` are ordinary
+                // Rust name-resolution results; they must not depend on an
+                // operation attribute being present. The local variant
+                // index is populated during predeclaration, while an
+                // already-published dependency is identified by its owning
+                // enum index in HIR.
                 if let Some(hir::Res::Def(def_id)) =
                     self.resolve_global_value_symbol(ident.ident.as_str())
                 {
-                    if self.op_kind_for_def(def_id.clone()).is_some() {
+                    let is_enum_variant = self
+                        .enum_variant_def_ids
+                        .values()
+                        .any(|candidate| candidate == &def_id)
+                        || self.hir_program.with(|program| {
+                            program.find_hir_enum_for_variant(def_id.clone()).is_some()
+                        });
+                    if is_enum_variant || self.op_kind_for_def(def_id.clone()).is_some() {
                         let hir_pat = hir::Pat {
                             hir_id: self.next_id(),
                             kind: hir::PatKind::Variant(hir::Path {

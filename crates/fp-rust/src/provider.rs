@@ -733,11 +733,25 @@ impl RustExternalApiProvider {
             &parsed.ast.items,
             &mut items,
         );
-        Ok(package_source_from_items(
-            id,
-            &items,
-            PackageMetadata::default(),
-        ))
+        let mut metadata = PackageMetadata::default();
+        // These provider-owned API facades are Rust crates from the
+        // resolver's point of view. Their signatures intentionally use the
+        // ordinary Rust prelude (`Result`, `String`, `Vec`, ...), so their
+        // package metadata must carry the same implicit std edge as a real
+        // Cargo crate. Leaving this unset makes AST→HIR report false
+        // unresolved paths inside the facade itself and poisons every
+        // downstream signature that references it.
+        metadata.prelude = Some(PackageId::new("std"));
+        metadata.dependencies.push(DependencyDescriptor {
+            package: "std".to_owned(),
+            resolved_package_id: Some(PackageId::new("std")),
+            constraint: None,
+            kind: DependencyKind::Normal,
+            features: Vec::new(),
+            optional: false,
+            target: Default::default(),
+        });
+        Ok(package_source_from_items(id, &items, metadata))
     }
 }
 
@@ -755,13 +769,24 @@ impl PackageProvider for RustExternalApiProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         Self::source_for(id)?;
+        let mut metadata = PackageMetadata::default();
+        metadata.prelude = Some(PackageId::new("std"));
+        metadata.dependencies.push(DependencyDescriptor {
+            package: "std".to_owned(),
+            resolved_package_id: Some(PackageId::new("std")),
+            constraint: None,
+            kind: DependencyKind::Normal,
+            features: Vec::new(),
+            optional: false,
+            target: Default::default(),
+        });
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
             name: id.as_str().to_owned(),
             version: None,
             manifest_path: VirtualPath::from_path(Path::new("<rust-external-api>/Cargo.toml")),
             root: VirtualPath::from_path(Path::new("<rust-external-api>")),
-            metadata: PackageMetadata::default(),
+            metadata,
             modules: Vec::new(),
         }))
     }
@@ -2144,6 +2169,17 @@ mod provider_tests {
     fn external_api_provider_declares_supported_registry_crates() {
         let provider = RustExternalApiProvider;
         for package in ["serde_json", "toml", "tokio"] {
+            let metadata = provider
+                .load_package_metadata(&PackageId::new(package))
+                .expect("supported registry API metadata");
+            assert_eq!(
+                metadata.metadata.prelude,
+                Some(PackageId::new("std")),
+                "{package} must use the Rust std prelude"
+            );
+            assert!(metadata.metadata.dependencies.iter().any(|dependency| {
+                dependency.resolved_package_id == Some(PackageId::new("std"))
+            }));
             let source = provider
                 .load_package_source(&PackageId::new(package))
                 .expect("supported registry API package");
