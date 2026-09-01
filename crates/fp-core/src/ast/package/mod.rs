@@ -119,12 +119,6 @@ pub struct PackagePath {
 #[derive(Clone, Debug)]
 pub struct AstPackage {
     pub package_id: PackageId,
-    /// This package's identity within the HIR numbering space — distinct
-    /// from `package_id` (the source-level id a provider names it by),
-    /// minted once by `AstProgram::begin_package` and needed before any
-    /// HIR exists (used as the key into `AstProgram::crates` and in
-    /// every HIR `DefId`/`HirId` this package ever mints).
-    pub hir_package_id: crate::hir::PackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
 
@@ -169,11 +163,6 @@ impl AstPackage {
     pub fn new(package_id: PackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
         Self {
             package_id,
-            // Overwritten by `AstProgram::begin_package` once it mints
-            // this package's real HIR-numbering identity; a fresh
-            // `AstPackage` isn't registered with any workspace yet, so
-            // there's no real id to give it here.
-            hir_package_id: crate::hir::PackageId::default(),
             name: name.into(),
             graph,
             module_tree: crate::ast::resolve::ModuleTree::new(),

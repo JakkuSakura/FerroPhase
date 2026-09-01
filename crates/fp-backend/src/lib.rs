@@ -69,7 +69,7 @@ pub fn roundtrip_items_via_hir(
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
         ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
-        package.hir_package_id.clone(),
+        package.package_id.clone(),
     );
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
@@ -91,7 +91,7 @@ pub fn roundtrip_items_via_hir_target(
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
         ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
-        package.hir_package_id.clone(),
+        package.package_id.clone(),
     );
     generator.set_target_lang(Some(target_lang));
     generator.set_cfg_filtering(true);
@@ -109,7 +109,7 @@ pub fn roundtrip_items_via_hir_dce(
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
         ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
-        package.hir_package_id.clone(),
+        package.package_id.clone(),
     );
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;

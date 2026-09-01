@@ -111,9 +111,7 @@ impl AstProgram {
     ) -> Rc<RefCell<AstPackage>> {
         let _ = data_layout;
         let source_package_id = package_id.clone();
-        let hir_package_id = package_id.clone();
-        let mut source = source;
-        source.hir_package_id = hir_package_id.clone();
+        let source = source;
         let krate = Rc::new(RefCell::new(source));
         self.crates
             .borrow_mut()
@@ -469,7 +467,7 @@ mod tests {
         assert!(
             child
                 .compiled_package_for_def(crate::hir::DefId::new(
-                    dependency.borrow().hir_package_id.clone(),
+                    dependency.borrow().package_id.clone(),
                     0,
                 ))
                 .is_some()
@@ -500,7 +498,7 @@ mod tests {
         assert!(
             child
                 .compiled_package_for_def(crate::hir::DefId::new(
-                    dependency.borrow().hir_package_id.clone(),
+                    dependency.borrow().package_id.clone(),
                     0,
                 ))
                 .is_some()

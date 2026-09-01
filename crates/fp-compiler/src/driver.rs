@@ -230,7 +230,7 @@ impl CompilerDriver {
                 .compiled_package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?
                 .borrow()
-                .hir_package_id
+                .package_id
                 .clone();
             let hir_package = self.state.borrow().hir_package_rc(hir_package_id)?;
             hir_package
@@ -306,7 +306,7 @@ impl CompilerDriver {
             .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let hir_package_id = package.borrow().hir_package_id.clone();
+        let hir_package_id = package.borrow().package_id.clone();
         let hir_package = self.state.borrow().hir(hir_package_id)?;
         fp_core::ast::package::resolve_entrypoint_def_id(package_id, &hir_package, function_name)
             .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
@@ -634,7 +634,7 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
-        let hir_package_id = package.borrow().hir_package_id.clone();
+        let hir_package_id = package.borrow().package_id.clone();
         let package_source = package.borrow().clone();
         let (mut hir_package, exports) =
             self.lower_package_hir(&package_source, hir_package_id, true)?;
@@ -654,7 +654,7 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
-        let hir_package_id = package.borrow().hir_package_id.clone();
+        let hir_package_id = package.borrow().package_id.clone();
         let existing = self
             .state
             .borrow()
@@ -677,7 +677,7 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
-        let hir_package_id = package.borrow().hir_package_id.clone();
+        let hir_package_id = package.borrow().package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
         let package_source = package.borrow().clone();
         // Re-lowering after comptime evaluation rebuilds HIR from the same

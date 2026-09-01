@@ -495,15 +495,15 @@ impl Resolver {
         hir_package: &mut hir::HirPackage,
     ) -> fp_core::error::Result<()> {
         let package = self.program.get_ast_package(package_id);
-        let (hir_package_id, items) = {
+        let (package_id, items) = {
             let package = package.borrow();
             (
-                package.hir_package_id.clone(),
+                package.package_id.clone(),
                 package.items.clone(),
             )
         };
         let mut resolver = AstResolver::new(
-            hir_package_id,
+            package_id,
             hir_package,
             self.program.provider().declaration_rules(),
             self.program.provider().resolution_rules(),

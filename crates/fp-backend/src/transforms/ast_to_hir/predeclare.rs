@@ -17,7 +17,7 @@ impl AstToHirLowerer {
             .workspace
             .crates()
             .iter()
-            .find(|(_, package)| package.borrow().hir_package_id == self.package_id)
+            .find(|(_, package)| package.borrow().package_id == self.package_id)
             .map(|(_, package)| {
                 let package = package.borrow();
                 package
