@@ -178,10 +178,42 @@ impl AstProgram {
         namespace: crate::ast::resolve::Namespace,
     ) -> crate::ast::resolve::ResolutionResult {
         let package = self.get_ast_package(package_id);
-        let package = package.borrow();
-        package
-            .module_tree
-            .resolve(module, name, namespace, self.provider().resolution_rules())
+        let (result, preludes) = {
+            let package = package.borrow();
+            let rules = self.provider().resolution_rules();
+            let result = package.module_tree.resolve(module, name, namespace, rules);
+            (result, package.prelude_modules.clone())
+        };
+        if !matches!(result, crate::ast::resolve::ResolutionResult::NotFound)
+            || !self.provider().resolution_rules().use_language_prelude
+        {
+            return result;
+        }
+        let rules = self.provider().resolution_rules();
+        let mut prelude_result = None;
+        for prelude in preludes {
+            let prelude_package = self.get_ast_package(&prelude.package_id);
+            let result =
+                prelude_package
+                    .borrow()
+                    .module_tree
+                    .resolve(&prelude.path, name, namespace, rules);
+            match result {
+                crate::ast::resolve::ResolutionResult::NotFound => {}
+                crate::ast::resolve::ResolutionResult::Ambiguous => {
+                    return crate::ast::resolve::ResolutionResult::Ambiguous;
+                }
+                crate::ast::resolve::ResolutionResult::Found(res) => {
+                    if prelude_result.is_some() {
+                        return crate::ast::resolve::ResolutionResult::Ambiguous;
+                    }
+                    prelude_result = Some(res);
+                }
+            }
+        }
+        prelude_result
+            .map(crate::ast::resolve::ResolutionResult::Found)
+            .unwrap_or(crate::ast::resolve::ResolutionResult::NotFound)
     }
 
     /// Resolve a qualified path through the AST package's module tree.
@@ -193,13 +225,45 @@ impl AstProgram {
         namespace: crate::ast::resolve::Namespace,
     ) -> crate::ast::resolve::ResolutionResult {
         let package = self.get_ast_package(package_id);
-        let package = package.borrow();
-        package.module_tree.resolve_path(
-            module,
-            path,
-            namespace,
-            self.provider().resolution_rules(),
-        )
+        let (result, preludes) = {
+            let package = package.borrow();
+            let rules = self.provider().resolution_rules();
+            let result = package
+                .module_tree
+                .resolve_path(module, path, namespace, rules);
+            (result, package.prelude_modules.clone())
+        };
+        if !matches!(result, crate::ast::resolve::ResolutionResult::NotFound)
+            || !self.provider().resolution_rules().use_language_prelude
+        {
+            return result;
+        }
+        let rules = self.provider().resolution_rules();
+        let mut prelude_result = None;
+        for prelude in preludes {
+            let prelude_package = self.get_ast_package(&prelude.package_id);
+            let result = prelude_package.borrow().module_tree.resolve_path(
+                &prelude.path,
+                path,
+                namespace,
+                rules,
+            );
+            match result {
+                crate::ast::resolve::ResolutionResult::NotFound => {}
+                crate::ast::resolve::ResolutionResult::Ambiguous => {
+                    return crate::ast::resolve::ResolutionResult::Ambiguous;
+                }
+                crate::ast::resolve::ResolutionResult::Found(res) => {
+                    if prelude_result.is_some() {
+                        return crate::ast::resolve::ResolutionResult::Ambiguous;
+                    }
+                    prelude_result = Some(res);
+                }
+            }
+        }
+        prelude_result
+            .map(crate::ast::resolve::ResolutionResult::Found)
+            .unwrap_or(crate::ast::resolve::ResolutionResult::NotFound)
     }
 
     pub fn resolve_module_path_final(
@@ -209,14 +273,12 @@ impl AstProgram {
         path: &QualifiedPath,
         namespace: crate::ast::resolve::Namespace,
     ) -> crate::ast::resolve::ResolutionResult {
-        let package = self.get_ast_package(package_id);
-        let package = package.borrow();
-        package.module_tree.resolve_path_final(
-            module,
-            path,
-            namespace,
-            self.provider().resolution_rules(),
-        )
+        match self.resolve_module_path(package_id, module, path, namespace) {
+            crate::ast::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
+                crate::ast::resolve::ResolutionResult::Found(crate::hir::Res::Error)
+            }
+            result => result,
+        }
     }
 
     pub fn module_exists(&self, package_id: &PackageId, path: &QualifiedPath) -> bool {
@@ -368,7 +430,6 @@ impl AstProgram {
             .borrow()
             .values()
             .any(|krate| krate.borrow().module_paths.contains(path))
-            
     }
 
     /// Borrow the root map directly. Used by callers that need to iterate

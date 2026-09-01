@@ -39,11 +39,6 @@ pub enum ImplBucketKey {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirPackage {
     pub id: PackageId,
-    /// The package whose reserved prelude bindings are imported while this
-    /// package is resolved. Copied from provider metadata at the AST-to-HIR
-    /// boundary so later lowering never infers a prelude from package names
-    /// or dependency contents.
-    pub prelude: Option<PackageId>,
     /// Resolved direct dependencies visible from this crate's extern prelude.
     /// This is the HIR equivalent of rustc's crate metadata edge: name
     /// resolution must consult only crates reachable through this list, not
@@ -387,11 +382,7 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
         TypeExprKind::Never => return ImplShapeClass::Shape("!".to_string()),
         _ => {}
     }
-    classify_type_shape(
-        &impl_item.self_ty,
-        &impl_item.generics,
-        &mut HashSet::new(),
-    )
+    classify_type_shape(&impl_item.self_ty, &impl_item.generics, &mut HashSet::new())
 }
 
 /// Classify the outer type exactly once, following transparent aliases by
@@ -399,7 +390,11 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
 /// is the simplified type of its target.  Keeping this lookup identity-based
 /// also handles aliases imported from another module/package without making
 /// their spelling part of dispatch.
-fn classify_type_shape(ty: &TypeExpr, generics: &Generics, _active_aliases: &mut HashSet<DefId>) -> ImplShapeClass {
+fn classify_type_shape(
+    ty: &TypeExpr,
+    generics: &Generics,
+    _active_aliases: &mut HashSet<DefId>,
+) -> ImplShapeClass {
     match &ty.kind {
         TypeExprKind::Primitive(prim) => primitive_shape_name(prim)
             .map(ImplShapeClass::Shape)
@@ -461,7 +456,6 @@ impl HirPackage {
     pub fn new(id: PackageId) -> Self {
         Self {
             id,
-            prelude: None,
             dependencies: Vec::new(),
             items: Vec::new(),
             def_map: HashMap::new(),

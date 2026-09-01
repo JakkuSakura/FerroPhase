@@ -2,19 +2,6 @@ use super::*;
 
 impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
-        let provider_prelude = self
-            .workspace
-            .crates()
-            .iter()
-            .find_map(|(package_id, package)| {
-                (package.borrow().hir_package_id == self.package_id).then(|| package_id)
-            })
-            .and_then(|package_id| self.workspace.package_metadata(package_id))
-            .and_then(|metadata| metadata.prelude)
-            .map(|package_id| hir::PackageId::new(package_id.as_str()));
-        if provider_prelude.is_some() {
-            self.package.prelude = provider_prelude;
-        }
         self.workspace.reset_local_scope();
         self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.current_owner = None;
@@ -51,7 +38,6 @@ impl AstToHirLowerer {
         // Keep predeclared struct fields available for struct update lowering.
     }
 
-    pub(super) fn load_default_prelude_defs(&mut self) {}
     pub(super) fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
         for item in items {
             if !self.item_enabled_by_cfg(item) {

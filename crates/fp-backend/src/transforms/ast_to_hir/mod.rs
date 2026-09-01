@@ -107,7 +107,6 @@ pub struct AstToHirLowerer {
     /// not a separate table), and — since `ModuleTree`'s bindings now
     /// carry the AST resolver's binding shape (including source metadata)
     /// — the former `global_type_defs`/
-    /// `global_value_defs`/`prelude_type_defs`/`prelude_value_defs` flat
     /// maps too. See `docs/Resolution.md`.
     package: hir::HirPackage,
     program_def_map: HashMap<hir::DefId, hir::Item>,
@@ -569,26 +568,9 @@ impl AstToHirLowerer {
         }
     }
 
-    fn lookup_prelude_symbol(
-        &self,
-        name: &str,
-        ns: fp_core::ast::resolve::Namespace,
-    ) -> Option<hir::Res> {
-        let prelude = fp_core::ast::path::QualifiedPath::new(vec!["prelude".to_owned()]);
-        match self
-            .workspace
-            .resolve_module_name(&self.package_id, &prelude, name, ns)
-        {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
-                Some(hir::Res::Def(def_id))
-            }
-            _ => None,
-        }
-    }
-
     /// Lexical scope only (generic parameters, locals pushed by
     /// `push_type_scope`/`push_value_scope`) — distinct from the
-    /// module/prelude/global tiers `resolve_type_symbol`/`resolve_value_symbol`
+    /// module/global resolver tiers `resolve_type_symbol`/`resolve_value_symbol`
     /// also consult. Used to tell a true lexical binding (an identity, not a
     /// module path — must not be canonicalized) apart from a same-named
     /// resolution that came from one of the other tiers (a real path that
@@ -663,7 +645,7 @@ impl AstToHirLowerer {
             _ => None,
         };
 
-        // Trait bounds use the same lexical/module/prelude scopes as ordinary
+        // Trait bounds use the same resolver-managed lexical/module scopes as ordinary
         // type paths. The expected trait namespace affects the interpretation
         // of an already-resolved binding; it does not authorize a workspace
         // suffix search for an arbitrary declaration with the same name.
@@ -682,9 +664,6 @@ impl AstToHirLowerer {
                     _ => None,
                 };
                 is_trait(resolved)
-            })
-            .or_else(|| {
-                is_trait(self.lookup_prelude_symbol(name, fp_core::ast::resolve::Namespace::Type))
             })
             .or_else(|| {
                 let path = fp_core::ast::path::QualifiedPath::new(vec![name.to_owned()]);
@@ -780,7 +759,6 @@ impl AstToHirLowerer {
         }
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
-        self.load_default_prelude_defs();
         self.predeclare_items(&generated_items, false)?;
 
         let mut hir_program = hir::HirPackage::new(self.package_id.clone());
@@ -1010,21 +988,6 @@ impl AstToHirLowerer {
 
         self.program_def_map = program.def_map.clone();
 
-        // `load_default_prelude_defs` scans *this* package's own module
-        // tree for prelude-tagged entries (see its doc comment) — those
-        // bindings are only populated by `predeclare_items` (steps 1/3
-        // above), so this must run after both, never before. Running it
-        // before predeclare meant a package's own prelude
-        // module scanned an always-empty tree,
-        // silently hiding every one of its own prelude items (`Vec`,
-        // `String`, `Option`, `Box`, `Rc`, ...) from its own unqualified
-        // uses — exactly the case when compiling `std` itself, whose source
-        // relies on its own prelude bare names throughout. Cross-package
-        // prelude (a *dependency*'s prelude, via `workspace.hir_definitions()`
-        // below) was never affected by this ordering bug since it doesn't
-        // depend on this package's own tables at all.
-        self.load_default_prelude_defs();
-
         // 5: append — unchanged.
         for package_item in &package_items {
             self.with_module_scope(&package_item.module_path, |this| {
@@ -1194,7 +1157,6 @@ impl AstToHirLowerer {
         let file_name = query.name.as_deref().unwrap_or("<query>");
         self.reset_file_context(file_name);
         self.prepare_lowering_state();
-        self.load_default_prelude_defs();
         self.program_def_map = HashMap::new();
         self.local_dispatch_items.clear();
 
@@ -1237,7 +1199,6 @@ impl AstToHirLowerer {
 
         self.module_path = module_path.clone();
         let mut program = hir::HirPackage::new(self.package.id.clone());
-        self.load_default_prelude_defs();
         self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {

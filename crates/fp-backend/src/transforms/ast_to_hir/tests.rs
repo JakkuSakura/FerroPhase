@@ -799,7 +799,6 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
             path: None,
         },
     );
-    generator.load_default_prelude_defs();
 
     let target = ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("Result")));
     let arg = ast::Expr::path(ast::Path::plain(vec![ident("hir"), ident("GenericArgs")]));
@@ -842,71 +841,6 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     assert_eq!(arg_path.segments[0].name.as_str(), "hir");
     assert_eq!(arg_path.segments[1].name.as_str(), "GenericArgs");
 
-    Ok(())
-}
-
-#[test]
-fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
-    let mut dependency = hir::HirPackage::new(hir::PackageId::new("std"));
-    let option = hir::DefId::new(dependency.id.clone(), 1);
-    let vec = hir::DefId::new(dependency.id.clone(), 2);
-    let string = hir::DefId::new(dependency.id.clone(), 3);
-    let prelude = dependency.module_tree.prelude();
-    for (name, def_id) in [
-        ("Option", option.clone()),
-        ("Vec", vec.clone()),
-        ("String", string.clone()),
-    ] {
-        dependency.module_tree.bind(
-            prelude,
-            fp_core::ast::resolve::Namespace::Type,
-            name,
-            hir::SymbolEntry {
-                res: hir::Res::Def(def_id),
-                export: hir::SymbolExport::Public,
-                path: None,
-            },
-        );
-    }
-
-    let mut program = hir::HirProgram::new();
-    program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
-    let mut generator = AstToHirLowerer::new(
-        hir::SharedHirProgram::new(program),
-        hir::PackageId::new("consumer"),
-    );
-    generator
-        .package
-        .dependencies
-        .push(hir::PackageId::new("std"));
-    generator.package.prelude = Some(hir::PackageId::new("std"));
-    generator.load_default_prelude_defs();
-
-    let prelude = generator.package.module_tree.prelude();
-    assert_eq!(
-        generator
-            .package
-            .module_tree
-            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "Option")
-            .map(|entry| &entry.res),
-        Some(&hir::Res::Def(option))
-    );
-    assert_eq!(
-        generator
-            .package
-            .module_tree
-            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "Vec")
-            .map(|entry| &entry.res),
-        Some(&hir::Res::Def(vec))
-    );
-    assert_eq!(
-        generator
-            .package
-            .module_tree
-            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "String")
-            .map(|entry| &entry.res),
-        Some(&hir::Res::Def(string))
-    );
     Ok(())
 }
 
@@ -1299,7 +1233,6 @@ fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
-    generator.package.prelude = Some(hir::PackageId::new("test"));
     let program = generator.transform_package(&package)?;
     let holder = program
         .items
@@ -1357,7 +1290,6 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
         hir::SharedHirProgram::new(workspace),
         hir::PackageId::new("consumer"),
     );
-    consumer_lowerer.package.prelude = Some(hir::PackageId::new("dependency"));
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     let holder = consumer
         .items
@@ -1663,7 +1595,6 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     let consumer_items = parser.parse_items_ast("pub struct Holder { value: Ok }")?;
     let consumer_source = package_from_items_as(PackageId::new("consumer"), consumer_items)?;
     let mut consumer_lowerer = AstToHirLowerer::new(workspace, hir::PackageId::new("consumer"));
-    consumer_lowerer.package.prelude = Some(hir::PackageId::new("std"));
     let consumer = consumer_lowerer.transform_package(&consumer_source)?;
     let holder = consumer
         .items
@@ -2950,7 +2881,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
 /// Fast, targeted repro for the "unresolved type path `Vec`/`Option`/
 /// `Arc`/..." bugs found typechecking the real vendored std (`fp compile`
 /// against it takes ~30 minutes; this test exercises the exact same
-/// resolution machinery — `load_default_prelude_defs`'s `prelude_bare_name`
+/// resolution machinery — the resolver's implicit-prelude fallback
 /// scan and `resolve_global_type_symbol`'s consultation of it — in
 /// milliseconds). Mirrors real std's own *file* layout, not an inline `mod
 /// foo { .. }` block: `inner.rs` (module path `["inner"]`) declares `pub
@@ -2978,7 +2909,7 @@ fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Res
     }));
 
     // References the bare name `Foo` with no `use` of its own — relies
-    // entirely on `load_default_prelude_defs` having picked it up from
+    // entirely on the AST resolver having picked it up from
     // `prelude::v1`'s re-export.
     let make_fn_item = make_fn(
         "make",
@@ -3786,7 +3717,7 @@ fn transform_package_plain_absolute_path_into_vendored_subcrate() -> Result<()> 
 /// `Foo::{self, Variant}` group import) with the one thing neither tested
 /// alone: a *third*, unrelated sibling module referencing the bare name
 /// with no `use` of its own — real std's actual consumer shape, which
-/// relies entirely on `load_default_prelude_defs`'s automatic
+/// relies entirely on the AST resolver's automatic
 /// prelude-injection tier, not an explicit import. If `Option`/`Result`
 /// are still showing up unresolved in the full std run after both prior
 /// fixes landed, this is the next shape to isolate — this repro exists to
@@ -3843,7 +3774,6 @@ fn transform_package_resolves_self_group_import_nested_in_module_via_default_pre
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
-    generator.package.prelude = Some(hir::PackageId::new("test"));
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
