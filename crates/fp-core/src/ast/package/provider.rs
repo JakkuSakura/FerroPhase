@@ -84,7 +84,7 @@ pub trait PackageProvider {
 /// no real frontend/disk parsing involved. Every real provider still
 /// builds a `AstPackage` directly (e.g. `FerroPhaseProvider`'s
 /// `load_embedded_package`); this just skips the "discover it from disk"
-/// step, while still requiring callers to obtain their `CompiledPackage`
+/// step, while still requiring callers to obtain their `AstPackage`
 /// through the normal `PackageProvider` -> `AstProgram::begin_package`
 /// path rather than hand-rolling one.
 pub struct FixedPackageProvider {

@@ -27,15 +27,15 @@ fn test_data_layout() -> LirDataLayout {
 /// `PackageProvider` (`FixedPackageProvider`, which just hands back an
 /// already-built `AstPackage`) followed by
 /// `AstProgram::begin_package` — never a hand-rolled
-/// `CompiledPackage`.
-fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::CompiledPackage> {
+/// `AstPackage`.
+fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::AstPackage> {
     package_from_items_as(PackageId::new("test"), items)
 }
 
 fn package_from_items_as(
     package_id: PackageId,
     items: Vec<ast::Item>,
-) -> Result<fp_core::ast::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::AstPackage> {
     let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
         .into_iter()
@@ -62,7 +62,7 @@ fn package_from_items_as(
 fn package_from_module_items(
     module_path: Vec<String>,
     items: Vec<ast::Item>,
-) -> Result<fp_core::ast::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::AstPackage> {
     let package_id = PackageId::new("test");
     let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
@@ -92,14 +92,14 @@ fn package_from_module_items(
 /// `module_path` can't exercise.
 fn package_from_items_with_paths(
     items: Vec<(Vec<String>, ast::Item)>,
-) -> Result<fp_core::ast::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::AstPackage> {
     package_from_items_with_paths_as(PackageId::new("test"), items)
 }
 
 fn package_from_items_with_paths_as(
     package_id: PackageId,
     items: Vec<(Vec<String>, ast::Item)>,
-) -> Result<fp_core::ast::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::AstPackage> {
     let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     // Real providers (`RustPackageProvider`) record every distinct module
     // path they see across all loaded files here — including a bare

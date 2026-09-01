@@ -9,7 +9,7 @@
 //! exists.
 
 /// `TargetBackend` for the bytecode/text-bytecode `--target` options — a
-/// package's own compiled MIR (already sitting on `CompiledPackage` from
+/// package's own compiled MIR from
 /// the shared workspace's typecheck pass) lowers directly to
 /// `BytecodeProgram`, the same as `CompilerDriver::compile_bytecode` used
 /// to do, just read from the workspace instead of re-driving a second

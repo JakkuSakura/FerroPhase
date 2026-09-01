@@ -43,7 +43,7 @@ impl Default for MirIdCounters {
 /// `MirCodeUnit` per top-level `DefId`, plus the derived tables
 /// `HirToMirLowerer` produces alongside them. Pairs with `MirProgram` the same
 /// way `hir::HirPackage` pairs with `hir::HirProgram`; several of these
-/// live on `CompiledPackage`'s `mir` field, one per package.
+/// live on the AST package's typed fields, one per package.
 #[derive(Debug, Clone, Default)]
 pub struct MirPackage {
     /// This package's lowered content, one `MirCodeUnit` per top-level

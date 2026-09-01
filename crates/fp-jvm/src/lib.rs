@@ -15,7 +15,7 @@ pub use parse::parse_class_to_lir;
 
 /// `TargetBackend` for the `--target jvm-bytecode` target — reads a
 /// package's already-compiled MIR straight off the shared workspace's
-/// `CompiledPackage`, same source `CompilerDriver::compile_bytecode`-style
+/// `AstPackage`, same source `CompilerDriver::compile_bytecode`-style
 /// helpers used, just without re-driving a second compile.
 pub struct JvmBackend {
     pub output: std::path::PathBuf,

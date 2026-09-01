@@ -168,7 +168,7 @@ pub struct HirPackage {
     /// by `add_item`/`index_derived_lookups`.
     pub member_to_owning_item: HashMap<DefId, DefId>,
     /// Fully-qualified name -> HIR `Res` lookup entries exported by this
-    /// package (moved from the old `CompiledPackage::hir_exports`) —
+    /// package (moved from the old compiled-package `hir_exports`) —
     /// populated incrementally by `ast_to_hir` as it registers each
     /// exported definition. Exact cross-package resolution is performed by
     /// `HirProgram`'s namespace-aware module-tree index; this map remains a

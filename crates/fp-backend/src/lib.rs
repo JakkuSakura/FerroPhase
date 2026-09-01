@@ -26,7 +26,7 @@ pub use transforms as transformations;
 /// items structurally on its own, so no flattening is needed here either.
 fn package_from_file(
     file: &fp_core::ast::File,
-) -> fp_core::Result<(std::rc::Rc<fp_core::ast::program::AstProgram>, fp_core::ast::package::CompiledPackage)> {
+) -> fp_core::Result<(std::rc::Rc<fp_core::ast::program::AstProgram>, fp_core::ast::package::AstPackage)> {
     use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 
     let package_id = fp_core::ast::package::PackageId::new("roundtrip");

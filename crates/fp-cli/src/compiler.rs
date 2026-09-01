@@ -637,7 +637,7 @@ impl LoweredProgram {
 
     fn compiled_package(
         &self,
-    ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::ast::package::CompiledPackage>>> {
+    ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::ast::package::AstPackage>>> {
         self.driver
             .state
             .borrow()
