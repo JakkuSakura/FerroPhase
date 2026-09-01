@@ -241,7 +241,20 @@ impl<'a> HirToAstLifter<'a> {
         if !self.capabilities.portable_operations {
             return None;
         }
-        self.hir_program.op_def(def_id.clone())
+        let path = self.hir_program.def_path(def_id.clone())?;
+        let segments = path
+            .segments
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect::<Vec<_>>();
+        self.source_operations
+            .as_ref()
+            .and_then(|registry| registry.find_op_by_call_segments(&segments))
+            .or_else(|| {
+                self.fp_operations
+                    .as_ref()
+                    .and_then(|registry| registry.find_op_by_call_segments(&segments))
+            })
     }
 
     fn portable_operations_enabled(&self) -> bool {
@@ -2383,9 +2396,12 @@ mod tests {
         let callee_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 4);
 
         let mut package = hir::HirPackage::new(package_id.clone());
-        package.op_defs.insert(
+        package.def_paths.insert(
             associated_id.clone(),
-            test_operation("string_from_utf8_lossy"),
+            hir::DefPath::new(vec![
+                hir::Symbol::new("String"),
+                hir::Symbol::new("from_utf8_lossy"),
+            ]),
         );
         package.record_method_resolution(call_id.clone(), associated_id);
         let call = hir::Expr {
@@ -2464,10 +2480,6 @@ mod tests {
         let callee_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 3);
 
         let mut package = hir::HirPackage::new(package_id.clone());
-        package.op_defs.insert(
-            function_id.clone(),
-            test_operation("string_from_utf8_lossy"),
-        );
         let call = hir::Expr {
             hir_id: call_id,
             kind: hir::ExprKind::Call(
@@ -2607,8 +2619,11 @@ mod tests {
             "command_output",
             "command_status",
             "command_spawn",
+            "exit_status_success",
             "child_wait",
             "child_wait_with_output",
+            "dir_entry_file_type",
+            "file_type_is_dir",
         ] {
             registry.insert_op(name, ast::Path::plain(vec![ast::Ident::new(name)]));
         }
@@ -2622,11 +2637,9 @@ mod tests {
             (dir_entry_file_type_id.clone(), "dir_entry_file_type"),
             (file_type_is_dir_id.clone(), "file_type_is_dir"),
         ] {
-            package.op_defs.insert(
+            package.def_paths.insert(
                 def_id,
-                registry
-                    .resolve(operation)
-                    .expect("registered process operation"),
+                hir::DefPath::new(vec![hir::Symbol::new(operation)]),
             );
         }
         for (expr, def_id) in [
@@ -2648,6 +2661,7 @@ mod tests {
                 portable_operations: true,
                 ..fp_core::capabilities::LanguageCapabilities::NATIVE
             })
+            .with_source_operations(registry)
             .with_materializer(Arc::new(TestMaterializer));
 
         for (expr, operation) in [

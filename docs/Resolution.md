@@ -140,13 +140,13 @@ records what remains to be migrated.
   index.
   Own unit tests cover construction/lookup/child-listing in isolation.
 - **`hir::Package`** — the lowered package data (`items`, `def_map`,
-  `def_paths`, `op_defs`, `intrinsic_defs`, `type_alias_targets`, and
+  `def_paths`, `intrinsic_defs`, `type_alias_targets`, and
   `placeholder_defs`). It deliberately owns no `ModuleTree`; module
   declarations and AST-stage name resolution remain attached to `AstPackage`.
 - **`hir::Program`** — now a genuinely new type: `packages:
   HashMap<PackageId, Package>`, the whole multi-package compiled result,
   with resolution methods (`def_path`, `type_alias_target`, `item`,
-  `op_def`, `intrinsic_def`, `is_placeholder_def`, `resolve`) that dispatch
+  `intrinsic_def`, `is_placeholder_def`, `resolve`) that dispatch
   to the right package via a `DefId`'s own `package_id` — a caller asks
   the whole program a question rather than indexing a package's fields
   directly.
@@ -170,7 +170,7 @@ parent-module index for glob expansion. `lookup_symbol`/
 or bare-name key lookup, replacing the old `lookup_symbol(key, &flat_map)`
 signature with `lookup_symbol(key, namespace)` against the tree.
 
-**Existing non-resolver migration work**: `HirGenerator` still builds `def_paths`/`op_defs`/
+**Existing non-resolver migration work**: `HirGenerator` still builds `def_paths`/
 `intrinsic_defs`/`type_alias_targets`/`placeholder_defs` as private scratch
 fields and merges them into the final `hir::Package` at `transform_package`'s
 several return points (`program.X.extend(self.X.clone())`) — the

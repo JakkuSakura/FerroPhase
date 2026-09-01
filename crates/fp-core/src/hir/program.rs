@@ -68,13 +68,16 @@ impl SharedHirProgram {
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
         self.0.borrow().member_owner(def_id)
     }
-
     pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
         self.0.borrow().local_struct_fields(def_id)
     }
 
     pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
         self.0.borrow().expr_type(hir_id)
+    }
+
+    pub fn intrinsic_def(&self, id: DefId) -> Option<CallKind> {
+        self.0.borrow().intrinsic_def(id)
     }
 
     pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
@@ -119,10 +122,6 @@ impl SharedHirProgram {
 
     pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
         self.0.borrow().const_block_value(def_id)
-    }
-
-    pub fn op_def(&self, def_id: DefId) -> Option<crate::intrinsics::PortableOp> {
-        self.0.borrow().op_def(def_id)
     }
 
     pub fn intrinsic_def(&self, def_id: DefId) -> Option<CallKind> {
@@ -498,13 +497,6 @@ impl HirProgram {
         if let Some(package) = self.package(&def_id.package_id) {
             package.record_const_block_value(def_id, value);
         }
-    }
-
-    pub fn op_def(&self, def_id: DefId) -> Option<crate::intrinsics::PortableOp> {
-        self.package(&def_id.package_id)?
-            .op_defs
-            .get(&def_id)
-            .cloned()
     }
 
     pub fn intrinsic_def(&self, def_id: DefId) -> Option<CallKind> {

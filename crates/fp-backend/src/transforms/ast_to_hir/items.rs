@@ -401,7 +401,6 @@ impl AstToHirLowerer {
             };
             let stub_methods = attrs_has_name(&impl_block.attrs, "unimplemented")
                 || self.is_unimplemented_type_expr(&self_ty);
-            let impl_op_class = fp_core::intrinsics::extract_op_attr(&impl_block.attrs, "class");
 
             let mut items = Vec::new();
             let mut method_names = HashSet::new();
@@ -445,18 +444,6 @@ impl AstToHirLowerer {
                                 self.package
                                     .intrinsic_defs
                                     .insert(method_def_id.clone(), kind);
-                            }
-                        }
-                        if let Some(tag) =
-                            fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
-                        {
-                            let op = impl_op_class.as_deref().and_then(|class| {
-                                self.lowering_config
-                                    .operations
-                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
-                            });
-                            if let Some(op) = op {
-                                self.package.op_defs.insert(method_def_id.clone(), op);
                             }
                         }
                         method_names.insert(method.sig.name.as_str().to_string());
@@ -619,23 +606,9 @@ impl AstToHirLowerer {
                                 let ast::ItemKind::DefFunction(trait_func) = item.kind() else {
                                     return None;
                                 };
-                                (trait_func.name.name == func.name.name)
-                                    .then(|| self.next_def_id())
+                                (trait_func.name.name == func.name.name).then(|| self.next_def_id())
                             });
                             if let Some(trait_method_def_id) = trait_method_def_id {
-                                if let Some(op) =
-                                    self.package.op_defs.get(&trait_method_def_id).cloned()
-                                {
-                                    let method_def_id = self.next_def_id();
-                                    self.package.op_defs.insert(method_def_id.clone(), op);
-                                    items.push(hir::ImplItem {
-                                        def_id: method_def_id,
-                                        hir_id: self.next_id(),
-                                        name: method.sig.name.clone(),
-                                        kind: hir::ImplItemKind::Method(method),
-                                    });
-                                    continue;
-                                }
                             }
                             items.push(hir::ImplItem {
                                 def_id: self.next_def_id(),
@@ -698,7 +671,6 @@ impl AstToHirLowerer {
                 Span::new(self.current_file, 0, 0),
             );
 
-            let trait_op_class = fp_core::intrinsics::extract_op_attr(&def_trait.attrs, "class");
             let mut items = Vec::new();
             for item in &def_trait.items {
                 match item.kind() {
@@ -709,18 +681,6 @@ impl AstToHirLowerer {
                         let function =
                             self.transform_function_with_body(func, Some(self_ty.clone()), true)?;
                         let method_def_id = self.next_def_id();
-                        if let Some(tag) =
-                            fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
-                        {
-                            let op = trait_op_class.as_deref().and_then(|class| {
-                                self.lowering_config
-                                    .operations
-                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
-                            });
-                            if let Some(op) = op {
-                                self.package.op_defs.insert(method_def_id.clone(), op);
-                            }
-                        }
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),
@@ -735,18 +695,6 @@ impl AstToHirLowerer {
                         let function =
                             self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
                         let method_def_id = self.next_def_id();
-                        if let Some(tag) =
-                            fp_core::intrinsics::extract_op_attr(&func_decl.attrs, "method")
-                        {
-                            let op = trait_op_class.as_deref().and_then(|class| {
-                                self.lowering_config
-                                    .operations
-                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
-                            });
-                            if let Some(op) = op {
-                                self.package.op_defs.insert(method_def_id.clone(), op);
-                            }
-                        }
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),

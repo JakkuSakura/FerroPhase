@@ -125,23 +125,8 @@ impl AstToHirLowerer {
                         self.unimplemented_type_def_ids.insert(def_id);
                     }
 
-                    let enum_op_class =
-                        fp_core::intrinsics::extract_op_attr(&def_enum.attrs, "class");
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
-                        if let Some(tag) =
-                            fp_core::intrinsics::extract_op_attr(&variant.attrs, "variant")
-                        {
-                            let op = enum_op_class.as_deref().and_then(|class| {
-                                self.lowering_config
-                                    .operations
-                                    .resolve(&fp_core::lang::member_operation_key(class, &tag))
-                            });
-                            if let Some(op) = op {
-                                self.package.op_defs.insert(variant_def_id.clone(), op);
-                            }
-                        }
-
                         let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
                             def_enum.name.name.clone(),
                             variant.name.name.clone(),

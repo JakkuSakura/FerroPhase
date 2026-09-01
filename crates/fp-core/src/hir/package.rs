@@ -75,22 +75,9 @@ pub struct HirPackage {
     /// the original source item (e.g. fp-kotlin modeling a trait as a real
     /// Kotlin interface) see it unmodified instead of overwritten.
     pub placeholder_defs: HashSet<DefId>,
-    /// A definition's portable op, when its source declaration was tagged
-    /// `#[op(func = "...")]` (free function) or `#[op(method = "...")]`
-    /// (inside a `class`-tagged `impl` block) — populated once, by
-    /// `ast_to_hir` reading the item's own attrs at the point it assigns
-    /// that item's real `DefId`. Consulted post-typecheck directly by
-    /// `HirToAstLifter`, keyed by the *resolved*
-    /// identity of a call's callee (`hir::Res::Def`) or a method call's
-    /// resolution (`TypeckResults::method_resolutions`) — never by
-    /// re-deriving and string/path-comparing a call site's own syntax,
-    /// which is both redundant (the compiler already resolved this) and
-    /// where the earlier, retired `compile_mode_std_path`/path-based
-    /// registry design went wrong.
-    pub op_defs: HashMap<DefId, crate::intrinsics::PortableOp>,
     /// A free function's compiler intrinsic, when its source declaration was
     /// tagged `#[intrinsic = "..."]` — populated the same way and at the
-    /// same site as `op_defs`, and consulted the same way: keyed by the
+    /// same declaration site, and consulted by the
     /// *resolved* identity of a call's callee (`hir::Res::Def`), never by
     /// re-deriving and name/path-comparing a call site's own syntax. A
     /// bare-name call with no real declaration to resolve to (nothing in
@@ -462,7 +449,6 @@ impl HirPackage {
             next_def_id: 1,
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
-            op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
             struct_defs_by_name: HashMap::new(),
             impl_method_item_index: HashMap::new(),

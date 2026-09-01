@@ -37,7 +37,7 @@ impl AstToHirLowerer {
                             .and_then(|owner| self.hir_program.item(owner))
                             .map(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
                             .unwrap_or(false);
-                    if is_enum_variant || self.op_kind_for_def(def_id.clone()).is_some() {
+                    if is_enum_variant {
                         let hir_pat = hir::Pat {
                             hir_id: self.next_id(),
                             kind: hir::PatKind::Variant(hir::Path {

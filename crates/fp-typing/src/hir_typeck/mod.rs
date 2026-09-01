@@ -5085,7 +5085,6 @@ impl HirTypeChecker {
                                     &item.kind,
                                     hir::TraitItemKind::Method(function)
                                         if function.body.is_some()
-                                            || program.op_def(item.def_id.clone()).is_some()
                                 )
                         }),
                         _ => false,
@@ -5233,7 +5232,7 @@ impl HirTypeChecker {
                             // not found" case, not something to paper over.
                             if trait_item.name == *method
                                 && (function.body.is_some()
-                                    || program.op_def(trait_item.def_id.clone()).is_some())
+                                    )
                             {
                                 let signature = scope.function_signature(function).await?;
                                 let method_actuals = scope.method_call_actuals(&signature, actuals);

@@ -96,7 +96,7 @@ impl AstToHirLowerer {
         // reclassification). Bare function-name calls are recognized in
         // `transform_invoke_to_hir`'s `Function` arm instead, purely from
         // the callee's *resolved* `DefId` and that declaration's own
-        // `#[op]`/`#[intrinsic]` attribute (`hir::HirPackage::op_defs`/
+        // `#[op]`/`#[intrinsic]` attribute (`intrinsic_defs`/
         // `intrinsic_defs`) — never by name/path-matching the call site,
         // which can't tell a builtin apart from a same-named real user
         // function (e.g. `std::json`'s own `print`, called from within
@@ -964,8 +964,7 @@ impl AstToHirLowerer {
                 // `hir_to_mir::expr::lower_call` (`Native`) and
                 // `HirToAstLifter::try_lift_call_as_intrinsic`
                 // (`Transpile`), both consulting the same
-                // `program.op_defs`/`intrinsic_defs` tables via
-                // `transforms::resolve_call_kind`.
+                // `intrinsic_defs` table.
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),

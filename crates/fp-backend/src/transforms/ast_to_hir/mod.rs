@@ -91,12 +91,12 @@ pub struct AstToHirLowerer {
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
     /// This package's own HIR content — `items`/`def_map`/`def_paths`/
-    /// `op_defs`/`intrinsic_defs`/`placeholder_defs`,
+    /// `intrinsic_defs`/`placeholder_defs`,
     /// plus the AST-owned `module_tree` (see `fp_core::ast::resolve::ModuleTree`'s doc
     /// comment). Written into directly throughout lowering — no private
     /// scratch copy, no mirror/extend step at `transform_package`'s return
     /// points (the earlier design this replaced kept separate `def_paths`/
-    /// `op_defs`/`intrinsic_defs`/`placeholder_defs`
+    /// `intrinsic_defs`/`placeholder_defs`
     /// fields here and copied them into a freshly-built `hir::HirPackage` at
     /// several return points instead).
     ///
@@ -687,17 +687,6 @@ impl AstToHirLowerer {
             .or_else(|| self.resolve_global_value_symbol(name))
     }
 
-    /// Tagged operations are owned by the package that declares their
-    /// definition. Foreign operations are queried through the program with
-    /// the definition's package identity, never copied into this package.
-    fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
-        self.package
-            .op_defs
-            .get(&def_id)
-            .cloned()
-            .or_else(|| self.hir_program.op_def(def_id))
-    }
-
     /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —
     /// used to answer "does this bare identifier already name something at
     /// module/prelude/workspace scope?" without that answer being masked by
@@ -1024,7 +1013,6 @@ impl AstToHirLowerer {
             program.add_anonymous_const(def_id, block);
         }
         program.placeholder_defs = self.package.placeholder_defs.clone();
-        program.op_defs.extend(self.package.op_defs.clone());
         program
             .intrinsic_defs
             .extend(self.package.intrinsic_defs.clone());
@@ -1181,7 +1169,6 @@ impl AstToHirLowerer {
         program.items.push(item);
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
-        program.op_defs.extend(self.package.op_defs.clone());
         program
             .intrinsic_defs
             .extend(self.package.intrinsic_defs.clone());
@@ -1234,7 +1221,6 @@ impl AstToHirLowerer {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
-        program.op_defs.extend(self.package.op_defs.clone());
         program
             .intrinsic_defs
             .extend(self.package.intrinsic_defs.clone());
@@ -1782,11 +1768,6 @@ impl AstToHirLowerer {
             }
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id.clone(), &func_def.visibility);
-                if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
-                    if let Some(op) = self.lowering_config.operations.resolve(&tag) {
-                        self.package.op_defs.insert(def_id.clone(), op);
-                    }
-                }
                 if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func_def.attrs) {
                     if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
                         .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
