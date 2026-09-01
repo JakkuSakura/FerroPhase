@@ -85,9 +85,6 @@ impl FerroModuleSourceResolver {
         let package_id = package.id.clone();
         let package_name = package.name.clone();
         let mut graph = PackageGraph::new(vec![package]);
-        for module in modules {
-            graph.insert_module(module);
-        }
 
         let mut source = AstPackage::new(package_id, package_name, graph);
         source.items = items;

@@ -97,9 +97,6 @@ impl SqlPackageProvider {
             modules: module_ids,
         };
         let mut graph = PackageGraph::new(vec![descriptor]);
-        for module in descriptors {
-            graph.insert_module(module);
-        }
         let mut package =
             AstPackage::new(package_id.clone(), package_id.as_str().to_string(), graph);
         package.items = items;

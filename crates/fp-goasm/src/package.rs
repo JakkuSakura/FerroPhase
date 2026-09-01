@@ -152,9 +152,6 @@ impl GoPackageProvider {
             modules: module_ids,
         };
         let mut graph = PackageGraph::new(vec![descriptor]);
-        for module in descriptors {
-            graph.insert_module(module);
-        }
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph);
         package.items = items;

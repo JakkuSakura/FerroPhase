@@ -255,17 +255,7 @@ impl PackageProvider for TypeScriptPackageProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         let descriptor = self.load_package_metadata(id)?;
-        let modules = match self.modules.read() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        let mut graph = PackageGraph::new(vec![(*descriptor).clone()]);
-        for module_id in &descriptor.modules {
-            let module = modules
-                .get(module_id)
-                .ok_or_else(|| ProviderError::ModuleNotFound(module_id.clone()))?;
-            graph.insert_module((**module).clone());
-        }
+        let graph = PackageGraph::new(vec![(*descriptor).clone()]);
         Ok(AstPackage::new(id.clone(), descriptor.name.clone(), graph))
     }
 }

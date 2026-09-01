@@ -111,9 +111,6 @@ fn load_embedded_package(
         modules: module_ids,
     };
     let mut graph = PackageGraph::new(vec![package]);
-    for descriptor in descriptors {
-        graph.insert_module(descriptor);
-    }
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
