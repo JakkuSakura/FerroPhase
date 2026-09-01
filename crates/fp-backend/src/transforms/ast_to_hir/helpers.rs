@@ -2,6 +2,24 @@ use super::*;
 use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
 impl AstToHirLowerer {
+    pub(super) fn package_crate_root(&self) -> Vec<String> {
+        if let Some(current_root) = self.module_path.segments.first()
+            && matches!(current_root.as_str(), "core" | "alloc" | "std")
+            && self.workspace.module_exists(
+                &self.package_id,
+                &fp_core::ast::path::QualifiedPath::new(vec![current_root.clone()]),
+            )
+        {
+            return vec![current_root.clone()];
+        }
+        let root = hir::HirProgram::external_crate_name(&self.package_id);
+        let candidate = fp_core::ast::path::QualifiedPath::new(vec![root]);
+        if self.workspace.module_exists(&self.package_id, &candidate) {
+            return candidate.segments;
+        }
+        Vec::new()
+    }
+
     pub(super) fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
         let def_id = match base.res.as_ref()? {
             hir::Res::Def(def_id) => def_id.clone(),
@@ -24,7 +42,9 @@ impl AstToHirLowerer {
             .cloned()
             .or_else(|| self.program_def_map.get(&def_id).cloned())
             .or_else(|| self.hir_program.item(def_id.clone()))?;
-        let hir::ItemKind::Enum(enum_def) = &item.kind else { return None; };
+        let hir::ItemKind::Enum(enum_def) = &item.kind else {
+            return None;
+        };
         enum_def
             .variants
             .iter()
@@ -479,35 +499,42 @@ impl AstToHirLowerer {
                     res: Some(base_res),
                 };
                 let full_path = self.canonicalize_segments(&type_relative.segments);
-                if let Some(hir::Res::Def(variant_id)) = match self.workspace.resolve_module_path_final(
-                    &self.package_id, &self.module_path, &full_path,
-                    fp_core::ast::resolve::Namespace::Value,
-                ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
-                    _ => None,
-                } {
+                if let Some(hir::Res::Def(variant_id)) =
+                    match self.workspace.resolve_module_path_final(
+                        &self.package_id,
+                        &self.module_path,
+                        &full_path,
+                        fp_core::ast::resolve::Namespace::Value,
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                            Some(hir::Res::Def(id))
+                        }
+                        _ => None,
+                    }
+                {
                     let predeclared_variant = self
                         .enum_variant_def_ids
                         .values()
                         .any(|candidate| candidate == &variant_id);
-                    let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res {
+                    let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res
+                    {
                         predeclared_variant
                             || self
-                                    .package
-                                    .def_map
-                                    .get(enum_id)
-                                    .cloned()
-                                    .or_else(|| self.hir_program.item(enum_id.clone()))
-                                    .is_some_and(|item| {
-                                        matches!(
-                                            item.kind,
-                                            hir::ItemKind::Enum(ref enum_def)
-                                                if enum_def
-                                                    .variants
-                                                    .iter()
-                                                    .any(|variant| variant.def_id == variant_id)
-                                        )
-                                    })
+                                .package
+                                .def_map
+                                .get(enum_id)
+                                .cloned()
+                                .or_else(|| self.hir_program.item(enum_id.clone()))
+                                .is_some_and(|item| {
+                                    matches!(
+                                        item.kind,
+                                        hir::ItemKind::Enum(ref enum_def)
+                                            if enum_def
+                                                .variants
+                                                .iter()
+                                                .any(|variant| variant.def_id == variant_id)
+                                    )
+                                })
                     } else {
                         false
                     };
@@ -573,15 +600,18 @@ impl AstToHirLowerer {
             && is_primitive_type_name(segments[0].name.as_str())
         {
             let primitive_path = self.canonicalize_segments(&segments);
-            if let fp_core::ast::resolve::ResolutionResult::Found(
-                hir::Res::Def(id),
-            ) = self.workspace.resolve_module_path_final(
-                &self.package_id,
-                &self.module_path,
-                &primitive_path,
-                fp_core::ast::resolve::Namespace::Type,
-            ) {
-                return Ok(hir::Path { segments, res: Some(hir::Res::Def(id)) });
+            if let fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) =
+                self.workspace.resolve_module_path_final(
+                    &self.package_id,
+                    &self.module_path,
+                    &primitive_path,
+                    fp_core::ast::resolve::Namespace::Type,
+                )
+            {
+                return Ok(hir::Path {
+                    segments,
+                    res: Some(hir::Res::Def(id)),
+                });
             }
         }
 
@@ -627,7 +657,9 @@ impl AstToHirLowerer {
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                            Some(hir::Res::Def(id))
+                        }
                         _ => None,
                     }
                 });
@@ -645,7 +677,9 @@ impl AstToHirLowerer {
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                            Some(hir::Res::Def(id))
+                        }
                         _ => None,
                     }
                 });
@@ -756,7 +790,10 @@ impl AstToHirLowerer {
                     && absolute.segments.get(1).map(String::as_str) == Some(first_name.as_str())
                 {
                     if let Some(res) = self.lookup_global_res(&absolute, scope) {
-                        return Ok(hir::Path { segments, res: Some(res) });
+                        return Ok(hir::Path {
+                            segments,
+                            res: Some(res),
+                        });
                     }
                 }
             }
@@ -845,15 +882,22 @@ impl AstToHirLowerer {
                         let parent = QualifiedPath::new(canonical[..canonical.len() - 1].to_vec());
                         if let Some(last) = canonical.last() {
                             canonical_res = match self.workspace.resolve_module_name(
-                                &self.package_id, &parent, last, scope.namespace(),
+                                &self.package_id,
+                                &parent,
+                                last,
+                                scope.namespace(),
                             ) {
-                                fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                                fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(
+                                    id,
+                                )) => Some(hir::Res::Def(id)),
                                 _ => None,
                             };
                         }
                     }
                     if canonical_res.is_none()
-                        && self.workspace.module_exists(&self.package_id, &canonical_path)
+                        && self
+                            .workspace
+                            .module_exists(&self.package_id, &canonical_path)
                     {
                         canonical_res = Some(hir::Res::Module(canonical.clone()));
                     }
@@ -913,7 +957,8 @@ impl AstToHirLowerer {
                     resolved.clone()
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
-                    if canonical_res.is_none() && self.workspace.module_exists(&self.package_id, &canonical)
+                    if canonical_res.is_none()
+                        && self.workspace.module_exists(&self.package_id, &canonical)
                     {
                         canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                     }

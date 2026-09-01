@@ -2,14 +2,15 @@ use super::*;
 
 impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
-        let provider_prelude = self.workspace
-                .crates()
-                .iter()
-                .find_map(|(package_id, package)| {
-                    (package.borrow().hir_package_id == self.package_id).then(|| package_id)
-                })
-                .and_then(|package_id| self.workspace.package_metadata(package_id))
-                .and_then(|metadata| metadata.prelude)
+        let provider_prelude = self
+            .workspace
+            .crates()
+            .iter()
+            .find_map(|(package_id, package)| {
+                (package.borrow().hir_package_id == self.package_id).then(|| package_id)
+            })
+            .and_then(|package_id| self.workspace.package_metadata(package_id))
+            .and_then(|metadata| metadata.prelude)
             .map(|package_id| hir::PackageId::new(package_id.as_str()));
         if provider_prelude.is_some() {
             self.package.prelude = provider_prelude;
@@ -25,31 +26,28 @@ impl AstToHirLowerer {
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
-        self.package.dependencies = self.workspace
-                    .crates()
-                    .iter()
-                    .find(|(_, package)| package.borrow().hir_package_id == self.package_id)
-                    .map(|(_, package)| {
-                        let package = package.borrow();
-                        package
-                            .graph
-                            .package(&package.package_id)
-                            .map(|descriptor| {
-                                descriptor
-                                    .metadata
-                                    .dependencies
-                                    .iter()
-                                    .filter_map(|dependency| {
-                                        dependency.resolved_package_id.as_ref()
-                                    })
-                                    .map(|id| hir::PackageId::new(id.as_str()))
-                                    .collect()
-                            })
-                            .unwrap_or_default()
+        self.package.dependencies = self
+            .workspace
+            .crates()
+            .iter()
+            .find(|(_, package)| package.borrow().hir_package_id == self.package_id)
+            .map(|(_, package)| {
+                let package = package.borrow();
+                package
+                    .graph
+                    .package(&package.package_id)
+                    .map(|descriptor| {
+                        descriptor
+                            .metadata
+                            .dependencies
+                            .iter()
+                            .filter_map(|dependency| dependency.resolved_package_id.as_ref())
+                            .map(|id| hir::PackageId::new(id.as_str()))
+                            .collect()
                     })
-                    .unwrap_or_default();
-        self.pending_impls.clear();
-        self.resolved_import_aliases.clear();
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
@@ -185,7 +183,7 @@ impl AstToHirLowerer {
                         // `option`, instead of a `None` binding under
                         // submodule `option::Option`. Any lookup that
                         // *splits* a qualified key into real segments
-                        // (`register_import_binding`'s `Option::{self,
+                        // (`Option::{self,
                         // None, Some}` resolution, `load_default_prelude_defs`'s
                         // scan) could then never find it — the actual root
                         // cause of every enum-variant-based prelude import
@@ -364,22 +362,7 @@ impl AstToHirLowerer {
                     // first mutation below (`allocate_def_id_for_item`),
                     // so a deferred item has made zero state changes and
                     // is safe to fully re-run later, unmodified.
-                    let defer = tolerant
-                        && self_type_first_segment_name(&impl_block.self_ty)
-                            .map(|name| {
-                                let qualified = matches!(
-                                    impl_block.self_ty.kind(),
-                                    ast::ExprKind::Name(ast::Name::Path(path))
-                                        if path.segments.len() > 1
-                                );
-                                !impl_block
-                                    .generics_params
-                                    .iter()
-                                    .any(|param| param.name.name == name)
-                                    && (qualified || self.resolve_type_symbol(name).is_none())
-                                    && !is_primitive_type_name(name)
-                            })
-                            .unwrap_or(false);
+                    let defer = false;
                     if !defer {
                         self.allocate_def_id_for_item(item);
                         // A self-type can be permanently unresolvable — not a
@@ -501,13 +484,9 @@ impl AstToHirLowerer {
                             }
                         }
                     } else {
-                        self.pending_impls
-                            .push((self.module_path.clone(), item.clone()));
                         // Collection still assigns stable identities to the
-                        // impl and its members. Header resolution belongs to
-                        // the later HIR transform, after imports are fixed,
-                        // just as rustc resolves impl headers in its late
-                        // resolver. Do not enqueue or replay the AST item.
+                        // impl and its members. Header resolution is owned by
+                        // the AST resolver before lowering.
                         self.allocate_def_id_for_item(item);
                         for impl_item in &impl_block.items {
                             if matches!(

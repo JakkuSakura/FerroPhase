@@ -1311,6 +1311,7 @@ dependencies = [
  "fp-bytecode",
  "fp-core",
  "fp-interpret",
+ "fp-resolve",
  "fp-stackcode",
  "fp-typing",
  "serde",
@@ -1608,6 +1609,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "fp-resolve"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
 ]
 
 [[package]]

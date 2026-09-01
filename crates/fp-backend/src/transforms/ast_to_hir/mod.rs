@@ -19,7 +19,6 @@ use closure::*;
 mod config;
 mod exprs; // expression lowering
 mod helpers;
-mod imports;
 mod items; // item/impl helpers
 mod macro_expansion;
 mod patterns; // pattern lowering // shared path/name helpers
@@ -168,22 +167,6 @@ pub struct AstToHirLowerer {
     /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
     hir_program: fp_core::hir::SharedHirProgram,
-    /// Impl items deferred until imports have been resolved.
-    pending_impls: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
-    /// `(module_path, alias)` pairs already registered by
-    /// `register_import_binding`, so re-running it (e.g. `append_item`'s
-    /// own `ItemKind::Import` handling, after `transform_package`'s
-    /// upfront import worklist already ran) is a guaranteed no-op instead
-    /// of an assumed-safe duplicate.
-    /// Resolved import identity includes the source target. Two different
-    /// glob/import targets may bind the same alias and must both be observed
-    /// so the module tree can report an ambiguity; deduplicating only by
-    /// `(module, alias)` silently discarded the second target.
-    resolved_import_aliases: HashSet<(fp_core::ast::path::QualifiedPath, String, Vec<String>)>,
-    /// Glob bindings already installed in a module/namespace. This lets a
-    /// later glob conflict with an earlier glob, while allowing a real local
-    /// definition (which is resolved before imports) to shadow both.
-    glob_import_bindings: HashSet<(fp_core::ast::path::QualifiedPath, fp_core::ast::resolve::Namespace, String)>,
     diagnostics: DiagnosticManager,
 }
 
@@ -217,7 +200,9 @@ impl PathResolutionScope {
     fn namespace(self) -> fp_core::ast::resolve::Namespace {
         match self {
             PathResolutionScope::Value => fp_core::ast::resolve::Namespace::Value,
-            PathResolutionScope::Type | PathResolutionScope::Trait => fp_core::ast::resolve::Namespace::Type,
+            PathResolutionScope::Type | PathResolutionScope::Trait => {
+                fp_core::ast::resolve::Namespace::Type
+            }
         }
     }
 }
@@ -227,21 +212,6 @@ enum LiteralTypeKind {
     Primitive(ast::TypePrimitive),
     Unit,
     Null,
-}
-
-#[derive(Debug, Clone)]
-struct ImportBinding {
-    target: Vec<String>,
-    alias: Option<String>,
-    /// `target` names a module prefix to expand (`use target::*;`),
-    /// re-evaluated fresh on every fixed-point sweep in
-    /// `resolve_pending_imports` instead of once at collection time — see
-    /// that field's own doc comment for why a one-shot expansion is wrong
-    /// for a glob whose source module's own bindings are still pending
-    /// (e.g. real `core::prelude::rust_2024`'s `pub use super::v1::*;`,
-    /// where `v1` itself has no bindings of its own until its `pub use
-    /// crate::option::Option::{self, None, Some};` resolves).
-    is_glob: bool,
 }
 
 impl AstToHirLowerer {
@@ -276,16 +246,6 @@ impl AstToHirLowerer {
 
     fn normalize_span(&self, span: Span) -> Span {
         span
-    }
-
-    fn handle_import(&mut self, _import: &ast::ItemImport) -> Result<()> {
-        let mut bindings = Vec::new();
-        self.collect_imports(Vec::new(), &_import.tree, &mut bindings)?;
-        let span = _import.span();
-        for binding in bindings {
-            self.register_import_binding(binding, &_import.visibility, span);
-        }
-        Ok(())
     }
 
     pub fn with_file<P: AsRef<Path>>(
@@ -341,9 +301,6 @@ impl AstToHirLowerer {
             intrinsic_normalizer: None,
             workspace,
             hir_program,
-            pending_impls: Vec::new(),
-            resolved_import_aliases: HashSet::new(),
-            glob_import_bindings: HashSet::new(),
             diagnostics: DiagnosticManager::new(),
         }
     }
@@ -479,8 +436,8 @@ impl AstToHirLowerer {
     /// path, here purely as the parent for one of *its* associated items
     /// (an impl method, an enum variant). Marking that non-module prefix
     /// `is_module = true` would make `module_exists` — and therefore
-    /// `register_import_binding`'s "is this name actually a module?"
-    /// check — treat `use crate::marker::PhantomData;` as importing a
+    /// module lookup must distinguish `use crate::marker::PhantomData;` from
+    /// importing a
     /// module instead of the struct itself, resolving to
     /// `Res::Module(["core","marker","PhantomData"])` rather than the
     /// struct's own `Res::Def`, the moment `PhantomData` gained even one
@@ -644,10 +601,17 @@ impl AstToHirLowerer {
         // its self path. They are not nominal workspace definitions and
         // therefore have no entry in `global_type_defs_by_def_id`; preserve
         // the lexical path as the canonical blanket-impl key instead.
-        if matches!(self.workspace.resolve_local(
-            self_path.segments.first().map(|s| s.name.as_str()).unwrap_or_default(),
-            fp_core::ast::resolve::Namespace::Type,
-        ), fp_core::ast::resolve::ResolutionResult::Found(_)) {
+        if matches!(
+            self.workspace.resolve_local(
+                self_path
+                    .segments
+                    .first()
+                    .map(|s| s.name.as_str())
+                    .unwrap_or_default(),
+                fp_core::ast::resolve::Namespace::Type,
+            ),
+            fp_core::ast::resolve::ResolutionResult::Found(_)
+        ) {
             return Ok(fp_core::ast::path::QualifiedPath::new(
                 self_path
                     .segments
@@ -767,7 +731,11 @@ impl AstToHirLowerer {
     /// `ns`, with no visibility filtering. This is reserved for canonical
     /// paths owned by the current definition; ordinary references go through
     /// the AST resolver's visibility-aware APIs.
-    fn tree_lookup_raw(&self, path: &fp_core::ast::path::QualifiedPath, ns: fp_core::ast::resolve::Namespace) -> Option<hir::Res> {
+    fn tree_lookup_raw(
+        &self,
+        path: &fp_core::ast::path::QualifiedPath,
+        ns: fp_core::ast::resolve::Namespace,
+    ) -> Option<hir::Res> {
         match self.workspace.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
@@ -779,12 +747,19 @@ impl AstToHirLowerer {
         }
     }
 
-    fn lookup_prelude_symbol(&self, name: &str, ns: fp_core::ast::resolve::Namespace) -> Option<hir::Res> {
+    fn lookup_prelude_symbol(
+        &self,
+        name: &str,
+        ns: fp_core::ast::resolve::Namespace,
+    ) -> Option<hir::Res> {
         let prelude = fp_core::ast::path::QualifiedPath::new(vec!["prelude".to_owned()]);
-        match self.workspace.resolve_module_name(&self.package_id, &prelude, name, ns) {
-            fp_core::ast::resolve::ResolutionResult::Found(
-                hir::Res::Def(def_id),
-            ) => Some(hir::Res::Def(def_id)),
+        match self
+            .workspace
+            .resolve_module_name(&self.package_id, &prelude, name, ns)
+        {
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+                Some(hir::Res::Def(def_id))
+            }
             _ => None,
         }
     }
@@ -797,15 +772,25 @@ impl AstToHirLowerer {
     /// resolution that came from one of the other tiers (a real path that
     /// canonicalization should expand).
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.workspace.resolve_local(name, fp_core::ast::resolve::Namespace::Type) {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+        match self
+            .workspace
+            .resolve_local(name, fp_core::ast::resolve::Namespace::Type)
+        {
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                Some(hir::Res::Def(id))
+            }
             _ => None,
         }
     }
 
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.workspace.resolve_local(name, fp_core::ast::resolve::Namespace::Value) {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+        match self
+            .workspace
+            .resolve_local(name, fp_core::ast::resolve::Namespace::Value)
+        {
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                Some(hir::Res::Def(id))
+            }
             _ => None,
         }
     }
@@ -824,9 +809,9 @@ impl AstToHirLowerer {
             name,
             fp_core::ast::resolve::Namespace::Type,
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(
-                hir::Res::Def(def_id),
-            ) => Some(hir::Res::Def(def_id)),
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+                Some(hir::Res::Def(def_id))
+            }
             _ => None,
         }
     }
@@ -864,22 +849,32 @@ impl AstToHirLowerer {
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
                 let resolved = match self.workspace.resolve_module_path_final(
-                    &self.package_id, &self.module_path, &qualified,
+                    &self.package_id,
+                    &self.module_path,
+                    &qualified,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        Some(hir::Res::Def(id))
+                    }
                     _ => None,
                 };
                 is_trait(resolved)
             })
-            .or_else(|| is_trait(self.lookup_prelude_symbol(name, fp_core::ast::resolve::Namespace::Type)))
+            .or_else(|| {
+                is_trait(self.lookup_prelude_symbol(name, fp_core::ast::resolve::Namespace::Type))
+            })
             .or_else(|| {
                 let path = fp_core::ast::path::QualifiedPath::new(vec![name.to_owned()]);
                 let resolved = match self.workspace.resolve_module_path_final(
-                    &self.package_id, &self.module_path, &path,
+                    &self.package_id,
+                    &self.module_path,
+                    &path,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        Some(hir::Res::Def(id))
+                    }
                     _ => None,
                 };
                 is_trait(resolved)
@@ -916,9 +911,9 @@ impl AstToHirLowerer {
             name,
             fp_core::ast::resolve::Namespace::Value,
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(
-                hir::Res::Def(def_id),
-            ) => Some(hir::Res::Def(def_id)),
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+                Some(hir::Res::Def(def_id))
+            }
             _ => None,
         }
     }
@@ -1089,6 +1084,20 @@ impl AstToHirLowerer {
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.ast_resolutions = package.resolutions.clone();
+        // AST resolution owns definition identity. Reuse those assignments
+        // during lowering so every resolved import/path points at the exact
+        // HIR definition that will be emitted, rather than allocating a
+        // second, order-dependent id sequence in the lowerer.
+        self.preassigned_def_ids
+            .extend(
+                package
+                    .resolutions
+                    .iter()
+                    .filter_map(|(item, resolution)| match resolution {
+                        hir::Res::Def(def_id) => Some((*item, def_id.clone())),
+                        _ => None,
+                    }),
+            );
         self.prepare_lowering_state();
         // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for
@@ -1172,10 +1181,8 @@ impl AstToHirLowerer {
         // `alloc::collections::btree::node::marker`.
         let mut program = hir::HirPackage::new(self.package.id.clone());
 
-        // 1: definitions (tolerant — impls whose self-type isn't resolvable
-        // yet, because it's only reachable through an import that hasn't
-        // been processed, get deferred into `pending_impls` instead of
-        // failing immediately; see `predeclare_items`'s `ItemKind::Impl` arm).
+        // 1: definitions. Import resolution has already populated the AST
+        // module tree, so impl headers are processed in this single pass.
         for package_item in &package_items {
             self.with_module_scope(&package_item.module_path, |this| {
                 this.predeclare_items(std::slice::from_ref(&package_item.item), true)
@@ -1187,7 +1194,6 @@ impl AstToHirLowerer {
         // regardless of processing order. Never attempted before append
         // until now; this fixed-point worklist also makes re-export
         // chains resolve, not just direct single-hop imports.
-        self.resolve_pending_imports(package)?;
 
         // Predeclaration may have probed a transparent alias RHS before its
         // imports existed and cached that miss (`type Result = result::Result`
@@ -1211,15 +1217,6 @@ impl AstToHirLowerer {
         // below) was never affected by this ordering bug since it doesn't
         // depend on this package's own tables at all.
         self.load_default_prelude_defs();
-
-        // Deferred impl headers are lowered after the package prelude is
-        // installed as well as after imports, since source impls commonly
-        // use bare prelude types such as `Option`.
-        for (module_path, item) in std::mem::take(&mut self.pending_impls) {
-            self.with_module_scope(&module_path, |this| {
-                this.predeclare_items(std::slice::from_ref(&item), false)
-            })?;
-        }
 
         // 5: append — unchanged.
         for package_item in &package_items {
@@ -1383,166 +1380,6 @@ impl AstToHirLowerer {
                 })
             })
             .collect()
-    }
-
-    /// Resolves every `ItemKind::Import` item in `package` as a small
-    /// fixed-point worklist: collect all bindings up front (this needs no
-    /// global state, just each import's own `module_path` context), then
-    /// keep sweeping whatever's still unresolved until a full sweep makes
-    /// no further progress. This is what makes re-export chains resolve
-    /// (`pub use` re-exporting another `pub use`), not just direct,
-    /// single-hop imports — a single sweep would only catch the latter.
-    /// Whatever's left unresolved after the fixed point is left as-is,
-    /// exactly like today's single-sweep behavior — not a new error
-    /// surface, genuinely-unresolvable imports behave the same as before.
-    fn resolve_pending_imports(
-        &mut self,
-        package: &fp_core::ast::package::AstPackage,
-    ) -> Result<()> {
-        let mut pending: Vec<(
-            fp_core::ast::path::QualifiedPath,
-            ImportBinding,
-            ast::Visibility,
-            Span,
-        )> = Vec::new();
-        // Collects every `use` in `item`, at whatever nesting depth —
-        // `package.items`' own `module_path` only reflects each *file's*
-        // location (`RustPackageProvider` gives every `.rs` file's
-        // top-level items that file's own module path), but a source file
-        // can still write `mod foo { use ...; }` inline rather than as a
-        // separate `mod foo;` file declaration (real std's own
-        // `std::prelude::v1`'s `mod ambiguous_macros_only { pub use crate
-        // ::*; }`), nesting the `use` one or more `ast::ItemKind::Module`
-        // levels below the file's own path. A single flat scan over
-        // `package.items` never looks inside those, so an import written
-        // this way was silently never collected as pending at all.
-        fn collect_pending_imports_recursive(
-            this: &mut AstToHirLowerer,
-            module_path: &fp_core::ast::path::QualifiedPath,
-            item: &ast::Item,
-            pending: &mut Vec<(
-                fp_core::ast::path::QualifiedPath,
-                ImportBinding,
-                ast::Visibility,
-                Span,
-            )>,
-        ) -> Result<()> {
-            match item.kind() {
-                ItemKind::Import(import) => {
-                    this.with_module_scope(module_path, |this| {
-                        let mut bindings = Vec::new();
-                        this.collect_imports(Vec::new(), &import.tree, &mut bindings)?;
-                        for binding in bindings {
-                            pending.push((
-                                module_path.clone(),
-                                binding,
-                                import.visibility.clone(),
-                                import.span(),
-                            ));
-                        }
-                        Ok(())
-                    })?;
-                }
-                ItemKind::Module(module) => {
-                    let nested_path = module_path.with_segment(module.name.name.clone());
-                    for child in &module.items {
-                        collect_pending_imports_recursive(this, &nested_path, child, pending)?;
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        for package_item in &package.items {
-            collect_pending_imports_recursive(
-                self,
-                &package_item.module_path,
-                &package_item.item,
-                &mut pending,
-            )?;
-        }
-
-        // A named import is only ever retried while it keeps making
-        // progress and is removed from `pending` the moment it resolves,
-        // so it can never itself loop forever. A glob is different (see
-        // its branch below): it's deliberately never removed, since its
-        // expansion can keep growing as sibling imports resolve. Both are
-        // bounded by the same real invariant — a finite crate has a finite
-        // number of (module, namespace, name) bindings, so genuine
-        // progress can only happen finitely many times — but a defensive
-        // cap still guards against a resolver bug (or a pathological
-        // re-export cycle this fixed point doesn't actually converge on)
-        // turning into a silent hang instead of a loud failure.
-        const MAX_SWEEPS: usize = 1000;
-        let mut sweeps = 0usize;
-        loop {
-            sweeps += 1;
-            if sweeps > MAX_SWEEPS {
-                return Err(fp_core::error::Error::from(format!(
-                    "internal compiler error: import resolution did not reach a fixed point after {MAX_SWEEPS} sweeps (likely an unbounded re-export cycle)"
-                )));
-            }
-            let mut progressed = false;
-            let mut still_pending = Vec::with_capacity(pending.len());
-            for (module_path, binding, visibility, span) in pending {
-                if binding.is_glob {
-                    // Re-expand from scratch every sweep instead of once at
-                    // collection time — the source module's own bindings
-                    // (e.g. `v1`'s re-exported `Some`/`None`) may still be
-                    // unresolved on earlier sweeps, so a one-shot expansion
-                    // would permanently see an empty module. A glob is
-                    // never removed from `pending`: its expansion can keep
-                    // growing as sibling imports resolve, so it's retried
-                    // every sweep until the whole worklist reaches a fixed
-                    // point (tracked via `resolved_import_aliases` growth
-                    // below, since `register_import_binding` itself returns
-                    // `true` for an already-resolved alias too).
-                    let aliases_before = self.resolved_import_aliases.len();
-                    self.with_module_scope(&module_path, |this| {
-                        let mut fresh = Vec::new();
-                        this.expand_glob_import(binding.target.clone(), &mut fresh);
-                        for fresh_binding in fresh {
-                            this.register_import_binding(fresh_binding, &visibility, span);
-                        }
-                        Ok(())
-                    })?;
-                    if self.resolved_import_aliases.len() > aliases_before {
-                        progressed = true;
-                    }
-                    still_pending.push((module_path, binding, visibility, span));
-                    continue;
-                }
-                let resolved = self.with_module_scope(&module_path, |this| {
-                    Ok(this.register_import_binding(binding.clone(), &visibility, span))
-                })?;
-                if resolved {
-                    progressed = true;
-                } else {
-                    still_pending.push((module_path, binding, visibility, span));
-                }
-            }
-            pending = still_pending;
-            if !progressed || pending.is_empty() {
-                break;
-            }
-        }
-        // Match rustc's final indeterminate-import check: imports that could
-        // not be resolved after the fixed point are errors, not silently
-        // dropped bindings. Globs remain pending by design because they are
-        // re-expanded on every sweep; only named imports can be diagnosed
-        // here without conflating an already-expanded glob with failure.
-        for (module_path, binding, _, span) in pending {
-            if !binding.is_glob {
-                let target = fp_core::ast::path::QualifiedPath::new(binding.target.clone()).to_key();
-                self.add_error(
-                    Diagnostic::error(format!("unresolved import `{target}`"))
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(span),
-                );
-                tracing::debug!(?module_path, %target, "unresolved import after resolution fixed point");
-            }
-        }
-        Ok(())
     }
 
     /// Transform a query document node into HIR.
@@ -1713,10 +1550,7 @@ impl AstToHirLowerer {
                 self.pop_module_scope();
                 Ok(())
             }
-            ItemKind::Import(import) => {
-                self.handle_import(import)?;
-                Ok(())
-            }
+            ItemKind::Import(import) => Ok(()),
             ItemKind::DefType(def_type) => {
                 if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
                     program
@@ -1818,7 +1652,6 @@ impl AstToHirLowerer {
 
         match item.as_ref().kind() {
             ItemKind::Import(import) => {
-                self.handle_import(import)?;
                 let unit_block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),
@@ -2162,9 +1995,7 @@ impl AstToHirLowerer {
                             .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
                             .transpose()?;
                         let payload = match &variant.value {
-                            ast::Ty::Unit(_) => {
-                                None
-                            }
+                            ast::Ty::Unit(_) => None,
                             ast::Ty::Structural(structural) => {
                                 Some(self.materialize_enum_struct_payload(
                                     &enum_def.name.name,
@@ -3517,12 +3348,17 @@ impl AstToHirLowerer {
                     // `qualify_path`/`to_key()` — so this only succeeds if
                     // the source struct happens to be registered at the
                     // crate root.
-                    let source_path = fp_core::ast::path::QualifiedPath::new(vec![source_name.to_owned()]);
+                    let source_path =
+                        fp_core::ast::path::QualifiedPath::new(vec![source_name.to_owned()]);
                     let source_def_id = match self.workspace.resolve_module_path_final(
-                        &self.package_id, &self.module_path, &source_path,
+                        &self.package_id,
+                        &self.module_path,
+                        &source_path,
                         fp_core::ast::resolve::Namespace::Type,
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                            Some(hir::Res::Def(id))
+                        }
                         _ => None,
                     };
                     let source_fields: Vec<ast::StructuralField> = source_def_id

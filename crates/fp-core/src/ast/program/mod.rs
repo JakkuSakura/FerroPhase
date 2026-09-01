@@ -100,40 +100,6 @@ impl AstProgram {
         self.local_scope.borrow_mut().declare(name, binding, self.provider().declaration_rules())
     }
 
-    /// Run the AST-stage resolver setup for a loaded package. Declaration
-    /// collection is intentionally separate from HIR lowering; this method
-    /// seeds the persistent module tree before any AST→HIR consumer runs.
-    pub fn resolve_package(&self, package_id: &PackageId) -> crate::error::Result<()> {
-        let package = self
-            .crates
-            .borrow()
-            .get(package_id)
-            .cloned()
-            .ok_or_else(|| crate::error::Error::from(format!("package not found: {package_id}")))?;
-        let mut package = package.borrow_mut();
-        let paths: Vec<_> = package
-            .module_paths
-            .iter()
-            .cloned()
-            .chain(package.items.iter().map(|item| item.module_path.clone()))
-            .collect();
-        let items = package.items.clone();
-        let mut resolver = crate::ast::resolve::AstResolver::for_package(
-            package_id.clone(),
-            &mut package.module_tree,
-            self.providers.declaration_rules(),
-            self.providers.resolution_rules(),
-        );
-        for path in paths {
-            resolver.modules.ensure_module(&path);
-        }
-        resolver.collect_package_items(&items);
-        let resolutions = resolver.resolution_table().clone();
-        drop(resolver);
-        package.resolutions = resolutions;
-        Ok(())
-    }
-
     /// Publish a package source slot and return its compiler-owned result.
     pub fn begin_package(
         &self,

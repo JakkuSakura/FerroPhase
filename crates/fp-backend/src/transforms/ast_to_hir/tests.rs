@@ -1581,7 +1581,11 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
     assert!(
         program
             .module_tree
-            .lookup(program.module_tree.root(), fp_core::ast::resolve::Namespace::Type, "Alias",)
+            .lookup(
+                program.module_tree.root(),
+                fp_core::ast::resolve::Namespace::Type,
+                "Alias",
+            )
             .is_some()
     );
     Ok(())
@@ -3075,7 +3079,7 @@ fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Res
 /// `std::prelude::v1` (`crates/fp-rust/std/std/prelude/v1.rs`) writes a
 /// `use` inline inside a *nested* `mod ambiguous_macros_only { pub use
 /// crate::*; }` block rather than only at its own file's top level.
-/// `resolve_pending_imports` used to scan only `package.items`' own
+/// The resolver must scan beyond `package.items`' own
 /// top-level entries, never recursing into `ast::ItemKind::Module`, so an
 /// import written this way was silently never collected as pending at all
 /// — this constructs that exact shape (`use` nested inside an inline

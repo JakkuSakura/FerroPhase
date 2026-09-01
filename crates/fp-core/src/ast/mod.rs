@@ -38,8 +38,8 @@ pub use json::*;
 pub use macros::*;
 pub use pat::*;
 pub use resolve::{
-    AstResolver, Binding, DeclarationOutcome, DeclarationRules, LocalScope,
-    ModuleTree as ResolveModuleTree, Namespace, ResolutionResult, ResolutionRules, Symbol,
+    Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree as ResolveModuleTree,
+    Namespace, ResolutionResult, ResolutionRules, Symbol,
 };
 pub use schema::*;
 pub use snapshot::*;
