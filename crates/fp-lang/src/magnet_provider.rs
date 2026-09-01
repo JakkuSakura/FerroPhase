@@ -111,6 +111,14 @@ impl PackageProvider for MagnetWorkspaceProvider {
         Box::new(crate::normalization::FerroIntrinsicNormalizer::new())
     }
 
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::ferro()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::ferro()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
         let mut module_ids = Vec::new();

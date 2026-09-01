@@ -3,14 +3,58 @@ use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
 impl AstToHirLowerer {
     pub(super) fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
-        let hir::Res::Def(def_id) = base.res.as_ref()? else {
-            return None;
+        let def_id = match base.res.as_ref()? {
+            hir::Res::Def(def_id) => def_id.clone(),
+            hir::Res::SelfTy => {
+                let self_ty = self.current_impl_self_ty.as_ref()?;
+                let hir::TypeExprKind::Path(path) = &self_ty.kind else {
+                    return None;
+                };
+                let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                    return None;
+                };
+                def_id.clone()
+            }
+            _ => return None,
         };
+        // Transparent aliases may also have a materialized enum-shaped HIR
+        // item for structural/type-building purposes. Constructor paths must
+        // nevertheless use the defining enum's variant identity, just like
+        // rustc resolves `Alias::Variant` through the alias target.
+        if let Some(target) = self
+            .package
+            .type_alias_targets
+            .get(&def_id)
+            .cloned()
+            .or_else(|| self.hir_program.type_alias_target(def_id.clone()))
+            && let hir::TypeExprKind::Path(path) = target.kind
+            && let Some(hir::Res::Def(target_id)) = path.res
+        {
+            let target_item = self
+                .package
+                .def_map
+                .get(&target_id)
+                .cloned()
+                .or_else(|| self.program_def_map.get(&target_id).cloned())
+                .or_else(|| self.hir_program.item(target_id.clone()));
+            if let Some(hir::Item {
+                kind: hir::ItemKind::Enum(enum_def),
+                ..
+            }) = target_item
+            {
+                return enum_def
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name.as_str() == name)
+                    .map(|variant| hir::Res::Def(variant.def_id.clone()));
+            }
+        }
         let item = self
             .package
             .def_map
-            .get(def_id)
+            .get(&def_id)
             .cloned()
+            .or_else(|| self.program_def_map.get(&def_id).cloned())
             .or_else(|| self.hir_program.item(def_id.clone()))?;
         let hir::ItemKind::Enum(enum_def) = &item.kind else {
             let prefix = QualifiedPath::new(
@@ -81,25 +125,20 @@ impl AstToHirLowerer {
                 } else if source_segments.len() > 1 {
                     path.segments.extend(source_segments.into_iter().skip(1));
                 }
-                let res = path
-                    .segments
-                    .split_last()
-                    .and_then(|(leaf, parent)| {
-                        self.package
-                            .module_tree
-                            .module_id(&QualifiedPath::new(parent.to_vec()))
-                            .and_then(|module| {
-                                self.package
-                                    .module_tree
-                                    .lookup(module, scope.namespace(), leaf)
-                            })
-                    })
-                    .map(|entry| entry.res.clone())
+                let res = path.segments.split_last().and_then(|(leaf, parent)| {
+                    match self.workspace.resolve_module_name(
+                        &self.package_id,
+                        &QualifiedPath::new(parent.to_vec()),
+                        leaf,
+                        scope.namespace(),
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
+                })
                     .or_else(|| self.lookup_global_res(&path, scope))
                     .or_else(|| {
-                        self.package
-                            .module_tree
-                            .module_exists(&path)
+                        self.workspace.module_exists(&self.package_id, &path)
                             .then(|| hir::Res::Module(path.segments.clone()))
                     });
                 return Ok(Some(hir::Path {
@@ -160,7 +199,7 @@ impl AstToHirLowerer {
         } else {
             self.lookup_global_res(&resolved_name.path, scope)
         };
-        if res.is_none() && self.package.module_tree.module_exists(&resolved_name.path) {
+        if res.is_none() && self.workspace.module_exists(&self.package_id, &resolved_name.path) {
             res = Some(hir::Res::Module(resolved_name.path.segments.clone()));
         }
         Ok(Some(self.preserve_lexical_projection_path(
@@ -284,11 +323,11 @@ impl AstToHirLowerer {
     /// `module_tree.root()`, with no need to scan every item's qualified
     /// path (as the old flat-map-based version did) or cache the result.
     fn cached_root_modules(&self) -> HashSet<String> {
-        let root = self.package.module_tree.root();
-        self.package
-            .module_tree
-            .children(root)
-            .map(|(name, _)| name.to_string())
+        self.workspace
+            .module_member_names(&self.package_id, &QualifiedPath::new(Vec::new()))
+            .into_iter()
+            .flatten()
+            .map(|name| name.to_string())
             .collect()
     }
 
@@ -297,59 +336,6 @@ impl AstToHirLowerer {
     /// this resolver is its only real caller (`resolve_item_path`'s own
     /// associated-type-path handling in `name_to_hir_path_with_scope`);
     /// keeping it as a free-standing "shared kernel" function in `fp-core`
-    /// implied a generality it never actually had.
-    fn parse_path(spec: &str) -> std::result::Result<ParsedPath, fp_core::ast::path::PathError> {
-        use fp_core::ast::path::PathError;
-        let trimmed = spec.trim();
-        if trimmed.is_empty() {
-            return Err(PathError::EmptyPath);
-        }
-        let mut raw = trimmed;
-        let mut prefix = PathPrefix::Plain;
-        if raw.starts_with("::") {
-            prefix = PathPrefix::Root;
-            raw = raw.trim_start_matches("::");
-        }
-        let mut segments: Vec<String> = raw
-            .split("::")
-            .filter(|seg| !seg.is_empty())
-            .map(|seg| seg.trim().to_string())
-            .filter(|seg| !seg.is_empty())
-            .collect();
-        if segments.is_empty() {
-            return Err(PathError::InvalidPath(spec.to_string()));
-        }
-        if matches!(prefix, PathPrefix::Plain) {
-            match segments[0].as_str() {
-                "crate" => {
-                    prefix = PathPrefix::Crate;
-                    segments.remove(0);
-                }
-                "self" => {
-                    prefix = PathPrefix::SelfMod;
-                    segments.remove(0);
-                }
-                "super" => {
-                    let mut depth = 0;
-                    while segments.first().map(|seg| seg.as_str()) == Some("super") {
-                        segments.remove(0);
-                        depth += 1;
-                    }
-                    prefix = PathPrefix::Super(depth);
-                }
-                _ => {}
-            }
-        }
-        Ok(ParsedPath { prefix, segments })
-    }
-
-    /// Resolves a parsed path against this resolver's own state directly
-    /// (module path, module tree, symbol tables, workspace) — moved here
-    /// from `fp_core::ast::path::resolve_item_path` (a free function that
-    /// needed three separate closures just to reach into `self`) since
-    /// this resolver is its only real caller; folds `item_exists`/
-    /// `scope_contains`/`module_exists` (previously closures built at the
-    /// call site) directly into the method body instead.
     fn resolve_item_path(
         &self,
         parsed: &ParsedPath,
@@ -359,8 +345,7 @@ impl AstToHirLowerer {
             return None;
         }
         let item_exists = |candidate: &QualifiedPath| {
-            let key = candidate.to_key();
-            if self.tree_lookup_raw(&key, scope.namespace()).is_some() {
+            if self.tree_lookup_raw(candidate, scope.namespace()).is_some() {
                 return true;
             }
             // Dependency trees participate only after the extern-prelude has
@@ -384,14 +369,16 @@ impl AstToHirLowerer {
             // Cross-package export (e.g. `libc::macos::getenv`), looked
             // up lazily against the workspace on a local-lookup miss —
             // see `lookup_global_res`'s identical fallback.
-            self.hir_program.find_export(&key).is_some()
+            self.workspace
+                .resolve_external_path(candidate, scope.namespace())
+                .is_some()
         };
         let scope_contains = |name: &str| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
             PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             PathResolutionScope::Trait => self.resolve_trait_symbol(name).is_some(),
         };
-        let module_exists = |p: &QualifiedPath| self.package.module_tree.module_exists(p);
+        let module_exists = |p: &QualifiedPath| self.workspace.module_exists(&self.package_id, p);
 
         match parsed.prefix {
             PathPrefix::Root | PathPrefix::Crate => {
@@ -558,29 +545,11 @@ impl AstToHirLowerer {
 
         let mut resolved = None;
 
-        // A primitive type name (`u8`, `bool`, ...) takes absolute
-        // priority over every other resolution tier below when it's the
-        // *entire* bare name being resolved — real Rust's own rule (a
-        // primitive is never shadowable by an import/re-export/module of
-        // the same name), and specifically what a type-relative value
-        // access (`u8::MAX`, built by resolving `u8` alone first and
-        // appending `::MAX` afterward) depends on: without this priority
-        // check, several *later* tiers below (e.g. `resolve_item_path`'s
-        // own independent item-existence scan) can still resolve a bare
-        // primitive name to an unrelated same-named item (vendored std's
-        // own crate-root `pub use legacy_int_modules::{u8, ..}`
-        // re-export) before ever reaching the primitive fallback that
-        // used to be the *last* resort at the bottom of this function.
-        if segments.len() == 1
-            && path_prefix == PathPrefix::Plain
-            && is_primitive_type_name(segments[0].name.as_str())
-        {
-            resolved = Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
-                segments[0].name.as_str().to_string(),
-            )));
-        }
-
-        if resolved.is_none() && segments.len() == 1 {
+        // Bare names are resolved through lexical/module/import bindings
+        // before builtin fallback. This matches rustc: a user-defined type
+        // (or import) named `u8` shadows the primitive spelling. Primitive
+        // handling remains a fallback for the no-binding case.
+        if segments.len() == 1 {
             if path_prefix == PathPrefix::Plain {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
@@ -605,6 +574,17 @@ impl AstToHirLowerer {
                     PathResolutionScope::Trait => self.resolve_trait_symbol(&segment.name),
                 });
             }
+        }
+
+        if resolved.is_none()
+            && scope != PathResolutionScope::Value
+            && segments.len() == 1
+            && path_prefix == PathPrefix::Plain
+            && is_primitive_type_name(segments[0].name.as_str())
+        {
+            resolved = Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
+                segments[0].name.as_str().to_string(),
+            )));
         }
 
         // Lexical bindings (especially generic parameters) are identities, not
@@ -692,30 +672,47 @@ impl AstToHirLowerer {
                     res: Some(base_res),
                 };
                 let full_path = self.canonicalize_segments(&type_relative.segments);
-                if let Some(hir::Res::Def(variant_id)) =
-                    self.lookup_symbol(&full_path.to_key(), hir::Namespace::Value)
-                {
+                if let Some(hir::Res::Def(variant_id)) = match self.workspace.resolve_module_path(
+                    &self.package_id, &self.module_path, &full_path,
+                    fp_core::ast::resolve::Namespace::Value,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                    _ => None,
+                } {
                     let predeclared_variant = self
                         .enum_variant_def_ids
                         .values()
                         .any(|candidate| candidate == &variant_id);
                     let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res
                     {
-                        self
-                            .package
-                            .def_map
-                            .get(enum_id)
-                            .cloned()
-                            .or_else(|| self.hir_program.item(enum_id.clone()))
-                            .is_some_and(|item| matches!(
-                                item.kind,
-                                hir::ItemKind::Enum(ref enum_def)
-                                    if enum_def.variants.iter().any(|variant| variant.def_id == variant_id)
-                            ))
+                        let transparent_alias =
+                            self.package.type_alias_targets.contains_key(enum_id)
+                                || self
+                                    .hir_program
+                                    .type_alias_target(enum_id.clone())
+                                    .is_some();
+                        (predeclared_variant && !transparent_alias)
+                            || (!transparent_alias
+                                && self
+                                    .package
+                                    .def_map
+                                    .get(enum_id)
+                                    .cloned()
+                                    .or_else(|| self.hir_program.item(enum_id.clone()))
+                                    .is_some_and(|item| {
+                                        matches!(
+                                            item.kind,
+                                            hir::ItemKind::Enum(ref enum_def)
+                                                if enum_def
+                                                    .variants
+                                                    .iter()
+                                                    .any(|variant| variant.def_id == variant_id)
+                                        )
+                                    }))
                     } else {
                         false
                     };
-                    if predeclared_variant || declared_variant {
+                    if declared_variant {
                         type_relative.res = Some(hir::Res::Def(variant_id));
                         return Ok(type_relative);
                     }
@@ -776,25 +773,16 @@ impl AstToHirLowerer {
             && path_prefix == PathPrefix::Plain
             && is_primitive_type_name(segments[0].name.as_str())
         {
-            let tree = &self.package.module_tree;
-            if let Some(root_module) = self
-                .module_path
-                .segments
-                .first()
-                .and_then(|root| tree.child(tree.root(), root))
-            {
-                if let Some(prim_module) = tree.child(root_module, segments[0].name.as_str()) {
-                    if let Some(res) = tree.lookup_res(
-                        prim_module,
-                        hir::Namespace::Type,
-                        segments[1].name.as_str(),
-                    ) {
-                        return Ok(hir::Path {
-                            segments,
-                            res: Some(res.clone()),
-                        });
-                    }
-                }
+            let primitive_path = self.canonicalize_segments(&segments);
+            if let fp_core::ast::resolve::ResolutionResult::Found(
+                fp_core::ast::resolve::AstRes::Def(id),
+            ) = self.workspace.resolve_module_path(
+                &self.package_id,
+                &self.module_path,
+                &primitive_path,
+                fp_core::ast::resolve::Namespace::Type,
+            ) {
+                return Ok(hir::Path { segments, res: Some(hir::Res::Def(id)) });
             }
         }
 
@@ -833,20 +821,17 @@ impl AstToHirLowerer {
                         .map(|segment| segment.name.as_str().to_string()),
                 );
                 let aliased = QualifiedPath::new(aliased);
-                let module_member = aliased
-                    .segments
-                    .split_last()
-                    .and_then(|(leaf, parent)| {
-                        self.package
-                            .module_tree
-                            .module_id(&QualifiedPath::new(parent.to_vec()))
-                            .and_then(|module| {
-                                self.package
-                                    .module_tree
-                                    .lookup(module, scope.namespace(), leaf)
-                            })
-                    })
-                    .map(|entry| entry.res.clone());
+                let module_member = aliased.segments.split_last().and_then(|(leaf, parent)| {
+                    match self.workspace.resolve_module_name(
+                        &self.package_id,
+                        &QualifiedPath::new(parent.to_vec()),
+                        leaf,
+                        scope.namespace(),
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
+                });
                 let module_member = module_member.or_else(|| {
                     let root = self.package_crate_root();
                     if root.is_empty() {
@@ -855,15 +840,15 @@ impl AstToHirLowerer {
                     let mut rooted = root;
                     rooted.extend(aliased.segments.iter().cloned());
                     let (leaf, parent) = rooted.split_last()?;
-                    self.package
-                        .module_tree
-                        .module_id(&QualifiedPath::new(parent.to_vec()))
-                        .and_then(|module| {
-                            self.package
-                                .module_tree
-                                .lookup_res(module, scope.namespace(), leaf)
-                        })
-                        .cloned()
+                    match self.workspace.resolve_module_name(
+                        &self.package_id,
+                        &QualifiedPath::new(parent.to_vec()),
+                        leaf,
+                        scope.namespace(),
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
                 });
                 if let Some(res) = module_member.or_else(|| self.lookup_global_res(&aliased, scope))
                 {
@@ -961,31 +946,18 @@ impl AstToHirLowerer {
             // inside `std` itself) — real rustc resolves this through the
             // extern prelude, an exact name -> crate-root mapping, not by
             // guessing. A sub-crate root is a child of the package-root
-            // node in `self.package.module_tree` (ground truth from the
-            // loader — every real module path was `ensure_module`d at the
-            // start of `transform_package`) — a single deterministic tree
-            // descent, no candidate trial-and-error.
+            // the AST resolver's module namespace — a single deterministic
+            // lookup, with no candidate trial-and-error.
             if let (Some(first_name), Some(package_root)) = (
                 segments.first().map(|s| s.name.as_str().to_string()),
                 self.module_path.segments.first().cloned(),
             ) {
-                let tree = &self.package.module_tree;
-                if let Some(root_module) = tree.child(tree.root(), &package_root) {
-                    if tree.child(root_module, &first_name).is_some() {
-                        let mut absolute_segments = vec![package_root, first_name];
-                        absolute_segments.extend(
-                            segments
-                                .iter()
-                                .skip(1)
-                                .map(|segment| segment.name.as_str().to_string()),
-                        );
-                        let absolute = QualifiedPath::new(absolute_segments);
-                        if let Some(res) = self.lookup_global_res(&absolute, scope) {
-                            return Ok(hir::Path {
-                                segments,
-                                res: Some(res),
-                            });
-                        }
+                let absolute = self.canonicalize_segments(&segments);
+                if absolute.head() == Some(package_root.as_str())
+                    && absolute.segments.get(1).map(String::as_str) == Some(first_name.as_str())
+                {
+                    if let Some(res) = self.lookup_global_res(&absolute, scope) {
+                        return Ok(hir::Path { segments, res: Some(res) });
                     }
                 }
             }
@@ -1001,15 +973,9 @@ impl AstToHirLowerer {
                         // `global_type_defs` (potentially thousands once
                         // vendored std is loaded) with a `format!`
                         // allocation per candidate.
-                        let type_paths = self
-                            .hir_program
-                            .def_path(type_def_id.clone())
-                            .into_iter()
-                            .map(|path| path.join("::"));
+                        let type_paths = std::iter::empty::<QualifiedPath>();
                         for type_path in type_paths {
-                            let mut associated_path = Self::parse_path(&type_path)
-                                .map_err(|error| fp_core::Error::from(format!("{error:?}")))?
-                                .segments;
+                            let mut associated_path = type_path.segments;
                             associated_path.extend(
                                 segments
                                     .iter()
@@ -1078,19 +1044,17 @@ impl AstToHirLowerer {
                     }
                     if canonical_res.is_none() && canonical.len() > 1 {
                         let parent = QualifiedPath::new(canonical[..canonical.len() - 1].to_vec());
-                        if let (Some(module), Some(last)) = (
-                            self.package.module_tree.module_id(&parent),
-                            canonical.last(),
-                        ) {
-                            canonical_res = self
-                                .package
-                                .module_tree
-                                .lookup_res(module, scope.namespace(), last)
-                                .cloned();
+                        if let Some(last) = canonical.last() {
+                            canonical_res = match self.workspace.resolve_module_name(
+                                &self.package_id, &parent, last, scope.namespace(),
+                            ) {
+                                fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                                _ => None,
+                            };
                         }
                     }
                     if canonical_res.is_none()
-                        && self.package.module_tree.module_exists(&canonical_path)
+                        && self.workspace.module_exists(&self.package_id, &canonical_path)
                     {
                         canonical_res = Some(hir::Res::Module(canonical.clone()));
                     }
@@ -1150,7 +1114,7 @@ impl AstToHirLowerer {
                     resolved.clone()
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
-                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical)
+                    if canonical_res.is_none() && self.workspace.module_exists(&self.package_id, &canonical)
                     {
                         canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                     }
@@ -1341,9 +1305,12 @@ impl AstToHirLowerer {
                         if let Some(path) =
                             self.resolved_name_to_hir_path(&resolved_name, name, scope)?
                         {
-                            if path.res.is_some() {
-                                return Ok(path);
-                            }
+                            // Preserve the frontend's canonical spelling even
+                            // when this lowering pass cannot yet attach a
+                            // `Res` (imports may be deferred to the fixed
+                            // point). Dropping it and rebuilding from the
+                            // short AST name loses qualified paths.
+                            return Ok(path);
                         }
                     }
                 }
@@ -1383,13 +1350,16 @@ impl AstToHirLowerer {
                 base.segments.push(seg);
                 if let Some(hir::Res::Module(module_path)) = base.res.clone() {
                     let member_path = QualifiedPath::new(module_path.clone());
-                    if let Some(module) = self.package.module_tree.module_id(&member_path) {
-                        if let Some(member) = self.package.module_tree.lookup(
-                            module,
-                            scope.namespace(),
+                    if let fp_core::ast::resolve::ResolutionResult::Found(res) =
+                        self.workspace.resolve_module_name(
+                            &self.package_id,
+                            &member_path,
                             select.field.name.as_str(),
-                        ) {
-                            base.res = Some(member.res.clone());
+                            scope.namespace(),
+                        )
+                    {
+                        if let fp_core::ast::resolve::AstRes::Def(id) = res {
+                            base.res = Some(hir::Res::Def(id));
                         }
                     }
                 }

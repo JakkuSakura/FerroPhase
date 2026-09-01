@@ -49,7 +49,6 @@ pub struct HirPackage {
     /// resolution must consult only crates reachable through this list, not
     /// every package loaded in the compilation session.
     pub dependencies: Vec<PackageId>,
-    pub module_tree: resolve::ModuleTree,
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
     /// High-water mark for `next_def_id` — per-package, not a driver-wide
@@ -186,9 +185,9 @@ pub struct HirPackage {
     /// Fully-qualified name -> HIR `Res` lookup entries exported by this
     /// package (moved from the old `CompiledPackage::hir_exports`) —
     /// populated incrementally by `ast_to_hir` as it registers each
-    /// exported definition. `HirProgram` merges these across every loaded
-    /// package for cross-package bare-name resolution (`AstProgram`'s old
-    /// `find_export`/`find_export_by_suffix`, now `HirProgram`'s).
+    /// exported definition. Exact cross-package resolution is performed by
+    /// `HirProgram`'s namespace-aware module-tree index; this map remains a
+    /// metadata compatibility surface for package serialization.
     pub hir_exports: HashMap<String, Res>,
     /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by the
     /// impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared impl,
@@ -502,7 +501,6 @@ impl HirPackage {
             id,
             prelude: None,
             dependencies: Vec::new(),
-            module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),
             def_map: HashMap::new(),
             next_def_id: 1,

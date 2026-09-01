@@ -440,7 +440,7 @@ impl CompilerDriver {
             )));
         }
 
-        let package_workspace = parent_workspace.for_package(package_id.clone());
+        let package_workspace = parent_workspace;
         {
             let mut state = self.state.borrow_mut();
             state.workspace = Rc::new(package_workspace);
@@ -621,6 +621,13 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
+        // Resolve names at the AST boundary before constructing HIR. The
+        // lowerer consumes the package's persistent AST module context.
+        self.state
+            .borrow()
+            .workspace
+            .resolve_package(&package_source.package_id)
+            .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
         let normalizer = self
             .state
             .borrow()
@@ -675,13 +682,7 @@ impl CompilerDriver {
             .borrow()
             .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| {
-                let hir_package = hir_package.borrow();
-                (
-                    hir_package.module_tree.all_paths().count(),
-                    hir_package.hir_exports.len(),
-                )
-            });
+            .map(|hir_package| hir_package.borrow().hir_exports.len());
         if existing.is_some() {
             return Ok(());
         }

@@ -141,6 +141,14 @@ impl PackageProvider for FerroPhaseProvider {
         Box::new(fp_core::intrinsics::NoopIntrinsicNormalizer)
     }
 
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::ferro()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::ferro()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
             CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME | LIBC_PACKAGE_NAME => {
@@ -253,6 +261,14 @@ impl PackageProvider for InputPackageProvider {
 
     fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
         Box::new(crate::normalization::FerroIntrinsicNormalizer::new())
+    }
+
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::ferro()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::ferro()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

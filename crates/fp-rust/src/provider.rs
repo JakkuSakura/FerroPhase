@@ -197,6 +197,14 @@ impl PackageProvider for RustPackageProvider {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
 
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::rust()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::rust()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
         // Real module discovery (below, in `load_package_source`) walks
@@ -802,6 +810,14 @@ impl PackageProvider for RustExternalApiProvider {
     fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
+
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::rust()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::rust()
+    }
 }
 
 impl RustStdProvider {
@@ -891,6 +907,14 @@ impl PackageProvider for RustStdProvider {
     // instead, so this one is never actually consulted.
     fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
+    }
+
+    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
+        fp_core::ast::resolve::DeclarationRules::rust()
+    }
+
+    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
+        fp_core::ast::resolve::ResolutionRules::rust()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

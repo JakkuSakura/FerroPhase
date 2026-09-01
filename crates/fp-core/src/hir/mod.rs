@@ -13,7 +13,6 @@ pub mod place;
 pub mod pretty;
 pub mod program;
 pub mod refinement;
-pub mod resolve;
 pub mod ty;
 
 pub use ident::{DefPath, Symbol};
@@ -21,7 +20,6 @@ pub use package::HirPackage;
 pub use path::HirPath;
 pub use program::{HirProgram, SharedHirProgram};
 pub use refinement::{ParamSlot, RefinementHint};
-pub use resolve::{ModuleId, ModuleTree, Namespace, SymbolEntry, SymbolExport};
 pub use ty::{Abi, Ty};
 
 pub type NodeId = u32;

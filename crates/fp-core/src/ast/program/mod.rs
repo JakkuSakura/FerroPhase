@@ -4,7 +4,6 @@ use crate::ast::package::provider::PackageProvider;
 use crate::ast::package::{AstPackage, PackageId, PackageMetadata};
 use crate::ast::path::QualifiedPath;
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
-use crate::hir::PackageId as HirPackageId;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -32,16 +31,7 @@ pub struct AstProgram {
     /// of providers (previously O(providers × package-list) per lookup,
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
-    current_package: Option<PackageId>,
     prelude: Rc<RefCell<Option<Rc<RefCell<AstPackage>>>>>,
-    /// Reverse index from a package's *HIR* id (the `package_id` embedded
-    /// in every `hir::DefId` minted while lowering it) back to its
-    /// `AstPackage` — lets a HIR-level, `DefId`-keyed lookup
-    /// (`find_hir_impl_method`) go straight to the one package that could
-    /// possibly own that `DefId` (an inherent impl's items are always
-    /// minted in the same package as the impl itself) instead of searching
-    /// every loaded package.
-    hir_packages: Rc<RefCell<HashMap<HirPackageId, Rc<RefCell<AstPackage>>>>>,
     /// Memoized, name-sorted snapshot of `crates`'s values — the package
     /// set only ever changes via `begin_package`/`import_package` (both
     /// invalidate this), so `sorted_packages` doesn't need to rebuild a
@@ -50,6 +40,9 @@ pub struct AstProgram {
     /// `module_paths`, ...) — this runs once per unqualified
     /// identifier/path reference across every compiled file.
     sorted_packages_cache: Rc<RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>>,
+    /// Explicit AST local-resolution state. Lowering borrows this facade;
+    /// it does not own lexical/local binding maps.
+    local_scope: Rc<RefCell<crate::ast::resolve::LocalScope>>,
 }
 
 impl AstProgram {
@@ -57,10 +50,9 @@ impl AstProgram {
         Self {
             crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
-            current_package: None,
             prelude: Rc::new(RefCell::new(None)),
-            hir_packages: Rc::new(RefCell::new(HashMap::new())),
             sorted_packages_cache: Rc::new(RefCell::new(None)),
+            local_scope: Rc::new(RefCell::new(crate::ast::resolve::LocalScope::new())),
         }
     }
 
@@ -80,25 +72,66 @@ impl AstProgram {
         packages
     }
 
-    /// Create a package-focused workspace view. Provider registrations and
-    /// already compiled package entries are shared by value (the packages
-    /// themselves remain behind their existing `Rc`s), while lookups see the
-    /// package currently being lowered. A dependency must remain visible when
-    /// recursive compilation changes the active package; starting with an
-    /// empty registry would make visibility depend on recursion order.
-    pub fn for_package(&self, package_id: PackageId) -> Self {
-        Self {
-            crates: self.crates.clone(),
-            providers: self.providers.clone(),
-            current_package: Some(package_id),
-            prelude: self.prelude.clone(),
-            hir_packages: self.hir_packages.clone(),
-            sorted_packages_cache: self.sorted_packages_cache.clone(),
-        }
+    pub fn reset_local_scope(&self) {
+        *self.local_scope.borrow_mut() = crate::ast::resolve::LocalScope::new();
     }
 
-    pub fn current_package(&self) -> Option<&PackageId> {
-        self.current_package.as_ref()
+    pub fn enter_local_scope(&self) {
+        self.local_scope.borrow_mut().enter();
+    }
+
+    pub fn leave_local_scope(&self) {
+        self.local_scope.borrow_mut().leave();
+    }
+
+    pub fn resolve_local(
+        &self,
+        name: &str,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> crate::ast::resolve::ResolutionResult {
+        self.local_scope.borrow().resolve(name, namespace, self.provider().resolution_rules())
+    }
+
+    pub fn declare_local(
+        &self,
+        name: impl Into<crate::ast::resolve::Symbol>,
+        binding: crate::ast::resolve::Binding,
+    ) -> crate::ast::resolve::DeclarationOutcome {
+        self.local_scope.borrow_mut().declare(name, binding, self.provider().declaration_rules())
+    }
+
+    /// Run the AST-stage resolver setup for a loaded package. Declaration
+    /// collection is intentionally separate from HIR lowering; this method
+    /// seeds the persistent module tree before any AST→HIR consumer runs.
+    pub fn resolve_package(&self, package_id: &PackageId) -> crate::error::Result<()> {
+        let package = self
+            .crates
+            .borrow()
+            .get(package_id)
+            .cloned()
+            .ok_or_else(|| crate::error::Error::from(format!("package not found: {package_id}")))?;
+        let mut package = package.borrow_mut();
+        let paths: Vec<_> = package
+            .module_paths
+            .iter()
+            .cloned()
+            .chain(package.items.iter().map(|item| item.module_path.clone()))
+            .collect();
+        let items = package.items.clone();
+        let mut resolver = crate::ast::resolve::AstResolver::from_provider(
+            &mut package.module_tree,
+            self.providers.as_ref(),
+        );
+        for path in paths {
+            resolver.modules.ensure_module(&path);
+        }
+        resolver.collect_package_items(&items);
+        let resolutions = resolver.resolution_table().clone();
+        let expr_resolutions = resolver.expr_resolution_table().clone();
+        drop(resolver);
+        package.resolutions = resolutions;
+        package.expr_resolutions = expr_resolutions;
+        Ok(())
     }
 
     /// Publish a package source slot and return its compiler-owned result.
@@ -117,18 +150,11 @@ impl AstProgram {
         self.crates
             .borrow_mut()
             .insert(source_package_id, krate.clone());
-        self.hir_packages
-            .borrow_mut()
-            .insert(hir_package_id.clone(), krate.clone());
         *self.sorted_packages_cache.borrow_mut() = None;
         krate
     }
 
     pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<AstPackage>>) {
-        let hir_package_id = package.borrow().hir_package_id.clone();
-        self.hir_packages
-            .borrow_mut()
-            .insert(hir_package_id, package.clone());
         self.crates.borrow_mut().insert(package_id, package);
         *self.sorted_packages_cache.borrow_mut() = None;
     }
@@ -137,12 +163,6 @@ impl AstProgram {
     /// source for ordinary packages. The standard and libc packages do not
     /// import their own prelude.
     pub fn install_prelude(&self, package: Rc<RefCell<AstPackage>>) {
-        let Some(current_package) = self.current_package.as_ref() else {
-            return;
-        };
-        if matches!(current_package.as_str(), "std" | "libc") {
-            return;
-        }
         self.prelude.borrow_mut().replace(package);
     }
 
@@ -166,9 +186,8 @@ impl AstProgram {
         None
     }
 
-    // `find_export`/`find_export_by_name`/`find_export_by_suffix` moved to
-    // `hir::HirProgram` — they read `hir_exports`, which now lives on
-    // `hir::HirPackage`, not `AstPackage`.
+    // Cross-package HIR export lookup is owned by `hir::HirProgram`; AST
+    // packages intentionally expose no global first-match resolver.
 
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {
         self.crates.borrow().contains_key(package_id)
@@ -191,17 +210,132 @@ impl AstProgram {
         })
     }
 
-    /// Routes straight to the one package that could own `def_id`
-    /// (`def_id.package_id`, the same trick `find_hir_impl_method`/
-    /// `find_hir_enum_for_variant` use above) instead of requiring the
-    /// caller to already have this workspace's mutable, ambient
-    /// `current_package()` set to the right value — a `DefId` already
-    /// names its own package, so nothing needs to be "focused" first.
+    /// Routes straight to the one package that could own `def_id`.
     pub fn compiled_package_for_def(
         &self,
         def_id: crate::hir::DefId,
     ) -> Option<Rc<RefCell<AstPackage>>> {
-        self.hir_packages.borrow().get(&def_id.package_id).cloned()
+        self.crates.borrow().get(&def_id.package_id).cloned()
+    }
+
+    /// Direct lookup of an AST package by its shared package id.
+    pub fn get_ast_package(&self, package_id: &PackageId) -> Rc<RefCell<AstPackage>> {
+        self.crates
+            .borrow()
+            .get(package_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!("AST package for HIR package `{package_id}` is missing")
+            })
+    }
+
+    /// Resolve a name through the AST package's module tree. Consumers should
+    /// use this boundary API rather than reaching into tree storage.
+    pub fn resolve_module_name(
+        &self,
+        package_id: &PackageId,
+        module: &QualifiedPath,
+        name: &str,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> crate::ast::resolve::ResolutionResult {
+        let package = self.get_ast_package(package_id);
+        let package = package.borrow();
+        package.module_tree.resolve(
+            module,
+            name,
+            namespace,
+            self.provider().resolution_rules(),
+        )
+    }
+
+    /// Resolve a qualified path through the AST package's module tree.
+    pub fn resolve_module_path(
+        &self,
+        package_id: &PackageId,
+        module: &QualifiedPath,
+        path: &QualifiedPath,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> crate::ast::resolve::ResolutionResult {
+        let package = self.get_ast_package(package_id);
+        let package = package.borrow();
+        package.module_tree.resolve_path(
+            module,
+            path,
+            namespace,
+            self.provider().resolution_rules(),
+        )
+    }
+
+    /// Resolve an extern-prelude path against the AST package that owns its
+    /// crate root. HIR has no resolver facade; all path resolution terminates
+    /// here before lowering.
+    pub fn resolve_external_path(
+        &self,
+        path: &QualifiedPath,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> Option<crate::ast::resolve::AstRes> {
+        let root = path.head()?.replace('-', "_");
+        let package_id = self
+            .crates()
+            .keys()
+            .find(|id| id.as_str().replace('-', "_") == root)?
+            .clone();
+        let package = self.get_ast_package(&package_id);
+        let package = package.borrow();
+        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
+        let leaf = internal.segments.last()?.clone();
+        let module = QualifiedPath::new(internal.segments[..internal.segments.len() - 1].to_vec());
+        match package.module_tree.resolve(&module, &leaf, namespace, self.provider().resolution_rules()) {
+            crate::ast::resolve::ResolutionResult::Found(res) => Some(res),
+            _ => None,
+        }
+    }
+
+    pub fn resolve_external_module_path(&self, path: &QualifiedPath) -> Option<QualifiedPath> {
+        let root = path.head()?.replace('-', "_");
+        let package_id = self.crates().keys().find(|id| id.as_str().replace('-', "_") == root)?.clone();
+        let package = self.get_ast_package(&package_id);
+        let package = package.borrow();
+        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
+        package.module_tree.module(&internal).map(|_| path.clone())
+    }
+
+    pub fn external_module_member_names(&self, path: &QualifiedPath) -> Option<Vec<String>> {
+        let root = path.head()?.replace('-', "_");
+        let package_id = self.crates().keys().find(|id| id.as_str().replace('-', "_") == root)?.clone();
+        let package = self.get_ast_package(&package_id);
+        let package = package.borrow();
+        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
+        let module = package.module_tree.module(&internal)?;
+        Some(module.symbols.keys().map(ToString::to_string).collect())
+    }
+
+    pub fn module_exists(&self, package_id: &PackageId, path: &QualifiedPath) -> bool {
+        self.get_ast_package(package_id)
+            .borrow()
+            .module_tree
+            .module(path)
+            .is_some()
+    }
+
+    pub fn module_member_names(
+        &self,
+        package_id: &PackageId,
+        path: &QualifiedPath,
+    ) -> Option<Vec<crate::ast::resolve::Symbol>> {
+        let package = self.get_ast_package(package_id);
+        let package = package.borrow();
+        Some(package.module_tree.module(path)?.symbols.keys().cloned().collect())
+    }
+
+    pub fn resolve_module_member(
+        &self,
+        package_id: &PackageId,
+        module: &QualifiedPath,
+        name: &str,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> crate::ast::resolve::ResolutionResult {
+        self.resolve_module_name(package_id, module, name, namespace)
     }
 
     /// This workspace's one registered provider — a compile always already
@@ -379,7 +513,7 @@ mod tests {
     #[test]
     fn package_workspace_inherits_installed_prelude() {
         let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = workspace.for_package(PackageId::new("parent"));
+        let parent = &workspace;
         let prelude = Rc::new(RefCell::new(AstPackage::new(
             PackageId::new("std"),
             "std",
@@ -387,7 +521,7 @@ mod tests {
         )));
         parent.install_prelude(prelude.clone());
 
-        let child = parent.for_package(PackageId::new("child"));
+        let child = &workspace;
 
         let inherited = child
             .prelude_package()
@@ -398,8 +532,8 @@ mod tests {
     #[test]
     fn package_workspace_observes_prelude_installed_after_creation() {
         let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = workspace.for_package(PackageId::new("parent"));
-        let child = parent.for_package(PackageId::new("child"));
+        let parent = &workspace;
+        let child = &workspace;
         let prelude = Rc::new(RefCell::new(AstPackage::new(
             PackageId::new("std"),
             "std",
@@ -419,7 +553,7 @@ mod tests {
     #[test]
     fn package_workspace_inherits_compiled_dependencies() {
         let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = workspace.for_package(PackageId::new("parent"));
+        let parent = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
             AstPackage::new(
@@ -430,7 +564,7 @@ mod tests {
             crate::lir::LirDataLayout::x86_64(),
         );
 
-        let child = parent.for_package(PackageId::new("child"));
+        let child = &workspace;
         let inherited = child
             .compiled_package(&PackageId::new("dependency"))
             .expect("package workspace should retain compiled dependencies");
@@ -448,8 +582,8 @@ mod tests {
     #[test]
     fn package_workspace_observes_dependencies_published_after_creation() {
         let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = workspace.for_package(PackageId::new("parent"));
-        let child = parent.for_package(PackageId::new("child"));
+        let parent = &workspace;
+        let child = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
             AstPackage::new(

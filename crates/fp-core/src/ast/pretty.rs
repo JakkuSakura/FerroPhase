@@ -11,7 +11,7 @@ use crate::ast::{
     Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
 };
 use crate::intrinsics::CallKind;
-use crate::pretty::{PrettyCtx, PrettyPrintable, escape_char, escape_string};
+use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use crate::query;
 
 impl PrettyPrintable for ast::Expr {

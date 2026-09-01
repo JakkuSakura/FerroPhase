@@ -31,9 +31,12 @@ impl AstToHirLowerer {
                         .enum_variant_def_ids
                         .values()
                         .any(|candidate| candidate == &def_id)
-                        || self.hir_program.with(|program| {
-                            program.find_hir_enum_for_variant(def_id.clone()).is_some()
-                        });
+                        || self
+                            .hir_program
+                            .member_owner(def_id.clone())
+                            .and_then(|owner| self.hir_program.item(owner))
+                            .map(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
+                            .unwrap_or(false);
                     if is_enum_variant || self.op_kind_for_def(def_id.clone()).is_some() {
                         let hir_pat = hir::Pat {
                             hir_id: self.next_id(),

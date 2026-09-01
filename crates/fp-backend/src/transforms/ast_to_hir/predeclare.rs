@@ -1,62 +1,34 @@
 use super::*;
 
 impl AstToHirLowerer {
-    fn bind_prelude_binding(
-        package: &mut hir::HirPackage,
-        prelude_module: hir::resolve::ModuleId,
-        name: &str,
-        namespace: hir::Namespace,
-        entry: hir::SymbolEntry,
-    ) {
-        package
-            .module_tree
-            .bind(prelude_module, namespace, name, entry);
-    }
-
     pub(super) fn prepare_lowering_state(&mut self) {
-        let provider_prelude = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| {
-                workspace
-                    .crates()
-                    .iter()
-                    .find_map(|(package_id, package)| {
-                        (package.borrow().hir_package_id == self.package_id).then(|| package_id)
-                    })
-                    .and_then(|package_id| workspace.package_metadata(package_id))
-                    .and_then(|metadata| metadata.prelude)
-            })
+        let provider_prelude = self.workspace
+                .crates()
+                .iter()
+                .find_map(|(package_id, package)| {
+                    (package.borrow().hir_package_id == self.package_id).then(|| package_id)
+                })
+                .and_then(|package_id| self.workspace.package_metadata(package_id))
+                .and_then(|metadata| metadata.prelude)
             .map(|package_id| hir::PackageId::new(package_id.as_str()));
         if provider_prelude.is_some() {
             self.package.prelude = provider_prelude;
         }
-        self.type_scopes.clear();
-        self.type_scopes.push(HashMap::new());
-        self.value_scopes.clear();
-        self.value_scopes.push(HashMap::new());
+        self.workspace.reset_local_scope();
         self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
-        self.module_visibility.clear();
-        self.module_visibility.push(true);
         self.current_owner = None;
         self.local_id = 0;
         self.current_position = 0;
         self.type_aliases.clear();
         self.type_alias_defining_modules.clear();
         self.type_alias_children.clear();
-        self.global_symbol_cache.borrow_mut().clear();
         self.trait_defs.clear();
         self.trait_def_modules.clear();
         self.structural_value_defs.clear();
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
-        self.package.module_tree = hir::resolve::ModuleTree::new();
-        self.package.dependencies = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| {
-                workspace
+        self.package.dependencies = self.workspace
                     .crates()
                     .iter()
                     .find(|(_, package)| package.borrow().hir_package_id == self.package_id)
@@ -78,68 +50,14 @@ impl AstToHirLowerer {
                             })
                             .unwrap_or_default()
                     })
-            })
-            .unwrap_or_default();
+                    .unwrap_or_default();
         self.pending_type_aliases.clear();
         self.pending_impls.clear();
         self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
-    pub(super) fn load_default_prelude_defs(&mut self) {
-        // This package's own module tree only ever holds *this* module's
-        // own declarations. Prelude bindings are installed at the symbol
-        // registration boundary, where their real module path, namespace,
-        // visibility, and resolved `Res` are still available.
-        // rustc installs the prelude of the selected standard library crate
-        // through crate metadata. The HIR package records those resolved
-        // dependency edges, so unrelated packages loaded in the same session
-        // cannot leak bare names into this crate.
-        // The provider reports rustc's implicit `std` edge in ordinary
-        // Rust package metadata. Do not infer a prelude from whatever
-        // unrelated sysroot packages happen to be loaded: `libc`, for
-        // example, is not a Rust crate with a core prelude merely because
-        // core is present in the shared HIR program.
-        let selected_prelude = self.package.prelude.clone();
-        if let Some(dependency_id) = selected_prelude {
-            let prelude_module = self.package.module_tree.prelude();
-            for namespace in [hir::Namespace::Type, hir::Namespace::Value] {
-                let bindings = if dependency_id == self.package.id {
-                    self.package
-                        .module_tree
-                        .prelude_bindings(namespace)
-                        .map(|(name, entry)| (name.to_owned(), entry.clone()))
-                        .collect::<Vec<_>>()
-                } else {
-                    let Some(hir_package) = self.hir_program.package(&dependency_id) else {
-                        continue;
-                    };
-                    let hir_package = hir_package.borrow();
-                    hir_package
-                        .module_tree
-                        .prelude_bindings(namespace)
-                        .map(|(name, entry)| (name.to_owned(), entry.clone()))
-                        .collect::<Vec<_>>()
-                };
-                for (name, entry) in bindings {
-                    if self
-                        .package
-                        .module_tree
-                        .lookup(prelude_module, namespace, &name)
-                        .is_none()
-                    {
-                        Self::bind_prelude_binding(
-                            &mut self.package,
-                            prelude_module,
-                            &name,
-                            namespace,
-                            entry,
-                        );
-                    }
-                }
-            }
-        }
-    }
+    pub(super) fn load_default_prelude_defs(&mut self) {}
     pub(super) fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
         for item in items {
             if !self.item_enabled_by_cfg(item) {

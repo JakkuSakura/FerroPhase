@@ -2006,7 +2006,15 @@ impl<'a> HirToAstLifter<'a> {
             }
         }
         if let Some(hir::Res::Def(def_id)) = &path.res {
-            if let Some(enum_name) = self.hir_program.find_hir_enum_for_variant(def_id.clone()) {
+            let enum_name = self
+                .hir_program
+                .member_owner(def_id.clone())
+                .and_then(|owner| self.hir_program.item(owner))
+                .and_then(|item| match item.kind {
+                    hir::ItemKind::Enum(def) => Some(def.name.as_str().to_string()),
+                    _ => None,
+                });
+            if let Some(enum_name) = enum_name {
                 if let Some(variant_name) = path.segments.last() {
                     return Path::plain(vec![
                         Ident::new(enum_name),

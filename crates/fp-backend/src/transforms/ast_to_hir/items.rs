@@ -400,17 +400,33 @@ impl AstToHirLowerer {
             // method on it unreachable.
             self.lookup_global_res(&qualified, PathResolutionScope::Type)
                 .or_else(|| {
-                    self.hir_program
-                        .resolve_external_path(&qualified, hir::Namespace::Type)
+                    match self.workspace.resolve_external_path(&qualified, fp_core::ast::resolve::Namespace::Type) {
+                        Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
                 })
-                .or_else(|| self.lookup_symbol(&qualified.to_key(), hir::Namespace::Type))
+                .or_else(|| match self.workspace.resolve_module_path(
+                    &self.package_id,
+                    &self.module_path,
+                    &qualified,
+                    fp_core::ast::resolve::Namespace::Type,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(
+                        fp_core::ast::resolve::AstRes::Def(id),
+                    ) => Some(hir::Res::Def(id)),
+                    _ => None,
+                })
                 .or_else(|| {
                     let prefix = self.module_path.join(&names[..names.len() - 1]);
-                    let module = self.package.module_tree.module_id(&prefix)?;
-                    self.package
-                        .module_tree
-                        .lookup_res(module, hir::Namespace::Type, names.last()?)
-                        .cloned()
+                    match self.workspace.resolve_module_name(
+                        &self.package_id,
+                        &prefix,
+                        names.last()?,
+                        fp_core::ast::resolve::Namespace::Type,
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
                 })
         };
         if let Some(resolved) = resolved {
@@ -422,8 +438,6 @@ impl AstToHirLowerer {
     pub(super) fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::Impl> {
         let saved_impl_self_ty = self.current_impl_self_ty.clone();
         self.push_type_scope();
-        self.current_type_scope()
-            .insert("Self".to_string(), hir::Res::SelfTy);
         // `Self` in type position (`-> Self`, `&Self`) resolves through the
         // type scope above. `Self { x, y }` struct-literal construction in
         // method bodies resolves through the *value* namespace instead
@@ -431,8 +445,6 @@ impl AstToHirLowerer {
         // namespaces, `register_type_def` + `register_value_def`) — needs
         // its own registration here or it stays unresolved.
         self.push_value_scope();
-        self.current_value_scope()
-            .insert("Self".to_string(), hir::Res::SelfTy);
         let result = (|| {
             // Register impl generics in the current type scope.
             let generics = self.transform_generics(&impl_block.generics_params);
@@ -649,8 +661,7 @@ impl AstToHirLowerer {
                             _ => None,
                         }
                         .unwrap_or(hir::Res::SelfTy);
-                        self.current_type_scope()
-                            .insert(param.name.name.clone(), res);
+                        let _ = (param, res);
                     }
                     // Synthesize default trait methods into the impl if they
                     // are missing — resolving names as if still in the
@@ -753,11 +764,7 @@ impl AstToHirLowerer {
     /// concrete `Self`.
     pub(super) fn transform_trait(&mut self, def_trait: &ast::ItemDefTrait) -> Result<hir::Trait> {
         self.push_type_scope();
-        self.current_type_scope()
-            .insert("Self".to_string(), hir::Res::SelfTy);
         self.push_value_scope();
-        self.current_value_scope()
-            .insert("Self".to_string(), hir::Res::SelfTy);
         let result = (|| {
             let generics = self.transform_generics(&def_trait.generics_params);
             let self_ty = hir::TypeExpr::new(

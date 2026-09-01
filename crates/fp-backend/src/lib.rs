@@ -26,7 +26,7 @@ pub use transforms as transformations;
 /// items structurally on its own, so no flattening is needed here either.
 fn package_from_file(
     file: &fp_core::ast::File,
-) -> fp_core::Result<fp_core::ast::package::CompiledPackage> {
+) -> fp_core::Result<(std::rc::Rc<fp_core::ast::program::AstProgram>, fp_core::ast::package::CompiledPackage)> {
     use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 
     let package_id = fp_core::ast::package::PackageId::new("roundtrip");
@@ -48,7 +48,9 @@ fn package_from_file(
     let source = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = fp_core::ast::program::AstProgram::new(std::sync::Arc::new(provider));
+    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(
+        std::sync::Arc::new(provider),
+    ));
     let data_layout = fp_core::lir::LirDataLayout::new(
         64,
         8,
@@ -57,14 +59,15 @@ fn package_from_file(
     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
     let package = workspace.begin_package(package_id, source, data_layout);
     let package = package.borrow().clone();
-    Ok(package)
+    Ok((workspace, package))
 }
 
 pub fn roundtrip_items_via_hir(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
-    let package = package_from_file(file)?;
+    let (ast_program, package) = package_from_file(file)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );
@@ -84,8 +87,9 @@ pub fn roundtrip_items_via_hir_target(
     let mut target_env = fp_core::cfg::TargetEnv::host();
     target_env.lang = Some(target_lang.to_owned());
     fp_core::cfg::filter_items_in_file(&mut filtered, &target_env);
-    let package = package_from_file(&filtered)?;
+    let (ast_program, package) = package_from_file(&filtered)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );
@@ -101,8 +105,9 @@ pub fn roundtrip_items_via_hir_target(
 pub fn roundtrip_items_via_hir_dce(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
-    let package = package_from_file(file)?;
+    let (ast_program, package) = package_from_file(file)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+        ast_program,
         fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
         package.hir_package_id.clone(),
     );

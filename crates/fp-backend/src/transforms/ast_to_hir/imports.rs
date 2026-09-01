@@ -1,6 +1,58 @@
 use super::*;
 
 impl AstToHirLowerer {
+    fn glob_shadowed_by_definition(
+        &self,
+        alias: &str,
+        namespace: fp_core::ast::resolve::Namespace,
+        res: &hir::Res,
+        is_glob: bool,
+    ) -> bool {
+        let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
+                           namespace: fp_core::ast::resolve::Namespace| {
+            match self.workspace.resolve_module_path(
+                &self.package_id,
+                &self.module_path,
+                path,
+                namespace,
+            ) {
+                fp_core::ast::resolve::ResolutionResult::Found(
+                    fp_core::ast::resolve::AstRes::Def(id),
+                ) => Some(hir::Res::Def(id)),
+                _ => None,
+            }
+        };
+        if !is_glob {
+            return false;
+        }
+        let _ = res;
+        matches!(
+            self.workspace.resolve_local(alias, namespace),
+            fp_core::ast::resolve::ResolutionResult::Found(_)
+        ) && !self.glob_import_bindings.contains(&(
+            self.module_path.clone(),
+            namespace,
+            alias.to_string(),
+        ))
+    }
+
+    fn check_import_collision(
+        &mut self,
+        alias: &str,
+        namespace: fp_core::ast::resolve::Namespace,
+        res: &hir::Res,
+        span: Span,
+    ) {
+        let existing = self.workspace.resolve_local(alias, namespace);
+        if matches!(existing, fp_core::ast::resolve::ResolutionResult::Found(_)) {
+            self.add_error(
+                Diagnostic::error(format!("ambiguous import `{alias}`"))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(span),
+            );
+        }
+    }
+
     pub(super) fn collect_imports(
         &self,
         base: Vec<String>,
@@ -178,18 +230,13 @@ impl AstToHirLowerer {
         // boundaries rather than rewriting paths at individual call sites.
         if let Some(current_root) = self.module_path.segments.first()
             && matches!(current_root.as_str(), "core" | "alloc" | "std")
-            && self
-                .package
-                .module_tree
-                .module_exists(&fp_core::ast::path::QualifiedPath::new(vec![
-                    current_root.clone(),
-                ]))
+            && self.workspace.module_exists(&self.package_id, &fp_core::ast::path::QualifiedPath::new(vec![current_root.clone()]))
         {
             return vec![current_root.clone()];
         }
         let root = hir::HirProgram::external_crate_name(&self.package_id);
         let candidate = fp_core::ast::path::QualifiedPath::new(vec![root]);
-        if self.package.module_tree.module_exists(&candidate) {
+        if self.workspace.module_exists(&self.package_id, &candidate) {
             return candidate.segments;
         }
         Vec::new()
@@ -211,7 +258,7 @@ impl AstToHirLowerer {
         }
         for candidate in candidates {
             let mut seen = HashSet::new();
-            if let Some(members) = self.hir_program.external_module_member_names(&candidate) {
+            if let Some(members) = self.workspace.external_module_member_names(&candidate) {
                 for child_name in members {
                     if !seen.insert(child_name.clone()) {
                         continue;
@@ -221,36 +268,23 @@ impl AstToHirLowerer {
                     out.push(ImportBinding {
                         target: full,
                         alias: None,
-                        is_glob: false,
+                        // Preserve the originating glob's precedence: this
+                        // binding may be shadowed by a local definition, but
+                        // must still conflict with another glob target.
+                        is_glob: true,
                     });
                 }
                 return;
             }
-            let Some(module_id) = self.package.module_tree.module_id(&candidate) else {
-                continue;
-            };
-            // Item children (values/types) — a direct lookup of this
-            // module's own bindings instead of a flat scan over every
-            // global definition in the package filtered by key prefix.
-            for (child_name, _) in self
-                .package
-                .module_tree
-                .bindings(module_id, hir::Namespace::Value)
-                .chain(
-                    self.package
-                        .module_tree
-                        .bindings(module_id, hir::Namespace::Type),
-                )
-            {
-                if !seen.insert(child_name.to_string()) {
-                    continue;
-                }
+            let Some(members) = self.workspace.module_member_names(&self.package_id, &candidate) else { continue };
+            for child_name in members {
+                if !seen.insert(child_name.to_string()) { continue; }
                 let mut full = candidate.segments.clone();
                 full.push(child_name.to_string());
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
-                    is_glob: false,
+                    is_glob: true,
                 });
             }
             // Type aliases have their own table, so use the parent-module
@@ -271,21 +305,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
-                    is_glob: false,
-                });
-            }
-            // Module children — a direct tree lookup instead of the old
-            // linear scan over every module path in the package.
-            for (child_name, _) in self.package.module_tree.children(module_id) {
-                if !seen.insert(child_name.to_string()) {
-                    continue;
-                }
-                let mut full = candidate.segments.clone();
-                full.push(child_name.to_string());
-                out.push(ImportBinding {
-                    target: full,
-                    alias: None,
-                    is_glob: false,
+                    is_glob: true,
                 });
             }
             return;
@@ -302,6 +322,7 @@ impl AstToHirLowerer {
         &mut self,
         binding: ImportBinding,
         visibility: &ast::Visibility,
+        span: Span,
     ) -> bool {
         let alias = binding
             .alias
@@ -310,7 +331,11 @@ impl AstToHirLowerer {
         if alias.is_empty() {
             return false;
         }
-        let resolved_key = (self.module_path.clone(), alias.clone());
+        let resolved_key = (
+            self.module_path.clone(),
+            alias.clone(),
+            binding.target.clone(),
+        );
         if self.resolved_import_aliases.contains(&resolved_key) {
             return true;
         }
@@ -348,6 +373,20 @@ impl AstToHirLowerer {
                 return false;
             };
             let candidate = module_path.with_segment(last.clone());
+            let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
+                               namespace: fp_core::ast::resolve::Namespace| {
+                match self.workspace.resolve_module_path(
+                    &self.package_id,
+                    &self.module_path,
+                    path,
+                    namespace,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(
+                        fp_core::ast::resolve::AstRes::Def(id),
+                    ) => Some(hir::Res::Def(id)),
+                    _ => None,
+                }
+            };
 
             // Whole-module import (`use std::json;`) — the last segment
             // itself names a module, not an item within one. A namespace-only
@@ -355,14 +394,13 @@ impl AstToHirLowerer {
             // members; resolve the item namespaces first so that node is not
             // mistaken for a real module (the same final-segment precedence
             // used by rustc's resolver).
-            let candidate_key = candidate.to_key();
-            let candidate_value = self.lookup_symbol(&candidate_key, hir::Namespace::Value);
-            let candidate_type = self.lookup_symbol(&candidate_key, hir::Namespace::Type);
-            let candidate_alias = self.type_aliases.get(&candidate_key).cloned();
+            let candidate_value = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Value);
+            let candidate_type = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Type);
+            let candidate_alias = self.type_aliases.get(&candidate.to_key()).cloned();
             let dependency_value =
-                self.lookup_dependency_binding(&candidate, hir::Namespace::Value);
-            let dependency_type = self.lookup_dependency_binding(&candidate, hir::Namespace::Type);
-            if self.package.module_tree.module_exists(&candidate)
+                self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Value);
+            let dependency_type = self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Type);
+            if self.workspace.module_exists(&self.package_id, &candidate)
                 && candidate_value.is_none()
                 && candidate_type.is_none()
                 && dependency_value.is_none()
@@ -370,9 +408,36 @@ impl AstToHirLowerer {
                 && candidate_alias.is_none()
             {
                 let res = hir::Res::Module(candidate.segments.clone());
-                self.current_value_scope()
-                    .insert(alias.clone(), res.clone());
-                self.current_type_scope().insert(alias.clone(), res.clone());
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Value,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.check_import_collision(&alias, fp_core::ast::resolve::Namespace::Value, &res, span);
+                    if binding.is_glob {
+                        self.glob_import_bindings.insert((
+                            self.module_path.clone(),
+                            fp_core::ast::resolve::Namespace::Value,
+                            alias.clone(),
+                        ));
+                    }
+                }
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Type,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.check_import_collision(&alias, fp_core::ast::resolve::Namespace::Type, &res, span);
+                    if binding.is_glob {
+                        self.glob_import_bindings.insert((
+                            self.module_path.clone(),
+                            fp_core::ast::resolve::Namespace::Type,
+                            alias.clone(),
+                        ));
+                    }
+                }
                 // Every top-level item gets its own transient
                 // `with_module_scope` push/pop cycle (see
                 // `transform_package`), so a scope-only insert here is
@@ -382,8 +447,27 @@ impl AstToHirLowerer {
                 // alias the same way value/type re-exports already do
                 // below, so `module::item()` resolves regardless of
                 // which sibling item introduced the `use`.
-                self.record_value_symbol(&alias, res.clone(), visibility);
-                self.record_type_symbol(&alias, res, visibility);
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Value,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.record_import_symbol(
+                        &alias,
+                        fp_core::ast::resolve::Namespace::Value,
+                        res.clone(),
+                        visibility,
+                    );
+                }
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Type,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.record_import_symbol(&alias, fp_core::ast::resolve::Namespace::Type, res, visibility);
+                }
                 self.resolved_import_aliases.insert(resolved_key);
                 return true;
             }
@@ -391,12 +475,9 @@ impl AstToHirLowerer {
             // Phase 2, mirrors rustc's `maybe_resolve_ident_in_module`:
             // resolve the final identifier against the walked module's
             // own bindings.
-            let key = candidate.to_key();
-            let value = self
-                .lookup_symbol(&key, hir::Namespace::Value)
+            let value = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Value)
                 .or(dependency_value);
-            let ty = self
-                .lookup_symbol(&key, hir::Namespace::Type)
+            let ty = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Type)
                 .or(dependency_type);
             // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
             // a separate table from the module tree's value/type bindings
@@ -404,10 +485,10 @@ impl AstToHirLowerer {
             // its own explicit copy step here, or a re-exported alias (e.g.
             // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
             // resolvable under the shorter path at all.
-            let type_alias = self.type_aliases.get(&key).cloned().or_else(|| {
-                self.find_workspace_type_alias(&key).map(|alias| {
+            let type_alias = self.type_aliases.get(&candidate.to_key()).cloned().or_else(|| {
+                self.find_workspace_type_alias(&candidate.to_key()).map(|alias| {
                     self.type_alias_defining_modules
-                        .insert(key.clone(), alias.defining_module);
+                        .insert(candidate.to_key(), alias.defining_module);
                     alias.target
                 })
             });
@@ -416,13 +497,40 @@ impl AstToHirLowerer {
             }
 
             if let Some(res) = value {
-                self.current_value_scope()
-                    .insert(alias.clone(), res.clone());
-                self.record_value_symbol(&alias, res, visibility);
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Value,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.check_import_collision(&alias, fp_core::ast::resolve::Namespace::Value, &res, span);
+                    if binding.is_glob {
+                        self.glob_import_bindings.insert((
+                            self.module_path.clone(),
+                            fp_core::ast::resolve::Namespace::Value,
+                            alias.clone(),
+                        ));
+                    }
+                    self.record_import_symbol(&alias, fp_core::ast::resolve::Namespace::Value, res, visibility);
+                }
             }
             if let Some(res) = ty {
-                self.current_type_scope().insert(alias.clone(), res.clone());
-                self.record_type_symbol(&alias, res, visibility);
+                if !self.glob_shadowed_by_definition(
+                    &alias,
+                    fp_core::ast::resolve::Namespace::Type,
+                    &res,
+                    binding.is_glob,
+                ) {
+                    self.check_import_collision(&alias, fp_core::ast::resolve::Namespace::Type, &res, span);
+                    if binding.is_glob {
+                        self.glob_import_bindings.insert((
+                            self.module_path.clone(),
+                            fp_core::ast::resolve::Namespace::Type,
+                            alias.clone(),
+                        ));
+                    }
+                    self.record_import_symbol(&alias, fp_core::ast::resolve::Namespace::Type, res, visibility);
+                }
             }
             if let Some(alias_ty) = type_alias {
                 let new_key = self.qualify_name(&alias);
@@ -431,7 +539,7 @@ impl AstToHirLowerer {
                     .or_default()
                     .push(alias.clone());
                 self.type_aliases.insert(new_key.clone(), alias_ty);
-                if let Some(defining_module) = self.type_alias_defining_modules.get(&key).cloned() {
+                if let Some(defining_module) = self.type_alias_defining_modules.get(&candidate.to_key()).cloned() {
                     self.type_alias_defining_modules
                         .insert(new_key, defining_module);
                 }
@@ -458,6 +566,17 @@ impl AstToHirLowerer {
         start: &fp_core::ast::path::QualifiedPath,
         segments: &[String],
     ) -> Option<fp_core::ast::path::QualifiedPath> {
+        let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
+                           namespace: fp_core::ast::resolve::Namespace| {
+            match self.workspace.resolve_module_path(
+                &self.package_id, &self.module_path, path, namespace,
+            ) {
+                fp_core::ast::resolve::ResolutionResult::Found(
+                    fp_core::ast::resolve::AstRes::Def(id),
+                ) => Some(hir::Res::Def(id)),
+                _ => None,
+            }
+        };
         let mut current = start.clone();
         for segment in segments {
             // An unqualified first segment is resolved in the current module
@@ -495,40 +614,19 @@ impl AstToHirLowerer {
                 };
                 for local_base in local_bases {
                     let local_path = local_base.with_segment(segment.clone());
-                    let local = local_path.to_key();
-                    let local_alias = self
-                        .lookup_symbol(&local, hir::Namespace::Value)
-                        .or_else(|| self.lookup_symbol(&local, hir::Namespace::Type));
+                    let local_alias = resolve_ast(&local_path, fp_core::ast::resolve::Namespace::Value)
+                        .or_else(|| resolve_ast(&local_path, fp_core::ast::resolve::Namespace::Type));
                     if let Some(hir::Res::Module(real_path)) = local_alias {
                         current = fp_core::ast::path::QualifiedPath::new(real_path);
                         break;
                     }
-                    if self.package.module_tree.module_exists(&local_path) {
+                    if self.workspace.module_exists(&self.package_id, &local_path) {
                         current = local_path;
                         break;
                     }
                 }
                 if !current.segments.is_empty() {
                     continue;
-                }
-                // A bare type from the implicit prelude can own the next
-                // path segment (`Option::Some`, `Result::Ok`). Enter its
-                // published definition namespace through the canonical
-                // DefPath, just as rustc's resolver enters an enum's
-                // variant namespace after resolving the type name.
-                if let Some(hir::Res::Def(def_id)) =
-                    self.lookup_prelude_symbol(segment, hir::Namespace::Type)
-                {
-                    if let Some(def_path) = self.hir_program.def_path(def_id) {
-                        current = fp_core::ast::path::QualifiedPath::new(
-                            def_path
-                                .segments
-                                .iter()
-                                .map(|segment| segment.as_str().to_owned())
-                                .collect(),
-                        );
-                        continue;
-                    }
                 }
             }
             if current.segments.is_empty()
@@ -543,17 +641,15 @@ impl AstToHirLowerer {
             }
             let candidate = current.with_segment(segment.clone());
             if current.segments.len() == 1 && current.head() == candidate.head() {
-                if let Some(module) = self.hir_program.resolve_external_module_path(&candidate) {
+                if let Some(module) = self.workspace.resolve_external_module_path(&candidate) {
                     current = module;
                     continue;
                 }
             }
-            let key = candidate.to_key();
-            let module_alias = self
-                .lookup_symbol(&key, hir::Namespace::Value)
-                .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type))
-                .or_else(|| self.lookup_dependency_binding(&candidate, hir::Namespace::Value))
-                .or_else(|| self.lookup_dependency_binding(&candidate, hir::Namespace::Type));
+            let module_alias = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Value)
+                .or_else(|| resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Type))
+                .or_else(|| self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Value))
+                .or_else(|| self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Type));
             match module_alias {
                 Some(hir::Res::Module(real_path)) => {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
@@ -586,14 +682,14 @@ impl AstToHirLowerer {
     fn lookup_dependency_binding(
         &self,
         path: &fp_core::ast::path::QualifiedPath,
-        namespace: hir::Namespace,
+        namespace: fp_core::ast::resolve::Namespace,
     ) -> Option<hir::Res> {
-        if let Some(entry) = self.hir_program.resolve_external_entry(path, namespace) {
-            if entry.export.can_access(&self.module_path.segments) {
-                return Some(entry.res.clone());
+        if let Some(res) = self.workspace.resolve_external_path(path, namespace) {
+            if let fp_core::ast::resolve::AstRes::Def(def_id) = res {
+                return Some(hir::Res::Def(def_id));
             }
         }
-        self.hir_program
+        self.workspace
             .resolve_external_module_path(path)
             .map(|_| hir::Res::Module(path.segments.clone()))
     }
@@ -603,12 +699,12 @@ impl AstToHirLowerer {
     /// this aligned with rustc's definition namespace rather than encoding
     /// individual constructor names in the resolver.
     fn path_is_definition_namespace(&self, path: &fp_core::ast::path::QualifiedPath) -> bool {
-        if self.package.module_tree.namespace_exists(path) {
+        if self.workspace.module_exists(&self.package_id, path) {
             return true;
         }
         let resolved = self
-            .lookup_dependency_binding(path, hir::Namespace::Type)
-            .or_else(|| self.lookup_dependency_binding(path, hir::Namespace::Value));
+            .lookup_dependency_binding(path, fp_core::ast::resolve::Namespace::Type)
+            .or_else(|| self.lookup_dependency_binding(path, fp_core::ast::resolve::Namespace::Value));
         let Some(hir::Res::Def(def_id)) = resolved else {
             return false;
         };

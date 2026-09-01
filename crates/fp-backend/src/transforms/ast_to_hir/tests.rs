@@ -221,7 +221,7 @@ fn transform_type_uses_owner_resolved_name_before_expr_wrapper() -> Result<()> {
     .with_resolved_names(resolved_names);
     generator.package.module_tree.bind(
         generator.package.module_tree.root(),
-        hir::Namespace::Type,
+        fp_core::ast::resolve::Namespace::Type,
         "String",
         hir::SymbolEntry {
             res: hir::Res::Def(resolved_def.clone()),
@@ -237,6 +237,32 @@ fn transform_type_uses_owner_resolved_name_before_expr_wrapper() -> Result<()> {
         ));
     };
     assert_eq!(path.res, Some(hir::Res::Def(resolved_def)));
+    Ok(())
+}
+
+#[test]
+fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
+    let mut generator = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let user_type = hir::DefId::new(hir::PackageId::new("test"), 7);
+    generator.package.module_tree.bind(
+        generator.package.module_tree.root(),
+        fp_core::ast::resolve::Namespace::Type,
+        "u8",
+        hir::SymbolEntry {
+            res: hir::Res::Def(user_type.clone()),
+            export: hir::SymbolExport::Public,
+            path: None,
+        },
+    );
+
+    let path = generator.name_to_hir_path_with_scope(
+        &ast::Name::from_ident(ident("u8")),
+        PathResolutionScope::Type,
+    )?;
+    assert_eq!(path.res, Some(hir::Res::Def(user_type)));
     Ok(())
 }
 
@@ -841,7 +867,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     let prelude_module = generator.package.module_tree.prelude();
     generator.package.module_tree.bind(
         prelude_module,
-        hir::Namespace::Type,
+        fp_core::ast::resolve::Namespace::Type,
         "Result",
         hir::SymbolEntry {
             res: hir::Res::Def(result_def_id.clone()),
@@ -909,7 +935,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
     ] {
         dependency.module_tree.bind(
             prelude,
-            hir::Namespace::Type,
+            fp_core::ast::resolve::Namespace::Type,
             name,
             hir::SymbolEntry {
                 res: hir::Res::Def(def_id),
@@ -937,7 +963,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
         generator
             .package
             .module_tree
-            .lookup(prelude, hir::Namespace::Type, "Option")
+            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "Option")
             .map(|entry| &entry.res),
         Some(&hir::Res::Def(option))
     );
@@ -945,7 +971,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
         generator
             .package
             .module_tree
-            .lookup(prelude, hir::Namespace::Type, "Vec")
+            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "Vec")
             .map(|entry| &entry.res),
         Some(&hir::Res::Def(vec))
     );
@@ -953,7 +979,7 @@ fn load_default_prelude_defs_reads_reserved_hir_prelude() -> Result<()> {
         generator
             .package
             .module_tree
-            .lookup(prelude, hir::Namespace::Type, "String")
+            .lookup(prelude, fp_core::ast::resolve::Namespace::Type, "String")
             .map(|entry| &entry.res),
         Some(&hir::Res::Def(string))
     );
@@ -973,7 +999,7 @@ fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()>
         hir::PackageId::new("test"),
     );
     generator.transform_package(&package)?;
-    let binding = generator.tree_lookup_raw("map::NodeRef", hir::Namespace::Type);
+    let binding = generator.tree_lookup_raw("map::NodeRef", fp_core::ast::resolve::Namespace::Type);
     assert!(matches!(
         binding.map(|entry| &entry.res),
         Some(hir::Res::Def(_))
@@ -1629,7 +1655,7 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
     assert!(
         program
             .module_tree
-            .lookup(program.module_tree.root(), hir::Namespace::Type, "Alias",)
+            .lookup(program.module_tree.root(), fp_core::ast::resolve::Namespace::Type, "Alias",)
             .is_some()
     );
     Ok(())
@@ -1698,7 +1724,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     std.hir_exports = std_lowerer.exported_symbols();
     assert_eq!(
         std.module_tree
-            .prelude_bindings(hir::Namespace::Type)
+            .prelude_bindings(fp_core::ast::resolve::Namespace::Type)
             .find(|(name, _)| *name == "Ok")
             .map(|(_, entry)| entry.res.clone()),
         Some(hir::Res::Def(ok_def_id.clone())),
@@ -2120,12 +2146,10 @@ fn transform_imported_dependency_enum_variant_uses_defining_identity() -> Result
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
+    let consumer_diagnostics = consumer_lowerer.take_diagnostics().get_diagnostics();
     assert!(
-        consumer_lowerer
-            .take_diagnostics()
-            .get_diagnostics()
-            .is_empty(),
-        "imported dependency enum variant should resolve without diagnostics"
+        consumer_diagnostics.is_empty(),
+        "imported dependency enum variant should resolve without diagnostics: {consumer_diagnostics:?}"
     );
     let function = consumer
         .items
@@ -2159,6 +2183,95 @@ fn transform_bare_imported_enum_variant_pattern_uses_enum_identity() -> Result<(
     assert!(
         lowerer.take_diagnostics().get_diagnostics().is_empty(),
         "bare enum variants imported into pattern scope should resolve"
+    );
+    Ok(())
+}
+
+#[test]
+fn unresolved_import_diagnostic_points_at_import_span() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast("use missing::Thing; fn main() {}")?;
+    let import_span = items.iter().find_map(|item| match item.kind() {
+        ast::ItemKind::Import(import) => Some(import.span()),
+        _ => None,
+    });
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.to_string().contains("unresolved import"))
+        .expect("unresolved import diagnostic");
+    let span = diagnostic
+        .span
+        .expect("diagnostic should carry import span");
+    // `parse_items_ast` intentionally uses the synthetic null file span;
+    // real package providers attach source offsets. The important invariant
+    // here is that the resolver preserves a span instead of manufacturing
+    // `None`/a lowerer's current-file fallback.
+    assert_eq!(Some(span), import_span);
+    Ok(())
+}
+
+#[test]
+fn conflicting_glob_imports_are_reported_as_ambiguous() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "mod first { pub struct Choice; } mod second { pub struct Choice; } use first::*; use second::*; fn take(_: Choice) {}",
+    )?;
+    let conflicting_import_span = items
+        .iter()
+        .filter_map(|item| match item.kind() {
+            ast::ItemKind::Import(import) => Some(import.span()),
+            _ => None,
+        })
+        .nth(1);
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    let ambiguity = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.to_string().contains("ambiguous import"))
+        .unwrap_or_else(|| {
+            panic!("expected an ambiguous glob import diagnostic, got {diagnostics:?}")
+        });
+    assert_eq!(ambiguity.span, conflicting_import_span);
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .to_string()
+                .contains("duplicate definition")
+        }),
+        "an import collision should not also be reported as a definition collision: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn local_definition_wins_over_glob_import() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "mod source { pub struct Choice; } use source::*; struct Choice; fn take(_: Choice) {}",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "a local definition should shadow a glob import without diagnostics: {diagnostics:?}"
     );
     Ok(())
 }

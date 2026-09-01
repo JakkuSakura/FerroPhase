@@ -81,6 +81,7 @@ impl QualifiedPath {
     pub fn to_key(&self) -> String {
         segments_to_key(&self.segments)
     }
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

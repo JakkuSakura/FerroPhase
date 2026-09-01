@@ -60,13 +60,13 @@ state from temporary local state:
 ```text
 parse → macro expansion → AstResolver → AST→HIR lowering → type checking
                          │
-                         ├── ModuleTree (persistent package state)
+                         ├── AstPackage::module_tree (persistent package state)
                          └── LocalScope (temporary function/block state)
 ```
 
-`HirPackage` owns one persistent `ModuleTree`. The existing tree remains the
-only module-scope owner; no `ModuleScope` wrapper is introduced. Each existing
-tree node stores one ordinary symbol map:
+`AstPackage` owns the persistent `ModuleTree`; `HirPackage` owns no module
+tree. The tree remains the only module-scope owner; no `ModuleScope` wrapper is
+introduced. Each tree node stores only one ordinary symbol map:
 
 ```rust
 symbols: HashMap<Symbol, Vec<Binding>>
@@ -75,8 +75,8 @@ symbols: HashMap<Symbol, Vec<Binding>>
 The vector retains all candidates for a spelling. Each `Binding` carries its
 namespace (`Type`, `Value`, or `Macro`) and semantic identity. Type/value
 bindings therefore share one key space without sharing a collision domain;
-macros are represented by a specialized `Binding::Macro(MacroBinding)`
-variant, not a second macro hashmap.
+macros are represented by the specialized `Binding::Macro` variant, not a
+second macro hashmap.
 
 `LocalScope` is the explicit counterpart for names whose lifetime is limited
 to a function or block:
@@ -113,10 +113,7 @@ an explicit `ResolutionResult`, never by insertion-order selection.
 Aliases are ordinary type bindings with alias metadata and a resolved
 `DefId`/`Res`; dedicated alias hashmaps are not part of the target design.
 
-The migration baseline still has compatibility tables for transparent
-type-alias payloads and performs macro lookup during expansion; both are
-removed by the target architecture above. Import diagnostics now retain the
-originating `use` span. `ModuleTree` now
+Import diagnostics retain the originating `use` span. `ModuleTree` now
 retains an explicit ambiguity marker instead of overwriting competing
 bindings; lookups refuse to select a winner and callers recover with an
 error. Cross-package associated-item recovery uses a prebuilt,
@@ -125,22 +122,29 @@ scans every package's exports or `def_paths` at query time. Transparent type
 aliases have HIR definition identities, while enum constructor paths follow
 the alias target to preserve the defining variant's `DefId`.
 
-## Foundation landed: `ModuleTree`, `hir::Package`, `hir::Program`
+The AST resolver is now invoked by `AstProgram::resolve_package` before HIR
+lowering. It collects package and nested-module declarations into the AST
+`ModuleTree`, persists item/expression resolution tables on `AstPackage`, and
+passes those tables to AST→HIR lowering. HIR lowering does not bootstrap or
+reconstruct resolver state from syntax; the AST resolver is the sole source of
+name-resolution results.
+
+## Foundation landed: AST `ModuleTree` and package context
 
 The building blocks for the target design below now exist in `fp-core`,
 are consumed by `HirGenerator`'s lookup and import paths; this section
 records what remains to be migrated.
 
-- **`ModuleTree`** (`fp-core/src/hir/resolve.rs`) — a real tree of nodes,
-  each with `parent`, `children: HashMap<String, ModuleId>`, namespace-indexed
-  bindings, and ambiguity markers indexed by the new `Namespace::{Type,
-  Value}` enum. Operations (`ensure_module`, `module_exists`, `child`,
-  `bind`/`lookup`, `children`) are all O(depth) or O(1) — no full-map scan.
+- **`ModuleTree`** (`fp-core/src/ast/resolve.rs`) — a real AST-owned nested
+  tree. Every node owns exactly one declaration map,
+  `HashMap<Symbol, Vec<Binding>>`; child modules are nested tree values keyed
+  by their segment. There is no `ModuleNode`, `ModuleId`, or parallel module
+  index.
   Own unit tests cover construction/lookup/child-listing in isolation.
-- **`hir::Package`** — what this document used to call `hir::Program`
-  (`items`, `def_map`, `def_paths`, `op_defs`, `intrinsic_defs`,
-  `type_alias_targets`, `placeholder_defs`), renamed and given `id:
-  PackageId` and `module_tree: ModuleTree` fields. One per compiled package.
+- **`hir::Package`** — the lowered package data (`items`, `def_map`,
+  `def_paths`, `op_defs`, `intrinsic_defs`, `type_alias_targets`, and
+  `placeholder_defs`). It deliberately owns no `ModuleTree`; module
+  declarations and AST-stage name resolution remain attached to `AstPackage`.
 - **`hir::Program`** — now a genuinely new type: `packages:
   HashMap<PackageId, Package>`, the whole multi-package compiled result,
   with resolution methods (`def_path`, `type_alias_target`, `item`,
@@ -151,7 +155,7 @@ records what remains to be migrated.
 
 **Fold-in landed**: `ModuleTree`'s bindings now carry the full
 `hir::SymbolEntry` shape (`res`/`export`/`path`, moved from `fp-backend`
-into `fp-core::hir::resolve` alongside `ModuleTree`), so `HirGenerator`'s
+into `fp-core::ast::resolve` alongside `ModuleTree`), so HIR lowering's
 former `global_type_defs`/`global_value_defs`/`prelude_type_defs`/
 `prelude_value_defs`/`crate_roots` flat maps are gone entirely — every
 value/type binding now lives directly on its owning module's tree node

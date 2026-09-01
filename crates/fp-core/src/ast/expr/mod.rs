@@ -1,6 +1,6 @@
 use crate::ast::{
-    BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty, Value, ValueUnit,
-    get_threadlocal_serializer,
+    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
+    Value, ValueUnit,
 };
 use crate::span::Span;
 use crate::{common_enum, common_struct};

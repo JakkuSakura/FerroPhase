@@ -11,7 +11,6 @@ impl SharedHirProgram {
     pub fn new(program: HirProgram) -> Self {
         Self(Rc::new(RefCell::new(program)))
     }
-
     pub fn publish_package(&self, package: HirPackage) {
         self.0.borrow_mut().publish_package(package);
     }
@@ -115,7 +114,6 @@ impl SharedHirProgram {
             .borrow()
             .reflection_field_intrinsic_at_span(package_id, span)
     }
-
     pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
         self.0.borrow().generic_call_arg(hir_id)
     }
@@ -190,32 +188,12 @@ impl SharedHirProgram {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HirProgram {
     pub packages: HashMap<PackageId, Rc<RefCell<HirPackage>>>,
-    /// Direct name -> `DefId` lookup across every package, for well-known
-    /// cross-package lookups by bare name (e.g. `fp_typing`'s well-known
-    /// standard-library collection types) — maintained incrementally by
-    /// `add_package`, never rescanned per query. First package added to
-    /// declare a given name wins (add the current package last, after its
-    /// dependencies, for "current package's own name shadows a
-    /// dependency's" priority).
-    struct_defs_by_name: HashMap<String, DefId>,
-    /// Canonical extern-prelude export paths owned by published package
-    /// snapshots. This is rebuilt when a package is published, so resolving
-    /// `dep::module::Item` never scans every dependency or copies bindings
-    /// into the consuming package.
-    exports_by_path: HashMap<String, Res>,
-    /// Rust extern-prelude crate names mapped to their owning package. This
-    /// keeps external-path resolution a direct program query rather than a
-    /// scan of every package snapshot.
-    packages_by_crate_name: HashMap<String, PackageId>,
 }
 
 impl HirProgram {
     pub fn new() -> Self {
         Self {
             packages: HashMap::new(),
-            struct_defs_by_name: HashMap::new(),
-            exports_by_path: HashMap::new(),
-            packages_by_crate_name: HashMap::new(),
         }
     }
 
@@ -236,8 +214,7 @@ impl HirProgram {
     /// tables in a second global copy.  Reindex the owned snapshot before
     /// publication so callers cannot accidentally publish a bulk-built HIR
     /// package with empty or stale derived indexes.
-    pub fn publish_package(&mut self, mut package: HirPackage) {
-        package.index_derived_lookups();
+    pub fn publish_package(&mut self, package: HirPackage) {
         let package_id = package.id.clone();
         let package = Rc::new(RefCell::new(package));
 
@@ -245,7 +222,6 @@ impl HirProgram {
         // result becomes available. Rebuild the aggregate index from the
         // authoritative package snapshots so stale entries cannot survive.
         self.packages.insert(package_id, package);
-        self.rebuild_indexes();
     }
 
     /// Inserts an already shared package snapshot without changing its
@@ -253,35 +229,14 @@ impl HirProgram {
     pub fn add_package(&mut self, package: Rc<RefCell<HirPackage>>) {
         let package_id = package.borrow().id.clone();
         self.packages.insert(package_id, package);
-        self.rebuild_indexes();
     }
 
-    fn rebuild_indexes(&mut self) {
-        self.struct_defs_by_name.clear();
-        self.exports_by_path.clear();
-        self.packages_by_crate_name.clear();
-        let mut package_ids = self.packages.keys().cloned().collect::<Vec<_>>();
-        package_ids.sort();
-        for package_id in package_ids {
-            let package = self.packages[&package_id].borrow();
-            self.packages_by_crate_name
-                .entry(Self::external_crate_name(&package.id))
-                .or_insert_with(|| package.id.clone());
-            for (name, def_id) in &package.struct_defs_by_name {
-                self.struct_defs_by_name
-                    .entry(name.clone())
-                    .or_insert_with(|| def_id.clone());
-            }
-            for (key, res) in &package.hir_exports {
-                self.exports_by_path
-                    .entry(key.clone())
-                    .or_insert_with(|| res.clone());
-                let canonical = Self::canonical_export_key(&package.id, key);
-                self.exports_by_path
-                    .entry(canonical)
-                    .or_insert_with(|| res.clone());
-            }
-        }
+    /// Lookup a nominal struct by its declared name. This is a HIR data query,
+    /// not name resolution; source-name resolution remains owned by AST.
+    pub fn struct_def_id(&self, name: &str) -> Option<DefId> {
+        self.packages.values().find_map(|package| {
+            package.borrow().struct_defs_by_name.get(name).cloned()
+        })
     }
 
     /// Returns the Rust source spelling of a package's external-crate root.
@@ -289,12 +244,6 @@ impl HirProgram {
     /// underscores in paths (`skln-core` is imported as `skln_core`).
     pub fn external_crate_name(package_id: &PackageId) -> String {
         package_id.as_str().replace('-', "_")
-    }
-
-    /// O(1) direct lookup — no package iteration — for a struct declared
-    /// under `name` in any package this `HirProgram` knows about.
-    pub fn struct_def_id(&self, name: &str) -> Option<DefId> {
-        self.struct_defs_by_name.get(name).cloned()
     }
 
     /// Every item across every package this `HirProgram` knows about — for

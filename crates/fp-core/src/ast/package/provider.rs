@@ -66,6 +66,17 @@ pub trait PackageProvider {
     /// silently inheriting it and this decision going unnoticed if that
     /// default is ever revisited.
     fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer>;
+
+    /// Language declaration policy used by the AST resolver. Providers may
+    /// override this for language-specific namespace and import semantics.
+    fn declaration_rules(&self) -> crate::ast::resolve::DeclarationRules {
+        crate::ast::resolve::DeclarationRules::default()
+    }
+
+    /// Language lookup policy used by the AST resolver.
+    fn resolution_rules(&self) -> crate::ast::resolve::ResolutionRules {
+        crate::ast::resolve::ResolutionRules::default()
+    }
 }
 
 /// A `PackageProvider` that always hands back one already-built
@@ -240,6 +251,14 @@ impl PackageProvider for CompositeProvider {
     /// whichever language its std happens to be authored in.
     fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer> {
         self.workspace.intrinsic_normalizer()
+    }
+
+    fn declaration_rules(&self) -> crate::ast::resolve::DeclarationRules {
+        self.workspace.declaration_rules()
+    }
+
+    fn resolution_rules(&self) -> crate::ast::resolve::ResolutionRules {
+        self.workspace.resolution_rules()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

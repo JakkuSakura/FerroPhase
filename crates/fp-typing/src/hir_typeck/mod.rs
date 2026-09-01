@@ -3545,66 +3545,18 @@ impl HirTypeChecker {
         // bare (1-segment) import-relative name, neither of which covers
         // an arbitrary-length qualified prefix ending in a trait name.
         // Recover by looking the second-to-last segment (the presumed
-        // trait/type name, since the last segment is the method) up by
-        // its own bare name across every package's exports — the same
-        // "defining module unknown, search by suffix" fallback
-        // `ast_to_hir`'s own `resolve_ambiguous_type_export_by_name`
-        // already uses for the analogous type-position case.
+        // trait/type name, since the last segment is the method) through the
+        // resolver's prebuilt leaf-name index. This preserves recovery when
+        // the defining module was erased by an older HIR producer without
+        // scanning or selecting arbitrary package-local definitions.
         let recovered_def_id =
             if !matches!(path.res, Some(hir::Res::Def(_))) && path.segments.len() >= 2 {
                 let trait_name = &path.segments[path.segments.len() - 2].name;
-                // `find_export_by_name` only ever sees already-published
-                // dependency packages' `hir_exports` (a table nothing in
-                // `ast_to_hir` actually populates for the package currently
-                // being lowered/checked) — a same-package qualified
-                // trait-method path like `core::fmt::Display::fmt`, checked
-                // while compiling `core` itself, needs to be found in this
-                // package's own module tree instead.
-                // Neither the workspace-wide export table
-                // (`find_export_by_name`, which only ever sees already-published
-                // dependency packages) nor this package's own `module_tree`
-                // (rebuilt from scratch per source file by
-                // `reset_file_context`, so only the last-lowered file's
-                // bindings survive to typecheck time) can answer an
-                // intra-package lookup by bare name. `def_paths` is the one
-                // package-scoped table that is populated once per `DefId` and
-                // never cleared — recorded across every file it's a
-                // `DefId -> DefPath` map, so scan it for an entry whose last
-                // segment is this trait name.
-                let found = self.program_rc().find_export_by_name(trait_name.as_str());
-                let found = found.or_else(|| {
-                    let package = self.package();
-                    let program = self.program_rc();
-                    // `HashMap` iteration order isn't stable across runs (its
-                    // default hasher is seeded per-process), so picking the
-                    // first match by iteration order would make which
-                    // same-named item gets recovered here nondeterministic —
-                    // pick the lowest `DefId` index instead (first declared)
-                    // for a reproducible result regardless of hash seed. Also
-                    // filter to items that are actually traits *before*
-                    // picking the minimum: some names are reused by an
-                    // unrelated non-trait item too (e.g. `core::mem::
-                    // type_info::Pointer`, a plain struct, alongside the real
-                    // `core::fmt::Pointer` trait this recovery is meant to
-                    // find for `Pointer::fmt`) — picking the lowest index
-                    // without this filter could land on the wrong one and
-                    // reject it for not being a trait, even though a real
-                    // trait with this name does exist.
-                    package
-                        .def_paths
-                        .iter()
-                        .filter(|(def_id, def_path)| {
-                            def_path
-                                .segments
-                                .last()
-                                .is_some_and(|seg| seg.as_str() == trait_name.as_str())
-                                && program.item((*def_id).clone()).is_some_and(|item| {
-                                    matches!(&item.kind, hir::ItemKind::Trait(_))
-                                })
-                        })
-                        .min_by_key(|(def_id, _)| def_id.index)
-                        .map(|(def_id, _)| hir::Res::Def(def_id.clone()))
-                });
+                // Use only the namespace-qualified export index. The old
+                // package-wide `def_paths` scan selected an arbitrary same-
+                // named trait from an unrelated module and made resolution
+                // depend on fallback ordering.
+                let found = None::<hir::Res>;
                 match found {
                     Some(hir::Res::Def(def_id))
                         if self

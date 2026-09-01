@@ -28,7 +28,13 @@ pub(super) fn should_drop_const_type_item(item: &ast::Item) -> bool {
 pub(super) fn comptime_type_alias_rhs(ty: &ast::Ty) -> Option<&ast::Expr> {
     match ty {
         ast::Ty::ConstBlock(const_block) => Some(const_block.expr.as_ref()),
-        ast::Ty::Expr(expr) => Some(expr.as_ref()),
+        // A name/path expression is an ordinary transparent type alias
+        // (`type Alias = Original`), not a comptime-produced type. Only
+        // non-path expressions need the expression-backed fallback.
+        ast::Ty::Expr(expr) => match expr.kind() {
+            ast::ExprKind::Name(_) => None,
+            _ => Some(expr.as_ref()),
+        },
         _ => None,
     }
 }

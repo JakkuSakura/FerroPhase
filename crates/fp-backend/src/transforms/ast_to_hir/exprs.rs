@@ -117,26 +117,16 @@ impl AstToHirLowerer {
                 .collect(),
         );
         let namespace = scope.namespace();
-        let mut packages = self
-            .hir_program
-            .with(|program| program.packages.values().cloned().collect::<Vec<_>>());
-        packages.sort_by(|left, right| left.borrow().id.cmp(&right.borrow().id));
+        let mut packages: Vec<_> = self
+            .workspace
+            .crates()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut found = None;
 
-        for package in packages {
-            let package = package.borrow();
-            let external_root = hir::HirProgram::external_crate_name(&package.id);
-
-            // Follow public module re-exports before consulting physical
-            // module paths. Bundled sysroot crates publish paths such as
-            // `std::fmt` as aliases to `alloc::fmt`; rustc resolves the
-            // alias first and then performs the final lookup in its target
-            // module. A suffix scan alone cannot see that relationship.
-            // Resolve against actual module nodes rather than trying a list
-            // of package-relative spellings. A bundled dependency can expose
-            // an extern-prelude root below its package root (for example, a
-            // requested `alloc::vec` is stored as `std::alloc::vec`). The
-            // suffix relation is structural and keeps the final binding
-            // lookup in the requested namespace.
+        for package_id in packages.drain(..) {
+            let external_root = package_id.as_str().replace('-', "_");
             let mut module_paths = vec![prefix.clone()];
             if prefix.segments.first().map(String::as_str) != Some(external_root.as_str()) {
                 let mut rooted = vec![external_root.clone()];
@@ -150,17 +140,23 @@ impl AstToHirLowerer {
             }
 
             for module_path in module_paths {
-                let Some(module) = package.module_tree.module_id(&module_path) else {
-                    continue;
-                };
-                if let Some(entry) = package.module_tree.lookup(module, namespace, leaf) {
-                    if entry.export.can_access(&self.module_path.segments) {
-                        return Some(entry.res.clone());
-                    }
+                let result = self.workspace.resolve_module_name(
+                    &package_id,
+                    &module_path,
+                    leaf,
+                    namespace,
+                );
+                let fp_core::ast::resolve::ResolutionResult::Found(
+                    fp_core::ast::resolve::AstRes::Def(def_id),
+                ) = result else { continue };
+                match &found {
+                    None => found = Some(hir::Res::Def(def_id)),
+                    Some(previous) if previous == &hir::Res::Def(def_id.clone()) => {}
+                    Some(_) => return None,
                 }
             }
         }
-        None
+        found
     }
 
     /// Records a diagnostic for an AST construct that can't be lowered to
@@ -602,7 +598,7 @@ impl AstToHirLowerer {
         let def_id = self.next_def_id();
         // Recorded once, unconditionally, right here — not lazily by the
         // type checker each time it happens to encounter this node (see
-        // `hir::HirPackage::anonymous_consts`'s doc comment).
+        // `hir::HirPackage::const_block_defs`'s doc comment).
         self.package.add_anonymous_const(
             def_id.clone(),
             hir::Block {
@@ -2270,19 +2266,39 @@ impl AstToHirLowerer {
             }
         }
 
-        let local = self.lookup_symbol(&key, scope.namespace());
+        let local = match self.workspace.resolve_module_path(
+            &self.package_id,
+            &self.module_path,
+            path,
+            scope.namespace(),
+        ) {
+            fp_core::ast::resolve::ResolutionResult::Found(
+                fp_core::ast::resolve::AstRes::Def(id),
+            ) => Some(hir::Res::Def(id)),
+            _ => None,
+        };
         // A cross-package export (e.g. `libc::macos::getenv`) is looked up
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
         local
-            .or_else(|| {
-                self.hir_program
-                    .resolve_external_path(path, scope.namespace())
+            .or_else(|| match self.workspace.resolve_external_path(path, scope.namespace()) {
+                Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                _ => None,
             })
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                    self.lookup_symbol(&key, hir::Namespace::Type)
+                    match self.workspace.resolve_module_path(
+                        &self.package_id,
+                        &self.module_path,
+                        path,
+                        fp_core::ast::resolve::Namespace::Type,
+                    ) {
+                        fp_core::ast::resolve::ResolutionResult::Found(
+                            fp_core::ast::resolve::AstRes::Def(id),
+                        ) => Some(hir::Res::Def(id)),
+                        _ => None,
+                    }
                 } else {
                     None
                 }

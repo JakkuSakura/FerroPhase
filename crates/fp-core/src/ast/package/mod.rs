@@ -122,11 +122,17 @@ pub struct AstPackage {
     /// This package's identity within the HIR numbering space — distinct
     /// from `package_id` (the source-level id a provider names it by),
     /// minted once by `AstProgram::begin_package` and needed before any
-    /// HIR exists (used as the key into `AstProgram::hir_packages` and in
+    /// HIR exists (used as the key into `AstProgram::crates` and in
     /// every HIR `DefId`/`HirId` this package ever mints).
     pub hir_package_id: crate::hir::PackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
+
+    /// Persistent module-resolution state populated by the AST resolver.
+    pub module_tree: crate::ast::resolve::ModuleTree,
+    /// AST node resolutions produced before lowering.
+    pub resolutions: HashMap<ItemId, crate::ast::resolve::AstRes>,
+    pub expr_resolutions: HashMap<crate::ast::ExprId, crate::ast::resolve::AstRes>,
 
     /// All known module paths within this package.
     pub module_paths: HashSet<QualifiedPath>,
@@ -201,6 +207,9 @@ impl AstPackage {
             hir_package_id: crate::hir::PackageId::default(),
             name: name.into(),
             graph,
+            module_tree: crate::ast::resolve::ModuleTree::new(),
+            resolutions: HashMap::new(),
+            expr_resolutions: HashMap::new(),
             module_paths,
             items: Vec::new(),
             referenced_paths: HashMap::new(),
