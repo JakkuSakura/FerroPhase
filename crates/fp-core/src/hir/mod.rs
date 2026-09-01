@@ -139,9 +139,6 @@ impl fmt::Display for DefId {
     }
 }
 
-// Remove the old type alias
-// pub type Symbol = String;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub hir_id: HirId,

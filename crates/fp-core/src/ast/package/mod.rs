@@ -177,16 +177,6 @@ pub struct AstPackage {
     /// nominal -- registration and lookup don't need to branch on that.
     pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
 
-    /// Fully-qualified transparent aliases exported by this package. The
-    /// declaration module is semantic data: a re-export must expand its RHS
-    /// in the scope where that RHS was written, never in an importing module.
-    pub type_alias_exports: HashMap<String, TypeAliasExport>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypeAliasExport {
-    pub target: crate::ast::Ty,
-    pub defining_module: QualifiedPath,
 }
 
 impl AstPackage {
@@ -217,7 +207,6 @@ impl AstPackage {
             function_item_ids: HashMap::new(),
             trait_defs: HashSet::new(),
             method_sigs: HashMap::new(),
-            type_alias_exports: HashMap::new(),
         }
     }
 

@@ -142,10 +142,6 @@ pub struct HirTypeChecker {
     /// resolves these directly from a parameter's bounds and therefore does
     /// not enter `assoc_type_for_self` first.
     resolving_generic_projections: Vec<(ty::ParamTy, hir::Symbol)>,
-    /// Transparent aliases are expanded during type checking.  Keep the
-    /// definition identity in the cycle key; aliases can be mutually
-    /// recursive even when their source spellings differ.
-    resolving_type_aliases: Vec<hir::DefId>,
     /// Impl headers and associated-type bindings may refer to projections
     /// whose candidate search reaches the same impl again. Track those
     /// definition identities separately from projection names so recursive
@@ -217,7 +213,6 @@ impl HirTypeChecker {
             resolving_assoc_projections: Vec::new(),
             resolving_impl_projections: HashSet::new(),
             resolving_generic_projections: Vec::new(),
-            resolving_type_aliases: Vec::new(),
             resolving_impl_headers: HashSet::new(),
             resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
@@ -252,7 +247,6 @@ impl HirTypeChecker {
             resolving_assoc_projections: Vec::new(),
             resolving_impl_projections: HashSet::new(),
             resolving_generic_projections: Vec::new(),
-            resolving_type_aliases: Vec::new(),
             resolving_impl_headers: HashSet::new(),
             resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
@@ -3050,24 +3044,6 @@ impl HirTypeChecker {
         };
         if let Some(generic) = self.generic_ty(def_id.clone()) {
             return Ok(generic);
-        }
-        // A transparent type alias (`type __darwin_useconds_t =
-        // __uint32_t;`) — HIR has no first-class item for one (see
-        // `hir::HirPackage::type_alias_targets`'s doc comment), so its
-        // `DefId` has no `def_map` entry to look up; expand it in place by
-        // checking its already-lowered target type expression instead.
-        let type_alias_target = {
-            let program = self.program_rc();
-            program.type_alias_target(def_id.clone())
-        };
-        if let Some(target) = type_alias_target {
-            if self.resolving_type_aliases.contains(def_id) {
-                return Ok(self.error_ty(format!("recursive type alias `{def_id}`")));
-            }
-            self.resolving_type_aliases.push(def_id.clone());
-            let result = self.check_type_expr(&target).await;
-            self.resolving_type_aliases.pop();
-            return result;
         }
         let Some(item) = self.program_rc().item(def_id.clone()) else {
             // A resolved definition without a published HIR item is a

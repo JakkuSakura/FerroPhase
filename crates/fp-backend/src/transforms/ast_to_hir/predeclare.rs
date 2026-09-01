@@ -19,9 +19,6 @@ impl AstToHirLowerer {
         self.current_owner = None;
         self.local_id = 0;
         self.current_position = 0;
-        self.type_aliases.clear();
-        self.type_alias_defining_modules.clear();
-        self.type_alias_children.clear();
         self.trait_defs.clear();
         self.trait_def_modules.clear();
         self.structural_value_defs.clear();
@@ -51,7 +48,6 @@ impl AstToHirLowerer {
                             .unwrap_or_default()
                     })
                     .unwrap_or_default();
-        self.pending_type_aliases.clear();
         self.pending_impls.clear();
         self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
@@ -249,7 +245,6 @@ impl AstToHirLowerer {
                     // type binding so dependent crates resolve it through
                     // the HIR definition graph like rustc does.
                     let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_alias(&def_type.name.name, &def_type.value);
                     self.register_type_def(
                         &def_type.name.name,
                         def_id.clone(),
@@ -330,18 +325,8 @@ impl AstToHirLowerer {
                         // name segment cannot detect the dependency.  Wait
                         // until the import fixed point has run, just as we
                         // do for an ordinary module-qualified alias RHS.
-                        let defer = tolerant
-                            && (comptime_type_alias_rhs(&def_type.value).is_some()
-                                || type_alias_rhs_first_segment_name(&def_type.value)
-                                    .map(|name| {
-                                        self.resolve_type_symbol(name).is_none()
-                                            && !is_primitive_type_name(name)
-                                    })
-                                    .unwrap_or(false));
-                        if defer {
-                            self.pending_type_aliases
-                                .push((self.module_path.clone(), item.clone()));
-                        } else {
+                        let defer = false;
+                        if !defer {
                             let def_id = self.allocate_def_id_for_item(item);
                             self.register_type_def(
                                 &def_type.name.name,
@@ -362,8 +347,7 @@ impl AstToHirLowerer {
                                     &def_type.visibility,
                                 );
                             }
-                            let target = self.transform_type_to_hir(&def_type.value)?;
-                            self.package.type_alias_targets.insert(def_id, target);
+                            let _ = self.transform_type_to_hir(&def_type.value)?;
                         }
                     }
                 }

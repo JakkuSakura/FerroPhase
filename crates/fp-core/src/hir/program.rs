@@ -65,15 +65,6 @@ impl SharedHirProgram {
     pub fn def_path(&self, def_id: DefId) -> Option<DefPath> {
         self.0.borrow().def_path(def_id)
     }
-
-    pub fn type_alias_target(&self, def_id: DefId) -> Option<TypeExpr> {
-        self.0.borrow().type_alias_target(def_id)
-    }
-
-    pub fn type_alias_target_hir_id(&self, def_id: DefId) -> Option<HirId> {
-        self.0.borrow().type_alias_target_hir_id(def_id)
-    }
-
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
         self.0.borrow().member_owner(def_id)
     }
@@ -264,23 +255,6 @@ impl HirProgram {
             .def_paths
             .get(&def_id)
             .cloned()
-    }
-
-    /// A transparent type alias's expansion target — see
-    /// `HirPackage::type_alias_targets`'s doc comment for why this table
-    /// exists at all.
-    pub fn type_alias_target(&self, def_id: DefId) -> Option<TypeExpr> {
-        self.package(&def_id.package_id)?
-            .type_alias_targets
-            .get(&def_id)
-            .cloned()
-    }
-
-    /// Stable HIR identity of a transparent type alias target. Comptime
-    /// results are keyed by this target identity, not by a display name.
-    pub fn type_alias_target_hir_id(&self, def_id: DefId) -> Option<HirId> {
-        self.package(&def_id.package_id)?
-            .type_alias_target_hir_id(&def_id)
     }
 
     pub fn item(&self, def_id: DefId) -> Option<Item> {

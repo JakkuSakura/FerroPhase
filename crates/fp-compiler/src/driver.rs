@@ -440,7 +440,7 @@ impl CompilerDriver {
             )));
         }
 
-        let package_workspace = parent_workspace;
+        let package_workspace = parent_workspace.clone();
         {
             let mut state = self.state.borrow_mut();
             state.workspace = package_workspace;
@@ -617,7 +617,6 @@ impl CompilerDriver {
         (
             hir::HirPackage,
             std::collections::HashMap<String, hir::Res>,
-            std::collections::HashMap<String, fp_core::ast::package::TypeAliasExport>,
         ),
         CompilerDriverError,
     > {
@@ -647,11 +646,7 @@ impl CompilerDriver {
                     resolution_only,
                 });
         let hir_package = generator.transform_package(package_source)?;
-        Ok((
-            hir_package,
-            generator.exported_symbols(),
-            generator.exported_type_aliases(),
-        ))
+        Ok((hir_package, generator.exported_symbols()))
     }
 
     fn lower_package_hir_for_resolution(
@@ -660,10 +655,9 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let package_source = package.borrow().clone();
-        let (mut hir_package, exports, type_aliases) =
+        let (mut hir_package, exports) =
             self.lower_package_hir(&package_source, hir_package_id, true)?;
         hir_package.hir_exports.extend(exports);
-        package.borrow_mut().type_alias_exports.extend(type_aliases);
         self.state.borrow_mut().insert_hir(hir_package);
         Ok(())
     }
@@ -717,12 +711,8 @@ impl CompilerDriver {
                 let hir_package = hir_package.borrow();
                 (hir_package.const_values(), hir_package.const_block_values())
             });
-        let (hir_program, package_exports, type_alias_exports) =
+        let (hir_program, package_exports) =
             self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
-        package
-            .borrow_mut()
-            .type_alias_exports
-            .extend(type_alias_exports);
         self.type_check_program(hir_program, package_exports)
             .await
             .map_err(|error| {

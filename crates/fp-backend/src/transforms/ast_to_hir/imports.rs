@@ -287,27 +287,6 @@ impl AstToHirLowerer {
                     is_glob: true,
                 });
             }
-            // Type aliases have their own table, so use the parent-module
-            // index populated by `register_type_alias` instead of scanning
-            // every alias and splitting every qualified key for each glob.
-            for child in self
-                .type_alias_children
-                .get(&candidate.to_key())
-                .into_iter()
-                .flatten()
-            {
-                let child = child.clone();
-                if !seen.insert(child.clone()) {
-                    continue;
-                }
-                let mut full = candidate.segments.clone();
-                full.push(child);
-                out.push(ImportBinding {
-                    target: full,
-                    alias: None,
-                    is_glob: true,
-                });
-            }
             return;
         }
     }
@@ -396,7 +375,6 @@ impl AstToHirLowerer {
             // used by rustc's resolver).
             let candidate_value = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Value);
             let candidate_type = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Type);
-            let candidate_alias = self.type_aliases.get(&candidate.to_key()).cloned();
             let dependency_value =
                 self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Value);
             let dependency_type = self.lookup_dependency_binding(&candidate, fp_core::ast::resolve::Namespace::Type);
@@ -405,7 +383,6 @@ impl AstToHirLowerer {
                 && candidate_type.is_none()
                 && dependency_value.is_none()
                 && dependency_type.is_none()
-                && candidate_alias.is_none()
             {
                 let res = hir::Res::Module(candidate.segments.clone());
                 if !self.glob_shadowed_by_definition(
@@ -479,20 +456,7 @@ impl AstToHirLowerer {
                 .or(dependency_value);
             let ty = resolve_ast(&candidate, fp_core::ast::resolve::Namespace::Type)
                 .or(dependency_type);
-            // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
-            // a separate table from the module tree's value/type bindings
-            // (see `register_type_alias`) — an import/glob-re-export needs
-            // its own explicit copy step here, or a re-exported alias (e.g.
-            // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
-            // resolvable under the shorter path at all.
-            let type_alias = self.type_aliases.get(&candidate.to_key()).cloned().or_else(|| {
-                self.find_workspace_type_alias(&candidate.to_key()).map(|alias| {
-                    self.type_alias_defining_modules
-                        .insert(candidate.to_key(), alias.defining_module);
-                    alias.target
-                })
-            });
-            if value.is_none() && ty.is_none() && type_alias.is_none() {
+            if value.is_none() && ty.is_none() {
                 return false;
             }
 
@@ -530,18 +494,6 @@ impl AstToHirLowerer {
                         ));
                     }
                     self.record_import_symbol(&alias, fp_core::ast::resolve::Namespace::Type, res, visibility);
-                }
-            }
-            if let Some(alias_ty) = type_alias {
-                let new_key = self.qualify_name(&alias);
-                self.type_alias_children
-                    .entry(self.module_path.to_key())
-                    .or_default()
-                    .push(alias.clone());
-                self.type_aliases.insert(new_key.clone(), alias_ty);
-                if let Some(defining_module) = self.type_alias_defining_modules.get(&candidate.to_key()).cloned() {
-                    self.type_alias_defining_modules
-                        .insert(new_key, defining_module);
                 }
             }
             self.resolved_import_aliases.insert(resolved_key);

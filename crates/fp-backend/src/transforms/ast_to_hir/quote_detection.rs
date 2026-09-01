@@ -68,28 +68,6 @@ pub(super) fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
-/// Returns the self-type's head (first) segment name when it's a plain,
-/// unprefixed name-based path — a bare single segment (`Vec`, or
-/// `Vec<u8>` via a single-segment `Name::ParameterPath`), or the first
-/// segment of a bare multi-segment path (`ops::RangeFull`, where `ops`
-/// is a module brought into scope by a plain `use crate::{..., ops};`).
-/// Either shape could plausibly still be waiting on an import that
-/// hasn't been processed yet. Already-anchored paths (`crate::vec::Vec`,
-/// `self::Foo`, `super::Foo`) and non-name self-types (blanket
-/// `impl<T> Trait for T`) all return `None` — those are never deferred,
-/// they fall straight through to today's immediate resolution/failure.
-/// Same idea as `self_type_first_segment_name`, for a type alias's RHS
-/// (`ast::Ty`, not `ast::Expr`) — `result::Result<(), Error>` and similar
-/// module-qualified type references lower to `Ty::Expr(Name::Path(..))`
-/// (see `comptime_type_alias_rhs`'s doc comment for the same shape used
-/// elsewhere), so this just unwraps that one layer and delegates.
-pub(super) fn type_alias_rhs_first_segment_name(ty: &ast::Ty) -> Option<&str> {
-    match ty {
-        ast::Ty::Expr(expr) => self_type_first_segment_name(expr),
-        _ => None,
-    }
-}
-
 pub(super) fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> {
     let ast::ExprKind::Name(name) = self_ty.kind() else {
         return None;

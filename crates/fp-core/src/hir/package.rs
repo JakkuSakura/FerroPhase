@@ -103,21 +103,6 @@ pub struct HirPackage {
     /// it stays an ordinary (and, for a genuinely undefined name, erroring)
     /// call, same as any other unresolved identifier.
     pub intrinsic_defs: HashMap<DefId, CallKind>,
-    /// A transparent type alias's expansion (`type Foo = Bar;`, where
-    /// `Bar` isn't itself a fresh struct/enum/structural literal this
-    /// alias declaration introduces) — HIR has no first-class "type
-    /// alias" item (mirroring the `placeholder_defs` doc comment above:
-    /// there's no dedicated item shape for this either), so the alias's
-    /// own `DefId` still resolves (via `global_type_defs`/`def_map`
-    /// registration at `ast_to_hir` time) but has no entry in `def_map`
-    /// itself — `path_ty` consults the already-resolved result recorded for
-    /// this target expression's `HirId`.
-    /// Without this, `type __darwin_useconds_t = __uint32_t;`-style
-    /// aliases (extremely common in real Rust — most of libc's typedefs,
-    /// and many of std's own `pub type Result<T> = ...`-style aliases)
-    /// could never resolve at all: nothing else in the pipeline gives a
-    /// non-materializing alias any HIR item to look up.
-    pub type_alias_targets: HashMap<DefId, TypeExpr>,
     /// Struct `DefId`s in `items`, keyed by name — built once by
     /// `index_derived_lookups` alongside this package's other derived
     /// tables, so cross-package HIR struct lookups
@@ -321,8 +306,6 @@ pub struct HirPackage {
     /// how the driver's comptime resolver recovers the exact block to
     /// lower from just that `DefId` — the same shared-package lookup
     /// every other typed result already goes through, alongside
-    /// `type_alias_targets` (another "extra HIR shape with no real
-    /// `def_map` entry" index).
     /// This package's typing diagnostics (warnings and recovered, non-fatal
     /// mismatches — see `fp_typing::TypingShared::record_error`'s doc
     /// comment for the full split with hard item-check aborts). Lives here
@@ -358,10 +341,7 @@ enum ImplShapeClass {
 /// key here. A primitive scalar (`impl u8 { .. }`) has no such tag (its
 /// self-type `Path` is simply unresolved, its first segment the primitive
 /// name); match `PRIMITIVE_SELF_TYPE_NAMES` directly for that case.
-fn classify_impl_shape(
-    impl_item: &Impl,
-    type_alias_targets: &HashMap<DefId, TypeExpr>,
-) -> ImplShapeClass {
+fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
     // A primitive self-type written where the parser recognizes it as a
     // literal type expression (`ast::Value::Type(Ty::Primitive(_))`, e.g.
     // real std's `impl Add for i64`) lowers straight to
@@ -411,7 +391,6 @@ fn classify_impl_shape(
     classify_type_shape(
         &impl_item.self_ty,
         &impl_item.generics,
-        type_alias_targets,
         &mut HashSet::new(),
     )
 }
@@ -421,12 +400,7 @@ fn classify_impl_shape(
 /// is the simplified type of its target.  Keeping this lookup identity-based
 /// also handles aliases imported from another module/package without making
 /// their spelling part of dispatch.
-fn classify_type_shape(
-    ty: &TypeExpr,
-    generics: &Generics,
-    aliases: &HashMap<DefId, TypeExpr>,
-    active_aliases: &mut HashSet<DefId>,
-) -> ImplShapeClass {
+fn classify_type_shape(ty: &TypeExpr, generics: &Generics, _active_aliases: &mut HashSet<DefId>) -> ImplShapeClass {
     match &ty.kind {
         TypeExprKind::Primitive(prim) => primitive_shape_name(prim)
             .map(ImplShapeClass::Shape)
@@ -449,18 +423,7 @@ fn classify_type_shape(
             Some(Res::Def(did)) if generics.params.iter().any(|param| param.def_id == *did) => {
                 ImplShapeClass::Blanket
             }
-            Some(Res::Def(did)) => {
-                if let Some(target) = aliases.get(did) {
-                    if !active_aliases.insert(did.clone()) {
-                        return ImplShapeClass::Unclassified;
-                    }
-                    let result = classify_type_shape(target, generics, aliases, active_aliases);
-                    active_aliases.remove(did);
-                    result
-                } else {
-                    ImplShapeClass::Nominal(did.clone())
-                }
-            }
+            Some(Res::Def(did)) => ImplShapeClass::Nominal(did.clone()),
             _ if path.segments.len() == 1
                 && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
             {
@@ -508,7 +471,6 @@ impl HirPackage {
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
-            type_alias_targets: HashMap::new(),
             struct_defs_by_name: HashMap::new(),
             impl_method_item_index: HashMap::new(),
             impls_by_self_did: HashMap::new(),
@@ -583,7 +545,7 @@ impl HirPackage {
                 // from path spelling here: a re-export or a same-named item
                 // in another package can otherwise produce an index key that
                 // differs from the `Res::Def` consumed by type checking.
-                match classify_impl_shape(impl_item, &self.type_alias_targets) {
+                match classify_impl_shape(impl_item) {
                     ImplShapeClass::Nominal(did) => {
                         self.impls_by_self_did
                             .entry(did)
@@ -824,14 +786,6 @@ impl HirPackage {
 
     pub fn type_expr_types(&self) -> HashMap<HirId, Ty> {
         self.type_expr_types.borrow().clone()
-    }
-
-    /// The target node whose resolved type is the expansion of a transparent
-    /// alias. The lookup key is independent of the target's syntax.
-    pub fn type_alias_target_hir_id(&self, def_id: &DefId) -> Option<HirId> {
-        self.type_alias_targets
-            .get(def_id)
-            .map(|target| target.hir_id.clone())
     }
 
     pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {

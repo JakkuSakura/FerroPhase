@@ -170,22 +170,6 @@ impl AstProgram {
         self.prelude.borrow().clone()
     }
 
-    /// Cross-package counterpart to `find_struct`/`find_enum`, for a
-    /// `type X = Y;` alias (e.g. `libc`'s `pub type char = u8;`) by its
-    /// fully-qualified defining path (`"libc::char"`) — so a dependent
-    /// package's own alias lookup can resolve an explicitly-qualified
-    /// reference like `::libc::char` the same way it already resolves
-    /// same-package aliases, without eagerly copying every package's
-    /// aliases into the caller's own map first.
-    pub fn find_type_alias(&self, key: &str) -> Option<crate::ast::package::TypeAliasExport> {
-        for package in self.sorted_packages() {
-            if let Some(alias) = package.borrow().type_alias_exports.get(key) {
-                return Some(alias.clone());
-            }
-        }
-        None
-    }
-
     // Cross-package HIR export lookup is owned by `hir::HirProgram`; AST
     // packages intentionally expose no global first-match resolver.
 

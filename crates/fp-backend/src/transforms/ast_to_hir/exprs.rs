@@ -9,15 +9,11 @@ mod literal_values;
 use literal_values::*;
 
 impl AstToHirLowerer {
-    /// Resolve an enum variant through a type alias in value position.
+    /// Resolve an enum variant from a previously resolved type path.
     ///
-    /// Rust keeps the alias and the nominal enum as distinct definitions, but
-    /// `Alias::Variant` is resolved against the enum's variant namespace. The
-    /// HIR value table stores the variant under the nominal enum path, so the
-    /// resolver has to follow the alias target before doing the final member
-    /// lookup. This is especially important for `ascii::Char`, which is a
-    /// public alias of `ascii_char::AsciiChar`.
-    pub(super) fn enum_variant_through_type_path(
+    /// Variant lookup is performed from the resolved nominal enum identity;
+    /// no source spelling or declaration category is consulted.
+    pub(super) fn enum_variant_for_type_path(
         &self,
         type_path: &fp_core::ast::path::QualifiedPath,
         variant_name: &str,
@@ -34,7 +30,7 @@ impl AstToHirLowerer {
         } else {
             self.lookup_global_res(type_path, PathResolutionScope::Type)
         }?;
-        let mut def_id = match type_res {
+        let def_id = match type_res {
             hir::Res::Def(def_id) => def_id,
             hir::Res::SelfTy => {
                 let self_ty = self.current_impl_self_ty.as_ref()?;
@@ -65,32 +61,7 @@ impl AstToHirLowerer {
                         .map(|variant| hir::Res::Def(variant.def_id.clone()));
                 }
                 hir::ItemKind::Struct(_) => return None,
-                _ => {
-                    let target = match self.resolved_item(&def_id)?.kind {
-                        hir::ItemKind::TypeAlias(alias) => alias.target,
-                        _ => return None,
-                    };
-                    let hir::TypeExprKind::Path(path) = &target.kind else {
-                        return None;
-                    };
-                    def_id = match &path.res {
-                        Some(hir::Res::Def(target_def_id)) => target_def_id.clone(),
-                        _ => self
-                            .lookup_global_res(
-                                &QualifiedPath::new(
-                                    path.segments
-                                        .iter()
-                                        .map(|segment| segment.name.as_str().to_string())
-                                        .collect(),
-                                ),
-                                PathResolutionScope::Type,
-                            )
-                            .and_then(|res| match res {
-                                hir::Res::Def(target_def_id) => Some(target_def_id),
-                                _ => None,
-                            })?,
-                    };
-                }
+                _ => return None,
             }
         }
         None
@@ -1054,15 +1025,12 @@ impl AstToHirLowerer {
             let seg = self.make_path_segment(&select.field.name, None);
             path.segments.push(seg);
             // Resolve the completed path after appending the selected item.
-            // The base (`ascii::Char`) may be a re-exported type alias; its
-            // variant namespace belongs to the nominal enum (`AsciiChar`),
-            // so resolving only the base leaves `Char::Null` without a Res.
-            let full_path = QualifiedPath::new(
-                path.segments
-                    .iter()
-                    .map(|segment| segment.name.as_str().to_string())
-                    .collect(),
-            );
+            let names: Vec<String> = path
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str().to_owned())
+                .collect();
+            let full_path = QualifiedPath::new(names);
             path.res = self
                 .lookup_global_res(&full_path, PathResolutionScope::Value)
                 .or(path.res);
@@ -2170,13 +2138,9 @@ impl AstToHirLowerer {
         if path.segments.is_empty() {
             return None;
         }
-        let key = path.to_key();
-
-        // A variant is looked up in the namespace of the nominal enum behind
-        // a transparent type alias (`ascii::Char::Null`, for example), not
-        // as a child of the alias's module-tree binding. Keep this before the
-        // ordinary value lookup so the alias remains transparent without
-        // creating duplicate declarations or typechecker exceptions.
+        // Try enum-variant lookup before ordinary value lookup. A path's
+        // prefix is resolved to a nominal enum identity, then its variants
+        // are searched by that identity.
         if scope == PathResolutionScope::Value && path.segments.len() > 1 {
             let prefix = QualifiedPath::new(
                 path.segments[..path.segments.len() - 1]
@@ -2185,7 +2149,7 @@ impl AstToHirLowerer {
                     .collect(),
             );
             if let Some(res) =
-                self.enum_variant_through_type_path(&prefix, path.segments.last()?.as_str())
+                self.enum_variant_for_type_path(&prefix, path.segments.last()?.as_str())
             {
                 return Some(res);
             }

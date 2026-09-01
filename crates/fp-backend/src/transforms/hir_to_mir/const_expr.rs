@@ -555,15 +555,7 @@ impl HirToMirLowerer {
                                 return None;
                             };
                             let field_name = self.const_string_from_expr(&args[0].value)?;
-                            let struct_def_id = self
-                                .hir_program
-                                .type_alias_target_hir_id(def_id.clone())
-                                .and_then(|target| self.typeck_type_expr_type(target))
-                                .and_then(|ty| match ty.kind {
-                                    TyKind::Adt(adt, _) => Some(adt.did),
-                                    _ => None,
-                                })
-                                .unwrap_or_else(|| def_id.clone());
+                            let struct_def_id = def_id.clone();
                             self.try_lazily_register_adt(struct_def_id.clone(), span);
                             let info = self
                                 .mir_package
@@ -615,19 +607,7 @@ impl HirToMirLowerer {
             .segments
             .last()
             .map(|segment| format!("struct {}", segment.name));
-        // A type alias denotes a `type` value in expression position, but
-        // reflection needs the represented ADT. Follow the alias target's
-        // checked type by identity; comptime-generated structs are keyed by
-        // that target const block's DefId, not by a display name.
-        let struct_def_id = self
-            .hir_program
-            .type_alias_target_hir_id(def_id.clone())
-            .and_then(|target| self.typeck_type_expr_type(target))
-            .and_then(|ty| match ty.kind {
-                TyKind::Adt(adt, _) => Some(adt.did),
-                _ => None,
-            })
-            .unwrap_or_else(|| def_id.clone());
+        let struct_def_id = def_id.clone();
         self.try_lazily_register_adt(struct_def_id.clone(), span);
         let struct_info = self
             .mir_package

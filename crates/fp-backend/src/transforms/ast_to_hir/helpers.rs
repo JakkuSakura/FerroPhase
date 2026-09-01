@@ -17,38 +17,6 @@ impl AstToHirLowerer {
             }
             _ => return None,
         };
-        // Transparent aliases may also have a materialized enum-shaped HIR
-        // item for structural/type-building purposes. Constructor paths must
-        // nevertheless use the defining enum's variant identity, just like
-        // rustc resolves `Alias::Variant` through the alias target.
-        if let Some(target) = self
-            .package
-            .type_alias_targets
-            .get(&def_id)
-            .cloned()
-            .or_else(|| self.hir_program.type_alias_target(def_id.clone()))
-            && let hir::TypeExprKind::Path(path) = target.kind
-            && let Some(hir::Res::Def(target_id)) = path.res
-        {
-            let target_item = self
-                .package
-                .def_map
-                .get(&target_id)
-                .cloned()
-                .or_else(|| self.program_def_map.get(&target_id).cloned())
-                .or_else(|| self.hir_program.item(target_id.clone()));
-            if let Some(hir::Item {
-                kind: hir::ItemKind::Enum(enum_def),
-                ..
-            }) = target_item
-            {
-                return enum_def
-                    .variants
-                    .iter()
-                    .find(|variant| variant.name.as_str() == name)
-                    .map(|variant| hir::Res::Def(variant.def_id.clone()));
-            }
-        }
         let item = self
             .package
             .def_map
@@ -56,15 +24,7 @@ impl AstToHirLowerer {
             .cloned()
             .or_else(|| self.program_def_map.get(&def_id).cloned())
             .or_else(|| self.hir_program.item(def_id.clone()))?;
-        let hir::ItemKind::Enum(enum_def) = &item.kind else {
-            let prefix = QualifiedPath::new(
-                base.segments
-                    .iter()
-                    .map(|segment| segment.name.as_str().to_owned())
-                    .collect(),
-            );
-            return self.enum_variant_through_type_path(&prefix, name);
-        };
+        let hir::ItemKind::Enum(enum_def) = &item.kind else { return None; };
         enum_def
             .variants
             .iter()
@@ -642,17 +602,9 @@ impl AstToHirLowerer {
                         .enum_variant_def_ids
                         .values()
                         .any(|candidate| candidate == &variant_id);
-                    let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res
-                    {
-                        let transparent_alias =
-                            self.package.type_alias_targets.contains_key(enum_id)
-                                || self
-                                    .hir_program
-                                    .type_alias_target(enum_id.clone())
-                                    .is_some();
-                        (predeclared_variant && !transparent_alias)
-                            || (!transparent_alias
-                                && self
+                    let declared_variant = if let Some(hir::Res::Def(enum_id)) = &type_relative.res {
+                        predeclared_variant
+                            || self
                                     .package
                                     .def_map
                                     .get(enum_id)
@@ -667,7 +619,7 @@ impl AstToHirLowerer {
                                                     .iter()
                                                     .any(|variant| variant.def_id == variant_id)
                                         )
-                                    }))
+                                    })
                     } else {
                         false
                     };
@@ -1238,11 +1190,9 @@ impl AstToHirLowerer {
     ) -> Result<hir::Path> {
         match expr.kind() {
             ast::ExprKind::Name(name) => {
-                // Frontend name resolution may have recorded a stale
-                // module-level DefId before this function's local type alias
-                // scope was entered. Lexical type bindings have rustc's
-                // normal shadowing precedence, so preserve the local HIR
-                // identity before consulting that snapshot.
+                // Lexical type bindings have rustc's normal shadowing
+                // precedence, so preserve the local HIR identity before
+                // consulting the module-level resolution snapshot.
                 if scope == PathResolutionScope::Type {
                     let local_name = match name {
                         Name::Ident(ident) => Some(ident.name.as_str()),
