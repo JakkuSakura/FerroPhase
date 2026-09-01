@@ -170,7 +170,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
     let user_type = hir::DefId::new(hir::PackageId::new("test"), 7);
     generator.package.module_tree.bind(
         generator.package.module_tree.root(),
-        fp_core::ast::resolve::Namespace::Type,
+        fp_core::hir::resolve::Namespace::Type,
         "u8",
         hir::SymbolEntry {
             res: hir::Res::Def(user_type.clone()),
@@ -785,7 +785,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     let prelude_module = generator.package.module_tree.prelude();
     generator.package.module_tree.bind(
         prelude_module,
-        fp_core::ast::resolve::Namespace::Type,
+        fp_core::hir::resolve::Namespace::Type,
         "Result",
         hir::SymbolEntry {
             res: hir::Res::Def(result_def_id.clone()),
@@ -851,7 +851,7 @@ fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()>
         hir::PackageId::new("test"),
     );
     generator.transform_package(&package)?;
-    let binding = generator.tree_lookup_raw("map::NodeRef", fp_core::ast::resolve::Namespace::Type);
+    let binding = generator.tree_lookup_raw("map::NodeRef", fp_core::hir::resolve::Namespace::Type);
     assert!(matches!(
         binding.map(|entry| &entry.res),
         Some(hir::Res::Def(_))
@@ -1507,7 +1507,7 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
             .module_tree
             .lookup(
                 program.module_tree.root(),
-                fp_core::ast::resolve::Namespace::Type,
+                fp_core::hir::resolve::Namespace::Type,
                 "Alias",
             )
             .is_some()
@@ -1578,7 +1578,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     std.hir_exports = std_lowerer.exported_symbols();
     assert_eq!(
         std.module_tree
-            .prelude_bindings(fp_core::ast::resolve::Namespace::Type)
+            .prelude_bindings(fp_core::hir::resolve::Namespace::Type)
             .find(|(name, _)| *name == "Ok")
             .map(|(_, entry)| entry.res.clone()),
         Some(hir::Res::Def(ok_def_id.clone())),

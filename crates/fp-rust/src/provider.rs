@@ -197,12 +197,12 @@ impl PackageProvider for RustPackageProvider {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
 
-    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
-        fp_core::ast::resolve::DeclarationRules::rust()
+    fn declaration_rules(&self) -> fp_core::hir::resolve::DeclarationRules {
+        fp_core::hir::resolve::DeclarationRules::rust()
     }
 
-    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
-        fp_core::ast::resolve::ResolutionRules::rust()
+    fn resolution_rules(&self) -> fp_core::hir::resolve::ResolutionRules {
+        fp_core::hir::resolve::ResolutionRules::rust()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
@@ -808,12 +808,12 @@ impl PackageProvider for RustExternalApiProvider {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
 
-    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
-        fp_core::ast::resolve::DeclarationRules::rust()
+    fn declaration_rules(&self) -> fp_core::hir::resolve::DeclarationRules {
+        fp_core::hir::resolve::DeclarationRules::rust()
     }
 
-    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
-        fp_core::ast::resolve::ResolutionRules::rust()
+    fn resolution_rules(&self) -> fp_core::hir::resolve::ResolutionRules {
+        fp_core::hir::resolve::ResolutionRules::rust()
     }
 }
 
@@ -906,12 +906,12 @@ impl PackageProvider for RustStdProvider {
         Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
 
-    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
-        fp_core::ast::resolve::DeclarationRules::rust()
+    fn declaration_rules(&self) -> fp_core::hir::resolve::DeclarationRules {
+        fp_core::hir::resolve::DeclarationRules::rust()
     }
 
-    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
-        fp_core::ast::resolve::ResolutionRules::rust()
+    fn resolution_rules(&self) -> fp_core::hir::resolve::ResolutionRules {
+        fp_core::hir::resolve::ResolutionRules::rust()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

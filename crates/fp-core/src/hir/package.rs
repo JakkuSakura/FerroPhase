@@ -55,6 +55,10 @@ pub struct HirPackage {
     /// reserved for the package-root `OwnerId` (see `OwnerId::root`), so a
     /// real item can never mint a `DefId` that collides with it.
     pub next_def_id: u32,
+    pub module_tree: crate::hir::resolve::ModuleTree,
+    /// Prelude modules participating in this package's resolved namespace.
+    /// Their identities are assigned in the HIR package's DefId space.
+    pub prelude_modules: Vec<DefId>,
     /// Fully-qualified path for a definition's `DefId`, recorded once at
     /// first registration (module segments + the definition's own bare
     /// name as the last segment). Analogous to rustc's `DefPathTable`:
@@ -447,6 +451,8 @@ impl HirPackage {
             items: Vec::new(),
             def_map: HashMap::new(),
             next_def_id: 1,
+            module_tree: crate::hir::resolve::ModuleTree::new(),
+            prelude_modules: Vec::new(),
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
             intrinsic_defs: HashMap::new(),

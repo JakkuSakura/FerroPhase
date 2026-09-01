@@ -41,7 +41,7 @@ pub struct AstProgram {
     sorted_packages_cache: Rc<RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>>,
     /// Explicit AST local-resolution state. Lowering borrows this facade;
     /// it does not own lexical/local binding maps.
-    local_scope: Rc<RefCell<crate::ast::resolve::LocalScope>>,
+    local_scope: Rc<RefCell<crate::hir::resolve::LocalScope>>,
 }
 
 impl AstProgram {
@@ -50,7 +50,7 @@ impl AstProgram {
             crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
             sorted_packages_cache: Rc::new(RefCell::new(None)),
-            local_scope: Rc::new(RefCell::new(crate::ast::resolve::LocalScope::new())),
+            local_scope: Rc::new(RefCell::new(crate::hir::resolve::LocalScope::new())),
         }
     }
 
@@ -71,7 +71,7 @@ impl AstProgram {
     }
 
     pub fn reset_local_scope(&self) {
-        *self.local_scope.borrow_mut() = crate::ast::resolve::LocalScope::new();
+        *self.local_scope.borrow_mut() = crate::hir::resolve::LocalScope::new();
     }
 
     pub fn enter_local_scope(&self) {
@@ -85,8 +85,8 @@ impl AstProgram {
     pub fn resolve_local(
         &self,
         name: &str,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> crate::ast::resolve::ResolutionResult {
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
         self.local_scope
             .borrow()
             .resolve(name, namespace, self.provider().resolution_rules())
@@ -94,9 +94,9 @@ impl AstProgram {
 
     pub fn declare_local(
         &self,
-        name: impl Into<crate::ast::resolve::Symbol>,
-        binding: crate::ast::resolve::Binding,
-    ) -> crate::ast::resolve::DeclarationOutcome {
+        name: impl Into<crate::hir::resolve::Symbol>,
+        binding: crate::hir::resolve::Binding,
+    ) -> crate::hir::resolve::DeclarationOutcome {
         self.local_scope
             .borrow_mut()
             .declare(name, binding, self.provider().declaration_rules())
@@ -174,8 +174,8 @@ impl AstProgram {
         package_id: &PackageId,
         module: &QualifiedPath,
         name: &str,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> crate::ast::resolve::ResolutionResult {
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
         let package = self.get_ast_package(package_id);
         let (result, preludes) = {
             let package = package.borrow();
@@ -183,7 +183,7 @@ impl AstProgram {
             let result = package.module_tree.resolve(module, name, namespace, rules);
             (result, package.prelude_modules.clone())
         };
-        if !matches!(result, crate::ast::resolve::ResolutionResult::NotFound)
+        if !matches!(result, crate::hir::resolve::ResolutionResult::NotFound)
             || !self.provider().resolution_rules().use_language_prelude
         {
             return result;
@@ -198,21 +198,21 @@ impl AstProgram {
                     .module_tree
                     .resolve(&prelude.path, name, namespace, rules);
             match result {
-                crate::ast::resolve::ResolutionResult::NotFound => {}
-                crate::ast::resolve::ResolutionResult::Ambiguous => {
-                    return crate::ast::resolve::ResolutionResult::Ambiguous;
+                crate::hir::resolve::ResolutionResult::NotFound => {}
+                crate::hir::resolve::ResolutionResult::Ambiguous => {
+                    return crate::hir::resolve::ResolutionResult::Ambiguous;
                 }
-                crate::ast::resolve::ResolutionResult::Found(res) => {
+                crate::hir::resolve::ResolutionResult::Found(res) => {
                     if prelude_result.is_some() {
-                        return crate::ast::resolve::ResolutionResult::Ambiguous;
+                        return crate::hir::resolve::ResolutionResult::Ambiguous;
                     }
                     prelude_result = Some(res);
                 }
             }
         }
         prelude_result
-            .map(crate::ast::resolve::ResolutionResult::Found)
-            .unwrap_or(crate::ast::resolve::ResolutionResult::NotFound)
+            .map(crate::hir::resolve::ResolutionResult::Found)
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
     }
 
     /// Resolve a qualified path through the AST package's module tree.
@@ -221,8 +221,8 @@ impl AstProgram {
         package_id: &PackageId,
         module: &QualifiedPath,
         path: &QualifiedPath,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> crate::ast::resolve::ResolutionResult {
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
         let package = self.get_ast_package(package_id);
         let (result, preludes) = {
             let package = package.borrow();
@@ -232,7 +232,7 @@ impl AstProgram {
                 .resolve_path(module, path, namespace, rules);
             (result, package.prelude_modules.clone())
         };
-        if !matches!(result, crate::ast::resolve::ResolutionResult::NotFound)
+        if !matches!(result, crate::hir::resolve::ResolutionResult::NotFound)
             || !self.provider().resolution_rules().use_language_prelude
         {
             return result;
@@ -248,21 +248,21 @@ impl AstProgram {
                 rules,
             );
             match result {
-                crate::ast::resolve::ResolutionResult::NotFound => {}
-                crate::ast::resolve::ResolutionResult::Ambiguous => {
-                    return crate::ast::resolve::ResolutionResult::Ambiguous;
+                crate::hir::resolve::ResolutionResult::NotFound => {}
+                crate::hir::resolve::ResolutionResult::Ambiguous => {
+                    return crate::hir::resolve::ResolutionResult::Ambiguous;
                 }
-                crate::ast::resolve::ResolutionResult::Found(res) => {
+                crate::hir::resolve::ResolutionResult::Found(res) => {
                     if prelude_result.is_some() {
-                        return crate::ast::resolve::ResolutionResult::Ambiguous;
+                        return crate::hir::resolve::ResolutionResult::Ambiguous;
                     }
                     prelude_result = Some(res);
                 }
             }
         }
         prelude_result
-            .map(crate::ast::resolve::ResolutionResult::Found)
-            .unwrap_or(crate::ast::resolve::ResolutionResult::NotFound)
+            .map(crate::hir::resolve::ResolutionResult::Found)
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
     }
 
     pub fn resolve_module_path_final(
@@ -270,11 +270,11 @@ impl AstProgram {
         package_id: &PackageId,
         module: &QualifiedPath,
         path: &QualifiedPath,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> crate::ast::resolve::ResolutionResult {
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
         match self.resolve_module_path(package_id, module, path, namespace) {
-            crate::ast::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
-                crate::ast::resolve::ResolutionResult::Found(crate::hir::Res::Error)
+            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
+                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error)
             }
             result => result,
         }
@@ -292,7 +292,7 @@ impl AstProgram {
         &self,
         package_id: &PackageId,
         path: &QualifiedPath,
-    ) -> Option<Vec<crate::ast::resolve::Symbol>> {
+    ) -> Option<Vec<crate::hir::resolve::Symbol>> {
         let package = self.get_ast_package(package_id);
         let package = package.borrow();
         Some(
@@ -311,8 +311,8 @@ impl AstProgram {
         package_id: &PackageId,
         module: &QualifiedPath,
         name: &str,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> crate::ast::resolve::ResolutionResult {
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
         self.resolve_module_name(package_id, module, name, namespace)
     }
 

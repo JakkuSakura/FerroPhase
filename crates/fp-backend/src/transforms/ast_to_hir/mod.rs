@@ -92,7 +92,7 @@ pub struct AstToHirLowerer {
     synthetic_items: Vec<hir::Item>,
     /// This package's own HIR content — `items`/`def_map`/`def_paths`/
     /// `intrinsic_defs`/`placeholder_defs`,
-    /// plus the AST-owned `module_tree` (see `fp_core::ast::resolve::ModuleTree`'s doc
+    /// plus the AST-owned `module_tree` (see `fp_core::hir::resolve::ModuleTree`'s doc
     /// comment). Written into directly throughout lowering — no private
     /// scratch copy, no mirror/extend step at `transform_package`'s return
     /// points (the earlier design this replaced kept separate `def_paths`/
@@ -217,11 +217,11 @@ enum ImplGenericArgKey {
 }
 
 impl PathResolutionScope {
-    fn namespace(self) -> fp_core::ast::resolve::Namespace {
+    fn namespace(self) -> fp_core::hir::resolve::Namespace {
         match self {
-            PathResolutionScope::Value => fp_core::ast::resolve::Namespace::Value,
+            PathResolutionScope::Value => fp_core::hir::resolve::Namespace::Value,
             PathResolutionScope::Type | PathResolutionScope::Trait => {
-                fp_core::ast::resolve::Namespace::Type
+                fp_core::hir::resolve::Namespace::Type
             }
         }
     }
@@ -562,15 +562,15 @@ impl AstToHirLowerer {
     fn tree_lookup_raw(
         &self,
         path: &fp_core::ast::path::QualifiedPath,
-        ns: fp_core::ast::resolve::Namespace,
+        ns: fp_core::hir::resolve::Namespace,
     ) -> Option<hir::Res> {
-        match self.workspace.resolve_module_path_final(
+        match self.hir_program.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
             &path,
             ns,
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
+            fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
             _ => None,
         }
     }
@@ -585,9 +585,9 @@ impl AstToHirLowerer {
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
         match self
             .workspace
-            .resolve_local(name, fp_core::ast::resolve::Namespace::Type)
+            .resolve_local(name, fp_core::hir::resolve::Namespace::Type)
         {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
             _ => None,
@@ -597,9 +597,9 @@ impl AstToHirLowerer {
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
         match self
             .workspace
-            .resolve_local(name, fp_core::ast::resolve::Namespace::Value)
+            .resolve_local(name, fp_core::hir::resolve::Namespace::Value)
         {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
             _ => None,
@@ -614,13 +614,13 @@ impl AstToHirLowerer {
     /// local/function-scoped shadow the way a bare reference correctly
     /// does.
     fn resolve_global_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.workspace.resolve_module_name(
+        match self.hir_program.resolve_module_name(
             &self.package_id,
             &self.module_path,
             name,
-            fp_core::ast::resolve::Namespace::Type,
+            fp_core::hir::resolve::Namespace::Type,
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
                 Some(hir::Res::Def(def_id))
             }
             _ => None,
@@ -659,13 +659,13 @@ impl AstToHirLowerer {
         is_trait(self.resolve_lexical_type_symbol(name))
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
-                let resolved = match self.workspace.resolve_module_path_final(
+                let resolved = match self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     &qualified,
-                    fp_core::ast::resolve::Namespace::Type,
+                    fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                         Some(hir::Res::Def(id))
                     }
                     _ => None,
@@ -674,13 +674,13 @@ impl AstToHirLowerer {
             })
             .or_else(|| {
                 let path = fp_core::ast::path::QualifiedPath::new(vec![name.to_owned()]);
-                let resolved = match self.workspace.resolve_module_path_final(
+                let resolved = match self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     &path,
-                    fp_core::ast::resolve::Namespace::Type,
+                    fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                         Some(hir::Res::Def(id))
                     }
                     _ => None,
@@ -702,13 +702,13 @@ impl AstToHirLowerer {
     /// same syntax — the same ambiguity real Rust resolves via name
     /// resolution, not parser syntax.
     fn resolve_global_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.workspace.resolve_module_name(
+        match self.hir_program.resolve_module_name(
             &self.package_id,
             &self.module_path,
             name,
-            fp_core::ast::resolve::Namespace::Value,
+            fp_core::hir::resolve::Namespace::Value,
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
                 Some(hir::Res::Def(def_id))
             }
             _ => None,
@@ -3089,13 +3089,13 @@ impl AstToHirLowerer {
                     // crate root.
                     let source_path =
                         fp_core::ast::path::QualifiedPath::new(vec![source_name.to_owned()]);
-                    let source_def_id = match self.workspace.resolve_module_path_final(
+                    let source_def_id = match self.hir_program.resolve_module_path_final(
                         &self.package_id,
                         &self.module_path,
                         &source_path,
-                        fp_core::ast::resolve::Namespace::Type,
+                        fp_core::hir::resolve::Namespace::Type,
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                             Some(hir::Res::Def(id))
                         }
                         _ => None,

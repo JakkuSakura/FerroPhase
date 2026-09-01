@@ -135,8 +135,6 @@ pub struct AstPackage {
     pub name: String,
     pub package: PackageDescriptor,
 
-    /// Persistent module-resolution state populated by the AST resolver.
-    pub module_tree: crate::ast::resolve::ModuleTree,
     pub prelude_modules: Vec<PackagePath>,
     /// AST node resolutions produced before lowering.
     pub resolutions: HashMap<QualifiedPath, crate::hir::Res>,
@@ -178,7 +176,6 @@ impl AstPackage {
             package_id,
             name: name.into(),
             package,
-            module_tree: crate::ast::resolve::ModuleTree::new(),
             prelude_modules: Vec::new(),
             resolutions: HashMap::new(),
             items: Vec::new(),

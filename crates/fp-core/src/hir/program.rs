@@ -79,7 +79,6 @@ impl SharedHirProgram {
     pub fn intrinsic_def(&self, id: DefId) -> Option<CallKind> {
         self.0.borrow().intrinsic_def(id)
     }
-
     pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
         self.0.borrow().type_expr_type(hir_id)
     }
@@ -92,6 +91,33 @@ impl SharedHirProgram {
         self.0.borrow().method_resolution(hir_id)
     }
 
+    pub fn resolve_module_name(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, name: &str, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
+        self.0.borrow().resolve_module_name(package_id, module, name, namespace, rules)
+    }
+    pub fn resolve_module_path(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, path: &crate::ast::path::QualifiedPath, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
+        self.0.borrow().resolve_module_path(package_id, module, path, namespace, rules)
+    }
+    pub fn module_exists(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> bool {
+        self.0.borrow().module_exists(package_id, path)
+    }
+    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::QualifiedPath> {
+        self.0.borrow().module_path(def_id)
+    }
+    pub fn resolve_module_path_final(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, path: &crate::ast::path::QualifiedPath, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
+        match self.resolve_module_path(package_id, module, path, namespace, rules) {
+            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error),
+            result => result,
+        }
+    }
+    pub fn module_member_names(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> Option<Vec<crate::hir::resolve::Symbol>> {
+        self.package(package_id).and_then(|package| {
+            package
+                .borrow()
+                .module_tree
+                .module(path)
+                .map(|module| module.symbols.keys().cloned().collect())
+        })
+    }
     pub fn reflection_field_intrinsic(
         &self,
         hir_id: HirId,
@@ -219,6 +245,43 @@ impl HirProgram {
     pub fn add_package(&mut self, package: Rc<RefCell<HirPackage>>) {
         let package_id = package.borrow().id.clone();
         self.packages.insert(package_id, package);
+    }
+
+    pub fn resolve_module_name(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::QualifiedPath,
+        name: &str,
+        namespace: crate::hir::resolve::Namespace,
+        rules: crate::hir::resolve::ResolutionRules,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.package(package_id)
+            .map(|package| package.module_tree.resolve(module, name, namespace, rules))
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
+    }
+
+    pub fn resolve_module_path(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::QualifiedPath,
+        namespace: crate::hir::resolve::Namespace,
+        rules: crate::hir::resolve::ResolutionRules,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.package(package_id)
+            .map(|package| package.module_tree.resolve_path(module, path, namespace, rules))
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
+    }
+
+    pub fn module_exists(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> bool {
+        self.package(package_id)
+            .map(|package| package.module_tree.module(path).is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::QualifiedPath> {
+        self.package(&def_id.package_id)
+            .and_then(|package| package.module_tree.path_for_module(def_id))
     }
 
     /// Lookup a nominal struct by its declared name. This is a HIR data query,

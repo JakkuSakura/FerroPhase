@@ -13,6 +13,7 @@ pub mod place;
 pub mod pretty;
 pub mod program;
 pub mod refinement;
+pub mod resolve;
 pub mod ty;
 
 pub use ident::{DefPath, Symbol};
@@ -830,7 +831,11 @@ pub enum Res {
     /// like rustc's `Res::Def(DefKind::TyParam/ConstParam, DefId)`.
     Generic(DefId),
     SelfTy,
-    Module(Vec<String>),
+    /// A module namespace, identified by the module item's definition id.
+    /// The path is retained by the module tree and is only used internally
+    /// while traversing a qualified path; resolved consumers use this stable
+    /// semantic identity rather than reconstructing a source path.
+    Module(DefId),
     /// A language-level builtin identified by source name rather than a
     /// nominal definition. This is separate from `BuiltinSelfType`, which is
     /// the HIR impl-shape marker used by method lookup.

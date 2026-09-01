@@ -3111,8 +3111,11 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        if let Some(hir::Res::Module(module_path)) = &resolved_path.res {
-            let mut requested = module_path.clone();
+        if let Some(module_path) = resolved_path.res.as_ref().and_then(|res| match res {
+            hir::Res::Module(def_id) => self.lowering.hir_program.module_path(def_id),
+            _ => None,
+        }) {
+            let mut requested = module_path.segments;
             requested.extend(
                 resolved_path
                     .segments

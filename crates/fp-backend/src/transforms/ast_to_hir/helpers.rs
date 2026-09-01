@@ -5,7 +5,7 @@ impl AstToHirLowerer {
     pub(super) fn package_crate_root(&self) -> Vec<String> {
         if let Some(current_root) = self.module_path.segments.first()
             && matches!(current_root.as_str(), "core" | "alloc" | "std")
-            && self.workspace.module_exists(
+            && self.hir_program.module_exists(
                 &self.package_id,
                 &fp_core::ast::path::QualifiedPath::new(vec![current_root.clone()]),
             )
@@ -14,7 +14,7 @@ impl AstToHirLowerer {
         }
         let root = hir::HirProgram::external_crate_name(&self.package_id);
         let candidate = fp_core::ast::path::QualifiedPath::new(vec![root]);
-        if self.workspace.module_exists(&self.package_id, &candidate) {
+        if self.hir_program.module_exists(&self.package_id, &candidate) {
             return candidate.segments;
         }
         Vec::new()
@@ -195,7 +195,7 @@ impl AstToHirLowerer {
             PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             PathResolutionScope::Trait => self.resolve_trait_symbol(name).is_some(),
         };
-        let module_exists = |p: &QualifiedPath| self.workspace.module_exists(&self.package_id, p);
+        let module_exists = |p: &QualifiedPath| self.hir_program.module_exists(&self.package_id, p);
 
         match parsed.prefix {
             PathPrefix::Root | PathPrefix::Crate => {
@@ -490,13 +490,13 @@ impl AstToHirLowerer {
                 };
                 let full_path = self.canonicalize_segments(&type_relative.segments);
                 if let Some(hir::Res::Def(variant_id)) =
-                    match self.workspace.resolve_module_path_final(
+                    match self.hir_program.resolve_module_path_final(
                         &self.package_id,
                         &self.module_path,
                         &full_path,
-                        fp_core::ast::resolve::Namespace::Value,
+                        fp_core::hir::resolve::Namespace::Value,
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                             Some(hir::Res::Def(id))
                         }
                         _ => None,
@@ -590,12 +590,12 @@ impl AstToHirLowerer {
             && is_primitive_type_name(segments[0].name.as_str())
         {
             let primitive_path = self.canonicalize_segments(&segments);
-            if let fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) =
-                self.workspace.resolve_module_path_final(
+            if let fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) =
+                self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     &primitive_path,
-                    fp_core::ast::resolve::Namespace::Type,
+                    fp_core::hir::resolve::Namespace::Type,
                 )
             {
                 return Ok(hir::Path {
@@ -627,12 +627,17 @@ impl AstToHirLowerer {
             // names. Without this ordering, an alias such as
             // `use super::node::marker` can fall through to suffix lookup
             // and select an unrelated public module (`core::marker`).
-            if let Some(hir::Res::Module(module_path)) = match scope {
+            let module_path = match scope {
                 PathResolutionScope::Value => self.resolve_value_symbol(&segments[0].name),
                 PathResolutionScope::Type => self.resolve_type_symbol(&segments[0].name),
                 PathResolutionScope::Trait => self.resolve_trait_symbol(&segments[0].name),
-            } {
-                let mut aliased = module_path;
+            };
+            let module_path = match module_path {
+                Some(hir::Res::Module(module_id)) => self.hir_program.module_path(&module_id),
+                _ => None,
+            };
+            if let Some(module_path) = module_path {
+                let mut aliased = module_path.segments;
                 aliased.extend(
                     segments
                         .iter()
@@ -641,13 +646,13 @@ impl AstToHirLowerer {
                 );
                 let aliased = QualifiedPath::new(aliased);
                 let module_member = aliased.segments.split_last().and_then(|(leaf, parent)| {
-                    match self.workspace.resolve_module_name(
+                    match self.hir_program.resolve_module_name(
                         &self.package_id,
                         &QualifiedPath::new(parent.to_vec()),
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                             Some(hir::Res::Def(id))
                         }
                         _ => None,
@@ -661,13 +666,13 @@ impl AstToHirLowerer {
                     let mut rooted = root;
                     rooted.extend(aliased.segments.iter().cloned());
                     let (leaf, parent) = rooted.split_last()?;
-                    match self.workspace.resolve_module_name(
+                    match self.hir_program.resolve_module_name(
                         &self.package_id,
                         &QualifiedPath::new(parent.to_vec()),
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                             Some(hir::Res::Def(id))
                         }
                         _ => None,
@@ -832,10 +837,11 @@ impl AstToHirLowerer {
                         }
                     }
                 }
-                if let Some(hir::Res::Module(module_path)) =
-                    self.resolve_value_symbol(first.name.as_str())
-                {
-                    let mut canonical = module_path;
+                if let Some(module_path) = self.resolve_value_symbol(first.name.as_str()).and_then(|res| match res {
+                    hir::Res::Module(id) => self.hir_program.module_path(&id),
+                    _ => None,
+                }) {
+                    let mut canonical = module_path.segments;
                     canonical.extend(
                         segments
                             .iter()
@@ -871,13 +877,13 @@ impl AstToHirLowerer {
                     if canonical_res.is_none() && canonical.len() > 1 {
                         let parent = QualifiedPath::new(canonical[..canonical.len() - 1].to_vec());
                         if let Some(last) = canonical.last() {
-                            canonical_res = match self.workspace.resolve_module_name(
+                            canonical_res = match self.hir_program.resolve_module_name(
                                 &self.package_id,
                                 &parent,
                                 last,
                                 scope.namespace(),
                             ) {
-                                fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(
+                                fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(
                                     id,
                                 )) => Some(hir::Res::Def(id)),
                                 _ => None,
@@ -889,7 +895,7 @@ impl AstToHirLowerer {
                             .workspace
                             .module_exists(&self.package_id, &canonical_path)
                     {
-                        canonical_res = Some(hir::Res::Module(canonical.clone()));
+                        canonical_res = self.lookup_global_res(&canonical_path, scope);
                     }
                     return Ok(hir::Path {
                         segments: canonical_segments,
@@ -948,9 +954,9 @@ impl AstToHirLowerer {
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
                     if canonical_res.is_none()
-                        && self.workspace.module_exists(&self.package_id, &canonical)
+                        && self.hir_program.module_exists(&self.package_id, &canonical)
                     {
-                        canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
+                        canonical_res = self.lookup_global_res(&canonical, scope);
                     }
                     canonical_res
                 };
@@ -969,8 +975,11 @@ impl AstToHirLowerer {
                         PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
                         PathResolutionScope::Trait => self.resolve_trait_symbol(&first.name),
                     };
-                    if let Some(hir::Res::Module(module_path)) = alias {
-                        let mut canonical = module_path;
+                    if let Some(module_path) = alias.and_then(|res| match res {
+                        hir::Res::Module(id) => self.hir_program.module_path(&id),
+                        _ => None,
+                    }) {
+                        let mut canonical = module_path.segments;
                         canonical.extend(
                             segments
                                 .iter()
@@ -980,7 +989,7 @@ impl AstToHirLowerer {
                         let canonical_path = QualifiedPath::new(canonical.clone());
                         resolved = self.lookup_global_res(&canonical_path, scope);
                         if resolved.is_none() && segments.len() == 1 {
-                            resolved = Some(hir::Res::Module(canonical));
+                            resolved = self.lookup_global_res(&canonical_path, scope);
                         }
                     }
                 }
@@ -1086,8 +1095,11 @@ impl AstToHirLowerer {
         }
 
         if segments.len() > 1 {
-            if let Some(hir::Res::Module(module_path)) = resolved.clone() {
-                let mut qualified = module_path;
+            if let Some(module_path) = resolved.clone().and_then(|res| match res {
+                hir::Res::Module(id) => self.hir_program.module_path(&id),
+                _ => None,
+            }) {
+                let mut qualified = module_path.segments;
                 qualified.extend(
                     segments
                         .iter()
@@ -1166,10 +1178,12 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
-                if let Some(hir::Res::Module(module_path)) = base.res.clone() {
-                    let member_path = QualifiedPath::new(module_path.clone());
-                    if let fp_core::ast::resolve::ResolutionResult::Found(res) =
-                        self.workspace.resolve_module_name(
+                if let Some(member_path) = base.res.clone().and_then(|res| match res {
+                    hir::Res::Module(id) => self.hir_program.module_path(&id),
+                    _ => None,
+                }) {
+                    if let fp_core::hir::resolve::ResolutionResult::Found(res) =
+                        self.hir_program.resolve_module_name(
                             &self.package_id,
                             &member_path,
                             select.field.name.as_str(),

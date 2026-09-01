@@ -138,12 +138,12 @@ impl PackageProvider for FerroPhaseProvider {
         Box::new(fp_core::intrinsics::NoopIntrinsicNormalizer)
     }
 
-    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
-        fp_core::ast::resolve::DeclarationRules::ferro()
+    fn declaration_rules(&self) -> fp_core::hir::resolve::DeclarationRules {
+        fp_core::hir::resolve::DeclarationRules::ferro()
     }
 
-    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
-        fp_core::ast::resolve::ResolutionRules::ferro()
+    fn resolution_rules(&self) -> fp_core::hir::resolve::ResolutionRules {
+        fp_core::hir::resolve::ResolutionRules::ferro()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
@@ -260,12 +260,12 @@ impl PackageProvider for InputPackageProvider {
         Box::new(crate::normalization::FerroIntrinsicNormalizer::new())
     }
 
-    fn declaration_rules(&self) -> fp_core::ast::resolve::DeclarationRules {
-        fp_core::ast::resolve::DeclarationRules::ferro()
+    fn declaration_rules(&self) -> fp_core::hir::resolve::DeclarationRules {
+        fp_core::hir::resolve::DeclarationRules::ferro()
     }
 
-    fn resolution_rules(&self) -> fp_core::ast::resolve::ResolutionRules {
-        fp_core::ast::resolve::ResolutionRules::ferro()
+    fn resolution_rules(&self) -> fp_core::hir::resolve::ResolutionRules {
+        fp_core::hir::resolve::ResolutionRules::ferro()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

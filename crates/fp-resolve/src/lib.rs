@@ -3,11 +3,10 @@
 //! Stable resolution data lives in `fp-core`; this crate owns the algorithms
 //! that populate it before AST-to-HIR lowering.
 
-use fp_core::ast::Symbol;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::program::AstProgram;
-use fp_core::ast::resolve::{
+use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
     ResolutionRules,
 };
@@ -16,7 +15,8 @@ use fp_core::span::Span;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{RefCell};
+use fp_core::hir::Symbol;
 
 pub struct AstResolver<'hir> {
     package: Rc<RefCell<fp_core::ast::package::AstPackage>>,
@@ -51,12 +51,12 @@ impl<'hir> AstResolver<'hir> {
         }
     }
 
-    fn package_tree(&self) -> Ref<'_, ModuleTree> {
-        Ref::map(self.package.borrow(), |package| &package.module_tree)
+    fn package_tree(&self) -> &ModuleTree {
+        &self.hir_package.module_tree
     }
 
-    fn package_tree_mut(&self) -> RefMut<'_, ModuleTree> {
-        RefMut::map(self.package.borrow_mut(), |package| &mut package.module_tree)
+    fn package_tree_mut(&mut self) -> &mut ModuleTree {
+        &mut self.hir_package.module_tree
     }
 
     fn item_def_id(&mut self) -> hir::DefId {
@@ -134,12 +134,16 @@ impl<'hir> AstResolver<'hir> {
         match item.kind() {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
+                let module_def_id = self.item_def_id();
+                self.resolutions
+                    .insert(child_path.clone(), hir::Res::Def(module_def_id.clone()));
                 self.package_tree_mut().ensure_module(&child_path);
                 self.declare_module(
                     module,
                     &child.name,
                     Binding::Module {
                         target: child_path.clone(),
+                        def_id: module_def_id,
                         span,
                     },
                 );
@@ -213,7 +217,7 @@ impl<'hir> AstResolver<'hir> {
                                     directive.namespace,
                                     self.resolution_rules,
                                 ) {
-                                    fp_core::ast::resolve::ResolutionResult::Found(res) => {
+                                    fp_core::hir::resolve::ResolutionResult::Found(res) => {
                                         Some((name.clone(), res))
                                     }
                                     _ => None,
@@ -260,7 +264,7 @@ impl<'hir> AstResolver<'hir> {
                 directive.namespace,
                 self.resolution_rules,
             ) {
-                fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
+                fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
                 _ => None,
             };
             let target = target.or_else(|| {
@@ -277,7 +281,7 @@ impl<'hir> AstResolver<'hir> {
                     &QualifiedPath::from_slice(rest),
                     directive.namespace,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
+                    fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
                     _ => None,
                 }
             });
@@ -571,7 +575,7 @@ mod tests {
             resolver
                 .modules
                 .resolve(&root, "Alias", Namespace::Type, ResolutionRules::rust(),),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(target)),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(target)),
         );
     }
 
@@ -644,7 +648,7 @@ mod tests {
             resolver
                 .modules
                 .resolve(&root, "Second", Namespace::Type, ResolutionRules::rust()),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(_))
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(_))
         ));
     }
 
@@ -690,7 +694,7 @@ mod tests {
             resolver
                 .modules
                 .resolve(&root, "Item", Namespace::Type, ResolutionRules::rust()),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(target)),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(target)),
         );
     }
 
@@ -705,6 +709,7 @@ mod tests {
             "child",
             Binding::Module {
                 target: child.clone(),
+                def_id: hir::DefId::local(1),
                 span: Span::null(),
             },
             DeclarationRules::rust(),
@@ -733,7 +738,7 @@ mod tests {
             resolver
                 .modules
                 .resolve(&root, "alias", Namespace::Type, ResolutionRules::rust()),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Module(vec!["child".into()])),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(hir::DefId::local(1))),
         );
     }
 }

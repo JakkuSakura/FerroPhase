@@ -1104,13 +1104,13 @@ impl AstToHirLowerer {
                         .map(|seg| seg.name.as_str().to_owned())
                         .collect(),
                 );
-                let fields = match self.workspace.resolve_module_path_final(
+                let fields = match self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     &qualified,
-                    fp_core::ast::resolve::Namespace::Type,
+                    fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
                         self.struct_field_defs.get(&def_id).cloned()
                     }
                     _ => None,
@@ -2147,26 +2147,26 @@ impl AstToHirLowerer {
             }
         }
 
-        let local = match self.workspace.resolve_module_path_final(
+        let local = match self.hir_program.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
             path,
             scope.namespace(),
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
             _ => None,
         };
         local.or_else(|| {
             if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                match self.workspace.resolve_module_path_final(
+                match self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     path,
-                    fp_core::ast::resolve::Namespace::Type,
+                    fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                         Some(hir::Res::Def(id))
                     }
                     _ => None,

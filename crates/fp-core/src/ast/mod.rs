@@ -21,7 +21,6 @@ mod pat;
 pub mod path;
 mod pretty;
 pub mod program;
-pub mod resolve;
 mod schema;
 mod serialize;
 pub mod snapshot;
@@ -37,10 +36,6 @@ pub use item_collection::*;
 pub use json::*;
 pub use macros::*;
 pub use pat::*;
-pub use resolve::{
-    Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree as ResolveModuleTree,
-    Namespace, ResolutionResult, ResolutionRules, Symbol,
-};
 pub use schema::*;
 pub use snapshot::*;
 #[allow(dead_code)]

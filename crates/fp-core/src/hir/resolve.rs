@@ -4,8 +4,8 @@
 //! expansion and AST→HIR lowering. HIR receives resolved identities; it does
 //! not perform first-time lexical or module lookup.
 
-use super::Span;
 use crate::ast::path::QualifiedPath;
+use crate::span::Span;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,6 +22,7 @@ pub use crate::hir::Symbol;
 pub enum Binding {
     Module {
         target: QualifiedPath,
+        def_id: crate::hir::DefId,
         span: Span,
     },
     Definition {
@@ -213,7 +214,7 @@ pub enum ResolutionResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct LocalScopeId(u32);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModuleTree {
     pub symbols: HashMap<Symbol, Vec<Binding>>,
     children: HashMap<Symbol, ModuleTree>,
@@ -258,6 +259,33 @@ impl ModuleTree {
             current = current.children.get_mut(&Symbol::from(segment.as_str()))?;
         }
         Some(current)
+    }
+
+    /// Find the source path associated with a module definition.  Module
+    /// paths are an implementation detail of traversal; the public
+    /// resolution result carries the module's `DefId`.
+    pub fn path_for_module(&self, def_id: &crate::hir::DefId) -> Option<QualifiedPath> {
+        fn visit(
+            tree: &ModuleTree,
+            def_id: &crate::hir::DefId,
+        ) -> Option<QualifiedPath> {
+            for bindings in tree.symbols.values() {
+                for binding in bindings {
+                    if let Binding::Module { def_id: id, target, .. } = binding {
+                        if id == def_id {
+                            return Some(target.clone());
+                        }
+                    }
+                }
+            }
+            for child in tree.children.values() {
+                if let Some(path) = visit(child, def_id) {
+                    return Some(path);
+                }
+            }
+            None
+        }
+        visit(self, def_id)
     }
 
     pub fn bindings(
@@ -360,7 +388,10 @@ impl ModuleTree {
             }) else {
                 return ResolutionResult::NotFound;
             };
-            result = self.resolve(&QualifiedPath::from_slice(&next), segment, namespace, rules);
+            let Some(next_path) = self.path_for_module(&next) else {
+                return ResolutionResult::NotFound;
+            };
+            result = self.resolve(&next_path, segment, namespace, rules);
         }
         result
     }
@@ -388,7 +419,7 @@ impl ModuleTree {
 
 fn binding_to_res(binding: &Binding) -> crate::hir::Res {
     match binding {
-        Binding::Module { target, .. } => crate::hir::Res::Module(target.segments.clone()),
+        Binding::Module { def_id, .. } => crate::hir::Res::Module(def_id.clone()),
         Binding::Definition { target, .. } | Binding::Alias { target, .. } => {
             crate::hir::Res::Def(target.clone())
         }
@@ -583,6 +614,7 @@ mod tests {
             "m",
             Binding::Module {
                 target: nested.clone(),
+                def_id: crate::hir::DefId::local(7),
                 span: span(),
             },
             DeclarationRules::rust(),

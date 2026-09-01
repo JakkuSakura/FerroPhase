@@ -69,13 +69,13 @@ pub trait PackageProvider {
 
     /// Language declaration policy used by the AST resolver. Providers may
     /// override this for language-specific namespace and import semantics.
-    fn declaration_rules(&self) -> crate::ast::resolve::DeclarationRules {
-        crate::ast::resolve::DeclarationRules::default()
+    fn declaration_rules(&self) -> crate::hir::resolve::DeclarationRules {
+        crate::hir::resolve::DeclarationRules::default()
     }
 
     /// Language lookup policy used by the AST resolver.
-    fn resolution_rules(&self) -> crate::ast::resolve::ResolutionRules {
-        crate::ast::resolve::ResolutionRules::default()
+    fn resolution_rules(&self) -> crate::hir::resolve::ResolutionRules {
+        crate::hir::resolve::ResolutionRules::default()
     }
 }
 
@@ -253,11 +253,11 @@ impl PackageProvider for CompositeProvider {
         self.workspace.intrinsic_normalizer()
     }
 
-    fn declaration_rules(&self) -> crate::ast::resolve::DeclarationRules {
+    fn declaration_rules(&self) -> crate::hir::resolve::DeclarationRules {
         self.workspace.declaration_rules()
     }
 
-    fn resolution_rules(&self) -> crate::ast::resolve::ResolutionRules {
+    fn resolution_rules(&self) -> crate::hir::resolve::ResolutionRules {
         self.workspace.resolution_rules()
     }
 
