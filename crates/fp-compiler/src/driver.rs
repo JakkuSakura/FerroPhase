@@ -677,6 +677,7 @@ impl CompilerDriver {
             .hir_program()
             .package(&hir_package_id)
             .map(|hir_package| {
+                let hir_package = hir_package.borrow();
                 (
                     hir_package.module_tree.all_paths().count(),
                     hir_package.hir_exports.len(),
@@ -709,7 +710,10 @@ impl CompilerDriver {
             .borrow()
             .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| (hir_package.const_values(), hir_package.const_block_values()));
+            .map(|hir_package| {
+                let hir_package = hir_package.borrow();
+                (hir_package.const_values(), hir_package.const_block_values())
+            });
         let (hir_program, package_exports, type_alias_exports) =
             self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
         package
@@ -831,7 +835,9 @@ impl CompilerDriver {
         let (lifted_items_by_path, referenced_paths_by_path) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
-            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, state.hir_program())
+            let hir_program = state.hir_program();
+            let hir_program = hir_program.borrow();
+            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, &hir_program)
                 .with_capabilities(state.backend_capabilities());
             let lifter = if let Some(operations) = state.target_operations() {
                 lifter.with_target_operations(operations)
@@ -958,7 +964,7 @@ impl CompilerDriver {
         let executor = self.state.borrow().tasks.clone();
         let checker = fp_typing::HirTypeChecker::new(
             program,
-            Some(dependency_program),
+            dependency_program,
             comptime_resolver,
             executor,
         );

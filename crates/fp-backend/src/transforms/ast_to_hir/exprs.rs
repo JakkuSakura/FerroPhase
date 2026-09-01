@@ -117,7 +117,9 @@ impl AstToHirLowerer {
                 .collect(),
         );
         let namespace = scope.namespace();
-        let mut packages: Vec<_> = self.hir_program.packages.values().collect();
+        let mut packages = self
+            .hir_program
+            .with(|program| program.packages.values().cloned().collect::<Vec<_>>());
         packages.sort_by(|left, right| left.borrow().id.cmp(&right.borrow().id));
 
         for package in packages {
@@ -600,8 +602,8 @@ impl AstToHirLowerer {
         let def_id = self.next_def_id();
         // Recorded once, unconditionally, right here — not lazily by the
         // type checker each time it happens to encounter this node (see
-        // `hir::HirPackage::const_block_defs`'s doc comment).
-        self.package.record_const_block_def(
+        // `hir::HirPackage::anonymous_consts`'s doc comment).
+        self.package.add_anonymous_const(
             def_id.clone(),
             hir::Block {
                 hir_id,
