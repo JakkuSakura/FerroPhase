@@ -31,7 +31,6 @@ pub struct AstProgram {
     /// of providers (previously O(providers × package-list) per lookup,
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
-    prelude: Rc<RefCell<Option<Rc<RefCell<AstPackage>>>>>,
     /// Memoized, name-sorted snapshot of `crates`'s values — the package
     /// set only ever changes via `begin_package`/`import_package` (both
     /// invalidate this), so `sorted_packages` doesn't need to rebuild a
@@ -50,7 +49,6 @@ impl AstProgram {
         Self {
             crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
-            prelude: Rc::new(RefCell::new(None)),
             sorted_packages_cache: Rc::new(RefCell::new(None)),
             local_scope: Rc::new(RefCell::new(crate::ast::resolve::LocalScope::new())),
         }
@@ -127,17 +125,6 @@ impl AstProgram {
     pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<AstPackage>>) {
         self.crates.borrow_mut().insert(package_id, package);
         *self.sorted_packages_cache.borrow_mut() = None;
-    }
-
-    /// Install `std`'s published package as the unqualified prelude lookup
-    /// source for ordinary packages. The standard and libc packages do not
-    /// import their own prelude.
-    pub fn install_prelude(&self, package: Rc<RefCell<AstPackage>>) {
-        self.prelude.borrow_mut().replace(package);
-    }
-
-    pub fn prelude_package(&self) -> Option<Rc<RefCell<AstPackage>>> {
-        self.prelude.borrow().clone()
     }
 
     // Cross-package HIR export lookup is owned by `hir::HirProgram`; AST
@@ -339,11 +326,6 @@ impl AstProgram {
                 return Some(s.clone());
             }
         }
-        if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(s) = prelude.borrow().struct_defs.get(path) {
-                return Some(s.clone());
-            }
-        }
         None
     }
 
@@ -356,22 +338,12 @@ impl AstProgram {
                 return Some(e.clone());
             }
         }
-        if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(e) = prelude.borrow().enum_defs.get(path) {
-                return Some(e.clone());
-            }
-        }
         None
     }
 
     pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<FunctionSignature> {
         for krate in self.sorted_packages() {
             if let Some(sig) = krate.borrow().function_sigs.get(path) {
-                return Some(sig.clone());
-            }
-        }
-        if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(sig) = prelude.borrow().function_sigs.get(path) {
                 return Some(sig.clone());
             }
         }
@@ -388,11 +360,6 @@ impl AstProgram {
                 return Some(sigs.clone());
             }
         }
-        if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(sigs) = prelude.borrow().method_sigs.get(path) {
-                return Some(sigs.clone());
-            }
-        }
         None
     }
 
@@ -401,11 +368,7 @@ impl AstProgram {
             .borrow()
             .values()
             .any(|krate| krate.borrow().module_paths.contains(path))
-            || self
-                .prelude
-                .borrow()
-                .as_ref()
-                .is_some_and(|prelude| prelude.borrow().module_paths.contains(path))
+            
     }
 
     /// Borrow the root map directly. Used by callers that need to iterate
@@ -439,46 +402,6 @@ mod tests {
     use super::*;
     use crate::ast::package::graph::PackageGraph;
     use crate::ast::package::provider::EmptyProvider;
-
-    #[test]
-    fn package_workspace_inherits_installed_prelude() {
-        let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = &workspace;
-        let prelude = Rc::new(RefCell::new(AstPackage::new(
-            PackageId::new("std"),
-            "std",
-            PackageGraph::new(Vec::new()),
-        )));
-        parent.install_prelude(prelude.clone());
-
-        let child = &workspace;
-
-        let inherited = child
-            .prelude_package()
-            .expect("package workspace should retain the installed prelude");
-        assert!(Rc::ptr_eq(&inherited, &prelude));
-    }
-
-    #[test]
-    fn package_workspace_observes_prelude_installed_after_creation() {
-        let workspace = AstProgram::new(Arc::new(EmptyProvider));
-        let parent = &workspace;
-        let child = &workspace;
-        let prelude = Rc::new(RefCell::new(AstPackage::new(
-            PackageId::new("std"),
-            "std",
-            PackageGraph::new(Vec::new()),
-        )));
-
-        parent.install_prelude(prelude.clone());
-
-        assert!(Rc::ptr_eq(
-            &child
-                .prelude_package()
-                .expect("package workspace should observe later prelude installs"),
-            &prelude
-        ));
-    }
 
     #[test]
     fn package_workspace_inherits_compiled_dependencies() {

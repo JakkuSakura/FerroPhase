@@ -64,10 +64,6 @@ pub struct CompilerDriver {
     pub state: Rc<RefCell<CompilerState>>,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::ast::package::AstPackage>>>,
-    /// The compiled `std` package is the source of Rust's implicit prelude.
-    /// Keep it on the driver because package-scoped `AstProgram`s deliberately
-    /// have independent prelude slots and are recreated during recursion.
-    prelude_package: Option<Rc<RefCell<fp_core::ast::package::AstPackage>>>,
     /// Packages that completed the pipeline required of a compilation root.
     /// A transpile dependency is deliberately absent until a later workspace
     /// walk promotes it to a root.
@@ -122,7 +118,6 @@ impl CompilerDriver {
             state,
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
-            prelude_package: None,
             completed_roots: HashSet::new(),
             pipeline: PipelineMode::Native,
         }
@@ -550,20 +545,7 @@ impl CompilerDriver {
             })?;
             let dependency_package =
                 Box::pin(self.compile_package_with_scope(&dependency_id, false)).await?;
-            if dependency_id.as_str() == "std" {
-                self.prelude_package = Some(dependency_package.clone());
-                self.state
-                    .borrow()
-                    .workspace
-                    .install_prelude(dependency_package);
-            }
-        }
-        // `std` may have been discovered below an intermediate dependency.
-        // That dependency's package-scoped workspace is discarded when its
-        // recursive compilation returns, so install the retained prelude in
-        // the workspace that belongs to this package as well.
-        if let Some(prelude) = self.prelude_package.clone() {
-            self.state.borrow().workspace.install_prelude(prelude);
+            let _ = dependency_package;
         }
         Ok(())
     }

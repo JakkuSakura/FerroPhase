@@ -100,6 +100,12 @@ pub struct PackageItem {
     pub item: Item,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PackagePath {
+    pub package_id: PackageId,
+    pub path: QualifiedPath,
+}
+
 /// A package's own AST/source-level content — both what a `PackageProvider`
 /// hands back (raw parsed source: `items`/`module_paths`/`referenced_paths`)
 /// and, once typechecked, the definitions typechecking derives from it
@@ -110,12 +116,6 @@ pub struct PackageItem {
 /// `XxxPackage` (there's no separate `AstProgram` — `items` is already the
 /// AST layer's un-lowered content, with no further flattening step the way
 /// HIR/MIR/LIR each need before backends consume them).
-/// Compatibility alias for the pre-merge name — a handful of call sites
-/// across `fp-backend`/`fp-cli` still spell this type `CompiledPackage`
-/// (its name before `AstPackage` absorbed `PackageSource`); kept as a plain
-/// alias rather than renaming every one of those call sites in this change.
-pub type CompiledPackage = AstPackage;
-
 #[derive(Clone, Debug)]
 pub struct AstPackage {
     pub package_id: PackageId,
@@ -130,6 +130,7 @@ pub struct AstPackage {
 
     /// Persistent module-resolution state populated by the AST resolver.
     pub module_tree: crate::ast::resolve::ModuleTree,
+    pub prelude_modules: Vec<PackagePath>,
     /// AST node resolutions produced before lowering.
     pub resolutions: HashMap<QualifiedPath, crate::hir::Res>,
 
@@ -185,6 +186,7 @@ impl AstPackage {
             name: name.into(),
             graph,
             module_tree: crate::ast::resolve::ModuleTree::new(),
+            prelude_modules: Vec::new(),
             resolutions: HashMap::new(),
             module_paths,
             items: Vec::new(),
