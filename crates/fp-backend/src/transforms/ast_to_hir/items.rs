@@ -393,18 +393,12 @@ impl AstToHirLowerer {
             self.resolve_type_symbol(&names[0])
         } else {
             // Consume the same exact namespace result used by ordinary HIR
-            // paths before consulting the external-package table. Impl
+            // paths before consulting package-qualified lookup. Impl
             // indexing runs immediately after lowering this header; leaving
             // a nominal self path unresolved at that point turns a valid
             // impl into an unclassified dispatch shape and makes every
             // method on it unreachable.
-            self.lookup_global_res(&qualified, PathResolutionScope::Type)
-                .or_else(|| {
-                    match self.workspace.resolve_external_path_from(&self.package_id, &qualified, fp_core::ast::resolve::Namespace::Type) {
-                        Some(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
-                        _ => None,
-                    }
-                })
+                self.lookup_global_res(&qualified, PathResolutionScope::Type)
                 .or_else(|| match self.workspace.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,

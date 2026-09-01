@@ -2166,16 +2166,7 @@ impl AstToHirLowerer {
             ) => Some(hir::Res::Def(id)),
             _ => None,
         };
-        // A cross-package export (e.g. `libc::macos::getenv`) is looked up
-        // lazily against the workspace on a local-lookup miss, instead of
-        // being eagerly copied into the module tree's own bindings up
-        // front. The exported binding stays in its owning package.
-        local
-            .or_else(|| match self.workspace.resolve_external_path_from(&self.package_id, path, scope.namespace()) {
-                Some(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
-                _ => None,
-            })
-            .or_else(|| {
+        local.or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {
                     match self.workspace.resolve_module_path_final(
                         &self.package_id,

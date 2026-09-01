@@ -341,25 +341,6 @@ impl AstToHirLowerer {
         self
     }
 
-    /// Look up a resolved definition without encoding any knowledge of its
-    /// declaration kind. Alias handling, struct lookup, and variant lookup
-    /// all start from this same semantic identity query.
-    pub(super) fn resolved_item(&self, def_id: &hir::DefId) -> Option<hir::Item> {
-        self.package
-            .def_map
-            .get(def_id)
-            .cloned()
-            .or_else(|| self.program_def_map.get(def_id).cloned())
-            .or_else(|| self.hir_program.item(def_id.clone()))
-    }
-
-    /// Return the AST package currently being lowered. Module declarations
-    /// and name-resolution state live here; HIR lowering must query this
-    /// package rather than maintaining a second module tree.
-    fn ast_package(&self) -> std::rc::Rc<std::cell::RefCell<ast::package::AstPackage>> {
-        self.workspace.get_ast_package(&self.package_id)
-    }
-
     pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
         self.target_env = TargetEnv::from_triple(target_triple);
     }
@@ -394,21 +375,6 @@ impl AstToHirLowerer {
     }
 
     fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
-        let _ = (name, hir_id);
-    }
-
-    /// Type-namespace counterpart of `register_value_local` — binds `name`
-    /// (lexically, this scope only) to the `HirId` of the expression whose
-    /// checked/comptime-resolved value defines its shape, instead of a real
-    /// `DefId`/`def_map` entry. Used for a local `type X = const { .. };`
-    /// whose RHS needs compile-time evaluation to produce a concrete type
-    /// (e.g. a `TypeBuilder`-constructed struct) — unlike a real
-    /// `struct`/`enum` item (`register_type_def`, backed by `Res::Def` and a
-    /// `def_map` entry known up front), the shape here is only known once
-    /// the checker actually evaluates the tagged expression, so `path_ty`
-    /// reads it out of the package's own typed results via this `HirId`
-    /// instead.
-    fn register_type_local(&mut self, name: &str, hir_id: hir::HirId) {
         let _ = (name, hir_id);
     }
 
@@ -467,33 +433,6 @@ impl AstToHirLowerer {
             return;
         }
         if let hir::Res::Def(def_id) = &res {
-            self.global_type_defs_by_def_id
-                .entry(def_id.clone())
-                .or_default()
-                .push(path.clone());
-        }
-    }
-
-    /// Records a resolved import in the module tree without diagnosing it as
-    /// a duplicate definition. Import collision handling has already run at
-    /// the `use` site's span, and `ModuleTree::bind` must still see competing
-    /// targets so later lookups remain ambiguous. Keeping this path separate
-    /// avoids emitting a second, synthetic-span "duplicate definition" error
-    /// for the same import conflict.
-    fn record_import_symbol(
-        &mut self,
-        name: &str,
-        namespace: fp_core::ast::resolve::Namespace,
-        res: hir::Res,
-        _visibility: &ast::Visibility,
-    ) {
-        let path = self.qualify_path(name);
-        if self.suppress_global_registration_depth > 0 {
-            return;
-        }
-        if namespace == fp_core::ast::resolve::Namespace::Type
-            && let hir::Res::Def(def_id) = &res
-        {
             self.global_type_defs_by_def_id
                 .entry(def_id.clone())
                 .or_default()
@@ -642,10 +581,6 @@ impl AstToHirLowerer {
         Err(fp_core::Error::from(format!(
             "type definition `{self_def_id}` has no canonical path"
         )))
-    }
-
-    fn should_export(&self, visibility: &ast::Visibility) -> bool {
-        matches!(visibility, ast::Visibility::Public) && self.current_module_visibility_flag()
     }
 
     fn map_visibility(&self, visibility: &ast::Visibility) -> hir::Visibility {

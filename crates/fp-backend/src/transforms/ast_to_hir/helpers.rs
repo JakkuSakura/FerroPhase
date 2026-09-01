@@ -188,17 +188,7 @@ impl AstToHirLowerer {
             return None;
         }
         let item_exists = |candidate: &QualifiedPath| {
-            if self.tree_lookup_raw(candidate, scope.namespace()).is_some() {
-                return true;
-            }
-            if self
-                .workspace
-                .resolve_external_path_from(&self.package_id, candidate, scope.namespace())
-                .is_some()
-            {
-                return true;
-            }
-            false
+            self.tree_lookup_raw(candidate, scope.namespace()).is_some()
         };
         let scope_contains = |name: &str| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
