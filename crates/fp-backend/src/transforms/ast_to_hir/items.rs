@@ -405,7 +405,7 @@ impl AstToHirLowerer {
                         _ => None,
                     }
                 })
-                .or_else(|| match self.workspace.resolve_module_path(
+                .or_else(|| match self.workspace.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     &qualified,

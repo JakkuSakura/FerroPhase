@@ -118,9 +118,11 @@ impl AstProgram {
             .chain(package.items.iter().map(|item| item.module_path.clone()))
             .collect();
         let items = package.items.clone();
-        let mut resolver = crate::ast::resolve::AstResolver::from_provider(
+        let mut resolver = crate::ast::resolve::AstResolver::for_package(
+            package_id.clone(),
             &mut package.module_tree,
-            self.providers.as_ref(),
+            self.providers.declaration_rules(),
+            self.providers.resolution_rules(),
         );
         for path in paths {
             resolver.modules.ensure_module(&path);
@@ -259,6 +261,23 @@ impl AstProgram {
         let package = self.get_ast_package(package_id);
         let package = package.borrow();
         package.module_tree.resolve_path(
+            module,
+            path,
+            namespace,
+            self.provider().resolution_rules(),
+        )
+    }
+
+    pub fn resolve_module_path_final(
+        &self,
+        package_id: &PackageId,
+        module: &QualifiedPath,
+        path: &QualifiedPath,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> crate::ast::resolve::ResolutionResult {
+        let package = self.get_ast_package(package_id);
+        let package = package.borrow();
+        package.module_tree.resolve_path_final(
             module,
             path,
             namespace,

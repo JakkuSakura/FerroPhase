@@ -802,7 +802,7 @@ impl AstToHirLowerer {
     /// paths owned by the current definition; ordinary references go through
     /// the AST resolver's visibility-aware APIs.
     fn tree_lookup_raw(&self, path: &fp_core::ast::path::QualifiedPath, ns: fp_core::ast::resolve::Namespace) -> Option<fp_core::ast::resolve::AstRes> {
-        match self.workspace.resolve_module_path(
+        match self.workspace.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
             &path,
@@ -897,7 +897,7 @@ impl AstToHirLowerer {
         is_trait(self.resolve_lexical_type_symbol(name))
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
-                let resolved = match self.workspace.resolve_module_path(
+                let resolved = match self.workspace.resolve_module_path_final(
                     &self.package_id, &self.module_path, &qualified,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
@@ -909,7 +909,7 @@ impl AstToHirLowerer {
             .or_else(|| is_trait(self.lookup_prelude_symbol(name, fp_core::ast::resolve::Namespace::Type)))
             .or_else(|| {
                 let path = fp_core::ast::path::QualifiedPath::new(vec![name.to_owned()]);
-                let resolved = match self.workspace.resolve_module_path(
+                let resolved = match self.workspace.resolve_module_path_final(
                     &self.package_id, &self.module_path, &path,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
@@ -3871,7 +3871,7 @@ impl AstToHirLowerer {
                     // the source struct happens to be registered at the
                     // crate root.
                     let source_path = fp_core::ast::path::QualifiedPath::new(vec![source_name.to_owned()]);
-                    let source_def_id = match self.workspace.resolve_module_path(
+                    let source_def_id = match self.workspace.resolve_module_path_final(
                         &self.package_id, &self.module_path, &source_path,
                         fp_core::ast::resolve::Namespace::Type,
                     ) {

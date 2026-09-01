@@ -2205,7 +2205,7 @@ impl AstToHirLowerer {
             }
         }
 
-        let local = match self.workspace.resolve_module_path(
+        let local = match self.workspace.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
             path,
@@ -2227,7 +2227,7 @@ impl AstToHirLowerer {
             })
             .or_else(|| {
                 if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                    match self.workspace.resolve_module_path(
+                    match self.workspace.resolve_module_path_final(
                         &self.package_id,
                         &self.module_path,
                         path,

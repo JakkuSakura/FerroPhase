@@ -10,7 +10,7 @@ impl AstToHirLowerer {
     ) -> bool {
         let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
                            namespace: fp_core::ast::resolve::Namespace| {
-            match self.workspace.resolve_module_path(
+            match self.workspace.resolve_module_path_final(
                 &self.package_id,
                 &self.module_path,
                 path,
@@ -375,7 +375,7 @@ impl AstToHirLowerer {
             let candidate = module_path.with_segment(last.clone());
             let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
                                namespace: fp_core::ast::resolve::Namespace| {
-                match self.workspace.resolve_module_path(
+                match self.workspace.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
                     path,

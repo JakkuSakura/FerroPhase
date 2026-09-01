@@ -397,6 +397,27 @@ impl ModuleTree {
         }
         result
     }
+
+    /// Resolve a path for a value/type use and require a terminal semantic
+    /// identity. Modules are valid only as intermediate path segments; a
+    /// module (or an unresolved AST item placeholder) at the final position
+    /// is reported as an error instead of leaking an intermediate result to
+    /// lowering.
+    pub fn resolve_path_final(
+        &self,
+        module: &QualifiedPath,
+        path: &QualifiedPath,
+        namespace: Namespace,
+        rules: ResolutionRules,
+    ) -> ResolutionResult {
+        match self.resolve_path(module, path, namespace, rules) {
+            ResolutionResult::Found(AstRes::Module(_))
+            | ResolutionResult::Found(AstRes::Item(_)) => {
+                ResolutionResult::Found(AstRes::Error)
+            }
+            result => result,
+        }
+    }
 }
 
 fn binding_to_res(binding: &Binding) -> AstRes {
@@ -515,6 +536,9 @@ impl LocalScope {
 /// package module tree, and is the only component that performs name lookup.
 #[derive(Debug)]
 pub struct AstResolver<'a> {
+    package_id: Option<crate::hir::PackageId>,
+    next_def_id: u32,
+    item_def_ids: HashMap<ItemId, crate::hir::DefId>,
     pub modules: &'a mut ModuleTree,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
@@ -541,12 +565,56 @@ impl<'a> AstResolver<'a> {
         resolution_rules: ResolutionRules,
     ) -> Self {
         Self {
+            package_id: None,
+            next_def_id: 1,
+            item_def_ids: HashMap::new(),
             modules,
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
             resolutions: HashMap::new(),
             expr_resolutions: HashMap::new(),
+        }
+    }
+
+    pub fn for_package(
+        package_id: crate::hir::PackageId,
+        modules: &'a mut ModuleTree,
+        declaration_rules: DeclarationRules,
+        resolution_rules: ResolutionRules,
+    ) -> Self {
+        let mut resolver = Self::new(modules, declaration_rules, resolution_rules);
+        resolver.package_id = Some(package_id);
+        resolver
+    }
+
+    fn item_def_id(&mut self, item: ItemId) -> crate::hir::DefId {
+        if let Some(def_id) = self.item_def_ids.get(&item) {
+            return def_id.clone();
+        }
+        let package_id = self
+            .package_id
+            .clone()
+            .expect("package-aware resolver required for DefId allocation");
+        let def_id = crate::hir::DefId::new(package_id, self.next_def_id);
+        self.next_def_id += 1;
+        self.item_def_ids.insert(item, def_id.clone());
+        def_id
+    }
+
+    fn declare_item_definition(
+        &mut self,
+        module: &QualifiedPath,
+        name: impl Into<Symbol>,
+        item: ItemId,
+        namespace: Namespace,
+        span: Span,
+    ) -> DeclarationOutcome {
+        if self.package_id.is_some() {
+            let def_id = self.item_def_id(item);
+            self.declare_definition_id(module, name, def_id, namespace, span)
+        } else {
+            self.declare_definition(module, name, item, namespace, span)
         }
     }
 
@@ -730,6 +798,16 @@ impl<'a> AstResolver<'a> {
         self.expr_resolutions.get(&id)
     }
 
+    pub fn resolve_path_final(
+        &self,
+        module: &QualifiedPath,
+        path: &QualifiedPath,
+        namespace: Namespace,
+    ) -> ResolutionResult {
+        self.modules
+            .resolve_path_final(module, path, namespace, self.resolution_rules)
+    }
+
     pub fn expr_resolution_table(&self) -> &HashMap<ExprId, AstRes> {
         &self.expr_resolutions
     }
@@ -784,7 +862,12 @@ impl<'a> AstResolver<'a> {
         // Declarations are resolved identities too: recording the item here
         // lets downstream stages consume the AST result table without having
         // to reconstruct an identity from the syntax node.
-        self.record_resolution(id, AstRes::Item(id));
+        if self.package_id.is_none() {
+            self.record_resolution(id, AstRes::Item(id));
+        } else {
+            let def_id = self.item_def_id(id);
+            self.record_resolution(id, AstRes::Def(def_id));
+        }
         match item.kind() {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
@@ -802,31 +885,31 @@ impl<'a> AstResolver<'a> {
                 }
             }
             ItemKind::DefStruct(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::DefStructural(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::DefEnum(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::DefType(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::OpaqueType(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::DefTrait(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Type, span);
             }
             ItemKind::DefConst(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Value, span);
             }
             ItemKind::DefStatic(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Value, span);
             }
             ItemKind::DefFunction(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span);
+                self.declare_item_definition(module, &def.name, id, Namespace::Value, span);
             }
             ItemKind::Macro(mac) => {
                 if let Some(name) = mac.declared_name.as_ref() {

@@ -656,7 +656,7 @@ impl AstToHirLowerer {
                     res: Some(base_res),
                 };
                 let full_path = self.canonicalize_segments(&type_relative.segments);
-                if let Some(hir::Res::Def(variant_id)) = match self.workspace.resolve_module_path(
+                if let Some(hir::Res::Def(variant_id)) = match self.workspace.resolve_module_path_final(
                     &self.package_id, &self.module_path, &full_path,
                     fp_core::ast::resolve::Namespace::Value,
                 ) {
@@ -760,7 +760,7 @@ impl AstToHirLowerer {
             let primitive_path = self.canonicalize_segments(&segments);
             if let fp_core::ast::resolve::ResolutionResult::Found(
                 fp_core::ast::resolve::AstRes::Def(id),
-            ) = self.workspace.resolve_module_path(
+            ) = self.workspace.resolve_module_path_final(
                 &self.package_id,
                 &self.module_path,
                 &primitive_path,

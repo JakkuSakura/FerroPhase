@@ -826,8 +826,20 @@ pub enum Visibility {
 pub enum Res {
     Def(DefId),
     Local(HirId),
+    /// A function parameter binding. Kept distinct from a local because
+    /// diagnostics and lowering may need to preserve the declaration class.
+    Parameter(HirId),
+    /// A generic parameter is represented by its declaration identity, just
+    /// like rustc's `Res::Def(DefKind::TyParam/ConstParam, DefId)`.
+    Generic(DefId),
     SelfTy,
     Module(Vec<String>),
+    /// A language-level builtin identified by source name rather than a
+    /// nominal definition. This is separate from `BuiltinSelfType`, which is
+    /// the HIR impl-shape marker used by method lookup.
+    BuiltinName(String),
+    /// Resolution failed after lookup/ambiguity diagnostics were recorded.
+    Error,
     /// A non-nominal `impl` self-type shape with no `DefId` of its own —
     /// `&T`/`&mut T`, `[T]`, `[T; N]`. Mirrors rustc's `SimplifiedType`
     /// fast-reject bucketing (`rustc_middle::ty::fast_reject`): identifies
