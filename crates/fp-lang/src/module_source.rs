@@ -327,9 +327,9 @@ mod tests {
             .expect("resolve package source");
 
         let paths = source
-            .graph
-            .modules()
-            .map(|module| module.module_path.to_key())
+            .items
+            .iter()
+            .map(|item| item.module_path.to_key())
             .collect::<HashSet<_>>();
         assert_eq!(paths.len(), 4);
         assert!(paths.contains("app::main"));

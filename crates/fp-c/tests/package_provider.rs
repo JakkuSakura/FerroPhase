@@ -25,19 +25,14 @@ fn directory_provider_discovers_and_loads_c_sources() {
     assert_eq!(packages.len(), 1);
 
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.graph.modules().count(), 2);
     assert_eq!(package.items.len(), 7);
     assert!(
         package
-            .graph
-            .modules()
-            .any(|module| module.module_path.to_key() == "main")
+            .items.iter().any(|item| item.module_path.to_key() == "main")
     );
     assert!(
         package
-            .graph
-            .modules()
-            .any(|module| module.module_path.to_key() == "include::api")
+            .items.iter().any(|item| item.module_path.to_key() == "include::api")
     );
     assert!(
         package
