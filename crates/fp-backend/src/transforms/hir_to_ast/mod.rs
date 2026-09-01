@@ -358,12 +358,10 @@ impl<'a> HirToAstLifter<'a> {
     /// `KotlinMaterializer` — the typed HIR was real, but nothing ever
     /// spliced it back in). This method fills that gap:
     /// each `Method` inside every `impl` block, keyed by its own
-    /// `DefId`'s qualified path (already recorded — see
-    /// `ast_to_hir::transform_package`'s predeclare pass, which calls
-    /// `record_value_path` for every impl method using `canonical_type_path`
-    /// + the method's own name — the same path shape a splice consumer can
-    /// reconstruct from the untyped source: the self-type's own module +
-    /// name + method name).
+    /// `DefId`'s qualified path (the predeclare pass allocates stable IDs for
+    /// every impl method; a splice consumer can reconstruct the same path
+    /// shape from the untyped source: the self-type's own module + name +
+    /// method name).
     ///
     /// Per-method visibility isn't tracked on `hir::ImplItem` today (only
     /// the enclosing `hir::Item`/impl block carries a `Visibility`, and

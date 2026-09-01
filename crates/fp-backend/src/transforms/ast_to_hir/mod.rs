@@ -418,14 +418,6 @@ impl AstToHirLowerer {
         }
     }
 
-    fn record_value_path(
-        &mut self,
-        path: &fp_core::ast::path::QualifiedPath,
-        res: hir::Res,
-        _visibility: &ast::Visibility,
-    ) {
-    }
-
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, _visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
         // See `suppress_global_registration_depth`'s doc comment.
@@ -1860,23 +1852,6 @@ impl AstToHirLowerer {
                             new_id
                         };
 
-                        // Record the `Enum::Variant`-qualified registration
-                        // first so its more complete path (including the
-                        // enum name segment) wins the `def_paths` entry —
-                        // `register_value_def` below re-registers the same
-                        // `def_id` under the bare variant name alone (for
-                        // unqualified in-scope lookup), which must not
-                        // clobber the canonical path.
-                        //
-                        // `record_value_path` (already-split segments), not
-                        // `record_value_symbol` (bare `&str` re-split as a
-                        // single malformed segment) — see the matching
-                        // `predeclare_items` `DefEnum` arm's doc comment.
-                        self.record_value_path(
-                            &self.module_path.join(&variant_path.segments),
-                            hir::Res::Def(variant_def_id.clone()),
-                            &enum_def.visibility,
-                        );
                         self.register_value_def(
                             &variant.name.name,
                             variant_def_id.clone(),

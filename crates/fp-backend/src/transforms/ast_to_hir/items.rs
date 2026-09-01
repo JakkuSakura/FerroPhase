@@ -446,49 +446,6 @@ impl AstToHirLowerer {
             let lowered_self_ty = self.transform_type_to_hir(&self_ty_ast)?;
             let self_ty = self.resolve_impl_self_type(lowered_self_ty);
             self.current_impl_self_ty = Some(self_ty.clone());
-            // Publish associated members from the completed impl header as
-            // soon as the header has a resolved self type. This is needed for
-            // impls whose source header was deferred until imports were
-            // installed: their members still have stable DefIds, but the
-            // earlier predeclaration pass could not publish a canonical
-            // `Type::member` path for them. Rustc's item tables retain these
-            // identities independently of the order in which the body is
-            // lowered.
-            if let hir::TypeExprKind::Path(self_path) = &self_ty.kind {
-                if let Ok(mut member_path) = self.canonical_type_path(self_path) {
-                    // Snapshot the members before allocating IDs. The ID
-                    // allocator mutably borrows the lowerer, so keeping an
-                    // iterator borrowed from `impl_block` across that call
-                    // creates an avoidable borrow conflict.
-                    let members = impl_block
-                        .items
-                        .iter()
-                        .filter_map(|member| match member.kind() {
-                            ast::ItemKind::DefFunction(function) => Some((
-                                function.name.name.clone(),
-                                function.visibility.clone(),
-                                member.clone(),
-                            )),
-                            ast::ItemKind::DefConst(constant) => Some((
-                                constant.name.name.clone(),
-                                constant.visibility.clone(),
-                                member.clone(),
-                            )),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    for (name, visibility, member) in members {
-                        member_path.segments.push(name);
-                        let member_def_id = self.def_id_for_item(&member);
-                        self.record_value_path(
-                            &member_path,
-                            hir::Res::Def(member_def_id),
-                            &visibility,
-                        );
-                        member_path.segments.pop();
-                    }
-                }
-            }
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),

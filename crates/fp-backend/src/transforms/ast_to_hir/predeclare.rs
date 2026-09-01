@@ -166,34 +166,6 @@ impl AstToHirLowerer {
                         } else {
                             self.module_path.join(&variant_path.segments).to_key()
                         };
-                        // Record the `Enum::Variant`-qualified registration
-                        // first so its more complete path wins the
-                        // `def_paths` entry over the bare-name
-                        // registration below (see the analogous comment in
-                        // `transform_item_to_hir`'s `DefEnum` arm).
-                        //
-                        // Must go through `record_value_path` (which takes
-                        // an already-split `QualifiedPath`), not
-                        // `record_value_symbol` (which takes a bare `&str`
-                        // name and appends it as a *single* module-tree
-                        // segment via `qualify_path`/`with_segment`) — the
-                        // latter turned the "::"-joined string
-                        // `"Option::None"` into one literal segment named
-                        // `"Option::None"` bound directly under module
-                        // `option`, instead of a `None` binding under
-                        // submodule `option::Option`. Any lookup that
-                        // *splits* a qualified key into real segments
-                        // (`Option::{self,
-                        // None, Some}` resolution, `load_default_prelude_defs`'s
-                        // scan) could then never find it — the actual root
-                        // cause of every enum-variant-based prelude import
-                        // (`Some`/`None`/`Ok`/`Err`) failing to resolve
-                        // crate-wide.
-                        self.record_value_path(
-                            &self.module_path.join(&variant_path.segments),
-                            hir::Res::Def(variant_def_id.clone()),
-                            &def_enum.visibility,
-                        );
                         self.register_value_def(
                             &variant.name.name,
                             variant_def_id.clone(),
@@ -276,11 +248,6 @@ impl AstToHirLowerer {
                                     } else {
                                         self.module_path.join(&variant_path.segments).to_key()
                                     };
-                                    self.record_value_path(
-                                        &self.module_path.join(&variant_path.segments),
-                                        hir::Res::Def(variant_def_id.clone()),
-                                        &def_type.visibility,
-                                    );
                                     self.register_value_def(
                                         &variant.name.name,
                                         variant_def_id.clone(),
@@ -443,42 +410,11 @@ impl AstToHirLowerer {
                         }
                         for impl_item in &impl_block.items {
                             match impl_item.kind() {
-                                ast::ItemKind::DefFunction(function) => {
-                                    let method_def_id = self.allocate_def_id_for_item(impl_item);
-                                    method_path.push(function.name.name.clone());
-                                    self.record_value_path(
-                                        &fp_core::ast::path::QualifiedPath::new(
-                                            method_path.clone(),
-                                        ),
-                                        hir::Res::Def(method_def_id),
-                                        &function.visibility,
-                                    );
-                                    method_path.pop();
+                                ast::ItemKind::DefFunction(_) => {
+                                    self.allocate_def_id_for_item(impl_item);
                                 }
-                                // An inherent/trait-impl associated const
-                                // (`impl char { pub const MIN: char = ...;
-                                // }`) — until this arm existed, this loop's
-                                // exclusive `DefFunction` match silently
-                                // skipped every associated const, so
-                                // nothing outside the impl's own body
-                                // (predeclare_items runs before any body is
-                                // lowered) could ever resolve a reference
-                                // to it (`char::MIN`) — not a timing/
-                                // ordering issue an import retry could
-                                // paper over, since the symbol was never
-                                // registered *anywhere*, ever, regardless
-                                // of reference order.
-                                ast::ItemKind::DefConst(constant) => {
-                                    let const_def_id = self.allocate_def_id_for_item(impl_item);
-                                    method_path.push(constant.name.name.clone());
-                                    self.record_value_path(
-                                        &fp_core::ast::path::QualifiedPath::new(
-                                            method_path.clone(),
-                                        ),
-                                        hir::Res::Def(const_def_id),
-                                        &constant.visibility,
-                                    );
-                                    method_path.pop();
+                                ast::ItemKind::DefConst(_) => {
+                                    self.allocate_def_id_for_item(impl_item);
                                 }
                                 _ => continue,
                             }
