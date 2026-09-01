@@ -440,59 +440,6 @@ impl AstToHirLowerer {
         }
     }
 
-    fn resolve_restricted_visibility_scope(&self, path: &ast::ItemImportPath) -> Vec<String> {
-        let mut scope: Vec<String> = Vec::new();
-        let mut started = false;
-        for segment in &path.segments {
-            match segment {
-                ast::ItemImportTree::Crate => {
-                    scope = self
-                        .module_path
-                        .segments
-                        .first()
-                        .cloned()
-                        .into_iter()
-                        .collect();
-                    started = true;
-                }
-                ast::ItemImportTree::Root => {
-                    scope = Vec::new();
-                    started = true;
-                }
-                ast::ItemImportTree::SelfMod => {
-                    scope = self.module_path.segments.clone();
-                    started = true;
-                }
-                ast::ItemImportTree::SuperMod => {
-                    if !started {
-                        scope = self.module_path.segments.clone();
-                        started = true;
-                    }
-                    scope.pop();
-                }
-                ast::ItemImportTree::Ident(ident) => {
-                    if !started {
-                        // A restriction path with no leading `crate`/
-                        // `self`/`super`/`::` keyword (uncommon; every
-                        // real vendored std case seen so far starts with
-                        // `crate::` or is a bare `super`) — treat as
-                        // relative to this item's own declaring module,
-                        // the same convention an ordinary relative `use`
-                        // path uses.
-                        scope = self.module_path.segments.clone();
-                        started = true;
-                    }
-                    scope.push(ident.name.to_string());
-                }
-                _ => {}
-            }
-        }
-        if !started {
-            scope = self.module_path.segments.clone();
-        }
-        scope
-    }
-
     fn canonical_type_path(
         &self,
         self_path: &hir::Path,
