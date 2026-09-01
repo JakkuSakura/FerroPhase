@@ -33,7 +33,7 @@ use quote_expansion::expand_quote_splices;
 #[cfg(test)]
 mod tests;
 
-pub use config::{HirLoweringConfig, ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
+pub use config::HirLoweringConfig;
 
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 
@@ -154,7 +154,6 @@ pub struct AstToHirLowerer {
     /// is never part of any actual name-resolution decision.
     local_item_debug_labels: HashMap<hir::DefId, String>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
-    resolved_names: ResolvedNameTable,
     /// Results produced by the AST-stage resolver. Lowering may translate an
     /// AST identity into a HIR identity, but does not own first-time lookup.
     ast_resolutions: HashMap<ast::ItemId, hir::Res>,
@@ -335,7 +334,6 @@ impl AstToHirLowerer {
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
-            resolved_names: ResolvedNameTable::new(),
             ast_resolutions: HashMap::new(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
@@ -380,11 +378,6 @@ impl AstToHirLowerer {
         N: IntrinsicNormalizer + 'static,
     {
         self.intrinsic_normalizer = Some(Box::new(normalizer));
-        self
-    }
-
-    pub fn with_resolved_names(mut self, resolved_names: ResolvedNameTable) -> Self {
-        self.resolved_names = resolved_names;
         self
     }
 
