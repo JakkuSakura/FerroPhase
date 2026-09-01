@@ -65,7 +65,14 @@ fn make_fn(
 /// `transform_package` needs.
 fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     let package_id = PackageId::new("test");
-    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(
+        package_id.clone(),
+        "test",
+        PackageGraph::new(fp_core::ast::package::PackageDescriptor::empty(
+            package_id.clone(),
+            "test",
+        )),
+    );
     source.items = file
         .items
         .into_iter()

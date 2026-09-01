@@ -35,7 +35,9 @@ fn package_from_file(
     let mut source = fp_core::ast::package::AstPackage::new(
         package_id.clone(),
         "roundtrip",
-        fp_core::ast::package::graph::PackageGraph::new(Vec::new()),
+        fp_core::ast::package::graph::PackageGraph::new(
+            fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "roundtrip"),
+        ),
     );
     source.items = items
         .into_iter()

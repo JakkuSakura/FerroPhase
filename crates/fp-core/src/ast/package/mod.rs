@@ -78,6 +78,20 @@ pub struct PackageDescriptor {
     pub modules: Vec<ModuleId>,
 }
 
+impl PackageDescriptor {
+    pub fn empty(id: PackageId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            version: None,
+            manifest_path: VirtualPath::from_path(std::path::Path::new(".")),
+            root: VirtualPath::from_path(std::path::Path::new(".")),
+            metadata: PackageMetadata::default(),
+            modules: Vec::new(),
+        }
+    }
+}
+
 pub mod graph;
 pub mod provider;
 
@@ -187,7 +201,10 @@ impl AstPackage {
         let mut source = Self::new(
             package_id.clone(),
             package_id.as_str(),
-            graph::PackageGraph::new(Vec::new()),
+            graph::PackageGraph::new(PackageDescriptor::empty(
+                package_id.clone(),
+                package_id.as_str(),
+            )),
         );
         source.items.push(PackageItem {
             module_path: QualifiedPath::new(Vec::new()),
