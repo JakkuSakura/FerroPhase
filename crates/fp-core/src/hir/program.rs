@@ -36,6 +36,13 @@ impl SharedHirProgram {
         self.0.borrow()
     }
 
+    /// Captures the packages published so far in a stable membership view.
+    /// Cloning `HirProgram` retains each shared package handle without copying
+    /// package data or observing packages published later.
+    pub fn snapshot(&self) -> Rc<HirProgram> {
+        Rc::new(self.0.borrow().clone())
+    }
+
     pub fn item(&self, def_id: DefId) -> Option<Item> {
         self.0.borrow().item(def_id)
     }
@@ -235,18 +242,14 @@ impl HirProgram {
         let package = Rc::new(RefCell::new(package));
 
         // Replacement is used when a package is re-lowered after a comptime
-        // result becomes available.  Rebuild the aggregate index from the
-        // authoritative package snapshots so entries from the old snapshot
-        // cannot survive under the new package's identity.
+        // result becomes available. Rebuild the aggregate index from the
+        // authoritative package snapshots so stale entries cannot survive.
         self.packages.insert(package_id, package);
         self.rebuild_indexes();
     }
 
-    /// Inserts an already shared package snapshot.  This is retained for
-    /// callers that intentionally share a package handle (notably focused
-    /// HIR construction tests); the snapshot must already have complete
-    /// derived indexes because it cannot be reindexed through `Rc` without
-    /// taking ownership of the caller's handle.
+    /// Inserts an already shared package snapshot without changing its
+    /// identity. The snapshot must already have complete derived indexes.
     pub fn add_package(&mut self, package: Rc<RefCell<HirPackage>>) {
         let package_id = package.borrow().id.clone();
         self.packages.insert(package_id, package);
@@ -1027,9 +1030,13 @@ impl HirProgram {
         let crate_name = path.head()?.to_string();
         let package_id = self.packages_by_crate_name.get(&crate_name)?.clone();
         let mut package = self.packages.get(&package_id)?.clone();
-        let rooted = package.borrow().module_tree.module_exists(
-            &crate::ast::path::QualifiedPath::new(vec![crate_name.clone()]),
-        );
+        let rooted =
+            package
+                .borrow()
+                .module_tree
+                .module_exists(&crate::ast::path::QualifiedPath::new(vec![
+                    crate_name.clone(),
+                ]));
         let first = usize::from(rooted);
         let mut current = if rooted {
             crate::ast::path::QualifiedPath::new(vec![crate_name])
@@ -1127,6 +1134,27 @@ mod tests {
     use crate::ast::path::QualifiedPath;
     use crate::hir::resolve::{Namespace, SymbolEntry, SymbolExport};
     use crate::hir::{Enum, EnumVariant, Item, ItemKind, OwnerId, Symbol, Visibility};
+
+    #[test]
+    fn shared_program_snapshot_preserves_package_identity_and_membership() {
+        let dependency_id = PackageId::new("dependency");
+        let dependency = Rc::new(RefCell::new(HirPackage::new(dependency_id.clone())));
+        let shared = SharedHirProgram::default();
+        shared.add_package(dependency.clone());
+
+        let snapshot = shared.snapshot();
+        assert!(Rc::ptr_eq(
+            &dependency,
+            &snapshot
+                .package_rc(&dependency_id)
+                .expect("snapshot should retain the dependency handle"),
+        ));
+
+        let later_id = PackageId::new("later");
+        shared.publish_package(HirPackage::new(later_id.clone()));
+        assert!(snapshot.package_rc(&later_id).is_none());
+        assert!(shared.package_rc(&later_id).is_some());
+    }
 
     #[test]
     fn find_export_accepts_normalized_external_crate_root() {

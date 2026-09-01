@@ -21,7 +21,7 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<RefCell<hir::HirPackage>>> {
-    let checker = HirTypeChecker::new(package, hir::SharedHirProgram::default(), None, executor);
+    let checker = HirTypeChecker::new(Rc::new(RefCell::new(package)), None, None, executor);
     let item_ids: Vec<_> = checker
         .borrow()
         .package()
@@ -40,33 +40,36 @@ async fn typecheck_program(
 }
 
 #[test]
-fn typechecker_uses_session_shared_program_without_snapshotting() {
+fn typechecker_stages_current_package_without_publishing_it() {
     let dependency_id = hir::PackageId::new("dependency");
     let dependency = Rc::new(RefCell::new(hir::HirPackage::new(dependency_id.clone())));
-    let program = hir::SharedHirProgram::default();
-    program.add_package(dependency.clone());
+    let mut dependency_program = hir::HirProgram::new();
+    dependency_program.add_package(dependency.clone());
+    let dependency_program = Rc::new(dependency_program);
 
     let current_id = test_pkg();
+    let current = Rc::new(RefCell::new(hir::HirPackage::new(current_id.clone())));
     let checker = HirTypeChecker::new(
-        hir::HirPackage::new(current_id.clone()),
-        program.clone(),
+        current.clone(),
+        Some(dependency_program.clone()),
         None,
         fp_core::executor::CompilerExecutor::new().handle(),
     );
-    let current = checker.borrow().finish();
+    let typing_program = checker.borrow().program_handle();
 
     assert!(Rc::ptr_eq(
         &dependency,
-        &program
-            .package(&dependency_id)
-            .expect("dependency package should remain published"),
+        &typing_program
+            .package_rc(&dependency_id)
+            .expect("dependency package should remain visible"),
     ));
     assert!(Rc::ptr_eq(
         &current,
-        &program
-            .package(&current_id)
-            .expect("current package should be published"),
+        &typing_program
+            .package_rc(&current_id)
+            .expect("current package should be visible while checking"),
     ));
+    assert!(dependency_program.package_rc(&current_id).is_none());
 }
 
 /// The core same-package ordering fix: `const A` (checked first, per
@@ -299,8 +302,8 @@ fn impl_header_obligation_is_keyed_by_impl_def_id() {
     let second_impl = hir::DefId::new(package_id.clone(), 902);
     let executor = fp_core::executor::CompilerExecutor::new().handle();
     let checker = HirTypeChecker::new(
-        hir::HirPackage::new(package_id),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirPackage::new(package_id))),
+        None,
         None,
         executor.clone(),
     );
@@ -787,12 +790,14 @@ fn typed_command_helper_local_preserves_method_def_identity() {
 
 #[test]
 fn comptime_request_returns_resolver_value_directly() {
-    let resolver: ComptimeResolver =
-        Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
-    let package = hir::HirPackage::new(test_pkg());
+    let resolver: ComptimeResolver = Rc::new(|program, request| {
+        assert!(program.package_rc(&request.package_id).is_some());
+        Box::pin(async { Ok(fp_core::ast::Value::unit()) })
+    });
+    let package = Rc::new(RefCell::new(hir::HirPackage::new(test_pkg())));
     let checker = HirTypeChecker::new(
         package,
-        hir::SharedHirProgram::default(),
+        None,
         Some(resolver),
         fp_core::executor::CompilerExecutor::new().handle(),
     );
