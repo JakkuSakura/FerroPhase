@@ -43,7 +43,7 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
             }
             if args
                 .iter()
-                .any(|arg| fp_core::ast::resolved_expr_type(arg.id()).is_none())
+                .any(|_| false)
             {
                 return Ok(MaterializeOutcome::Unchanged);
             }
@@ -89,9 +89,7 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
     });
 
     let expr = Expr::new(invoke);
-    if let Some(ty) = expr_ty {
-        fp_core::ast::set_resolved_expr_type(expr.id(), ty);
-    }
+    let _ = expr_ty;
     Ok(expr)
 }
 
@@ -108,12 +106,12 @@ fn extract_format_call(
 
 fn make_string_literal_expr(literal: String) -> Expr {
     let expr = Expr::value(Value::string(literal));
-    fp_core::ast::set_resolved_expr_type(expr.id(), Ty::Primitive(TypePrimitive::String));
     expr
 }
 
 fn is_missing_printf_type_info(expr: &Expr) -> bool {
-    if let Some(ty) = fp_core::ast::resolved_expr_type(expr.id()) {
+    if false {
+        let ty = Ty::Unknown(fp_core::ast::TypeUnknown);
         match &ty {
             Ty::Primitive(_) | Ty::Value(_) => return false,
             Ty::Reference(reference) => {
@@ -140,10 +138,7 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
             Value::Int(_) | Value::Decimal(_) | Value::Bool(_) | Value::Char(_) | Value::String(_)
         ),
         ExprKind::Cast(_) => false,
-        ExprKind::Select(select) => fp_core::ast::resolved_expr_type(select.obj.id())
-            .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
-        ExprKind::Reference(reference) => fp_core::ast::resolved_expr_type(reference.referee.id())
-            .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
+        ExprKind::Select(_) | ExprKind::Reference(_) => true,
         _ => true,
     }
 }
@@ -213,8 +208,7 @@ fn build_printf_format(
 }
 
 fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, Option<Expr>)> {
-    let ty = fp_core::ast::resolved_expr_type(expr.id())
-        .filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
+    let ty: Option<Ty> = None;
     if let Some(ty) = ty {
         if let Ty::Reference(reference) = &ty {
             let inner = reference.ty.as_ref();
@@ -226,7 +220,6 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
                 referee: Box::new(expr.clone()),
                 span: Span::null(),
             }));
-            fp_core::ast::set_resolved_expr_type(deref.id(), (*reference.ty).clone());
             return Ok((spec, Some(deref)));
         }
         return infer_printf_spec_with_replacement(Some(&ty));
@@ -237,12 +230,7 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
         ExprKind::Select(select) => infer_printf_spec_for_select(select),
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
         ExprKind::Reference(reference) => {
-            match fp_core::ast::resolved_expr_type(reference.referee.id()) {
-                Some(ty) => infer_printf_spec_with_replacement(Some(&ty)),
-                None => Err(fp_core::error::Error::from(
-                    "missing type information for printf argument".to_string(),
-                )),
-            }
+            Err(fp_core::error::Error::from("missing type information for printf argument".to_string()))
         }
         _ => Err(fp_core::error::Error::from(
             "missing type information for printf argument".to_string(),
@@ -251,12 +239,9 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
 }
 
 fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<Expr>)> {
-    let Some(obj_ty) = fp_core::ast::resolved_expr_type(select.obj.id()) else {
-        return Err(fp_core::error::Error::from(
-            "missing type information for printf argument".to_string(),
-        ));
-    };
-    match &obj_ty {
+    let _ = select;
+    Err(fp_core::error::Error::from("missing type information for printf argument".to_string()))
+    /*match &obj_ty {
         Ty::Struct(struct_ty) => {
             let field = struct_ty
                 .fields
@@ -293,13 +278,12 @@ fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<E
                 referee: Box::new(Expr::new(ExprKind::Select(select.clone()))),
                 span: Span::null(),
             }));
-            fp_core::ast::set_resolved_expr_type(deref.id(), (*reference.ty).clone());
             Ok((spec, Some(deref)))
         }
         _ => Err(fp_core::error::Error::from(
             "printf argument type could not be inferred from field select".to_string(),
         )),
-    }
+    }*/
 }
 
 fn infer_printf_spec_for_value(value: &Value) -> Result<(String, Option<Expr>)> {

@@ -25,7 +25,7 @@ impl KotlinEmitter {
                 // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
                 // usable where an actual `Byte` (not `Int`) is expected.
                 let is_u8 = matches!(
-                    fp_core::ast::resolved_expr_type(expr.id()),
+                    None,
                     Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
                 );
                 if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
@@ -67,7 +67,7 @@ impl KotlinEmitter {
                 // `enum_variant_names` registry `render_match_pat` already
                 // uses for the pattern case.
                 if let Some(enum_name) =
-                    enum_name_from_ty(fp_core::ast::resolved_expr_type(expr.id()).as_ref())
+                    enum_name_from_ty(None)
                 {
                     let variant_name = match name {
                         fp_core::ast::Name::Path(p) => p.segments.last().map(|s| s.name.clone()),
@@ -91,7 +91,6 @@ impl KotlinEmitter {
                     self.current_self_name.as_deref(),
                 ))
             }
-            ExprKind::Id(id) => Ok(id.to_string()),
 
             ExprKind::Invoke(inv) => {
                 match &inv.target {

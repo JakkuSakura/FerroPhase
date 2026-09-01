@@ -265,9 +265,8 @@ pub(super) fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
 
 #[allow(dead_code)]
 pub(super) fn expr_contains_type_type(expr: &ast::Expr) -> bool {
-    fp_core::ast::resolved_expr_type(expr.id())
-        .as_ref()
-        .is_some_and(|ty| ty_contains_type_type(ty))
+    let _ = expr;
+    false
 }
 
 pub(super) fn value_contains_quote(value: &ast::Value) -> bool {

@@ -132,7 +132,6 @@ pub struct AstPackage {
     pub module_tree: crate::ast::resolve::ModuleTree,
     /// AST node resolutions produced before lowering.
     pub resolutions: HashMap<ItemId, crate::hir::Res>,
-    pub expr_resolutions: HashMap<crate::ast::ExprId, crate::hir::Res>,
 
     /// All known module paths within this package.
     pub module_paths: HashSet<QualifiedPath>,
@@ -209,7 +208,6 @@ impl AstPackage {
             graph,
             module_tree: crate::ast::resolve::ModuleTree::new(),
             resolutions: HashMap::new(),
-            expr_resolutions: HashMap::new(),
             module_paths,
             items: Vec::new(),
             referenced_paths: HashMap::new(),

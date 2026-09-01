@@ -217,33 +217,8 @@ impl AstToHirLowerer {
     /// rustc carrying the resolved `Res` on the path node rather than
     /// reconstructing it from the spelling later.
     pub(super) fn resolved_type_path(&mut self, expr: &ast::Expr) -> Result<Option<hir::Path>> {
-        let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() else {
-            return Ok(None);
-        };
-        if resolved_name.namespace != ResolvedNameNamespace::Type {
-            return Ok(None);
-        }
-        let name = match expr.kind() {
-            ast::ExprKind::Name(name) => name.clone(),
-            // `Value::Expr` is a type wrapper, not a new source path. Build a
-            // name from the resolver's path so the owning node's namespace
-            // and canonical identity remain authoritative.
-            _ => ast::Name::path(ast::Path::plain(
-                resolved_name
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| ast::Ident::new(segment.clone()))
-                    .collect(),
-            )),
-        };
-        let path =
-            self.resolved_name_to_hir_path(&resolved_name, &name, PathResolutionScope::Type)?;
-        // Frontend resolution can run before imports and deferred aliases
-        // are installed. Preserve an actual resolution, but do not let an
-        // unresolved snapshot suppress the authoritative AST-to-HIR resolver
-        // after those module tables have been completed.
-        Ok(path.filter(|path| path.res.is_some()))
+        let _ = expr;
+        Ok(None)
     }
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
@@ -1280,20 +1255,6 @@ impl AstToHirLowerer {
                         if let Some(res) = self.resolve_lexical_type_symbol(local_name) {
                             let mut path = self.name_to_hir_path_with_scope(name, scope)?;
                             path.res = Some(res);
-                            return Ok(path);
-                        }
-                    }
-                }
-                if let Some(resolved_name) = self.resolved_names.get(&expr.id()).cloned() {
-                    if !resolved_name.path.segments.is_empty() {
-                        if let Some(path) =
-                            self.resolved_name_to_hir_path(&resolved_name, name, scope)?
-                        {
-                            // Preserve the frontend's canonical spelling even
-                            // when this lowering pass cannot yet attach a
-                            // `Res` (imports may be deferred to the fixed
-                            // point). Dropping it and rebuilding from the
-                            // short AST name loses qualified paths.
                             return Ok(path);
                         }
                     }

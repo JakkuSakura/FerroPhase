@@ -31,13 +31,20 @@ impl AstToHirLowerer {
             ast::Ty::Expr(expr) => {
                 if let ast::ExprKind::Name(name) = expr.kind() {
                     let path = name.to_path();
-                    let segments = path
-                        .segments
-                        .iter()
-                        .map(|seg| seg.name.clone())
-                        .collect::<Vec<_>>();
-                    if let Some(alias) = self.lookup_type_alias(&segments) {
-                        return self.struct_fields_from_type(&alias, span);
+                    let qualified = fp_core::ast::path::QualifiedPath::new(
+                        path.segments.iter().map(|seg| seg.name.clone()).collect(),
+                    );
+                    if let fp_core::ast::resolve::ResolutionResult::Found(
+                        hir::Res::Def(def_id),
+                    ) = self.workspace.resolve_module_path_final(
+                        &self.package_id,
+                        &self.module_path,
+                        &qualified,
+                        fp_core::ast::resolve::Namespace::Type,
+                    ) {
+                        if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
+                            return Ok(fields);
+                        }
                     }
                 }
                 self.add_error(

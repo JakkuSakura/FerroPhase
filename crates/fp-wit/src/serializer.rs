@@ -1676,8 +1676,6 @@ fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
             for arg in &invoke.args {
                 if let Some(arg_ty) = expr_to_wit_type(arg, self_name) {
                     args.push(arg_ty);
-                } else if let Some(ty) = fp_core::ast::resolved_expr_type(arg.id()) {
-                    args.push(ty_to_wit_with_self(&ty, self_name));
                 }
             }
 

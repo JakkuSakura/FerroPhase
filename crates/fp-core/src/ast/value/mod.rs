@@ -114,10 +114,10 @@ impl Value {
 
     pub fn expr(e: impl Into<Expr>) -> Self {
         let expr: Expr = e.into();
-        let (id, span, kind) = expr.into_parts();
+        let (span, kind) = expr.into_parts();
         match kind {
             ExprKind::Value(v) => *v,
-            other => Value::Expr(Expr::from_parts(id, span, other).into()),
+            other => Value::Expr(Expr::from_parts(span, other).into()),
         }
     }
     pub const fn undefined() -> Self {

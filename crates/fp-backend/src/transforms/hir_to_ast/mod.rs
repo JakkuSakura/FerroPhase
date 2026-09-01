@@ -53,9 +53,6 @@ impl PortableOpAstConverter {
                 args: args.to_vec(),
                 kwargs: call.kwargs,
             }));
-            if let Some(ty) = expr_ty {
-                ast::set_resolved_expr_type(node.id(), ty.clone());
-            }
             Some(node)
         } else {
             let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
@@ -64,9 +61,6 @@ impl PortableOpAstConverter {
                 args: call.args,
                 kwargs: call.kwargs,
             }));
-            if let Some(ty) = expr_ty {
-                ast::set_resolved_expr_type(node.id(), ty.clone());
-            }
             Some(node)
         }
     }
@@ -128,17 +122,6 @@ pub struct HirToAstLifter<'a> {
     /// Consulted by `lift_path` so later references to a renamed binding
     /// (resolved via `hir::Res::Local`) use the new name too.
     renamed_locals: RefCell<HashMap<hir::HirId, String>>,
-    /// `ExprId` -> resolved `Ty` for every lifted expr the typer resolved a
-    /// type for. Populated during lifting (`lift_expr`), then published into
-    /// `fp_core::ast`'s thread-local resolved-type table (see
-    /// `ast::set_resolved_expr_types`) by `finish()`/the top-level lift
-    /// entry points, for the few backend/AST-materializer reads that are
-    /// genuine subexpression-level type queries with no annotation-shaped
-    /// AST position to promote the type into instead (e.g. fp-kotlin's
-    /// Vec/String/enum-receiver checks). Real annotation positions (a `let`
-    /// binding, a closure param) get the resolved type promoted directly
-    /// into a `PatternKind::Type` instead of recorded here.
-    resolved_expr_types: RefCell<HashMap<ast::ExprId, Ty>>,
 }
 
 impl<'a> HirToAstLifter<'a> {
@@ -154,7 +137,6 @@ impl<'a> HirToAstLifter<'a> {
             source_operations: None,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
-            resolved_expr_types: RefCell::new(HashMap::new()),
         }
     }
 
@@ -253,15 +235,6 @@ impl<'a> HirToAstLifter<'a> {
                 "target materializer did not handle portable operation",
             )),
         }
-    }
-
-    /// Publishes every `ExprId` -> resolved `Ty` pair collected while
-    /// lifting into `fp_core::ast`'s thread-local resolved-type table, for
-    /// backend serializers / AST materializer passes running afterward on
-    /// the same thread to read via `ast::resolved_expr_type`. Called once
-    /// lifting a file/package is complete.
-    pub fn publish_resolved_expr_types(&self) {
-        ast::extend_resolved_expr_types(self.resolved_expr_types.borrow().clone());
     }
 
     fn portable_op_for_def(&self, def_id: &hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
@@ -1218,24 +1191,6 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
         };
-        // Record the typer's resolved type for this HIR node, if we have
-        // typeck results and it resolved to something representable as an
-        // `ast::Ty` — see `hir_ty_to_ast`. Recorded into this lifter's own
-        // `resolved_expr_types` side-table (published into
-        // `fp_core::ast`'s thread-local table by `publish_resolved_expr_types`)
-        // rather than stamped onto the node itself, since an arbitrary
-        // subexpression has no annotation-shaped AST position to promote
-        // the type into. `None` just means nothing gets recorded for this
-        // expr id, same net effect as before this existed.
-        if let Some(ty) = self
-            .package
-            .expr_type(expr.hir_id.clone())
-            .and_then(|ty| self.hir_ty_to_ast(&ty))
-        {
-            self.resolved_expr_types
-                .borrow_mut()
-                .insert(lifted.id(), ty);
-        }
         Ok(lifted.with_span(expr.span))
     }
 

@@ -235,8 +235,7 @@ fn annotate_expr(expr: &mut Expr, module_path: &QualifiedPath) {
         ExprKind::Splice(splice) => annotate_expr(splice.token.as_mut(), module_path),
         ExprKind::SplicePending(pending) => annotate_expr(pending.token.as_mut(), module_path),
         ExprKind::Value(value) => annotate_value(value.as_mut(), module_path),
-        ExprKind::Id(_)
-        | ExprKind::Name(_)
+        ExprKind::Name(_)
         | ExprKind::Continue(_)
         | ExprKind::FormatString(_)
         | ExprKind::Macro(_) => {}

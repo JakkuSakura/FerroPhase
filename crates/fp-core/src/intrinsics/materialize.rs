@@ -322,14 +322,8 @@ pub fn materialize_expr(
     expr: ast::Expr,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Expr> {
-    let ast::Expr { id, span, kind } = expr;
-    // Looking this expr's resolved type up by its own (preserved-through-
-    // materialization — see `new_expr.id = id;` below) id, rather than an
-    // `Expr.ty` cache field carried on the node itself (removed): every
-    // constructed replacement expr keeps the original id, so a lookup here
-    // finds whatever `HirToAstLifter` recorded for this exact node, same as
-    // reading `.ty()` used to.
-    let expr_ty = crate::ast::resolved_expr_type(id);
+    let ast::Expr { span, kind } = expr;
+    let expr_ty = None;
     let mut new_expr = match kind {
         ast::ExprKind::Block(block) => {
             ast::Expr::new(ast::ExprKind::Block(materialize_block(block, strategy)?))
@@ -728,8 +722,6 @@ pub fn materialize_expr(
             }
             ast::Expr::new(ast::ExprKind::Range(expr_range))
         }
-        // Leaves — no nested `Expr`/`Item` to recurse into.
-        ast::ExprKind::Id(id) => ast::Expr::new(ast::ExprKind::Id(id)),
         ast::ExprKind::Name(name) => ast::Expr::new(ast::ExprKind::Name(name)),
         ast::ExprKind::Continue(expr_continue) => {
             ast::Expr::new(ast::ExprKind::Continue(expr_continue))
@@ -739,16 +731,13 @@ pub fn materialize_expr(
         // `ItemKind::Macro`) — nothing left inside to materialize.
         ast::ExprKind::Macro(macro_expr) => ast::Expr::new(ast::ExprKind::Macro(macro_expr)),
     };
-    new_expr.id = id;
     new_expr.span = span;
     Ok(new_expr)
 }
 
 fn is_hashmap_expr(expr: &ast::Expr) -> bool {
-    crate::ast::resolved_expr_type(expr.id())
-        .as_ref()
-        .map(is_hashmap_ty)
-        .unwrap_or(false)
+    let _ = expr;
+    false
 }
 
 fn is_hashmap_ty_slot(ty: &ast::TySlot) -> bool {
@@ -793,9 +782,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
         span: Span::null(),
     };
     let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
-    if let Some(ty) = expr_ty {
-        crate::ast::set_resolved_expr_type(node.id(), ty);
-    }
+    let _ = expr_ty;
     node
 }
 
@@ -836,9 +823,7 @@ fn build_hashmap_from_entries(
     };
 
     let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
-    if let Some(ty) = expr_ty {
-        crate::ast::set_resolved_expr_type(node.id(), ty);
-    }
+    let _ = expr_ty;
     node
 }
 

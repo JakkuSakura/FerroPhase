@@ -892,9 +892,7 @@ fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
     let (value, ty) = parse_numeric_literal_local(&token.lexeme)
         .map_err(|_| ErrMode::Cut(ContextError::new()))?;
     let node = Expr::value(value).with_span(token_span_to_span(&token));
-    if let Some(ty) = ty {
-        fp_core::ast::set_resolved_expr_type(node.id(), ty);
-    }
+    let _ = ty;
     Ok(node)
 }
 
@@ -969,17 +967,9 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                 lifetime: None,
             })
         };
-        // Unlike the other literal kinds in this function, this parse-time
-        // type genuinely needs to survive to AST->HIR lowering
-        // (`ast_to_hir::exprs::transform_bytes_value_to_hir`, which reads it
-        // back to distinguish `b"..."` from `c"..."` — `ValueBytes` itself
-        // carries no such flag) with no annotation-shaped AST position to
-        // hold it, so it's recorded in the resolved-expr-type side-table
-        // (`fp_core::ast::set_resolved_expr_type`) keyed by this node's own
-        // freshly-assigned id.
         let node = Expr::value(Value::Bytes(ValueBytes::from(bytes.as_slice())))
             .with_span(token_span_to_span(&token));
-        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+        let _ = ty;
         return Ok(node);
     }
     let value =

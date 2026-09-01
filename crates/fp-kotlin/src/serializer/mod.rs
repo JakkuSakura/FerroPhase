@@ -2365,7 +2365,7 @@ fn is_byte_array_index(expr: &Expr) -> bool {
 /// `.substring(...)`).
 fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
     if matches!(
-        fp_core::ast::resolved_expr_type(expr.id()),
+        None,
         Some(Ty::Vec(_)) | Some(Ty::Slice(_))
     ) {
         return true;
@@ -2386,7 +2386,7 @@ fn is_nullable_expr(expr: &Expr) -> bool {
             _ => false,
         }
     }
-    fp_core::ast::resolved_expr_type(expr.id()).is_some_and(|ty| ty_is_nullable(&ty))
+    false
 }
 
 /// True if `expr` is a known `String` — checks the real inferred type
@@ -2396,7 +2396,7 @@ fn is_nullable_expr(expr: &Expr) -> bool {
 /// immutable, no `.copy()` method) rather than map to Kotlin's data-class
 /// `.copy()` convention.
 fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if is_string_like_ty(fp_core::ast::resolved_expr_type(expr.id()).as_ref()) {
+    if is_string_like_ty(None) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
@@ -2426,7 +2426,7 @@ fn is_string_like_ty(ty: Option<&Ty>) -> bool {
 /// entirely rather than map to Kotlin's data-class `.copy()` convention.
 fn is_known_enum_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
     if matches!(
-        fp_core::ast::resolved_expr_type(expr.id()),
+        None,
         Some(Ty::Enum(_))
     ) {
         return true;

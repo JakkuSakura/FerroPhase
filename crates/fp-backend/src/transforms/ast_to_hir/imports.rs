@@ -10,7 +10,7 @@ impl AstToHirLowerer {
     ) -> bool {
         let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
                            namespace: fp_core::ast::resolve::Namespace| {
-            match self.workspace.resolve_module_path_final(
+            match self.workspace.resolve_module_path(
                 &self.package_id,
                 &self.module_path,
                 path,
@@ -568,7 +568,7 @@ impl AstToHirLowerer {
     ) -> Option<fp_core::ast::path::QualifiedPath> {
         let resolve_ast = |path: &fp_core::ast::path::QualifiedPath,
                            namespace: fp_core::ast::resolve::Namespace| {
-            match self.workspace.resolve_module_path(
+            match self.workspace.resolve_module_path_final(
                 &self.package_id, &self.module_path, path, namespace,
             ) {
                 fp_core::ast::resolve::ResolutionResult::Found(

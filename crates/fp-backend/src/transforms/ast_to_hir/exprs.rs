@@ -66,12 +66,10 @@ impl AstToHirLowerer {
                 }
                 hir::ItemKind::Struct(_) => return None,
                 _ => {
-                    let target = self
-                        .package
-                        .type_alias_targets
-                        .get(&def_id)
-                        .cloned()
-                        .or_else(|| self.hir_program.type_alias_target(def_id.clone()))?;
+                    let target = match self.resolved_item(&def_id)?.kind {
+                        hir::ItemKind::TypeAlias(alias) => alias.target,
+                        _ => return None,
+                    };
                     let hir::TypeExprKind::Path(path) = &target.kind else {
                         return None;
                     };
@@ -204,34 +202,10 @@ impl AstToHirLowerer {
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => match value.as_ref() {
                 ast::Value::Bytes(bytes) => {
-                    let ty = fp_core::ast::resolved_expr_type(ast_expr.id());
-                    Self::transform_bytes_value_to_hir(bytes, ty.as_ref())
-                }
-                ast::Value::Int(_)
-                | ast::Value::UInt(_)
-                | ast::Value::BigInt(_)
-                | ast::Value::Decimal(_)
-                | ast::Value::BigDecimal(_)
-                    if fp_core::ast::resolved_expr_type(ast_expr.id()).is_some() =>
-                {
-                    let target = fp_core::ast::resolved_expr_type(ast_expr.id())
-                        .expect("numeric literal type checked above");
-                    let value = hir::Expr {
-                        hir_id: self.next_id(),
-                        kind: self.transform_value_to_hir(value)?,
-                        span,
-                    };
-                    hir::ExprKind::Cast(
-                        Box::new(value),
-                        Box::new(self.transform_type_to_hir(&target)?),
-                    )
+                    Self::transform_bytes_value_to_hir(bytes, None)
                 }
                 _ => self.transform_value_to_hir(value)?,
             },
-            ExprKind::Id(expr_id) => self.error_placeholder_expr_kind(
-                format!("unresolved expression id {expr_id} during AST→HIR lowering"),
-                expr_span,
-            ),
             ExprKind::Name(_) => hir::ExprKind::Path(
                 self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
             ),
@@ -1160,16 +1134,28 @@ impl AstToHirLowerer {
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(struct_span),
                     );
-                    return Ok(hir::ExprKind::Struct(path, fields));
+                    return Ok(hir::ExprKind::Struct(path, Vec::new()));
                 }
             }
             _ => {
-                let segments = path
-                    .segments
-                    .iter()
-                    .map(|seg| seg.name.as_str().to_string())
-                    .collect::<Vec<_>>();
-                let Some(alias) = self.lookup_type_alias(&segments) else {
+                let qualified = QualifiedPath::new(
+                    path.segments
+                        .iter()
+                        .map(|seg| seg.name.as_str().to_owned())
+                        .collect(),
+                );
+                let fields = match self.workspace.resolve_module_path_final(
+                    &self.package_id,
+                    &self.module_path,
+                    &qualified,
+                    fp_core::ast::resolve::Namespace::Type,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+                        self.struct_field_defs.get(&def_id).cloned()
+                    }
+                    _ => None,
+                };
+                let Some(fields) = fields else {
                     self.add_error(
                         Diagnostic::error(
                             "struct update requires a resolved struct definition".to_string(),
@@ -1177,9 +1163,9 @@ impl AstToHirLowerer {
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(struct_span),
                     );
-                    return Ok(hir::ExprKind::Struct(path, fields));
+                    return Ok(hir::ExprKind::Struct(path, Vec::new()));
                 };
-                self.struct_fields_from_type(&alias, struct_span)?
+                fields
             }
         };
 

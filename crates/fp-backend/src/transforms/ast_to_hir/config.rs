@@ -1,9 +1,8 @@
-use fp_core::ast::ExprId;
 use fp_core::ast::path::QualifiedPath;
 use std::collections::HashMap;
 
 /// Names resolved while lowering expressions, before type checking.
-pub type ResolvedNameTable = HashMap<ExprId, ResolvedName>;
+pub type ResolvedNameTable = HashMap<QualifiedPath, ResolvedName>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedNameNamespace {

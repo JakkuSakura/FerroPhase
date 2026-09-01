@@ -4,7 +4,7 @@
 //! expansion and AST→HIR lowering. HIR receives resolved identities; it does
 //! not perform first-time lexical or module lookup.
 
-use super::{ExprId, ItemId, Span};
+use super::{ItemId, Span};
 use crate::ast::path::QualifiedPath;
 use std::collections::HashMap;
 
@@ -521,7 +521,6 @@ pub struct AstResolver<'a> {
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
     resolutions: HashMap<ItemId, crate::hir::Res>,
-    expr_resolutions: HashMap<ExprId, crate::hir::Res>,
 }
 
 impl<'a> AstResolver<'a> {
@@ -553,7 +552,6 @@ impl<'a> AstResolver<'a> {
             declaration_rules,
             resolution_rules,
             resolutions: HashMap::new(),
-            expr_resolutions: HashMap::new(),
         }
     }
 
@@ -696,20 +694,6 @@ impl<'a> AstResolver<'a> {
         )
     }
 
-    pub fn resolve_expr(
-        &mut self,
-        expr: ExprId,
-        module: &QualifiedPath,
-        name: &str,
-        namespace: Namespace,
-    ) -> ResolutionResult {
-        let result = self.resolve(module, name, namespace);
-        if let ResolutionResult::Found(res) = &result {
-            self.record_expr_resolution(expr, res.clone());
-        }
-        result
-    }
-
     /// Resolve a qualified path by resolving its first segment and traversing
     /// module nodes for the remaining segments.  No package-wide suffix scan
     /// is performed.
@@ -751,14 +735,6 @@ impl<'a> AstResolver<'a> {
         &self.resolutions
     }
 
-    pub fn record_expr_resolution(&mut self, id: ExprId, result: crate::hir::Res) {
-        self.expr_resolutions.insert(id, result);
-    }
-
-    pub fn expr_resolution(&self, id: ExprId) -> Option<&crate::hir::Res> {
-        self.expr_resolutions.get(&id)
-    }
-
     pub fn resolve_path_final(
         &self,
         module: &QualifiedPath,
@@ -767,10 +743,6 @@ impl<'a> AstResolver<'a> {
     ) -> ResolutionResult {
         self.modules
             .resolve_path_final(module, path, namespace, self.resolution_rules)
-    }
-
-    pub fn expr_resolution_table(&self) -> &HashMap<ExprId, crate::hir::Res> {
-        &self.expr_resolutions
     }
 
     /// Collect declarations from parsed package items and allocate their

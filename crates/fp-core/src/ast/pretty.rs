@@ -19,7 +19,6 @@ impl PrettyPrintable for ast::Expr {
         let suffix = ty_suffix(None, ctx);
 
         match &self.kind {
-            ast::ExprKind::Id(id) => ctx.write_line(format!("id({}){}", id, suffix)),
             ast::ExprKind::Name(name) => ctx.write_line(format!("name {}{}", name, suffix)),
             ast::ExprKind::Value(value) => ctx.write_line(format!(
                 "value {}{}",
@@ -1254,7 +1253,6 @@ fn summarize_value(value: &ast::Value) -> String {
 
 fn render_expr_inline(expr: &ast::Expr) -> String {
     match &expr.kind {
-        ast::ExprKind::Id(id) => format!("id({})", id),
         ast::ExprKind::Name(name) => name.to_string(),
         ast::ExprKind::Value(value) => summarize_value(value.as_ref()),
         ast::ExprKind::BinOp(binop) => format!(

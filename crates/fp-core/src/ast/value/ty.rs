@@ -220,10 +220,10 @@ impl Ty {
         }
     }
     pub fn expr(expr: Expr) -> Self {
-        let (id, span, kind) = expr.into_parts();
+        let (span, kind) = expr.into_parts();
         match kind {
             ExprKind::Value(value) => Self::value(*value),
-            other => Ty::Expr(Box::new(Expr::from_parts(id, span, other))),
+            other => Ty::Expr(Box::new(Expr::from_parts(span, other))),
         }
     }
     pub fn value(v: impl Into<Value>) -> Self {

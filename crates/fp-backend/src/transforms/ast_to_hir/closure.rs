@@ -462,65 +462,16 @@ impl ClosureLowering {
         param_ty: Option<&ast::Ty>,
         ret_ty: Option<&ast::Ty>,
     ) {
-        let ast::ExprKind::Closure(closure) = expr.kind() else {
-            return;
-        };
-        let existing_params = match fp_core::ast::resolved_expr_type(expr.id()) {
-            Some(ast::Ty::Function(function)) => Some(function.params.clone()),
-            _ => None,
-        };
-        // Prefer the real, structurally-derived parameter type
-        // (`closure_param_ty_for_invoke`) when the closure takes exactly
-        // one parameter (true for every method this derivation currently
-        // covers) — falling back to an `Any`-typed, arity-only
-        // placeholder otherwise. `Any` is only safe for a closure body
-        // that does nothing type-dependent with its parameter (e.g. it's
-        // ignored, or just returned) — a body doing real field/method
-        // access on an `Any`-typed parameter would silently resolve to an
-        // error placeholder instead of erroring loudly, so callers should
-        // supply a real type whenever one is derivable.
-        let params = closure
-            .params
-            .iter()
-            .enumerate()
-            .map(|(index, pattern)| match pattern.kind() {
-                ast::PatternKind::Type(typed) => typed.ty.clone(),
-                _ if index == 0 && closure.params.len() == 1 => param_ty
-                    .cloned()
-                    .or_else(|| {
-                        existing_params
-                            .as_ref()
-                            .and_then(|params| params.get(index).cloned())
-                    })
-                    .unwrap_or(ast::Ty::Any(ast::TypeAny)),
-                _ => existing_params
-                    .as_ref()
-                    .and_then(|params| params.get(index).cloned())
-                    .unwrap_or(ast::Ty::Any(ast::TypeAny)),
-            })
-            .collect();
-        // Same reasoning applies to the closure's own return type — left
-        // `Unknown`, it reproduces the identical "silently becomes a null
-        // placeholder" failure one step later, now at the synthetic
-        // `__closureN_call` function's return position.
-        let ret_ty = ret_ty
-            .cloned()
-            .or_else(|| closure.ret_ty.as_deref().cloned())
-            .unwrap_or(ast::Ty::Unknown(ast::TypeUnknown));
-        fp_core::ast::set_resolved_expr_type(
-            expr.id(),
-            ast::Ty::Function(ast::TypeFunction {
-                params,
-                generics_params: Vec::new(),
-                ret_ty: Some(Box::new(ret_ty)),
-            }),
-        );
+        let _ = (expr, param_ty, ret_ty);
     }
 
     fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
         Self::ensure_closure_has_function_ty(expr, None, None);
-        let Some(ast::Ty::Function(fn_ty)) = fp_core::ast::resolved_expr_type(expr.id()) else {
-            return Ok(None);
+        let ast::ExprKind::Closure(closure_ref) = expr.kind() else { return Ok(None); };
+        let fn_ty = ast::TypeFunction {
+            params: closure_ref.params.iter().map(|_| ast::Ty::Any(ast::TypeAny)).collect(),
+            generics_params: Vec::new(),
+            ret_ty: closure_ref.ret_ty.clone(),
         };
 
         let ast::ExprKind::Closure(closure) = expr.kind_mut() else {
@@ -641,17 +592,7 @@ impl ClosureLowering {
                     Some(ty.as_ref().clone())
                 }
             })
-            .or_else(|| {
-                fp_core::ast::resolved_expr_type(closure.body.id())
-                    .or_else(|| fp_core::ast::resolved_expr_type(rewritten_body.id()))
-                    .and_then(|ty| {
-                        if matches!(ty, ast::Ty::Unknown(_)) {
-                            None
-                        } else {
-                            Some(ty)
-                        }
-                    })
-            });
+            ;
         let fallback_ret_ty = fn_ty.ret_ty.as_ref().and_then(|ty| {
             if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
                 None
@@ -688,15 +629,10 @@ impl ClosureLowering {
         let mut fields = Vec::new();
         for capture in &captures {
             let value_expr = ast::Expr::ident(capture.name.clone());
-            fp_core::ast::set_resolved_expr_type(value_expr.id(), capture.ty.clone());
             fields.push(ast::ExprField::new(capture.name.clone(), value_expr));
         }
         if fields.is_empty() {
             let value_expr = ast::Expr::value(ast::Value::int(0));
-            fp_core::ast::set_resolved_expr_type(
-                value_expr.id(),
-                ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I8)),
-            );
             fields.push(ast::ExprField::new(
                 ast::Ident::new(DUMMY_CAPTURE_NAME),
                 value_expr,
@@ -711,8 +647,6 @@ impl ClosureLowering {
             fields,
             update: None,
         }));
-        struct_expr.id = expr.id();
-        fp_core::ast::set_resolved_expr_type(struct_expr.id(), env_struct_ty.clone());
 
         *expr = struct_expr;
 
@@ -1017,7 +951,7 @@ impl ClosureLowering {
                 unreachable!("intrinsic collections should have been expanded")
             }
             ast::ExprKind::Name(_) | ast::ExprKind::Closured(_) => {}
-            ast::ExprKind::Closure(_) | ast::ExprKind::Id(_) => {}
+            ast::ExprKind::Closure(_) => {}
         }
         Ok(())
     }
@@ -1329,8 +1263,7 @@ impl CaptureCollector {
                 if let Some(ident) = name.as_ident() {
                     let name = ident.as_str();
                     if !self.is_in_scope(name) && !self.seen.contains(name) {
-                        let ty = fp_core::ast::resolved_expr_type(expr.id())
-                            .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
+                        let ty = ast::Ty::Any(ast::TypeAny);
                         self.seen.insert(name.to_string());
                         self.captures.push((name.to_string(), ty));
                     }
@@ -1347,7 +1280,6 @@ impl CaptureCollector {
                     self.visit(&kwarg.value);
                 }
             }
-            ast::ExprKind::Id(_) => {}
         }
     }
 
@@ -1473,8 +1405,6 @@ impl CaptureReplacer {
                                 generic_args: Vec::new(),
                                 select: ast::ExprSelectType::Field,
                             }));
-                        expr_struct.id = expr.id();
-                        fp_core::ast::set_resolved_expr_type(expr_struct.id(), capture_ty.clone());
                         *expr = expr_struct;
                     }
                 }
@@ -1548,10 +1478,6 @@ impl CaptureReplacer {
                                         generic_args: Vec::new(),
                                         select: ast::ExprSelectType::Field,
                                     }));
-                                fp_core::ast::set_resolved_expr_type(
-                                    expr_struct.id(),
-                                    capture_ty.clone(),
-                                );
                                 invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());
                             }
                         }
@@ -1674,10 +1600,9 @@ impl CaptureReplacer {
             ast::ExprKind::IntrinsicContainer(container) => {
                 let mut new_expr = container.take_into_const_expr();
                 self.visit(&mut new_expr);
-                new_expr.id = expr.id();
                 *expr = new_expr;
             }
-            ast::ExprKind::Id(_) | ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
+            ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
         }
     }
 

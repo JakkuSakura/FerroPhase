@@ -164,7 +164,6 @@ pub struct AstToHirLowerer {
     /// Results produced by the AST-stage resolver. Lowering may translate an
     /// AST identity into a HIR identity, but does not own first-time lookup.
     ast_resolutions: HashMap<ast::ItemId, hir::Res>,
-    ast_expr_resolutions: HashMap<ast::ExprId, hir::Res>,
     target_env: TargetEnv,
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
@@ -358,7 +357,6 @@ impl AstToHirLowerer {
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             ast_resolutions: HashMap::new(),
-            ast_expr_resolutions: HashMap::new(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
@@ -428,6 +426,18 @@ impl AstToHirLowerer {
 
     fn ast_resolution(&self, item: ast::ItemId) -> Option<&hir::Res> {
         self.ast_resolutions.get(&item)
+    }
+
+    /// Look up a resolved definition without encoding any knowledge of its
+    /// declaration kind. Alias handling, struct lookup, and variant lookup
+    /// all start from this same semantic identity query.
+    pub(super) fn resolved_item(&self, def_id: &hir::DefId) -> Option<hir::Item> {
+        self.package
+            .def_map
+            .get(def_id)
+            .cloned()
+            .or_else(|| self.program_def_map.get(def_id).cloned())
+            .or_else(|| self.hir_program.item(def_id.clone()))
     }
 
     /// Return the AST package currently being lowered. Module declarations
@@ -1015,10 +1025,7 @@ impl AstToHirLowerer {
         // the declared output type matching the body, which HIR→MIR lowering
         // checks; a hardcoded `()` output would then be a mismatch for any
         // non-unit expression.
-        let output = match fp_core::ast::resolved_expr_type(ast_expr.id()) {
-            Some(ty) => self.transform_type_to_hir(&ty)?,
-            None => self.create_unit_type(),
-        };
+        let output = self.create_unit_type();
         let main_body_expr = self.transform_expr_to_hir(&lowered_expr)?;
         let main_body = match main_body_expr.kind {
             hir::ExprKind::Block(block) => block,
@@ -1126,7 +1133,6 @@ impl AstToHirLowerer {
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.ast_resolutions = package.resolutions.clone();
-        self.ast_expr_resolutions = package.expr_resolutions.clone();
         self.prepare_lowering_state();
         // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for
@@ -4117,10 +4123,8 @@ fn sanitize_generated_symbol_prefix(value: &str) -> String {
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
 fn expand_intrinsic_collection(expr: &mut ast::Expr) -> bool {
-    let id = expr.id();
     if let ast::ExprKind::IntrinsicContainer(collection) = expr.kind_mut() {
         let mut new_expr = collection.take_into_const_expr();
-        new_expr.id = id;
         *expr = new_expr;
         true
     } else {

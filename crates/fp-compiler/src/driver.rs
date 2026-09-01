@@ -443,7 +443,7 @@ impl CompilerDriver {
         let package_workspace = parent_workspace;
         {
             let mut state = self.state.borrow_mut();
-            state.workspace = Rc::new(package_workspace);
+            state.workspace = package_workspace;
         }
 
         let result: Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> =
@@ -635,14 +635,17 @@ impl CompilerDriver {
             .provider()
             .intrinsic_normalizer();
         let mut generator =
-            AstToHirLowerer::new(self.state.borrow().hir_program_rc(), hir_package_id)
+            AstToHirLowerer::new(
+                self.state.borrow().workspace.clone(),
+                self.state.borrow().hir_program_rc(),
+                hir_package_id,
+            )
                 .with_intrinsic_normalizer(normalizer)
                 .with_lowering_config(HirLoweringConfig {
                     capabilities: self.state.borrow().backend_capabilities(),
                     operations: self.state.borrow().source_operations().unwrap_or_default(),
                     resolution_only,
-                })
-                .with_workspace(self.state.borrow().workspace.clone());
+                });
         let hir_package = generator.transform_package(package_source)?;
         Ok((
             hir_package,
@@ -866,7 +869,6 @@ impl CompilerDriver {
             // bodies never get spliced back in at all.
             let mut lifted_items_by_path = lifter.lift_items_by_path();
             lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
-            lifter.publish_resolved_expr_types();
             (lifted_items_by_path, lifter.referenced_paths_by_path())
         };
         if let Some(pkg) = self

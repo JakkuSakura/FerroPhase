@@ -129,10 +129,8 @@ impl AstProgram {
         }
         resolver.collect_package_items(&items);
         let resolutions = resolver.resolution_table().clone();
-        let expr_resolutions = resolver.expr_resolution_table().clone();
         drop(resolver);
         package.resolutions = resolutions;
-        package.expr_resolutions = expr_resolutions;
         Ok(())
     }
 

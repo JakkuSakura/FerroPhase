@@ -17,7 +17,7 @@ pub use import::*;
 pub type BItem = Box<Item>;
 
 /// A stable, globally-unique identity for an `Item` node, assigned once at
-/// construction (mirrors `ExprId`, `ast/expr/mod.rs`) -- unlike a
+/// construction -- unlike a
 /// `QualifiedPath`, which is a display/qualification convention (prefixed by
 /// whatever module/compile-unit context happened to be active), this is
 /// never re-derived from a path string and stays valid across passes that

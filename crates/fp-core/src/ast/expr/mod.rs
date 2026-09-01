@@ -5,7 +5,6 @@ use crate::ast::{
 use crate::span::Span;
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 mod closure;
 mod collection;
@@ -17,20 +16,11 @@ pub use collection::*;
 pub use stmt::*;
 pub use value::*;
 
-pub type ExprId = u64;
 pub type BExpr = Box<Expr>;
-
-static EXPR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-pub fn fresh_expr_id() -> ExprId {
-    EXPR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
 
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
     pub enum ExprKind {
-        /// An id for the expression node
-        Id(ExprId),
         Name(Name),
         Value(BValue),
         Block(ExprBlock),
@@ -90,8 +80,6 @@ common_enum! {
 
 common_struct! {
     pub struct Expr {
-        #[serde(default)]
-        pub id: ExprId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
@@ -102,18 +90,9 @@ common_struct! {
 impl Expr {
     pub fn new(kind: ExprKind) -> Self {
         Self {
-            id: fresh_expr_id(),
             span: None,
             kind,
         }
-    }
-
-    pub fn id(&self) -> ExprId {
-        self.id
-    }
-
-    pub fn set_id(&mut self, id: ExprId) {
-        self.id = id;
     }
 
     pub fn span(&self) -> Span {
@@ -133,12 +112,12 @@ impl Expr {
         &mut self.kind
     }
 
-    pub fn into_parts(self) -> (ExprId, Option<Span>, ExprKind) {
-        (self.id, self.span, self.kind)
+    pub fn into_parts(self) -> (Option<Span>, ExprKind) {
+        (self.span, self.kind)
     }
 
-    pub fn from_parts(id: ExprId, span: Option<Span>, kind: ExprKind) -> Self {
-        Self { id, span, kind }
+    pub fn from_parts(span: Option<Span>, kind: ExprKind) -> Self {
+        Self { span, kind }
     }
 
     pub fn get(&self) -> Self {
@@ -173,10 +152,10 @@ impl Expr {
         block.into_expr()
     }
     pub fn into_block(self) -> ExprBlock {
-        let (id, span, kind) = self.into_parts();
+        let (span, kind) = self.into_parts();
         match kind {
             ExprKind::Block(block) => block,
-            other => ExprBlock::new_expr(Expr::from_parts(id, span, other)),
+            other => ExprBlock::new_expr(Expr::from_parts(span, other)),
         }
     }
     pub fn macro_invocation(invocation: MacroInvocation) -> Self {
@@ -191,7 +170,6 @@ fn union_spans(spans: impl IntoIterator<Item = Span>) -> Span {
 impl ExprKind {
     pub fn span(&self) -> Span {
         match self {
-            ExprKind::Id(_) => Span::null(),
             ExprKind::Name(name) => name.span(),
             ExprKind::Value(value) => value.span(),
             ExprKind::Block(block) => block.span(),

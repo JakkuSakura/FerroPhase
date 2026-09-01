@@ -22,12 +22,12 @@ common_enum! {
 }
 impl ExprInvokeTarget {
     pub fn expr(expr: Expr) -> Self {
-        let (id, span, kind) = expr.into_parts();
+        let (span, kind) = expr.into_parts();
         match kind {
             ExprKind::Name(name) => Self::Function(name),
             ExprKind::Select(select) => Self::Method(select),
             ExprKind::Value(value) => Self::value(*value),
-            other => Self::Expr(Expr::from_parts(id, span, other).into()),
+            other => Self::Expr(Expr::from_parts(span, other).into()),
         }
     }
     pub fn value(value: Value) -> Self {
