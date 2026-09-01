@@ -45,26 +45,21 @@ impl AstToHirLowerer {
             _ => return None,
         };
 
-        for _ in 0..32 {
-            let item = self
-                .package
-                .def_map
-                .get(&def_id)
-                .cloned()
-                .or_else(|| self.hir_program.item(def_id.clone()))?;
-            match &item.kind {
-                hir::ItemKind::Enum(enum_def) => {
-                    return enum_def
-                        .variants
-                        .iter()
-                        .find(|variant| variant.name.as_str() == variant_name)
-                        .map(|variant| hir::Res::Def(variant.def_id.clone()));
-                }
-                hir::ItemKind::Struct(_) => return None,
-                _ => return None,
-            }
+        let item = self
+            .package
+            .def_map
+            .get(&def_id)
+            .cloned()
+            .or_else(|| self.hir_program.item(def_id.clone()))?;
+        match &item.kind {
+            hir::ItemKind::Enum(enum_def) => enum_def
+                .variants
+                .iter()
+                .find(|variant| variant.name.as_str() == variant_name)
+                .map(|variant| hir::Res::Def(variant.def_id.clone())),
+            hir::ItemKind::Struct(_) => None,
+            _ => None,
         }
-        None
     }
 
     /// Records a diagnostic for an AST construct that can't be lowered to
@@ -172,9 +167,7 @@ impl AstToHirLowerer {
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => match value.as_ref() {
-                ast::Value::Bytes(bytes) => {
-                    Self::transform_bytes_value_to_hir(bytes, None)
-                }
+                ast::Value::Bytes(bytes) => Self::transform_bytes_value_to_hir(bytes, None),
                 _ => self.transform_value_to_hir(value)?,
             },
             ExprKind::Name(_) => hir::ExprKind::Path(
@@ -2161,28 +2154,28 @@ impl AstToHirLowerer {
             path,
             scope.namespace(),
         ) {
-            fp_core::ast::resolve::ResolutionResult::Found(
-                hir::Res::Def(id),
-            ) => Some(hir::Res::Def(id)),
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                Some(hir::Res::Def(id))
+            }
             _ => None,
         };
         local.or_else(|| {
-                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                    match self.workspace.resolve_module_path_final(
-                        &self.package_id,
-                        &self.module_path,
-                        path,
-                        fp_core::ast::resolve::Namespace::Type,
-                    ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(
-                            hir::Res::Def(id),
-                        ) => Some(hir::Res::Def(id)),
-                        _ => None,
+            if scope == PathResolutionScope::Value && path.segments.len() > 1 {
+                match self.workspace.resolve_module_path_final(
+                    &self.package_id,
+                    &self.module_path,
+                    path,
+                    fp_core::ast::resolve::Namespace::Type,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        Some(hir::Res::Def(id))
                     }
-                } else {
-                    None
+                    _ => None,
                 }
-            })
+            } else {
+                None
+            }
+        })
     }
 
     // make_path_segment moved to helpers.rs
