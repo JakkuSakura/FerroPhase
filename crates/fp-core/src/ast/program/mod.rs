@@ -143,7 +143,7 @@ impl AstProgram {
         self.compiled_package(package_id).and_then(|package| {
             package
                 .borrow()
-                .graph
+                .package
                 .package(package_id)
                 .map(|descriptor| descriptor.metadata.clone())
         })
@@ -442,7 +442,6 @@ impl AstProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::package::graph::PackageGraph;
     use crate::ast::package::provider::EmptyProvider;
 
     #[test]
@@ -454,7 +453,7 @@ mod tests {
             AstPackage::new(
                 PackageId::new("dependency"),
                 "dependency",
-                PackageGraph::new(Vec::new()),
+                Vec::new(),
             ),
             crate::lir::LirDataLayout::x86_64(),
         );
@@ -484,7 +483,7 @@ mod tests {
             AstPackage::new(
                 PackageId::new("dependency"),
                 "dependency",
-                PackageGraph::new(Vec::new()),
+                Vec::new(),
             ),
             crate::lir::LirDataLayout::x86_64(),
         );

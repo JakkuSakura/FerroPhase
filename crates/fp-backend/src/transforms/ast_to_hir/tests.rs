@@ -1,7 +1,7 @@
 use super::*;
 use crate::transforms::HirToAstLifter;
 use fp_core::ast;
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{AstPackage, PackageId};
 use fp_core::ast::path::QualifiedPath;
@@ -36,7 +36,7 @@ fn package_from_items_as(
     package_id: PackageId,
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::AstPackage> {
-    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
     source.items = items
         .into_iter()
         .map(|item| fp_core::ast::package::PackageItem {
@@ -64,7 +64,7 @@ fn package_from_module_items(
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::AstPackage> {
     let package_id = PackageId::new("test");
-    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
     source.items = items
         .into_iter()
         .map(|item| fp_core::ast::package::PackageItem {
@@ -100,7 +100,7 @@ fn package_from_items_with_paths_as(
     package_id: PackageId,
     items: Vec<(Vec<String>, ast::Item)>,
 ) -> Result<fp_core::ast::package::AstPackage> {
-    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
     for (module_path, _) in &items {
         if !module_path.is_empty() {
             source.module_tree.ensure_module(&QualifiedPath::new(

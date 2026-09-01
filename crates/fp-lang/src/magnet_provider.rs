@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, PackageDescriptor, PackageId, PackageItem, PackageMetadata,
@@ -254,7 +254,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
         metadata: Default::default(),
         modules: module_ids,
     };
-    let graph = PackageGraph::new(package);
+    let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source

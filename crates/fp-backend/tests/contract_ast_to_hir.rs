@@ -1,5 +1,5 @@
 use fp_backend::transformations::AstToHirLowerer;
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{AstPackage, PackageId, PackageItem};
 use fp_core::ast::path::QualifiedPath;

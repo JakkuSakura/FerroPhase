@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageItem};
 use fp_core::ast::path::QualifiedPath;
@@ -84,7 +84,7 @@ impl FerroModuleSourceResolver {
 
         let package_id = package.id.clone();
         let package_name = package.name.clone();
-        let graph = PackageGraph::new(package);
+        let graph = package;
 
         let mut source = AstPackage::new(package_id, package_name, graph);
         source.items = items;

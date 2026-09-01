@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
@@ -110,7 +110,7 @@ fn load_embedded_package(
         metadata: Default::default(),
         modules: module_ids,
     };
-    let graph = PackageGraph::new(package);
+    let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
 use fp_core::ast::path::QualifiedPath;
@@ -95,7 +95,7 @@ impl PrqlPackageProvider {
             metadata: Default::default(),
             modules: module_ids,
         };
-        let graph = PackageGraph::new(descriptor);
+        let graph = descriptor;
         let mut package =
             AstPackage::new(package_id.clone(), package_id.as_str().to_string(), graph);
         package.items = items;
@@ -122,7 +122,7 @@ impl PackageProvider for PrqlPackageProvider {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
         package
-            .graph
+            .package
             .package(id)
             .cloned()
             .map(Arc::new)

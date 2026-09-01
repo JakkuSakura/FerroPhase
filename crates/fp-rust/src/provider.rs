@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
@@ -594,7 +594,7 @@ fn package_source_from_items(
         metadata,
         modules: module_ids,
     };
-    let graph = PackageGraph::new(package);
+    let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source
@@ -1507,7 +1507,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         metadata,
         modules: module_ids,
     };
-    let graph = PackageGraph::new(package);
+    let graph = package;
     let mut krate = AstPackage::new(package_id, crate_name, graph);
     krate.items = items;
     Ok(krate)
@@ -1566,7 +1566,7 @@ fn load_embedded_fp_package(
         metadata: Default::default(),
         modules: module_ids,
     };
-    let graph = PackageGraph::new(package);
+    let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
@@ -1977,7 +1977,7 @@ mod provider_tests {
                 "{crate_name} items must start at the external crate root"
             );
             let package = source
-                .graph
+                .package
                 .packages()
                 .find(|package| package.id.as_str() == crate_name)
                 .expect("sysroot source graph package");

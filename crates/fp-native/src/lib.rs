@@ -524,11 +524,9 @@ impl NativeObjectPackageProvider {
         fp_core::ast::package::AstPackage::new(
             package_id.clone(),
             package_id.as_str().to_string(),
-            fp_core::ast::package::graph::PackageGraph::new(
-                fp_core::ast::package::PackageDescriptor::empty(
-                    package_id.clone(),
-                    package_id.as_str(),
-                ),
+            fp_core::ast::package::PackageDescriptor::empty(
+                package_id.clone(),
+                package_id.as_str(),
             ),
         )
     }

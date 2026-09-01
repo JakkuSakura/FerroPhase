@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
@@ -145,7 +145,7 @@ impl GoLangPackageProvider {
             metadata,
             modules: module_ids,
         };
-        let graph = PackageGraph::new(descriptor);
+        let graph = descriptor;
         let mut package = AstPackage::new(package_id, package_name, graph);
         package.items = items;
         Ok(package)
@@ -171,7 +171,7 @@ impl PackageProvider for GoLangPackageProvider {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
         package
-            .graph
+            .package
             .package(id)
             .cloned()
             .map(Arc::new)

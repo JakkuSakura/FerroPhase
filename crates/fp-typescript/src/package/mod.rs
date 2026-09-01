@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId,
@@ -255,7 +255,7 @@ impl PackageProvider for TypeScriptPackageProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         let descriptor = self.load_package_metadata(id)?;
-        let graph = PackageGraph::new((*descriptor).clone());
+        let graph = (*descriptor).clone();
         Ok(AstPackage::new(id.clone(), descriptor.name.clone(), graph))
     }
 }

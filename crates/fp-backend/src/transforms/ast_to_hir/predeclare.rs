@@ -21,7 +21,7 @@ impl AstToHirLowerer {
             .map(|(_, package)| {
                 let package = package.borrow();
                 package
-                    .graph
+                    .package
                     .package(&package.package_id)
                     .map(|descriptor| {
                         descriptor

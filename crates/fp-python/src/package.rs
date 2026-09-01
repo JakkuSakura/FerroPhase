@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
@@ -157,7 +157,7 @@ impl PythonPackageProvider {
             metadata,
             modules: module_ids,
         };
-        let graph = PackageGraph::new(descriptor);
+        let graph = descriptor;
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph);
         package.items = items;
@@ -184,7 +184,7 @@ impl PackageProvider for PythonPackageProvider {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
         package
-            .graph
+            .package
             .package(id)
             .cloned()
             .map(Arc::new)

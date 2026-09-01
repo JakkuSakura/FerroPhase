@@ -79,6 +79,18 @@ pub struct PackageDescriptor {
 }
 
 impl PackageDescriptor {
+    pub fn new(package: Self) -> Self {
+        package
+    }
+
+    pub fn package(&self, id: &PackageId) -> Option<&Self> {
+        (self.id == *id).then_some(self)
+    }
+
+    pub fn packages(&self) -> impl Iterator<Item = &Self> {
+        std::iter::once(self)
+    }
+
     pub fn empty(id: PackageId, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -92,7 +104,6 @@ impl PackageDescriptor {
     }
 }
 
-pub mod graph;
 pub mod provider;
 
 use crate::ast::path::QualifiedPath;
@@ -134,7 +145,7 @@ pub struct PackagePath {
 pub struct AstPackage {
     pub package_id: PackageId,
     pub name: String,
-    pub graph: graph::PackageGraph,
+    pub package: PackageDescriptor,
 
     /// Persistent module-resolution state populated by the AST resolver.
     pub module_tree: crate::ast::resolve::ModuleTree,
@@ -174,11 +185,11 @@ pub struct AstPackage {
 }
 
 impl AstPackage {
-    pub fn new(package_id: PackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
+    pub fn new(package_id: PackageId, name: impl Into<String>, package: PackageDescriptor) -> Self {
         Self {
             package_id,
             name: name.into(),
-            graph,
+            package,
             module_tree: crate::ast::resolve::ModuleTree::new(),
             prelude_modules: Vec::new(),
             resolutions: HashMap::new(),
@@ -201,10 +212,10 @@ impl AstPackage {
         let mut source = Self::new(
             package_id.clone(),
             package_id.as_str(),
-            graph::PackageGraph::new(PackageDescriptor::empty(
+            PackageDescriptor::empty(
                 package_id.clone(),
                 package_id.as_str(),
-            )),
+            ),
         );
         source.items.push(PackageItem {
             module_path: QualifiedPath::new(Vec::new()),
