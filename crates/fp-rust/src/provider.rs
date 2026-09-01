@@ -594,7 +594,7 @@ fn package_source_from_items(
         metadata,
         modules: module_ids,
     };
-    let mut graph = PackageGraph::new(vec![package]);
+    let graph = PackageGraph::new(package);
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source
@@ -1507,7 +1507,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         metadata,
         modules: module_ids,
     };
-    let mut graph = PackageGraph::new(vec![package]);
+    let graph = PackageGraph::new(package);
     let mut krate = AstPackage::new(package_id, crate_name, graph);
     krate.items = items;
     Ok(krate)
@@ -1566,7 +1566,7 @@ fn load_embedded_fp_package(
         metadata: Default::default(),
         modules: module_ids,
     };
-    let mut graph = PackageGraph::new(vec![package]);
+    let graph = PackageGraph::new(package);
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)

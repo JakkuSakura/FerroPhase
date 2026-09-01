@@ -95,7 +95,7 @@ impl PrqlPackageProvider {
             metadata: Default::default(),
             modules: module_ids,
         };
-        let mut graph = PackageGraph::new(vec![descriptor]);
+        let graph = PackageGraph::new(descriptor);
         let mut package =
             AstPackage::new(package_id.clone(), package_id.as_str().to_string(), graph);
         package.items = items;

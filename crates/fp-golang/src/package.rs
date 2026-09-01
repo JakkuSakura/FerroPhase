@@ -145,7 +145,7 @@ impl GoLangPackageProvider {
             metadata,
             modules: module_ids,
         };
-        let mut graph = PackageGraph::new(vec![descriptor]);
+        let graph = PackageGraph::new(descriptor);
         let mut package = AstPackage::new(package_id, package_name, graph);
         package.items = items;
         Ok(package)

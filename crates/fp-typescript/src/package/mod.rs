@@ -255,7 +255,7 @@ impl PackageProvider for TypeScriptPackageProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         let descriptor = self.load_package_metadata(id)?;
-        let graph = PackageGraph::new(vec![(*descriptor).clone()]);
+        let graph = PackageGraph::new((*descriptor).clone());
         Ok(AstPackage::new(id.clone(), descriptor.name.clone(), graph))
     }
 }

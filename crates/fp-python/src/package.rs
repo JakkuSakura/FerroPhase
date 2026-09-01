@@ -157,7 +157,7 @@ impl PythonPackageProvider {
             metadata,
             modules: module_ids,
         };
-        let mut graph = PackageGraph::new(vec![descriptor]);
+        let graph = PackageGraph::new(descriptor);
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph);
         package.items = items;

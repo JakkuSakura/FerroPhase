@@ -254,7 +254,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
         metadata: Default::default(),
         modules: module_ids,
     };
-    let mut graph = PackageGraph::new(vec![package]);
+    let graph = PackageGraph::new(package);
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source

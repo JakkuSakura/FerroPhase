@@ -110,7 +110,7 @@ fn load_embedded_package(
         metadata: Default::default(),
         modules: module_ids,
     };
-    let mut graph = PackageGraph::new(vec![package]);
+    let graph = PackageGraph::new(package);
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
