@@ -52,11 +52,9 @@ pub struct CompilerState {
     /// doesn't fit the `lir_program` hierarchy above.
     runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirCodeUnit>,
     runtime_entrypoints: std::collections::HashMap<lir::LirPath, hir::DefId>,
-    /// This package's comptime resolver, wired up by the driver
-    /// (`make_comptime_resolver`) before `TypingShared` exists — a
-    /// package's HIR isn't generated yet at that point, so there's nowhere
-    /// else to stash it until `type_check_program` builds the real
-    /// `TypingShared` and hands the resolver straight through.
+    /// Reusable comptime resolver wired up by the driver. Each checker passes
+    /// its stable HIR view to the resolver alongside the request, so this
+    /// callback does not own package-specific state.
     pub comptime_resolver: Option<ComptimeResolver>,
     /// The compiled-package registry for this compilation session.
     pub workspace: Rc<AstProgram>,

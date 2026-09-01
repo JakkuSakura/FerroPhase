@@ -56,13 +56,14 @@ use type_shapes::*;
 /// refcounting, not a real ownership need.
 #[derive(Clone)]
 pub struct HirTypeChecker {
-    /// The whole compilation session's HIR: every published dependency package
-    /// plus this package's own in-progress HIR. Both
+    /// Stable view of every dependency published when type checking started,
+    /// plus the current package's shared in-progress handle. Cloning this view
+    /// never clones package data.
     /// `HirId` and `DefId` already carry their owning `PackageId` (see
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
     /// or cross-package alike — routes through this one `HirProgram` via
     /// `HirProgram::item`/`def_path`/etc.
-    program: hir::SharedHirProgram,
+    program: Rc<hir::HirProgram>,
     current_package_handle: Rc<RefCell<hir::HirPackage>>,
     /// Which entry in `program` is being checked. Package-local iteration and
     /// compile-time requests both retain this identity explicitly.
@@ -184,21 +185,21 @@ impl HirTypeChecker {
         }
     }
 
-    /// Publishes the package into the compiler's shared HIR program and wraps
-    /// the package-level checker state in one `Rc<RefCell<_>>` root handle.
+    /// Builds a stable-membership program view around the caller-owned package
+    /// handle. The caller remains responsible for publishing that same handle
+    /// after type checking finishes.
     pub fn new(
-        current_package: hir::HirPackage,
-        program: hir::SharedHirProgram,
+        current_package_handle: Rc<RefCell<hir::HirPackage>>,
+        dependency_program: Option<Rc<hir::HirProgram>>,
         comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<RefCell<Self>> {
-        let package_id = current_package.id.clone();
-        program.publish_package(current_package);
-        let current_package_handle = program
-            .package_rc(&package_id)
-            .expect("published current package must be available");
+        let package_id = current_package_handle.borrow().id.clone();
+        current_package_handle.borrow_mut().index_derived_lookups();
+        let mut program = dependency_program.as_deref().cloned().unwrap_or_default();
+        program.add_package(current_package_handle.clone());
         Rc::new(RefCell::new(Self {
-            program,
+            program: Rc::new(program),
             current_package_handle,
             current_package: package_id,
             comptime_resolver,
@@ -471,12 +472,12 @@ impl HirTypeChecker {
 
     /// The whole workspace `HirProgram`, for cross-package lookups that
     /// `package()`'s single-package view can't answer.
-    fn program_rc(&self) -> std::cell::Ref<'_, hir::HirProgram> {
-        self.program.borrow()
+    fn program_rc(&self) -> Rc<hir::HirProgram> {
+        self.program.clone()
     }
 
-    /// Cloned handle to the same session-wide program used by this checker.
-    pub fn program_handle(&self) -> hir::SharedHirProgram {
+    /// Cloned handle to the stable program view used by this checker.
+    pub fn program_handle(&self) -> Rc<hir::HirProgram> {
         self.program.clone()
     }
 
@@ -505,7 +506,7 @@ impl HirTypeChecker {
             .clone()
             .expect("HirTypeChecker::request_comptime called without a comptime_resolver");
         let def_id = request.def_id.clone();
-        let value = resolver(request).await?;
+        let value = resolver(self.program.clone(), request).await?;
         // Recorded here, once, for every caller — not each call site's own
         // responsibility (see `spawn_comptime_task`, which used to do this
         // itself right after awaiting this same method).
@@ -3739,31 +3740,27 @@ impl HirTypeChecker {
             }
         }
         let Some(item) = self.program_rc().item(def_id.clone()) else {
-            // Clone the matched HIR fragments while the program is borrowed;
-            // type checking below needs mutable access to this checker.
-            let found = {
-                let program = self.program_rc();
-                let owner_id = program
-                    .package(&self.current_package())
-                    .and_then(|package| package.member_owner(def_id.clone()));
-                owner_id
-                    .and_then(|owner_id| program.item(owner_id))
-                    .and_then(|item| {
-                        let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                            return None;
-                        };
-                        let impl_member = impl_item
-                            .items
-                            .iter()
-                            .find(|member| member.def_id == *def_id)?;
-                        Some((
-                            impl_item.generics.clone(),
-                            impl_item.self_ty.clone(),
-                            impl_item.items.clone(),
-                            impl_member.kind.clone(),
-                        ))
-                    })
-            };
+            let program = self.program_rc();
+            let owner_id = program
+                .package(&self.current_package())
+                .and_then(|package| package.member_owner(def_id.clone()));
+            let found = owner_id
+                .and_then(|owner_id| program.item(owner_id))
+                .and_then(|item| {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                        return None;
+                    };
+                    let impl_member = impl_item
+                        .items
+                        .iter()
+                        .find(|member| member.def_id == *def_id)?;
+                    Some((
+                        impl_item.generics.clone(),
+                        impl_item.self_ty.clone(),
+                        impl_item.items.clone(),
+                        impl_member.kind.clone(),
+                    ))
+                });
             if let Some((generics, self_ty, impl_items, hir::ImplItemKind::Method(function))) =
                 found
             {
@@ -4728,12 +4725,10 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
             _ => None,
         };
-        let candidates: Vec<_> = {
-            let program = self.program_rc();
-            match receiver_def {
-                Some(def_id) => program.impls_for_adt(def_id).collect(),
-                None => shape_and_blanket_candidates(&program, &target_ty.kind).collect(),
-            }
+        let program = self.program_rc();
+        let candidates: Box<dyn Iterator<Item = hir::Item> + '_> = match receiver_def {
+            Some(def_id) => Box::new(program.impls_for_adt(def_id)),
+            None => shape_and_blanket_candidates(&program, &target_ty.kind),
         };
         let result: Result<Option<Ty>> = 'search: {
             for item in candidates {
@@ -5769,7 +5764,6 @@ impl HirTypeChecker {
         self.program
             .package(&variant_id.package_id)
             .and_then(|package| {
-                let package = package.borrow();
                 let enum_def_id = package.enum_variant_item_index.get(&variant_id)?;
                 package.def_map.get(enum_def_id).cloned()
             })

@@ -113,9 +113,8 @@ impl CompilerDriver {
     /// against this driver's own `state`, which can only happen once
     /// `state` is behind the same `Rc<RefCell<_>>` every other
     /// comptime-resolution call site closes over. The resolver itself is
-    /// stateless (it resolves purely off a request's own `def_id`), so one
-    /// built here is reused for every package this driver ever compiles —
-    /// no per-package reconstruction needed.
+    /// stateless: each invocation receives both the request identity and the
+    /// checker's stable HIR view, so one resolver is reused across packages.
     fn from_state_rc(state: Rc<RefCell<CompilerState>>) -> Self {
         let resolver = Self::make_comptime_resolver(&state);
         state.borrow_mut().comptime_resolver = Some(resolver);
@@ -960,11 +959,11 @@ impl CompilerDriver {
         package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
-        let dependency_program = self.state.borrow().hir_program_rc();
+        let dependency_program = self.state.borrow().hir_program().snapshot();
         let executor = self.state.borrow().tasks.clone();
         let checker = fp_typing::HirTypeChecker::new(
-            program,
-            dependency_program,
+            Rc::new(RefCell::new(program)),
+            Some(dependency_program),
             comptime_resolver,
             executor,
         );
@@ -1033,8 +1032,10 @@ impl CompilerDriver {
         }
     }
 
-    /// Builds the `fp_typing::ComptimeResolver` a package's typecheck
-    /// awaits directly from `request_comptime` — this is what lets an
+    /// Builds the `fp_typing::ComptimeResolver` a package's typecheck awaits
+    /// directly from `request_comptime`. The checker supplies its own stable
+    /// HIR view on each invocation, including the package not yet published
+    /// into `CompilerState`; this is what lets an
     /// item's typecheck task suspend on a real `const { .. }` block and
     /// resume naturally once it's answered, with no driver-side polling
     /// loop pumping a request queue. Only needs `state` (not a full
@@ -1043,10 +1044,10 @@ impl CompilerDriver {
     /// `&mut CompilerDriver` call).
     fn make_comptime_resolver(state: &Rc<RefCell<CompilerState>>) -> fp_typing::ComptimeResolver {
         let state = state.clone();
-        Rc::new(move |request: fp_typing::ComptimeRequest| {
+        Rc::new(move |hir_program, request: fp_typing::ComptimeRequest| {
             let state = state.clone();
             Box::pin(async move {
-                Self::resolve_comptime_request_with(&state, request)
+                Self::resolve_comptime_request_with(&state, hir_program, request)
                     .await
                     .map_err(|error| fp_core::error::Error::from(error.to_string()))
             })
@@ -1070,13 +1071,14 @@ impl CompilerDriver {
     /// the same per-item isolation `typecheck_item` already relies on.
     async fn resolve_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
+        hir_program: Rc<hir::HirProgram>,
         request: fp_typing::ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
         // The request's own `def_id` already carries its owning package's
         // id — no need to look the compiled package up in the workspace
         // just to recover an id it already has.
         let package_id = PackageId::new(request.def_id.package_id.as_str());
-        let hir_program = state.borrow().hir_program_rc();
+        let hir_program = hir::SharedHirProgram::new(hir_program.as_ref().clone());
         let mir_package = state.borrow_mut().mir_package_rc(&package_id);
         let mut lowering =
             HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);
