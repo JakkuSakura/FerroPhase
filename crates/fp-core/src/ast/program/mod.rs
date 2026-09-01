@@ -291,6 +291,67 @@ impl AstProgram {
         }
     }
 
+    /// Resolve an extern-prelude path while respecting the requesting
+    /// package's declared dependency edges. This mirrors rustc's extern
+    /// prelude: a loaded package is not automatically visible merely because
+    /// it happens to exist in the compilation registry.
+    pub fn resolve_external_path_from(
+        &self,
+        requester: &PackageId,
+        path: &QualifiedPath,
+        namespace: crate::ast::resolve::Namespace,
+    ) -> Option<crate::ast::resolve::AstRes> {
+        let root = path.head()?.replace('-', "_");
+        let target = self
+            .crates
+            .borrow()
+            .keys()
+            .find(|id| id.as_str().replace('-', "_") == root)
+            .cloned()?;
+        let allowed = self
+            .compiled_package(requester)
+            .and_then(|package| {
+                package
+                    .borrow()
+                    .graph
+                    .package(requester)
+                    .map(|descriptor| descriptor.metadata.dependencies.iter().filter_map(|dep| dep.resolved_package_id.clone()).collect::<Vec<_>>())
+            })
+            .is_some_and(|deps| deps.iter().any(|id| id == &target));
+        if !allowed {
+            return None;
+        }
+        self.resolve_external_path(path, namespace)
+    }
+
+    pub fn resolve_external_module_path_from(
+        &self,
+        requester: &PackageId,
+        path: &QualifiedPath,
+    ) -> Option<QualifiedPath> {
+        let root = path.head()?.replace('-', "_");
+        let target = self
+            .crates
+            .borrow()
+            .keys()
+            .find(|id| id.as_str().replace('-', "_") == root)
+            .cloned()?;
+        let allowed = self
+            .compiled_package(requester)
+            .and_then(|package| {
+                package
+                    .borrow()
+                    .graph
+                    .package(requester)
+                    .map(|descriptor| descriptor.metadata.dependencies.iter().filter_map(|dep| dep.resolved_package_id.clone()).collect::<Vec<_>>())
+            })
+            .is_some_and(|deps| deps.iter().any(|id| id == &target));
+        if !allowed {
+            return None;
+        }
+        self.resolve_external_module_path(path)
+    }
+
     pub fn resolve_external_module_path(&self, path: &QualifiedPath) -> Option<QualifiedPath> {
         let root = path.head()?.replace('-', "_");
         let package_id = self.crates().keys().find(|id| id.as_str().replace('-', "_") == root)?.clone();

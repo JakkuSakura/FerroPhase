@@ -400,7 +400,7 @@ impl AstToHirLowerer {
             // method on it unreachable.
             self.lookup_global_res(&qualified, PathResolutionScope::Type)
                 .or_else(|| {
-                    match self.workspace.resolve_external_path(&qualified, fp_core::ast::resolve::Namespace::Type) {
+                    match self.workspace.resolve_external_path_from(&self.package_id, &qualified, fp_core::ast::resolve::Namespace::Type) {
                         Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }

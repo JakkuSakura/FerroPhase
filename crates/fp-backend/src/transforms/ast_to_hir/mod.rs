@@ -701,9 +701,9 @@ impl AstToHirLowerer {
         // `global_type_defs_by_def_id` narrows straight to the qualified
         // paths that could possibly resolve to `self_def_id`, instead of
         // scanning every type binding in the package on every impl block.
-        // Deliberately bypasses `lookup_symbol`'s visibility filtering —
-        // a definition's own canonical path is always resolvable from its
-        // own impl block, regardless of privacy.
+        // Deliberately uses the raw AST module lookup without applying
+        // export visibility: a definition's own canonical path is always
+        // resolvable from its own impl block, regardless of privacy.
         if self
             .tree_lookup_raw(&relative, fp_core::ast::resolve::Namespace::Type)
             .is_some()
@@ -798,10 +798,9 @@ impl AstToHirLowerer {
 
     /// A qualified-path `key` (`"a::b::c"`, or a bare name at the crate
     /// root) resolved against the module tree's bindings in namespace
-    /// `ns`, with no visibility filtering — the raw lookup `lookup_symbol`
-    /// applies `SymbolExport::can_access` on top of, and `canonical_type_path`
-    /// deliberately uses unfiltered instead (a definition's own canonical
-    /// path is always resolvable from its own impl block).
+    /// `ns`, with no visibility filtering. This is reserved for canonical
+    /// paths owned by the current definition; ordinary references go through
+    /// the AST resolver's visibility-aware APIs.
     fn tree_lookup_raw(&self, path: &fp_core::ast::path::QualifiedPath, ns: fp_core::ast::resolve::Namespace) -> Option<fp_core::ast::resolve::AstRes> {
         match self.workspace.resolve_module_path(
             &self.package_id,

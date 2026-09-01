@@ -98,67 +98,6 @@ impl AstToHirLowerer {
         None
     }
 
-    /// Resolve an external path from the dependency package that owns it.
-    /// The consumer's module tree contains copied bindings for normal imports,
-    /// but the dependency tree is authoritative for an extern-prelude root
-    /// and for paths whose canonical spelling was published by the provider
-    /// (`alloc::vec::Vec`, for example). This preserves the dependency's
-    /// namespace and `Res` instead of reconstructing either from a name.
-    pub(super) fn lookup_dependency_module_tree(
-        &self,
-        path: &QualifiedPath,
-        scope: PathResolutionScope,
-    ) -> Option<hir::Res> {
-        let leaf = path.segments.last()?.as_str();
-        let prefix = QualifiedPath::new(
-            path.segments[..path.segments.len() - 1]
-                .iter()
-                .cloned()
-                .collect(),
-        );
-        let namespace = scope.namespace();
-        let mut packages: Vec<_> = self
-            .workspace
-            .crates()
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut found = None;
-
-        for package_id in packages.drain(..) {
-            let external_root = package_id.as_str().replace('-', "_");
-            let mut module_paths = vec![prefix.clone()];
-            if prefix.segments.first().map(String::as_str) != Some(external_root.as_str()) {
-                let mut rooted = vec![external_root.clone()];
-                rooted.extend(prefix.segments.iter().cloned());
-                module_paths.push(QualifiedPath::new(rooted));
-            }
-            if prefix.segments.first().map(String::as_str) == Some(external_root.as_str()) {
-                let mut bundled = vec![external_root.clone(), external_root.clone()];
-                bundled.extend(prefix.segments.iter().skip(1).cloned());
-                module_paths.push(QualifiedPath::new(bundled));
-            }
-
-            for module_path in module_paths {
-                let result = self.workspace.resolve_module_name(
-                    &package_id,
-                    &module_path,
-                    leaf,
-                    namespace,
-                );
-                let fp_core::ast::resolve::ResolutionResult::Found(
-                    fp_core::ast::resolve::AstRes::Def(def_id),
-                ) = result else { continue };
-                match &found {
-                    None => found = Some(hir::Res::Def(def_id)),
-                    Some(previous) if previous == &hir::Res::Def(def_id.clone()) => {}
-                    Some(_) => return None,
-                }
-            }
-        }
-        found
-    }
-
     /// Records a diagnostic for an AST construct that can't be lowered to
     /// HIR (an unhandled shape, an unnormalized macro, etc.) and returns an
     /// empty-block placeholder in its place — lets HIR generation for the
@@ -2282,7 +2221,7 @@ impl AstToHirLowerer {
         // being eagerly copied into the module tree's own bindings up
         // front. The exported binding stays in its owning package.
         local
-            .or_else(|| match self.workspace.resolve_external_path(path, scope.namespace()) {
+            .or_else(|| match self.workspace.resolve_external_path_from(&self.package_id, path, scope.namespace()) {
                 Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
                 _ => None,
             })

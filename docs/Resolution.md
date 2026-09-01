@@ -7,21 +7,20 @@ explicit AST resolver assigns identities, and only then does AST lower to HIR.
 
 ## Current design (migration baseline)
 
-The resolver is `HirGenerator`
-(`crates/fp-backend/src/transforms/ast_to_hir/mod.rs`). It is already
-module-aware and namespace-aware, and already returns an enum per lookup —
-matching the intent of "module-aware, namespaced, enum-returning" resolution.
+The resolver is the AST-owned `AstResolver`
+(`crates/fp-core/src/ast/resolve.rs`), invoked through `AstProgram` before
+AST→HIR lowering. It is module-aware and namespace-aware, and returns an enum
+per lookup — matching the intent of "module-aware, namespaced, enum-returning"
+resolution.
 Concretely:
 
 - **Two namespaces** (type, value): `type_scopes` / `value_scopes` (lexical,
   block/module scope stacks) and namespace-indexed bindings in `ModuleTree`.
   This is transitional; the target replaces these lowerer-owned maps with
   `LocalScope` and a single symbol map on each `ModuleTree` node.
-- **Current-module tracking**: `module_path` plus `with_module_scope`
-  (mod.rs:2168) push/pop a path stack around `predeclare_items` and
-  `append_item`, so every resolution and visibility check
-  (`can_access`, `SymbolExport::Scoped`) knows what module it's running in.
-  This is the equivalent of rustc's per-namespace `Rib` stack.
+- **Current-module tracking**: `AstResolver` walks the nested `ModuleTree`;
+  `AstToHirLowerer` only supplies the current AST module path when querying
+  `AstProgram` and does not own module symbol maps.
 - **Resolution result enum**: `hir::Res` (`fp-core/src/hir/mod.rs:720`) —
   `Def(DefId) | Local(HirId) | SelfTy | Module(Vec<String>) | Builtin(...)`.
   Close to rustc's `Res<Id>` (`Def(DefKind, DefId) | PrimTy | SelfTyParam |
@@ -29,11 +28,10 @@ Concretely:
 - **Modules as a tree**: `ModuleTree` stores parent/child relationships and
   namespace bindings, matching rustc's `ModuleData` shape and allowing direct
   child lookup.
-- **Import resolution as fixpoint**: `resolve_pending_imports` (mod.rs:2003)
+- **Import resolution as fixpoint**: `AstResolver`'s import pass
   collects all `use`/re-export bindings via
-  `collect_pending_imports_recursive` (recursing into inline modules), then
-  loops calling `register_import_binding` until a full sweep makes no
-  progress — the same shape as rustc's indeterminate-import worklist, needed
+  loops until a full sweep makes no progress — the same shape as rustc's
+  indeterminate-import worklist, needed
   to resolve multi-hop `pub use` chains and glob imports whose target module
   isn't fully known yet.
 - **Macro expansion is currently global**: `expand_item_macros` and the

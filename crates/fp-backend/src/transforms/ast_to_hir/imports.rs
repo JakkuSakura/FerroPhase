@@ -641,7 +641,10 @@ impl AstToHirLowerer {
             }
             let candidate = current.with_segment(segment.clone());
             if current.segments.len() == 1 && current.head() == candidate.head() {
-                if let Some(module) = self.workspace.resolve_external_module_path(&candidate) {
+                if let Some(module) = self
+                    .workspace
+                    .resolve_external_module_path_from(&self.package_id, &candidate)
+                {
                     current = module;
                     continue;
                 }
@@ -684,13 +687,13 @@ impl AstToHirLowerer {
         path: &fp_core::ast::path::QualifiedPath,
         namespace: fp_core::ast::resolve::Namespace,
     ) -> Option<hir::Res> {
-        if let Some(res) = self.workspace.resolve_external_path(path, namespace) {
+        if let Some(res) = self.workspace.resolve_external_path_from(&self.package_id, path, namespace) {
             if let fp_core::ast::resolve::AstRes::Def(def_id) = res {
                 return Some(hir::Res::Def(def_id));
             }
         }
         self.workspace
-            .resolve_external_module_path(path)
+            .resolve_external_module_path_from(&self.package_id, path)
             .map(|_| hir::Res::Module(path.segments.clone()))
     }
 

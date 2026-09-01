@@ -348,30 +348,14 @@ impl AstToHirLowerer {
             if self.tree_lookup_raw(candidate, scope.namespace()).is_some() {
                 return true;
             }
-            // Dependency trees participate only after the extern-prelude has
-            // identified the first segment as a crate root. Rustc does not
-            // consult every dependency when probing an ordinary lexical path;
-            // doing so would change shadowing and module-relative lookup.
-            let is_extern_crate_root = candidate.segments.first().is_some_and(|root| {
-                self.hir_program.with(|program| {
-                    program.packages.values().any(|package| {
-                        hir::HirProgram::external_crate_name(&package.borrow().id) == root.as_str()
-                    })
-                })
-            });
-            if is_extern_crate_root
-                && self
-                    .lookup_dependency_module_tree(candidate, scope)
-                    .is_some()
+            if self
+                .workspace
+                .resolve_external_path_from(&self.package_id, candidate, scope.namespace())
+                .is_some()
             {
                 return true;
             }
-            // Cross-package export (e.g. `libc::macos::getenv`), looked
-            // up lazily against the workspace on a local-lookup miss —
-            // see `lookup_global_res`'s identical fallback.
-            self.workspace
-                .resolve_external_path(candidate, scope.namespace())
-                .is_some()
+            false
         };
         let scope_contains = |name: &str| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
