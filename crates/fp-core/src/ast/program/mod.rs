@@ -35,8 +35,8 @@ pub struct AstProgram {
     /// set only ever changes via `begin_package`/`import_package` (both
     /// invalidate this), so `sorted_packages` doesn't need to rebuild a
     /// `String` per package and re-sort on every one of its many callers
-    /// (`find_struct`/`find_enum`/`find_function_sig`, `method_sigs`,
-    /// `module_paths`, ...) — this runs once per unqualified
+    /// (`find_struct`/`find_enum`/`find_function_sig`, `method_sigs`, ...) —
+    /// this runs once per unqualified
     /// identifier/path reference across every compiled file.
     sorted_packages_cache: Rc<RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>>,
     /// Explicit AST local-resolution state. Lowering borrows this facade;
@@ -362,23 +362,6 @@ impl AstProgram {
             .collect()
     }
 
-    pub fn module_paths(&self) -> Vec<QualifiedPath> {
-        let mut paths: Vec<_> = self
-            .sorted_packages()
-            .into_iter()
-            .flat_map(|package| {
-                package
-                    .borrow()
-                    .module_paths
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        paths.sort_by_key(|path| path.to_key());
-        paths
-    }
-
     /// Search every crate for a struct at `path`, borrowing each crate just
     /// long enough to check — the one clone that remains is the matched
     /// item itself, needed regardless to build an owned `Ty::Struct(..)`.
@@ -426,10 +409,10 @@ impl AstProgram {
     }
 
     pub fn has_module(&self, path: &QualifiedPath) -> bool {
-        self.crates
-            .borrow()
-            .values()
-            .any(|krate| krate.borrow().module_paths.contains(path))
+        self.crates.borrow().values().any(|krate| {
+            let package = krate.borrow();
+            package.package_id == path.package_id && package.module_tree.module(path).is_some()
+        })
     }
 
     /// Borrow the root map directly. Used by callers that need to iterate

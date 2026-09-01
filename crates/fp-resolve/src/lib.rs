@@ -495,15 +495,10 @@ impl Resolver {
         hir_package: &mut hir::HirPackage,
     ) -> fp_core::error::Result<()> {
         let package = self.program.get_ast_package(package_id);
-        let (hir_package_id, paths, items) = {
+        let (hir_package_id, items) = {
             let package = package.borrow();
             (
                 package.hir_package_id.clone(),
-                package
-                    .module_paths
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
                 package.items.clone(),
             )
         };
@@ -514,9 +509,6 @@ impl Resolver {
             self.program.provider().resolution_rules(),
             Rc::clone(&self.program),
         );
-        for path in paths {
-            resolver.package_tree_mut().ensure_module(&path);
-        }
         resolver.collect_package_items(&items);
         let mut worklist = ResolutionWorklist::default();
         resolver.collect_imports(&items, &mut worklist);

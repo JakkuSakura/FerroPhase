@@ -110,7 +110,6 @@ impl CPackageProvider {
         }
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph);
-        package.module_paths = module_paths;
         package.items = items;
         Ok(package)
     }

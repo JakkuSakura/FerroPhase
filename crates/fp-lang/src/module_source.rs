@@ -91,7 +91,6 @@ impl FerroModuleSourceResolver {
 
         let mut source = AstPackage::new(package_id, package_name, graph);
         source.items = items;
-        source.module_paths = module_paths;
         Ok(source)
     }
 
@@ -328,9 +327,9 @@ mod tests {
             .expect("resolve package source");
 
         let paths = source
-            .module_paths
-            .iter()
-            .map(QualifiedPath::to_key)
+            .graph
+            .modules()
+            .map(|module| module.module_path.to_key())
             .collect::<HashSet<_>>();
         assert_eq!(paths.len(), 4);
         assert!(paths.contains("app::main"));

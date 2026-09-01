@@ -107,7 +107,7 @@ pub struct PackagePath {
 }
 
 /// A package's own AST/source-level content — both what a `PackageProvider`
-/// hands back (raw parsed source: `items`/`module_paths`/`referenced_paths`)
+/// hands back (raw parsed source: `items`/`referenced_paths`)
 /// and, once typechecked, the definitions typechecking derives from it
 /// (`struct_defs`/`enum_defs`/`function_sigs`/...). One type across both
 /// stages rather than two near-identical ones: the typecheck-derived fields
@@ -133,9 +133,6 @@ pub struct AstPackage {
     pub prelude_modules: Vec<PackagePath>,
     /// AST node resolutions produced before lowering.
     pub resolutions: HashMap<QualifiedPath, crate::hir::Res>,
-
-    /// All known module paths within this package.
-    pub module_paths: HashSet<QualifiedPath>,
 
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
@@ -170,12 +167,6 @@ pub struct AstPackage {
 
 impl AstPackage {
     pub fn new(package_id: PackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
-        let module_paths = graph
-            .modules()
-            .filter(|module| !module.module_path.is_empty())
-            .map(|module| QualifiedPath::new(module.module_path.clone()))
-            .collect();
-
         Self {
             package_id,
             // Overwritten by `AstProgram::begin_package` once it mints
@@ -188,7 +179,6 @@ impl AstPackage {
             module_tree: crate::ast::resolve::ModuleTree::new(),
             prelude_modules: Vec::new(),
             resolutions: HashMap::new(),
-            module_paths,
             items: Vec::new(),
             referenced_paths: HashMap::new(),
             struct_defs: HashMap::new(),

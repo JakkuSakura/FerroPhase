@@ -101,20 +101,14 @@ fn package_from_items_with_paths_as(
     items: Vec<(Vec<String>, ast::Item)>,
 ) -> Result<fp_core::ast::package::AstPackage> {
     let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
-    // Real providers (`RustPackageProvider`) record every distinct module
-    // path they see across all loaded files here — including a bare
-    // crate-root file's own path (e.g. `alloc/lib.rs` -> `["alloc"]`),
-    // which is what makes a *whole-module* import/`extern crate` alias
-    // resolve at all. `AstProgram::begin_package`
-    // copies `source.module_paths` verbatim (`krate.module_paths =
-    // source.module_paths;`, never recomputes it from `source.graph`), so
-    // setting it here is both correct and sufficient for a test — no need
-    // to also build a real `PackageGraph`.
-    source.module_paths = items
-        .iter()
-        .map(|(module_path, _)| QualifiedPath::new(module_path.clone()))
-        .filter(|path| !path.segments.is_empty())
-        .collect();
+    for (module_path, _) in &items {
+        if !module_path.is_empty() {
+            source.module_tree.ensure_module(&QualifiedPath::new(
+                package_id.clone(),
+                module_path.clone(),
+            ));
+        }
+    }
     source.items = items
         .into_iter()
         .map(|(module_path, item)| fp_core::ast::package::PackageItem {

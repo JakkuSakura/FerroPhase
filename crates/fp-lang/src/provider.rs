@@ -363,7 +363,7 @@ mod tests {
                 .load_package_source(&PackageId::new(package))
                 .expect("embedded package source should load");
             assert!(
-                source.module_paths.iter().all(|path| path
+                source.graph.modules().all(|module| module.module_path
                     .segments
                     .first()
                     .is_some_and(|segment| segment == package)),

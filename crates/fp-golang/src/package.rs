@@ -150,7 +150,6 @@ impl GoLangPackageProvider {
             graph.insert_module(module);
         }
         let mut package = AstPackage::new(package_id, package_name, graph);
-        package.module_paths = module_paths;
         package.items = items;
         Ok(package)
     }

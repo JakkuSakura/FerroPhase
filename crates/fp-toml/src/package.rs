@@ -102,7 +102,6 @@ impl TomlPackageProvider {
         }
         let mut package =
             AstPackage::new(package_id, self.package_id().as_str().to_string(), graph);
-        package.module_paths = module_paths;
         package.items = items;
         Ok(package)
     }

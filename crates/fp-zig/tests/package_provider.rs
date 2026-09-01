@@ -24,15 +24,15 @@ fn directory_provider_discovers_nested_zig_modules() {
     assert_eq!(package.items.len(), 2);
     assert!(
         package
-            .module_paths
-            .iter()
-            .any(|path| path.to_key() == "src::main")
+            .graph
+            .modules()
+            .any(|module| module.module_path.to_key() == "src::main")
     );
     assert!(
         package
-            .module_paths
-            .iter()
-            .any(|path| path.to_key() == "src::math::add")
+            .graph
+            .modules()
+            .any(|module| module.module_path.to_key() == "src::math::add")
     );
     assert_eq!(
         provider

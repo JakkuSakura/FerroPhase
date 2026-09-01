@@ -26,7 +26,7 @@ pub struct PackageSource {
     pub package_id: PackageId,
     pub name: String,
     pub graph: PackageGraph,
-    pub module_paths: HashSet<QualifiedPath>,
+    pub module_tree: ModuleTree,
     pub items: Vec<PackageItem>,     // the real payload
 }
 ```

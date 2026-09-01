@@ -32,15 +32,15 @@ fn directory_provider_discovers_go_modules_and_manifest_metadata() {
     assert_eq!(package.items.len(), 3);
     assert!(
         package
-            .module_paths
-            .iter()
-            .any(|path| path.to_key() == "root")
+            .graph
+            .modules()
+            .any(|module| module.module_path.to_key() == "root")
     );
     assert!(
         package
-            .module_paths
-            .iter()
-            .any(|path| path.to_key() == "internal::service")
+            .graph
+            .modules()
+            .any(|module| module.module_path.to_key() == "internal::service")
     );
     assert!(
         package

@@ -35,9 +35,9 @@ pub trait PackageProvider {
     fn refresh(&self) -> ProviderResult<()>;
 
     /// Load a package's modules. Discovery, parsing, and graph construction
-    /// are the implementor's job. The returned `AstPackage`'s `items`,
-    /// `module_paths`, and `graph` are populated; compiler-owned registries
-    /// are left empty for the compiler to fill in.
+    /// are the implementor's job. The returned `AstPackage`'s `items` and
+    /// `graph` are populated; compiler-owned registries are left empty for
+    /// the compiler to fill in.
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage>;
 
     /// Packages this provider considers part of the *current workspace*,
