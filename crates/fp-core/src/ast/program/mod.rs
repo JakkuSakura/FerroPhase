@@ -144,8 +144,9 @@ impl AstProgram {
             package
                 .borrow()
                 .package
-                .package(package_id)
-                .map(|descriptor| descriptor.metadata.clone())
+                .metadata
+                .clone()
+                .into()
         })
     }
 

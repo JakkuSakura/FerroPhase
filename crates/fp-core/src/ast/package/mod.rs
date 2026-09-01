@@ -79,18 +79,6 @@ pub struct PackageDescriptor {
 }
 
 impl PackageDescriptor {
-    pub fn new(package: Self) -> Self {
-        package
-    }
-
-    pub fn package(&self, id: &PackageId) -> Option<&Self> {
-        (self.id == *id).then_some(self)
-    }
-
-    pub fn packages(&self) -> impl Iterator<Item = &Self> {
-        std::iter::once(self)
-    }
-
     pub fn empty(id: PackageId, name: impl Into<String>) -> Self {
         Self {
             id,
