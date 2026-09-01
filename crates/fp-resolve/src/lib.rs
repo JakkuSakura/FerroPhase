@@ -18,10 +18,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::cell::{Ref, RefCell, RefMut};
 
-pub struct AstResolver {
+pub struct AstResolver<'hir> {
     package: Rc<RefCell<fp_core::ast::package::AstPackage>>,
-    package_id: hir::PackageId,
-    next_def_id: u32,
+    hir_package: &'hir mut hir::HirPackage,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
@@ -33,18 +32,17 @@ pub struct AstResolver {
     ast_program: Rc<AstProgram>,
 }
 
-impl AstResolver {
+impl<'hir> AstResolver<'hir> {
     pub fn new(
-        package_id: hir::PackageId,
         ast_package_id: PackageId,
+        hir_package: &'hir mut hir::HirPackage,
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
         ast_program: Rc<AstProgram>,
     ) -> Self {
         Self {
             package: ast_program.get_ast_package(&ast_package_id),
-            package_id,
-            next_def_id: 1,
+            hir_package,
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
@@ -62,9 +60,7 @@ impl AstResolver {
     }
 
     fn item_def_id(&mut self) -> hir::DefId {
-        let def_id = hir::DefId::new(self.package_id.clone(), self.next_def_id);
-        self.next_def_id += 1;
-        def_id
+        self.hir_package.next_def_id()
     }
 
     pub fn declare_module(
@@ -493,7 +489,11 @@ impl Resolver {
         Self { program }
     }
 
-    pub fn resolve_package(&self, package_id: &PackageId) -> fp_core::error::Result<()> {
+    pub fn resolve_package(
+        &self,
+        package_id: &PackageId,
+        hir_package: &mut hir::HirPackage,
+    ) -> fp_core::error::Result<()> {
         let package = self.program.get_ast_package(package_id);
         let (hir_package_id, paths, items) = {
             let package = package.borrow();
@@ -508,8 +508,8 @@ impl Resolver {
             )
         };
         let mut resolver = AstResolver::new(
-            package_id.clone(),
             hir_package_id,
+            hir_package,
             self.program.provider().declaration_rules(),
             self.program.provider().resolution_rules(),
             Rc::clone(&self.program),

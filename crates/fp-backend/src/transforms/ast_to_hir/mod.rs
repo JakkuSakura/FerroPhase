@@ -235,6 +235,13 @@ enum LiteralTypeKind {
 }
 
 impl AstToHirLowerer {
+    /// Provides the package being lowered to the AST resolver so definition
+    /// identities are allocated from the same HIR-owned counter used by the
+    /// rest of lowering.
+    pub fn hir_package_mut(&mut self) -> &mut hir::HirPackage {
+        &mut self.package
+    }
+
     fn add_error(&mut self, diag: Diagnostic) {
         self.diagnostics.add_diagnostic(diag);
     }

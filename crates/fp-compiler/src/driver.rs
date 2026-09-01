@@ -602,11 +602,6 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
-        // Resolve names at the AST boundary before constructing HIR. The
-        // lowerer consumes the package's persistent AST module context.
-        fp_resolve::Resolver::new(std::rc::Rc::clone(&self.state.borrow().workspace))
-            .resolve_package(&package_source.package_id)
-            .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
         let normalizer = self
             .state
             .borrow()
@@ -625,6 +620,12 @@ impl CompilerDriver {
                     operations: self.state.borrow().source_operations().unwrap_or_default(),
                     resolution_only,
                 });
+        // DefId allocation belongs to the destination HIR package. Resolve
+        // against the very package that lowering will return; the AST
+        // resolver does not maintain a second allocation counter.
+        fp_resolve::Resolver::new(std::rc::Rc::clone(&self.state.borrow().workspace))
+            .resolve_package(&package_source.package_id, generator.hir_package_mut())
+            .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
         let hir_package = generator.transform_package(package_source)?;
         Ok((hir_package, generator.exported_symbols()))
     }
