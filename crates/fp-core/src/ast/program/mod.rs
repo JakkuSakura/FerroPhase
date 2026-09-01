@@ -89,7 +89,9 @@ impl AstProgram {
         name: &str,
         namespace: crate::ast::resolve::Namespace,
     ) -> crate::ast::resolve::ResolutionResult {
-        self.local_scope.borrow().resolve(name, namespace, self.provider().resolution_rules())
+        self.local_scope
+            .borrow()
+            .resolve(name, namespace, self.provider().resolution_rules())
     }
 
     pub fn declare_local(
@@ -97,7 +99,9 @@ impl AstProgram {
         name: impl Into<crate::ast::resolve::Symbol>,
         binding: crate::ast::resolve::Binding,
     ) -> crate::ast::resolve::DeclarationOutcome {
-        self.local_scope.borrow_mut().declare(name, binding, self.provider().declaration_rules())
+        self.local_scope
+            .borrow_mut()
+            .declare(name, binding, self.provider().declaration_rules())
     }
 
     /// Publish a package source slot and return its compiler-owned result.
@@ -174,9 +178,7 @@ impl AstProgram {
             .borrow()
             .get(package_id)
             .cloned()
-            .unwrap_or_else(|| {
-                panic!("AST package for HIR package `{package_id}` is missing")
-            })
+            .unwrap_or_else(|| panic!("AST package for HIR package `{package_id}` is missing"))
     }
 
     /// Resolve a name through the AST package's module tree. Consumers should
@@ -190,12 +192,9 @@ impl AstProgram {
     ) -> crate::ast::resolve::ResolutionResult {
         let package = self.get_ast_package(package_id);
         let package = package.borrow();
-        package.module_tree.resolve(
-            module,
-            name,
-            namespace,
-            self.provider().resolution_rules(),
-        )
+        package
+            .module_tree
+            .resolve(module, name, namespace, self.provider().resolution_rules())
     }
 
     /// Resolve a qualified path through the AST package's module tree.
@@ -233,111 +232,6 @@ impl AstProgram {
         )
     }
 
-    /// Resolve an extern-prelude path against the AST package that owns its
-    /// crate root. HIR has no resolver facade; all path resolution terminates
-    /// here before lowering.
-    pub fn resolve_external_path(
-        &self,
-        path: &QualifiedPath,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> Option<crate::hir::Res> {
-        let root = path.head()?.replace('-', "_");
-        let package_id = self
-            .crates()
-            .keys()
-            .find(|id| id.as_str().replace('-', "_") == root)?
-            .clone();
-        let package = self.get_ast_package(&package_id);
-        let package = package.borrow();
-        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
-        let leaf = internal.segments.last()?.clone();
-        let module = QualifiedPath::new(internal.segments[..internal.segments.len() - 1].to_vec());
-        match package.module_tree.resolve(&module, &leaf, namespace, self.provider().resolution_rules()) {
-            crate::ast::resolve::ResolutionResult::Found(res) => Some(res),
-            _ => None,
-        }
-    }
-
-    /// Resolve an extern-prelude path while respecting the requesting
-    /// package's declared dependency edges. This mirrors rustc's extern
-    /// prelude: a loaded package is not automatically visible merely because
-    /// it happens to exist in the compilation registry.
-    pub fn resolve_external_path_from(
-        &self,
-        requester: &PackageId,
-        path: &QualifiedPath,
-        namespace: crate::ast::resolve::Namespace,
-    ) -> Option<crate::hir::Res> {
-        let root = path.head()?.replace('-', "_");
-        let target = self
-            .crates
-            .borrow()
-            .keys()
-            .find(|id| id.as_str().replace('-', "_") == root)
-            .cloned()?;
-        let allowed = self
-            .compiled_package(requester)
-            .and_then(|package| {
-                package
-                    .borrow()
-                    .graph
-                    .package(requester)
-                    .map(|descriptor| descriptor.metadata.dependencies.iter().filter_map(|dep| dep.resolved_package_id.clone()).collect::<Vec<_>>())
-            })
-            .is_some_and(|deps| deps.iter().any(|id| id == &target));
-        if !allowed {
-            return None;
-        }
-        self.resolve_external_path(path, namespace)
-    }
-
-    pub fn resolve_external_module_path_from(
-        &self,
-        requester: &PackageId,
-        path: &QualifiedPath,
-    ) -> Option<QualifiedPath> {
-        let root = path.head()?.replace('-', "_");
-        let target = self
-            .crates
-            .borrow()
-            .keys()
-            .find(|id| id.as_str().replace('-', "_") == root)
-            .cloned()?;
-        let allowed = self
-            .compiled_package(requester)
-            .and_then(|package| {
-                package
-                    .borrow()
-                    .graph
-                    .package(requester)
-                    .map(|descriptor| descriptor.metadata.dependencies.iter().filter_map(|dep| dep.resolved_package_id.clone()).collect::<Vec<_>>())
-            })
-            .is_some_and(|deps| deps.iter().any(|id| id == &target));
-        if !allowed {
-            return None;
-        }
-        self.resolve_external_module_path(path)
-    }
-
-    pub fn resolve_external_module_path(&self, path: &QualifiedPath) -> Option<QualifiedPath> {
-        let root = path.head()?.replace('-', "_");
-        let package_id = self.crates().keys().find(|id| id.as_str().replace('-', "_") == root)?.clone();
-        let package = self.get_ast_package(&package_id);
-        let package = package.borrow();
-        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
-        package.module_tree.module(&internal).map(|_| path.clone())
-    }
-
-    pub fn external_module_member_names(&self, path: &QualifiedPath) -> Option<Vec<String>> {
-        let root = path.head()?.replace('-', "_");
-        let package_id = self.crates().keys().find(|id| id.as_str().replace('-', "_") == root)?.clone();
-        let package = self.get_ast_package(&package_id);
-        let package = package.borrow();
-        let internal = QualifiedPath::new(path.segments.iter().skip(1).cloned().collect());
-        let module = package.module_tree.module(&internal)?;
-        Some(module.symbols.keys().map(ToString::to_string).collect())
-    }
-
     pub fn module_exists(&self, package_id: &PackageId, path: &QualifiedPath) -> bool {
         self.get_ast_package(package_id)
             .borrow()
@@ -353,7 +247,15 @@ impl AstProgram {
     ) -> Option<Vec<crate::ast::resolve::Symbol>> {
         let package = self.get_ast_package(package_id);
         let package = package.borrow();
-        Some(package.module_tree.module(path)?.symbols.keys().cloned().collect())
+        Some(
+            package
+                .module_tree
+                .module(path)?
+                .symbols
+                .keys()
+                .cloned()
+                .collect(),
+        )
     }
 
     pub fn resolve_module_member(

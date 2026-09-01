@@ -82,7 +82,7 @@ pub mod graph;
 pub mod provider;
 
 use crate::ast::path::QualifiedPath;
-use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
+use crate::ast::{FunctionSignature, Item, MethodSignature, TypeEnum, TypeStruct};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -131,7 +131,7 @@ pub struct AstPackage {
     /// Persistent module-resolution state populated by the AST resolver.
     pub module_tree: crate::ast::resolve::ModuleTree,
     /// AST node resolutions produced before lowering.
-    pub resolutions: HashMap<ItemId, crate::hir::Res>,
+    pub resolutions: HashMap<QualifiedPath, crate::hir::Res>,
 
     /// All known module paths within this package.
     pub module_paths: HashSet<QualifiedPath>,
@@ -154,17 +154,6 @@ pub struct AstPackage {
     pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
     pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
     pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
-    /// The `ItemId` (see `ast::item::ItemId`'s doc comment) of the
-    /// `ItemDefFunction` node each locally-defined `function_sigs` entry
-    /// was registered from -- lets a later pass (generic monomorphization)
-    /// find that exact AST node again directly, instead of re-deriving a
-    /// location from the `QualifiedPath` key (which is a qualification
-    /// convention, not a record of real module nesting, and doesn't
-    /// generally correspond to a walkable path in a stored `File`). Not
-    /// merged into `FunctionSignature` itself: that type is also
-    /// constructed for synthetic/extern/builtin signatures with no
-    /// backing `Item` at all.
-    pub function_item_ids: HashMap<QualifiedPath, ItemId>,
     pub trait_defs: HashSet<QualifiedPath>,
 
     /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
@@ -176,7 +165,6 @@ pub struct AstPackage {
     /// whether `SelfType` resolves to a struct, an enum, or anything else
     /// nominal -- registration and lookup don't need to branch on that.
     pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
-
 }
 
 impl AstPackage {
@@ -204,7 +192,6 @@ impl AstPackage {
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             function_sigs: HashMap::new(),
-            function_item_ids: HashMap::new(),
             trait_defs: HashSet::new(),
             method_sigs: HashMap::new(),
         }

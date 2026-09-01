@@ -75,7 +75,8 @@ pub struct AstToHirLowerer {
     /// Memoized results for the ambiguous bare-type export query. The HIR
     /// program is immutable during one lowering pass, while this query is
     /// reached repeatedly for generic arguments in bundled std.
-    preassigned_def_ids: HashMap<u64, hir::DefId>,
+    preassigned_def_ids: HashMap<fp_core::ast::path::QualifiedPath, hir::DefId>,
+    transient_def_ids: HashMap<usize, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
     trait_defs: HashMap<String, ast::ItemDefTrait>,
@@ -153,9 +154,6 @@ pub struct AstToHirLowerer {
     /// is never part of any actual name-resolution decision.
     local_item_debug_labels: HashMap<hir::DefId, String>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
-    /// Results produced by the AST-stage resolver. Lowering may translate an
-    /// AST identity into a HIR identity, but does not own first-time lookup.
-    ast_resolutions: HashMap<ast::ItemId, hir::Res>,
     target_env: TargetEnv,
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
@@ -281,6 +279,7 @@ impl AstToHirLowerer {
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             global_type_defs_by_def_id: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
+            transient_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -294,7 +293,6 @@ impl AstToHirLowerer {
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
-            ast_resolutions: HashMap::new(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
@@ -310,12 +308,17 @@ impl AstToHirLowerer {
         self
     }
 
-    pub fn with_preassigned_def_ids(mut self, ids: HashMap<u64, hir::DefId>) -> Self {
+    pub fn with_preassigned_def_ids(
+        mut self,
+        ids: HashMap<fp_core::ast::path::QualifiedPath, hir::DefId>,
+    ) -> Self {
         self.preassigned_def_ids = ids;
         self
     }
 
-    pub fn preassigned_def_ids(&self) -> HashMap<u64, hir::DefId> {
+    pub fn preassigned_def_ids(
+        &self,
+    ) -> HashMap<fp_core::ast::path::QualifiedPath, hir::DefId> {
         self.preassigned_def_ids.clone()
     }
 
@@ -336,10 +339,6 @@ impl AstToHirLowerer {
     {
         self.intrinsic_normalizer = Some(Box::new(normalizer));
         self
-    }
-
-    fn ast_resolution(&self, item: ast::ItemId) -> Option<&hir::Res> {
-        self.ast_resolutions.get(&item)
     }
 
     /// Look up a resolved definition without encoding any knowledge of its
@@ -667,28 +666,46 @@ impl AstToHirLowerer {
         }
     }
 
-    fn item_key(item: &ast::Item) -> u64 {
-        item.id()
+    fn item_name(item: &ast::Item) -> Option<&str> {
+        use ast::ItemKind::*;
+        match item.kind() {
+            DefStruct(v) => Some(v.name.as_str()),
+            DefStructural(v) => Some(v.name.as_str()),
+            DefEnum(v) => Some(v.name.as_str()),
+            DefType(v) => Some(v.name.as_str()),
+            OpaqueType(v) => Some(v.name.as_str()),
+            DefConst(v) => Some(v.name.as_str()),
+            DefStatic(v) => Some(v.name.as_str()),
+            DefFunction(v) => Some(v.name.as_str()),
+            DefTrait(v) => Some(v.name.as_str()),
+            DeclConst(v) => Some(v.name.as_str()),
+            DeclStatic(v) => Some(v.name.as_str()),
+            DeclFunction(v) => Some(v.name.as_str()),
+            DeclType(v) => Some(v.name.as_str()),
+            _ => None,
+        }
     }
 
     fn allocate_def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
-        let key = Self::item_key(item);
-        if let Some(existing) = self.preassigned_def_ids.get(&key) {
-            existing.clone()
-        } else {
-            let def_id = self.next_def_id();
-            self.preassigned_def_ids.insert(key, def_id.clone());
-            def_id
+        let key = item as *const ast::Item as usize;
+        if let Some(existing) = self.transient_def_ids.get(&key) {
+            return existing.clone();
         }
+        if let Some(name) = Self::item_name(item) {
+            let path = self.qualify_path(name);
+            if let Some(existing) = self.preassigned_def_ids.get(&path) {
+                let existing = existing.clone();
+                self.transient_def_ids.insert(key, existing.clone());
+                return existing;
+            }
+        }
+        let def_id = self.next_def_id();
+        self.transient_def_ids.insert(key, def_id.clone());
+        def_id
     }
 
     fn def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
-        let key = Self::item_key(item);
-        if let Some(id) = self.preassigned_def_ids.get(&key) {
-            id.clone()
-        } else {
-            self.allocate_def_id_for_item(item)
-        }
+        self.allocate_def_id_for_item(item)
     }
 
     fn current_module_visibility_flag(&self) -> bool {
@@ -1083,21 +1100,16 @@ impl AstToHirLowerer {
         package: &fp_core::ast::package::AstPackage,
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
-        self.ast_resolutions = package.resolutions.clone();
         // AST resolution owns definition identity. Reuse those assignments
         // during lowering so every resolved import/path points at the exact
         // HIR definition that will be emitted, rather than allocating a
         // second, order-dependent id sequence in the lowerer.
-        self.preassigned_def_ids
-            .extend(
-                package
-                    .resolutions
-                    .iter()
-                    .filter_map(|(item, resolution)| match resolution {
-                        hir::Res::Def(def_id) => Some((*item, def_id.clone())),
-                        _ => None,
-                    }),
-            );
+        self.preassigned_def_ids.extend(package.resolutions.iter().filter_map(
+            |(path, resolution)| match resolution {
+                hir::Res::Def(def_id) => Some((path.clone(), def_id.clone())),
+                _ => None,
+            },
+        ));
         self.prepare_lowering_state();
         // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for

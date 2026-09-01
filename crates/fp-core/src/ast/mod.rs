@@ -49,50 +49,6 @@ pub use value::*;
 /// Shared slot for storing optional type annotations on AST nodes.
 pub type TySlot = Option<Ty>;
 
-mod resolved_types {
-    use super::{ItemId, PatternId, Ty};
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-
-    thread_local! {
-        static RESOLVED_ITEM_TYPES: RefCell<HashMap<ItemId, Ty>> = RefCell::new(HashMap::new());
-        static RESOLVED_PATTERN_TYPES: RefCell<HashMap<PatternId, Ty>> = RefCell::new(HashMap::new());
-        static RESOLVED_PATTERN_OPS: RefCell<HashMap<PatternId, crate::intrinsics::PortableOp>> = RefCell::new(HashMap::new());
-    }
-
-    pub fn resolved_item_type(id: ItemId) -> Option<Ty> {
-        RESOLVED_ITEM_TYPES.with(|cell| cell.borrow().get(&id).cloned())
-    }
-
-    pub fn set_resolved_item_type(id: ItemId, ty: Ty) {
-        RESOLVED_ITEM_TYPES.with(|cell| {
-            cell.borrow_mut().insert(id, ty);
-        });
-    }
-
-    pub fn resolved_pattern_type(id: PatternId) -> Option<Ty> {
-        RESOLVED_PATTERN_TYPES.with(|cell| cell.borrow().get(&id).cloned())
-    }
-
-    pub fn set_resolved_pattern_type(id: PatternId, ty: Ty) {
-        RESOLVED_PATTERN_TYPES.with(|cell| {
-            cell.borrow_mut().insert(id, ty);
-        });
-    }
-
-    pub fn set_resolved_pattern_op(id: PatternId, op: crate::intrinsics::PortableOp) {
-        RESOLVED_PATTERN_OPS.with(|cell| {
-            cell.borrow_mut().insert(id, op);
-        });
-    }
-
-    pub fn resolved_pattern_op(id: PatternId) -> Option<crate::intrinsics::PortableOp> {
-        RESOLVED_PATTERN_OPS.with(|cell| cell.borrow().get(&id).cloned())
-    }
-
-}
-pub use resolved_types::*;
-
 common_struct! {
     pub struct File {
         pub path: PathBuf,

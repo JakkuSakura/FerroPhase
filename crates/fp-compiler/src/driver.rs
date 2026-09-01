@@ -622,7 +622,7 @@ impl CompilerDriver {
     > {
         // Resolve names at the AST boundary before constructing HIR. The
         // lowerer consumes the package's persistent AST module context.
-        fp_resolve::Resolver::new(&self.state.borrow().workspace)
+        fp_resolve::Resolver::new(std::rc::Rc::clone(&self.state.borrow().workspace))
             .resolve_package(&package_source.package_id)
             .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
         let normalizer = self

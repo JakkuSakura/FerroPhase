@@ -3,6 +3,7 @@
 //! Stable resolution data lives in `fp-core`; this crate owns the algorithms
 //! that populate it before AST-to-HIR lowering.
 
+use fp_core::ast::Symbol;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::program::AstProgram;
@@ -10,83 +11,59 @@ use fp_core::ast::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
     ResolutionRules,
 };
-use fp_core::ast::{ItemId, Symbol};
 use fp_core::hir;
 use fp_core::span::Span;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::rc::Rc;
+use std::cell::{Ref, RefCell, RefMut};
 
-pub struct AstResolver<'a> {
+pub struct AstResolver {
+    package: Rc<RefCell<fp_core::ast::package::AstPackage>>,
     package_id: hir::PackageId,
     next_def_id: u32,
-    item_def_ids: HashMap<ItemId, hir::DefId>,
-    pub modules: &'a mut ModuleTree,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
-    resolutions: HashMap<ItemId, hir::Res>,
-    external_modules: HashMap<Symbol, ModuleTree>,
+    resolutions: HashMap<QualifiedPath, hir::Res>,
+    /// Workspace registry used for extern-prelude lookup.  Keeping the
+    /// registry (rather than cloned module trees) means imports resolve
+    /// against the live AST packages and avoids a second, stale resolution
+    /// snapshot.
+    ast_program: Rc<AstProgram>,
 }
 
-impl<'a> AstResolver<'a> {
+impl AstResolver {
     pub fn new(
         package_id: hir::PackageId,
-        modules: &'a mut ModuleTree,
+        ast_package_id: PackageId,
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
+        ast_program: Rc<AstProgram>,
     ) -> Self {
         Self {
+            package: ast_program.get_ast_package(&ast_package_id),
             package_id,
             next_def_id: 1,
-            item_def_ids: HashMap::new(),
-            modules,
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
             resolutions: HashMap::new(),
-            external_modules: HashMap::new(),
+            ast_program,
         }
     }
 
-    /// Install dependency module snapshots captured before the current
-    /// package is mutably borrowed by the resolver.
-    pub fn with_external_modules(mut self, modules: HashMap<Symbol, ModuleTree>) -> Self {
-        self.external_modules = modules;
-        self
+    fn package_tree(&self) -> Ref<'_, ModuleTree> {
+        Ref::map(self.package.borrow(), |package| &package.module_tree)
     }
 
-    fn resolve_external_path(
-        &self,
-        path: &QualifiedPath,
-        namespace: Namespace,
-    ) -> Option<hir::Res> {
-        let (root, rest) = path.segments.split_first()?;
-        let tree = self.external_modules.get(&Symbol::from(root.as_str()))?;
-        match tree.resolve_path(
-            &QualifiedPath::new(Vec::new()),
-            &QualifiedPath::from_slice(rest),
-            namespace,
-            self.resolution_rules,
-        ) {
-            fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
-            _ => None,
-        }
+    fn package_tree_mut(&self) -> RefMut<'_, ModuleTree> {
+        RefMut::map(self.package.borrow_mut(), |package| &mut package.module_tree)
     }
 
-    fn external_module(&self, path: &QualifiedPath) -> Option<&ModuleTree> {
-        let (root, rest) = path.segments.split_first()?;
-        let tree = self.external_modules.get(&Symbol::from(root.as_str()))?;
-        tree.module(&QualifiedPath::from_slice(rest))
-    }
-
-    fn item_def_id(&mut self, item: ItemId) -> hir::DefId {
-        if let Some(def_id) = self.item_def_ids.get(&item) {
-            return def_id.clone();
-        }
+    fn item_def_id(&mut self) -> hir::DefId {
         let def_id = hir::DefId::new(self.package_id.clone(), self.next_def_id);
         self.next_def_id += 1;
-        self.item_def_ids.insert(item, def_id.clone());
         def_id
     }
 
@@ -96,7 +73,7 @@ impl<'a> AstResolver<'a> {
         name: impl Into<Symbol>,
         binding: Binding,
     ) -> DeclarationOutcome {
-        self.modules
+        self.package_tree_mut()
             .declare(module, name, binding, self.declaration_rules)
     }
 
@@ -122,12 +99,12 @@ impl<'a> AstResolver<'a> {
     pub fn collect_package_items(&mut self, items: &[fp_core::ast::package::PackageItem]) {
         for package_item in items {
             let module = package_item.module_path.clone();
-            self.modules.ensure_module(&module);
+            self.package_tree_mut().ensure_module(&module);
             self.collect_item(&module, &package_item.item);
         }
     }
 
-    pub fn resolution_table(&self) -> &HashMap<ItemId, hir::Res> {
+    pub fn resolution_table(&self) -> &HashMap<QualifiedPath, hir::Res> {
         &self.resolutions
     }
 
@@ -135,33 +112,33 @@ impl<'a> AstResolver<'a> {
         &mut self,
         module: &QualifiedPath,
         name: impl Into<Symbol>,
-        item: ItemId,
         namespace: Namespace,
         span: Span,
-    ) {
-        let target = self.item_def_id(item);
+    ) -> hir::DefId {
+        let target = self.item_def_id();
+        let name: Symbol = name.into();
+        let path = module.with_segment(name.to_string());
+        self.resolutions.insert(path, hir::Res::Def(target.clone()));
         self.declare_module(
             module,
             name,
             Binding::Definition {
-                target,
+                target: target.clone(),
                 namespace,
                 span,
             },
         );
+        target
     }
 
     fn collect_item(&mut self, module: &QualifiedPath, item: &fp_core::ast::Item) {
         use fp_core::ast::ItemKind;
 
-        let id = item.id();
         let span = item.span();
-        let def_id = self.item_def_id(id);
-        self.resolutions.insert(id, hir::Res::Def(def_id));
         match item.kind() {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
-                self.modules.ensure_module(&child_path);
+                self.package_tree_mut().ensure_module(&child_path);
                 self.declare_module(
                     module,
                     &child.name,
@@ -175,35 +152,35 @@ impl<'a> AstResolver<'a> {
                 }
             }
             ItemKind::DefStruct(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefStructural(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefEnum(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefType(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::OpaqueType(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefTrait(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Type, span)
+                self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefConst(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span)
+                self.declare_definition(module, &def.name, Namespace::Value, span);
             }
             ItemKind::DefStatic(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span)
+                self.declare_definition(module, &def.name, Namespace::Value, span);
             }
             ItemKind::DefFunction(def) => {
-                self.declare_definition(module, &def.name, id, Namespace::Value, span)
+                self.declare_definition(module, &def.name, Namespace::Value, span);
             }
             ItemKind::Macro(mac) => {
                 if let Some(name) = mac.declared_name.as_ref() {
-                    let target = self.item_def_id(id);
+                    let target = self.item_def_id();
                     self.declare_module(module, name, Binding::Macro { id: target, span });
                 }
             }
@@ -226,40 +203,47 @@ impl<'a> AstResolver<'a> {
         let mut made_progress = false;
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
-                let source = self
-                    .modules
+                let members = self
+                    .package_tree()
                     .module(&directive.target)
-                    .or_else(|| self.external_module(&directive.target))
-                    .cloned();
-                let Some(source) = source else {
+                    .map(|source| {
+                        source
+                            .symbols
+                            .keys()
+                            .filter_map(|name| {
+                                match source.resolve(
+                                    &QualifiedPath::new(Vec::new()),
+                                    name.as_str(),
+                                    directive.namespace,
+                                    self.resolution_rules,
+                                ) {
+                                    fp_core::ast::resolve::ResolutionResult::Found(res) => {
+                                        Some((name.clone(), res))
+                                    }
+                                    _ => None,
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                let Some(members) = members else {
                     deferred.push_back(directive);
                     if worklist.queue.is_empty() && !made_progress {
                         break;
                     }
                     continue;
                 };
-                let members: Vec<_> = source.symbols.keys().cloned().collect();
                 if members.is_empty() {
                     deferred.push_back(directive);
                 } else {
-                    for name in members {
-                        if let fp_core::ast::resolve::ResolutionResult::Found(target) = source
-                            .resolve(
-                                &QualifiedPath::new(Vec::new()),
-                                name.as_str(),
-                                directive.namespace,
-                                self.resolution_rules,
-                            )
-                        {
-                            self.declare_import(
-                                &directive.module,
-                                name,
-                                target,
-                                directive.namespace,
-                                directive.span,
-                            );
-                            made_progress = true;
-                        }
+                    for (name, target) in members {
+                        self.declare_import(
+                            &directive.module,
+                            name,
+                            target,
+                            directive.namespace,
+                            directive.span,
+                        );
+                        made_progress = true;
                     }
                 }
                 if worklist.queue.is_empty() {
@@ -274,7 +258,7 @@ impl<'a> AstResolver<'a> {
             // Imports may legally bind a module itself (`use crate::foo as bar`),
             // so do not apply value/type terminal checks here. Those checks are
             // reserved for expression/type references at lowering time.
-            let target = match self.modules.resolve_path(
+            let target = match self.package_tree().resolve_path(
                 &directive.module,
                 &directive.target,
                 directive.namespace,
@@ -283,8 +267,24 @@ impl<'a> AstResolver<'a> {
                 fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
                 _ => None,
             };
-            let target = target
-                .or_else(|| self.resolve_external_path(&directive.target, directive.namespace));
+            let target = target.or_else(|| {
+                let (root, rest) = directive.target.segments.split_first()?;
+                let package_id = self
+                    .ast_program
+                    .crates()
+                    .keys()
+                    .find(|id| id.as_str().replace('-', "_") == root.as_str())?
+                    .clone();
+                match self.ast_program.resolve_module_path(
+                    &package_id,
+                    &QualifiedPath::new(Vec::new()),
+                    &QualifiedPath::from_slice(rest),
+                    directive.namespace,
+                ) {
+                    fp_core::ast::resolve::ResolutionResult::Found(res) => Some(res),
+                    _ => None,
+                }
+            });
             if let Some(target) = target {
                 self.declare_import(
                     &directive.module,
@@ -363,7 +363,7 @@ impl<'a> AstResolver<'a> {
                     base = module
                         .head()
                         .filter(|head| {
-                            self.modules
+                            self.package_tree()
                                 .module(&QualifiedPath::new(vec![(*head).to_owned()]))
                                 .is_some()
                         })
@@ -484,65 +484,38 @@ impl ResolutionWorklist {
     }
 }
 
-pub struct Resolver<'a> {
-    program: &'a AstProgram,
+pub struct Resolver {
+    program: Rc<AstProgram>,
 }
 
-impl<'a> Resolver<'a> {
-    pub fn new(program: &'a AstProgram) -> Self {
+impl Resolver {
+    pub fn new(program: Rc<AstProgram>) -> Self {
         Self { program }
     }
 
     pub fn resolve_package(&self, package_id: &PackageId) -> fp_core::error::Result<()> {
         let package = self.program.get_ast_package(package_id);
-        let (hir_package_id, paths, items, dependencies) = {
+        let (hir_package_id, paths, items) = {
             let package = package.borrow();
-            let dependencies = package
-                .graph
-                .package(package_id)
-                .map(|descriptor| {
-                    descriptor
-                        .metadata
-                        .dependencies
-                        .iter()
-                        .filter_map(|dependency| dependency.resolved_package_id.clone())
-                        .collect::<HashSet<_>>()
-                })
-                .unwrap_or_default();
             (
                 package.hir_package_id.clone(),
                 package
                     .module_paths
                     .iter()
                     .cloned()
-                    .chain(package.items.iter().map(|item| item.module_path.clone()))
                     .collect::<Vec<_>>(),
                 package.items.clone(),
-                dependencies,
             )
         };
-        let external_modules = self
-            .program
-            .crates()
-            .iter()
-            .filter(|(id, _)| dependencies.contains(*id) && *id != package_id)
-            .map(|(id, package)| {
-                (
-                    Symbol::from(id.as_str().replace('-', "_")),
-                    package.borrow().module_tree.clone(),
-                )
-            })
-            .collect();
-        let mut package = package.borrow_mut();
         let mut resolver = AstResolver::new(
+            package_id.clone(),
             hir_package_id,
-            &mut package.module_tree,
             self.program.provider().declaration_rules(),
             self.program.provider().resolution_rules(),
-        )
-        .with_external_modules(external_modules);
+            Rc::clone(&self.program),
+        );
         for path in paths {
-            resolver.modules.ensure_module(&path);
+            resolver.package_tree_mut().ensure_module(&path);
         }
         resolver.collect_package_items(&items);
         let mut worklist = ResolutionWorklist::default();
@@ -550,6 +523,7 @@ impl<'a> Resolver<'a> {
         resolver.resolve_worklist(&mut worklist);
         let resolutions = resolver.resolution_table().clone();
         drop(resolver);
+        let mut package = package.borrow_mut();
         package.resolutions = resolutions;
         Ok(())
     }
@@ -558,6 +532,12 @@ impl<'a> Resolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::ast::package::provider::EmptyProvider;
+    use std::sync::Arc;
+
+    fn test_program() -> Rc<AstProgram> {
+        Rc::new(AstProgram::new(Arc::new(EmptyProvider)))
+    }
 
     #[test]
     fn worklist_resolves_forward_alias_after_target_is_committed() {
@@ -579,6 +559,7 @@ mod tests {
             &mut modules,
             DeclarationRules::rust(),
             ResolutionRules::rust(),
+            test_program(),
         );
         let mut worklist = ResolutionWorklist::default();
         worklist.push(ImportDirective {
@@ -611,6 +592,7 @@ mod tests {
             &mut modules,
             DeclarationRules::rust(),
             ResolutionRules::rust(),
+            test_program(),
         );
         let mut worklist = ResolutionWorklist::default();
         worklist.push(ImportDirective {
@@ -648,6 +630,7 @@ mod tests {
             &mut modules,
             DeclarationRules::rust(),
             ResolutionRules::rust(),
+            test_program(),
         );
         let mut worklist = ResolutionWorklist::default();
         for (name, source) in [("Second", "First"), ("First", "Target")] {
@@ -695,6 +678,7 @@ mod tests {
             &mut modules,
             DeclarationRules::rust(),
             ResolutionRules::rust(),
+            test_program(),
         );
         let mut worklist = ResolutionWorklist::default();
         worklist.push(ImportDirective {
@@ -738,6 +722,7 @@ mod tests {
             &mut modules,
             DeclarationRules::rust(),
             ResolutionRules::rust(),
+            test_program(),
         );
         let mut worklist = ResolutionWorklist::default();
         worklist.push(ImportDirective {
@@ -757,100 +742,6 @@ mod tests {
                 .modules
                 .resolve(&root, "alias", Namespace::Type, ResolutionRules::rust()),
             fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Module(vec!["child".into()])),
-        );
-    }
-
-    #[test]
-    fn worklist_resolves_dependency_path_from_snapshot() {
-        let root = QualifiedPath::new(Vec::new());
-        let mut dependency = ModuleTree::new();
-        let target = hir::DefId::new(hir::PackageId::new("dep"), 3);
-        dependency.declare(
-            &QualifiedPath::new(Vec::new()),
-            "Thing",
-            Binding::Definition {
-                target: target.clone(),
-                namespace: Namespace::Type,
-                span: Span::null(),
-            },
-            DeclarationRules::rust(),
-        );
-        let mut external = HashMap::new();
-        external.insert(Symbol::from("dep"), dependency);
-        let mut modules = ModuleTree::new();
-        let mut resolver = AstResolver::new(
-            hir::PackageId::new("main"),
-            &mut modules,
-            DeclarationRules::rust(),
-            ResolutionRules::rust(),
-        )
-        .with_external_modules(external);
-        let mut worklist = ResolutionWorklist::default();
-        worklist.push(ImportDirective {
-            module: root.clone(),
-            name: Symbol::from("Alias"),
-            target: QualifiedPath::new(vec!["dep".into(), "Thing".into()]),
-            namespace: Namespace::Type,
-            kind: ImportKind::Single,
-            visibility: fp_core::ast::Visibility::Private,
-            span: Span::null(),
-        });
-
-        resolver.resolve_worklist(&mut worklist);
-
-        assert_eq!(
-            resolver
-                .modules
-                .resolve(&root, "Alias", Namespace::Type, ResolutionRules::rust()),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(target)),
-        );
-    }
-
-    #[test]
-    fn worklist_expands_dependency_glob_from_snapshot() {
-        let root = QualifiedPath::new(Vec::new());
-        let mut dependency = ModuleTree::new();
-        let target = hir::DefId::new(hir::PackageId::new("dep"), 4);
-        let module = QualifiedPath::new(vec!["api".into()]);
-        dependency.ensure_module(&module);
-        dependency.declare(
-            &module,
-            "Thing",
-            Binding::Definition {
-                target: target.clone(),
-                namespace: Namespace::Type,
-                span: Span::null(),
-            },
-            DeclarationRules::rust(),
-        );
-        let mut external = HashMap::new();
-        external.insert(Symbol::from("dep"), dependency);
-        let mut modules = ModuleTree::new();
-        let mut resolver = AstResolver::new(
-            hir::PackageId::new("main"),
-            &mut modules,
-            DeclarationRules::rust(),
-            ResolutionRules::rust(),
-        )
-        .with_external_modules(external);
-        let mut worklist = ResolutionWorklist::default();
-        worklist.push(ImportDirective {
-            module: root.clone(),
-            name: Symbol::from(""),
-            target: QualifiedPath::new(vec!["dep".into(), "api".into()]),
-            namespace: Namespace::Type,
-            kind: ImportKind::Glob,
-            visibility: fp_core::ast::Visibility::Private,
-            span: Span::null(),
-        });
-
-        resolver.resolve_worklist(&mut worklist);
-
-        assert_eq!(
-            resolver
-                .modules
-                .resolve(&root, "Thing", Namespace::Type, ResolutionRules::rust()),
-            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(target)),
         );
     }
 }

@@ -2647,26 +2647,24 @@ mod tests {
         let mut registry = LangItemRegistry::default();
         registry.insert_op("result_ok", Path::plain(vec![Ident::new("result_ok")]));
         registry.insert_op("result_err", Path::plain(vec![Ident::new("result_err")]));
-        let success = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+        let mut success = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
             name: fp_core::ast::Name::ident("success_spelling_is_irrelevant"),
             patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
                 Ident::new("ok"),
             )))],
         }));
-        fp_core::ast::set_resolved_pattern_op(
-            success.id(),
+        success.set_resolved_op(
             registry
                 .resolve("result_ok")
                 .expect("registered result success"),
         );
-        let failure = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+        let mut failure = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
             name: fp_core::ast::Name::ident("failure_spelling_is_irrelevant"),
             patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
                 Ident::new("err"),
             )))],
         }));
-        fp_core::ast::set_resolved_pattern_op(
-            failure.id(),
+        failure.set_resolved_op(
             registry
                 .resolve("result_err")
                 .expect("registered result failure"),

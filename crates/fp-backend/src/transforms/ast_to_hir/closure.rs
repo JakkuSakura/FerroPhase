@@ -556,10 +556,6 @@ impl ClosureLowering {
             name: struct_ident.clone(),
             value: struct_decl.clone(),
         }));
-        fp_core::ast::set_resolved_item_type(
-            struct_item.id(),
-            ast::Ty::Struct(struct_decl.clone()),
-        );
         let env_param_ident = ast::Ident::new("__env");
         let mut fn_params = Vec::new();
         let mut fn_param_tys = Vec::new();

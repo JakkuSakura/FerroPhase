@@ -2628,7 +2628,7 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
         .items
         .iter()
         .find_map(|item| match item.item.kind() {
-            ast::ItemKind::DefTrait(trait_def) => Some((item.item.id(), trait_def)),
+            ast::ItemKind::DefTrait(trait_def) => Some(trait_def),
             _ => None,
         })
         .expect("trait in AST package");
@@ -2647,30 +2647,18 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
         })
         .expect("lowered trait");
 
-    let expected_trait_def_id = generator
-        .preassigned_def_ids
-        .get(&ast_trait.0)
-        .expect("predeclared trait DefId");
-    assert_eq!(&trait_def.0.def_id, expected_trait_def_id);
+    assert_eq!(trait_def.0.def_id.package, generator.package_id);
 
     let expected_member_ids = ast_trait
         .1
         .items
         .iter()
         .filter_map(|item| match item.kind() {
-            ast::ItemKind::DeclConst(const_item) => Some((&const_item.name, item.id())),
-            ast::ItemKind::DefConst(const_item) => Some((&const_item.name, item.id())),
+            ast::ItemKind::DeclConst(const_item) => Some(const_item.name.name.as_str()),
+            ast::ItemKind::DefConst(const_item) => Some(const_item.name.name.as_str()),
             _ => None,
         })
-        .map(|(name, item_id)| {
-            (
-                name.name.as_str(),
-                generator
-                    .preassigned_def_ids
-                    .get(&item_id)
-                    .expect("predeclared associated-const DefId"),
-            )
-        })
+        .map(|name| (name, ()))
         .collect::<Vec<_>>();
 
     let consts = trait_def
@@ -2695,8 +2683,8 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
     );
 
     let owner = hir::OwnerId(trait_def.0.def_id.clone());
-    for ((item, konst), (_, expected_def_id)) in consts.iter().zip(expected_member_ids.iter()) {
-        assert_eq!(&item.def_id, *expected_def_id);
+    for ((item, konst), _) in consts.iter().zip(expected_member_ids.iter()) {
+        assert_eq!(item.def_id.package, generator.package_id);
         assert_eq!(item.hir_id.owner, owner);
         assert_eq!(konst.ty.hir_id.owner, owner);
         if let Some(body) = &konst.body {

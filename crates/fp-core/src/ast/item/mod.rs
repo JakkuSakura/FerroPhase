@@ -1,10 +1,8 @@
-use std::fmt::Formatter;
-use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::ast::*;
 use crate::span::Span;
 use crate::{common_enum, common_struct};
+use std::fmt::Formatter;
+use std::hash::Hash;
 
 mod decl;
 mod def;
@@ -15,21 +13,6 @@ pub use def::*;
 pub use import::*;
 
 pub type BItem = Box<Item>;
-
-/// A stable, globally-unique identity for an `Item` node, assigned once at
-/// construction -- unlike a
-/// `QualifiedPath`, which is a display/qualification convention (prefixed by
-/// whatever module/compile-unit context happened to be active), this is
-/// never re-derived from a path string and stays valid across passes that
-/// stash an `Item` in a different structure (e.g. a compile unit's typed
-/// `File`) and need to find that exact node again later.
-pub type ItemId = u64;
-
-static ITEM_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-pub fn fresh_item_id() -> ItemId {
-    ITEM_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
 
 common_enum! {
     /// Item is syntax node that "declares" a thing without returning a value
@@ -104,8 +87,6 @@ common_enum! {
 
 common_struct! {
     pub struct Item {
-        #[serde(default)]
-        pub id: ItemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
@@ -130,15 +111,7 @@ impl std::fmt::Display for Item {
 
 impl Item {
     pub fn new(kind: ItemKind) -> Self {
-        Self {
-            id: fresh_item_id(),
-            span: None,
-            kind,
-        }
-    }
-
-    pub fn id(&self) -> ItemId {
-        self.id
+        Self { span: None, kind }
     }
 
     pub fn span(&self) -> Span {

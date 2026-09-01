@@ -20,7 +20,7 @@ pub fn materialize_item(
     item: ast::Item,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Item> {
-    let ast::Item { id, span, kind } = item;
+    let ast::Item { span, kind } = item;
     let new_kind = match kind {
         ast::ItemKind::Macro(item) => ast::ItemKind::Macro(item),
         ast::ItemKind::Module(mut module) => {
@@ -111,7 +111,6 @@ pub fn materialize_item(
         }
     };
     Ok(ast::Item {
-        id,
         span,
         kind: new_kind,
     })

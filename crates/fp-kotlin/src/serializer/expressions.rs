@@ -1055,7 +1055,7 @@ pub(super) fn is_else_arm(pat: &Option<fp_core::ast::BPattern>) -> bool {
 
 pub(super) fn pattern_portable_op(pat: &Option<fp_core::ast::BPattern>) -> Option<String> {
     let pattern = pat.as_ref()?;
-    fp_core::ast::resolved_pattern_op(pattern.id()).map(|op| op.name().to_string())
+    pattern.resolved_op().map(|op| op.name().to_string())
 }
 
 /// The enum's own bare declared name for an enum-variant VALUE expression,

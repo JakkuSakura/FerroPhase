@@ -48,6 +48,8 @@ common_struct! {
     pub struct Pattern {
         #[serde(default)]
         pub id: PatternId,
+        #[serde(skip)]
+        pub resolved_op: Option<crate::intrinsics::PortableOp>,
         #[serde(flatten)]
         pub kind: PatternKind,
     }
@@ -57,6 +59,7 @@ impl Pattern {
     pub fn new(kind: PatternKind) -> Self {
         Self {
             id: fresh_pattern_id(),
+            resolved_op: None,
             kind,
         }
     }
@@ -67,6 +70,14 @@ impl Pattern {
 
     pub fn set_id(&mut self, id: PatternId) {
         self.id = id;
+    }
+
+    pub fn set_resolved_op(&mut self, op: crate::intrinsics::PortableOp) {
+        self.resolved_op = Some(op);
+    }
+
+    pub fn resolved_op(&self) -> Option<&crate::intrinsics::PortableOp> {
+        self.resolved_op.as_ref()
     }
 
     pub fn kind(&self) -> &PatternKind {
@@ -82,7 +93,11 @@ impl Pattern {
     }
 
     pub fn from_parts(id: PatternId, kind: PatternKind) -> Self {
-        Self { id, kind }
+        Self {
+            id,
+            resolved_op: None,
+            kind,
+        }
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {
