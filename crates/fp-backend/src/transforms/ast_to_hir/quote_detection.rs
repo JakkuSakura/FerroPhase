@@ -39,7 +39,7 @@ pub(super) fn comptime_type_alias_rhs(ty: &ast::Ty) -> Option<&ast::Expr> {
     }
 }
 
-/// Shared with `canonical_type_path`'s own primitive-name check, and with
+/// Shared with impl self-type identity checks, and with
 /// the tolerant-predeclare deferral check below, so both places recognize
 /// the same set of names as "not a real registered type, don't bother
 /// looking it up."

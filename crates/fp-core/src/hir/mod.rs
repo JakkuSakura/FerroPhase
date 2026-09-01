@@ -843,13 +843,13 @@ pub enum Res {
     /// only the shallow outer shape, not the referent/element type, so
     /// multiple impls of the same shape share one bucket. `.method()`
     /// call resolution does not use this — it re-derives structural
-    /// self-type equality per candidate impl independently. This exists
-    /// only so `canonical_type_path` can produce a key for the impl
-    /// during HIR lowering, consumed by UFCS-style explicit-path lookups.
+    /// self-type equality per candidate impl independently. The AST→HIR
+    /// lowering stage records semantic impl identity separately; this value
+    /// remains the HIR marker for structural dispatch.
     Builtin(BuiltinSelfType),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinSelfType {
     Reference {
         mutable: bool,

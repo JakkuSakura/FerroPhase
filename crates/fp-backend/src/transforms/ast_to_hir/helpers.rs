@@ -730,8 +730,8 @@ impl AstToHirLowerer {
             // as written, with no module prefix at all — the case for a
             // primitive type's own inherent-impl item (`char::MAX`,
             // referenced from inside the *module* `core::char`, whose own
-            // canonical impl path is the bare `["char"]` singleton — see
-            // `canonical_type_path`'s `is_primitive_type_name` branch, not
+            // semantic primitive identity is the bare `["char"]` singleton — see
+            // the typed primitive identity branch, not
             // `core::char`). Without this check, the crate-root guess
             // below fires first: since `core::char` (the module) really
             // does have a child named `char`... no it doesn't, but this
@@ -792,7 +792,7 @@ impl AstToHirLowerer {
                     if let Some(hir::Res::Def(type_def_id)) =
                         self.resolve_type_symbol(first.name.as_str())
                     {
-                        // `global_type_defs_by_def_id` narrows straight to
+                        // semantic impl identity narrows straight to
                         // the (usually one-element) set of qualified paths
                         // that could possibly resolve to `type_def_id`,
                         // instead of scanning every entry in
@@ -1360,12 +1360,12 @@ impl AstToHirLowerer {
             // `Ty` (not path-like at all — no `Name`/`Select`/`Invoke`
             // shape exists for it), wrapped as `Value::Type` by
             // `fp_lang::ast::type_to_expr`. These aren't nameable the way
-            // `canonical_type_path` expects — real rustc doesn't register
+            // typed impl identity expects — real rustc doesn't register
             // their impls under a module path either, it keys them by a
             // structural `SimplifiedType` bucket. Mirror that: tag the
             // path with `Res::Builtin(BuiltinSelfType)` (a typed shape
             // tag) instead of relying on the segment name; see
-            // `canonical_type_path`'s matching `Res::Builtin` check.
+            // matching `Res::Builtin` check.
             ast::ExprKind::Value(value) => match value.as_ref() {
                 ast::Value::Type(ast::Ty::Reference(reference)) => {
                     let kind = hir::BuiltinSelfType::Reference {

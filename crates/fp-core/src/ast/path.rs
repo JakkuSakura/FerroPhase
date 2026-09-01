@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+use crate::package::PackageId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPath {
@@ -22,16 +23,25 @@ pub struct ParsedPath {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct QualifiedPath {
+    pub package_id: PackageId,
     pub segments: Vec<String>,
 }
 
 impl QualifiedPath {
-    pub fn new(segments: Vec<String>) -> Self {
-        Self { segments }
+    pub fn new(package_id: PackageId, segments: Vec<String>) -> Self {
+        Self {
+            package_id,
+            segments,
+        }
+    }
+
+    pub fn with_package_id(package_id: PackageId, segments: Vec<String>) -> Self {
+        Self::new(package_id, segments)
     }
 
     pub fn from_slice(segments: &[String]) -> Self {
         Self {
+            package_id: PackageId::default(),
             segments: segments.to_vec(),
         }
     }
@@ -59,13 +69,19 @@ impl QualifiedPath {
     pub fn with_segment(&self, segment: String) -> Self {
         let mut segments = self.segments.clone();
         segments.push(segment);
-        Self { segments }
+        Self {
+            package_id: self.package_id.clone(),
+            segments,
+        }
     }
 
     pub fn join(&self, extra: &[String]) -> Self {
         let mut segments = self.segments.clone();
         segments.extend(extra.iter().cloned());
-        Self { segments }
+        Self {
+            package_id: self.package_id.clone(),
+            segments,
+        }
     }
 
     pub fn parent_n(&self, depth: usize) -> Option<Self> {
@@ -74,6 +90,7 @@ impl QualifiedPath {
         }
         let keep = self.segments.len().saturating_sub(depth);
         Some(Self {
+            package_id: self.package_id.clone(),
             segments: self.segments[..keep].to_vec(),
         })
     }

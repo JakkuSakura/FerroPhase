@@ -61,17 +61,11 @@ pub struct AstToHirLowerer {
     current_file: FileId,
     current_position: u32,
     module_path: fp_core::ast::path::QualifiedPath,
-    /// Reverse index from a `DefId` to every qualified-path key bound in
-    /// the type namespace that resolves to it (a type can have more than
-    /// one, e.g. via re-exports) — built incrementally in
-    /// `record_type_symbol`, its only insertion site. Lets
-    /// `name_to_hir_path_with_scope`'s cross-module associated-call
-    /// resolution (`Vec::new()`, `String::from(...)`, any std/libc
-    /// associated-function call) go straight to the handful of paths that
-    /// could possibly match a given type, instead of linear-scanning every
-    /// type binding in the package (potentially thousands once vendored
-    /// std is loaded) with a `format!` allocation per candidate.
-    global_type_defs_by_def_id: HashMap<hir::DefId, Vec<fp_core::ast::path::QualifiedPath>>,
+    /// Semantic index for associated items. The key is the resolved impl
+    /// self-type identity plus the associated name; source paths and aliases
+    /// never participate in this index.
+    impl_items: HashMap<(ImplSelfKey, hir::Symbol), hir::DefId>,
+    impl_generic_param_ids: HashMap<(hir::DefId, usize), hir::DefId>,
     /// Memoized results for the ambiguous bare-type export query. The HIR
     /// program is immutable during one lowering pass, while this query is
     /// reached repeatedly for generic arguments in bundled std.
@@ -194,6 +188,37 @@ enum PathResolutionScope {
     Trait,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImplSelfKey {
+    Adt {
+        def_id: hir::DefId,
+        args: Vec<ImplGenericArgKey>,
+    },
+    Builtin(hir::BuiltinSelfType),
+    Primitive(ast::TypePrimitive),
+    Param(hir::DefId),
+    Reference {
+        mutable: bool,
+        inner: Box<ImplSelfKey>,
+    },
+    RawPointer {
+        mutable: bool,
+        inner: Box<ImplSelfKey>,
+    },
+    Slice(Box<ImplSelfKey>),
+    Array {
+        element: Box<ImplSelfKey>,
+        length: Option<hir::HirId>,
+    },
+    Tuple(Vec<ImplSelfKey>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImplGenericArgKey {
+    Type(Box<ImplSelfKey>),
+    Const(hir::HirId),
+}
+
 impl PathResolutionScope {
     fn namespace(self) -> fp_core::ast::resolve::Namespace {
         match self {
@@ -277,7 +302,8 @@ impl AstToHirLowerer {
             current_file: 0, // Default file ID
             current_position: 0,
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
-            global_type_defs_by_def_id: HashMap::new(),
+            impl_items: HashMap::new(),
+            impl_generic_param_ids: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
             transient_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
@@ -316,9 +342,7 @@ impl AstToHirLowerer {
         self
     }
 
-    pub fn preassigned_def_ids(
-        &self,
-    ) -> HashMap<fp_core::ast::path::QualifiedPath, hir::DefId> {
+    pub fn preassigned_def_ids(&self) -> HashMap<fp_core::ast::path::QualifiedPath, hir::DefId> {
         self.preassigned_def_ids.clone()
     }
 
@@ -419,107 +443,72 @@ impl AstToHirLowerer {
     }
 
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, _visibility: &ast::Visibility) {
-        let path = self.qualify_path(name);
         // See `suppress_global_registration_depth`'s doc comment.
         if self.suppress_global_registration_depth > 0 {
             return;
         }
-        if let hir::Res::Def(def_id) = &res {
-            self.global_type_defs_by_def_id
-                .entry(def_id.clone())
-                .or_default()
-                .push(path.clone());
-        }
+        let _ = (name, res);
     }
 
-    fn canonical_type_path(
-        &self,
-        self_path: &hir::Path,
-    ) -> Result<fp_core::ast::path::QualifiedPath> {
-        // Non-nominal self-type shapes (`&T`, `[T]`, `[T; N]`) carry a typed
-        // `Res::Builtin` tag rather than resolving to a `DefId` — mirrors
-        // rustc's `SimplifiedType` fast-reject bucketing. Check this first,
-        // via the tag rather than sniffing the segment name.
-        if let Some(hir::Res::Builtin(kind)) = &self_path.res {
-            return Ok(fp_core::ast::path::QualifiedPath::new(vec![
-                kind.bucket_key().to_string(),
-            ]));
-        }
-        let self_def_id = match self_path.res {
-            Some(hir::Res::Def(ref def_id)) => Some(def_id.clone()),
-            _ => None,
-        };
-        let self_def_id = self_def_id.as_ref();
-        let self_def_id = match self_def_id {
-            Some(id) => id,
-            None => {
-                let name = self_path
+    fn impl_self_key(&self, self_ty: &hir::TypeExpr) -> Result<ImplSelfKey> {
+        match &self_ty.kind {
+            hir::TypeExprKind::Primitive(primitive) => Ok(ImplSelfKey::Primitive(*primitive)),
+            hir::TypeExprKind::Path(path) => {
+                let args = path
                     .segments
-                    .first()
-                    .map(|s| s.name.as_str())
-                    .unwrap_or("");
-                if is_primitive_type_name(name) {
-                    return Ok(fp_core::ast::path::QualifiedPath::new(vec![
-                        name.to_string(),
-                    ]));
+                    .last()
+                    .and_then(|segment| segment.args.as_ref())
+                    .map(|args| {
+                        args.args
+                            .iter()
+                            .map(|arg| match arg {
+                                hir::GenericArg::Type(ty) => {
+                                    self.impl_self_key(ty).map(ImplGenericArgKey::Type)
+                                }
+                                hir::GenericArg::Const(expr) => {
+                                    Ok(ImplGenericArgKey::Const(expr.hir_id.clone()))
+                                }
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                match path.res.as_ref() {
+                    Some(hir::Res::Def(def_id)) => Ok(ImplSelfKey::Adt {
+                        def_id: def_id.clone(),
+                        args,
+                    }),
+                    Some(hir::Res::Generic(def_id)) => Ok(ImplSelfKey::Param(def_id.clone())),
+                    Some(hir::Res::Builtin(kind)) => Ok(ImplSelfKey::Builtin(kind.clone())),
+                    Some(hir::Res::BuiltinName(name)) => ast::TypePrimitive::from_name(name)
+                        .map(ImplSelfKey::Primitive)
+                        .ok_or_else(|| fp_core::Error::from("unresolved builtin impl self type")),
+                    _ => Err(fp_core::Error::from("unresolved impl self type")),
                 }
-                return Err(fp_core::Error::from("unresolved impl self type"));
             }
-        };
-
-        // An impl may be declared in this package while its self type is
-        // owned by a dependency (`alloc::vec` implements traits for
-        // `core::option::Option`, for example). The local reverse index only
-        // contains definitions predeclared by this lowerer; route foreign
-        // identities through the owning package's canonical path instead of
-        // treating them as unresolved and repeatedly retrying/skipping them.
-        // During predeclaration, impl generic parameters are entered into a
-        // temporary lexical type scope so `impl<T> Trait for T` can resolve
-        // its self path. They are not nominal workspace definitions and
-        // therefore have no entry in `global_type_defs_by_def_id`; preserve
-        // the lexical path as the canonical blanket-impl key instead.
-        if matches!(
-            self.workspace.resolve_local(
-                self_path
-                    .segments
-                    .first()
-                    .map(|s| s.name.as_str())
-                    .unwrap_or_default(),
-                fp_core::ast::resolve::Namespace::Type,
-            ),
-            fp_core::ast::resolve::ResolutionResult::Found(_)
-        ) {
-            return Ok(fp_core::ast::path::QualifiedPath::new(
-                self_path
-                    .segments
+            hir::TypeExprKind::Ref(inner) => Ok(ImplSelfKey::Reference {
+                mutable: false,
+                inner: Box::new(self.impl_self_key(inner)?),
+            }),
+            hir::TypeExprKind::Ptr { inner, mutable } => Ok(ImplSelfKey::RawPointer {
+                mutable: *mutable,
+                inner: Box::new(self.impl_self_key(inner)?),
+            }),
+            hir::TypeExprKind::Slice(inner) => {
+                Ok(ImplSelfKey::Slice(Box::new(self.impl_self_key(inner)?)))
+            }
+            hir::TypeExprKind::Array(inner, length) => Ok(ImplSelfKey::Array {
+                element: Box::new(self.impl_self_key(inner)?),
+                length: length.as_ref().map(|expr| expr.hir_id.clone()),
+            }),
+            hir::TypeExprKind::Tuple(types) => Ok(ImplSelfKey::Tuple(
+                types
                     .iter()
-                    .map(|segment| segment.name.as_str().to_owned())
-                    .collect(),
-            ));
+                    .map(|ty| self.impl_self_key(ty))
+                    .collect::<Result<Vec<_>>>()?,
+            )),
+            _ => Err(fp_core::Error::from("unsupported impl self type")),
         }
-
-        let relative = self.module_path.join(
-            &self_path
-                .segments
-                .iter()
-                .map(|segment| segment.name.as_str().to_owned())
-                .collect::<Vec<_>>(),
-        );
-        // `global_type_defs_by_def_id` narrows straight to the qualified
-        // paths that could possibly resolve to `self_def_id`, instead of
-        // scanning every type binding in the package on every impl block.
-        // Deliberately uses the raw AST module lookup without applying
-        // export visibility: a definition's own canonical path is always
-        // resolvable from its own impl block, regardless of privacy.
-        if self
-            .tree_lookup_raw(&relative, fp_core::ast::resolve::Namespace::Type)
-            .is_some()
-        {
-            return Ok(relative);
-        }
-        Err(fp_core::Error::from(format!(
-            "type definition `{self_def_id}` has no canonical path"
-        )))
     }
 
     fn map_visibility(&self, visibility: &ast::Visibility) -> hir::Visibility {
@@ -978,12 +967,16 @@ impl AstToHirLowerer {
         // during lowering so every resolved import/path points at the exact
         // HIR definition that will be emitted, rather than allocating a
         // second, order-dependent id sequence in the lowerer.
-        self.preassigned_def_ids.extend(package.resolutions.iter().filter_map(
-            |(path, resolution)| match resolution {
-                hir::Res::Def(def_id) => Some((path.clone(), def_id.clone())),
-                _ => None,
-            },
-        ));
+        self.preassigned_def_ids
+            .extend(
+                package
+                    .resolutions
+                    .iter()
+                    .filter_map(|(path, resolution)| match resolution {
+                        hir::Res::Def(def_id) => Some((path.clone(), def_id.clone())),
+                        _ => None,
+                    }),
+            );
         self.prepare_lowering_state();
         // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for

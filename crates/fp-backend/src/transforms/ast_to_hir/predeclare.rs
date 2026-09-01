@@ -331,7 +331,7 @@ impl AstToHirLowerer {
                     // is safe to fully re-run later, unmodified.
                     let defer = false;
                     if !defer {
-                        self.allocate_def_id_for_item(item);
+                        let impl_def_id = self.allocate_def_id_for_item(item);
                         // A self-type can be permanently unresolvable — not a
                         // timing issue an import-order retry would fix, but a
                         // genuine dead end (e.g. its target type lives in a
@@ -342,14 +342,16 @@ impl AstToHirLowerer {
                         // "tolerate what's broken, keep what isn't" policy
                         // already applied at the file level (parse errors).
                         self.push_type_scope();
-                        for param in &impl_block.generics_params {
+                        for (index, param) in impl_block.generics_params.iter().enumerate() {
                             let def_id = self.next_def_id();
+                            self.impl_generic_param_ids
+                                .insert((impl_def_id.clone(), index), def_id.clone());
                             self.register_type_generic(&param.name.name, def_id);
                         }
-                        let self_path = match self
-                            .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)
+                        let self_ty = match self
+                            .transform_type_to_hir(&ast::Ty::expr(impl_block.self_ty.clone()))
                         {
-                            Ok(path) => path,
+                            Ok(self_ty) => self_ty,
                             Err(error) => {
                                 self.pop_type_scope();
                                 tracing::debug!(
@@ -360,61 +362,26 @@ impl AstToHirLowerer {
                                 continue;
                             }
                         };
-                        let mut method_path = match self.canonical_type_path(&self_path) {
-                            Ok(path) => path.segments,
-                            Err(error) => {
-                                self.pop_type_scope();
-                                tracing::debug!(
-                                    module = %self.module_path.to_key(),
-                                    %error,
-                                    "skipping unsupported impl during tolerant predeclaration",
-                                );
-                                continue;
-                            }
+                        let Some(impl_key) = self.impl_self_key(&self_ty).ok() else {
+                            self.pop_type_scope();
+                            continue;
                         };
                         self.pop_type_scope();
-                        // `impl Vec<&str> { fn join }` / `impl Vec<String> {
-                        // fn join }` are two genuinely different,
-                        // already-concrete methods (this impl declares no
-                        // generic parameter of its own to substitute), but
-                        // `canonical_type_path` only ever returns the base
-                        // struct's nominal path ("std::alloc::Vec") --
-                        // dropping the impl's own concrete generic
-                        // arguments entirely. Left alone, both compute the
-                        // identical qualified path "std::alloc::Vec::join",
-                        // colliding once both reach the same LIR workspace
-                        // ("duplicate LIR artifact `Vec__join`"). A truly
-                        // generic impl (`impl<T> Vec<T> { fn push }`) is
-                        // unaffected — it has its own generic params, so
-                        // this check is skipped; its per-call-site
-                        // specializations are disambiguated further
-                        // downstream instead (hir_to_mir's
-                        // `specialization_suffix`, keyed off the
-                        // *substituted* type, not the impl itself).
-                        if impl_block.generics_params.is_empty() {
-                            if let Some(args) = self_path
-                                .segments
-                                .last()
-                                .and_then(|segment| segment.args.as_ref())
-                                .filter(|args| !args.args.is_empty())
-                            {
-                                use std::hash::{Hash, Hasher};
-                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                for arg in &args.args {
-                                    format!("{:?}", arg).hash(&mut hasher);
-                                }
-                                if let Some(last) = method_path.last_mut() {
-                                    last.push_str(&format!("_spec_{:x}", hasher.finish()));
-                                }
-                            }
-                        }
                         for impl_item in &impl_block.items {
                             match impl_item.kind() {
-                                ast::ItemKind::DefFunction(_) => {
-                                    self.allocate_def_id_for_item(impl_item);
+                                ast::ItemKind::DefFunction(function) => {
+                                    let def_id = self.allocate_def_id_for_item(impl_item);
+                                    self.impl_items.insert(
+                                        (impl_key.clone(), function.name.name.clone().into()),
+                                        def_id,
+                                    );
                                 }
-                                ast::ItemKind::DefConst(_) => {
-                                    self.allocate_def_id_for_item(impl_item);
+                                ast::ItemKind::DefConst(constant) => {
+                                    let def_id = self.allocate_def_id_for_item(impl_item);
+                                    self.impl_items.insert(
+                                        (impl_key.clone(), constant.name.name.clone().into()),
+                                        def_id,
+                                    );
                                 }
                                 _ => continue,
                             }

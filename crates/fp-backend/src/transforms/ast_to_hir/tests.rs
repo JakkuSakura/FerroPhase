@@ -194,6 +194,40 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
 }
 
 #[test]
+fn impl_self_keys_use_definition_identity_and_generic_arguments() {
+    let package = hir::PackageId::new("impl-key-test");
+    let adt = |index| ImplSelfKey::Adt {
+        def_id: hir::DefId::new(package.clone(), index),
+        args: Vec::new(),
+    };
+    assert_ne!(adt(1), adt(2));
+
+    let concrete = |arg| ImplSelfKey::Adt {
+        def_id: hir::DefId::new(package.clone(), 3),
+        args: vec![ImplGenericArgKey::Type(Box::new(arg))],
+    };
+    assert_ne!(
+        concrete(ImplSelfKey::Primitive(ast::TypePrimitive::Bool)),
+        concrete(ImplSelfKey::Primitive(ast::TypePrimitive::Char))
+    );
+}
+
+#[test]
+fn impl_self_keys_preserve_structural_outer_shape() {
+    let inner = ImplSelfKey::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64));
+    assert_ne!(
+        ImplSelfKey::Reference {
+            mutable: false,
+            inner: Box::new(inner.clone()),
+        },
+        ImplSelfKey::RawPointer {
+            mutable: false,
+            inner: Box::new(inner),
+        }
+    );
+}
+
+#[test]
 fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
     // Resolving a bare name against the *current* module's own qualified
     // entries (module_path + name) is intentional (lets a module's own
@@ -214,42 +248,6 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
     generator.module_path = QualifiedPath::new(vec!["consumer".to_string()]);
     assert_eq!(generator.resolve_value_symbol("SharedType"), None);
     assert_eq!(generator.resolve_type_symbol("SharedType"), None);
-}
-
-#[test]
-fn canonical_type_path_uses_foreign_owner_def_path() {
-    let dependency_id = hir::PackageId::new("core");
-    let def_id = hir::DefId::new(dependency_id.clone(), 23099);
-    let mut dependency = hir::HirPackage::new(dependency_id);
-    dependency.def_paths.insert(
-        def_id.clone(),
-        hir::DefPath::new(vec![
-            hir::Symbol::new("core"),
-            hir::Symbol::new("option"),
-            hir::Symbol::new("Option"),
-        ]),
-    );
-
-    let mut program = hir::HirProgram::new();
-    program.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
-    let mut generator = AstToHirLowerer::new(
-        hir::SharedHirProgram::new(program),
-        hir::PackageId::new("alloc"),
-    );
-    generator.module_path = QualifiedPath::new(vec!["alloc".to_string(), "vec".to_string()]);
-
-    let path = hir::Path {
-        segments: vec![hir::PathSegment {
-            name: hir::Symbol::new("Option"),
-            args: None,
-        }],
-        res: Some(hir::Res::Def(def_id)),
-    };
-
-    assert_eq!(
-        generator.canonical_type_path(&path).unwrap().segments,
-        vec!["core", "option", "Option"]
-    );
 }
 
 #[test]

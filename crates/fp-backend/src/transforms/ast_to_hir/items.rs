@@ -182,9 +182,17 @@ impl AstToHirLowerer {
 
     pub(super) fn transform_generics(&mut self, params: &[ast::GenericParam]) -> hir::Generics {
         let mut hir_params = Vec::new();
-        for param in params {
+        for (index, param) in params.iter().enumerate() {
             let hir_id = self.next_id();
-            let def_id = self.next_def_id();
+            let def_id = self
+                .current_owner
+                .as_ref()
+                .and_then(|owner| {
+                    self.impl_generic_param_ids
+                        .get(&(owner.clone(), index))
+                        .cloned()
+                })
+                .unwrap_or_else(|| self.next_def_id());
             self.register_type_generic(&param.name.name, def_id.clone());
             // A generic parameter's own trait bounds (`F: FnOnce() -> R`,
             // `I: Iterator<Item = T>`, ...) so `path_ty` can resolve a
@@ -362,73 +370,6 @@ impl AstToHirLowerer {
         self.unimplemented_type_def_ids.contains(&def_id)
     }
 
-    /// Attach the resolver result to an impl header's nominal self path before
-    /// the HIR package builds its dispatch indices.  Impl headers are lowered
-    /// after imports and the implicit prelude have been installed, but a
-    /// path assembled by an AST type helper can still arrive without `Res`.
-    /// Keeping that path unresolved makes a real nominal impl look like an
-    /// unknown structural shape to the indexer.  Resolve the path through the
-    /// same type namespace used by ordinary type expressions, selecting the
-    /// owning package from an extern-prelude root when present.
-    fn resolve_impl_self_type(&self, mut self_ty: hir::TypeExpr) -> hir::TypeExpr {
-        let hir::TypeExprKind::Path(path) = &mut self_ty.kind else {
-            return self_ty;
-        };
-        if path.segments.is_empty()
-            || matches!(
-                path.res.as_ref(),
-                Some(hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy)
-            )
-        {
-            return self_ty;
-        }
-
-        let names = path
-            .segments
-            .iter()
-            .map(|segment| segment.name.as_str().to_owned())
-            .collect::<Vec<_>>();
-        let qualified = fp_core::ast::path::QualifiedPath::new(names.clone());
-        let resolved = if names.len() == 1 {
-            self.resolve_type_symbol(&names[0])
-        } else {
-            // Consume the same exact namespace result used by ordinary HIR
-            // paths before consulting package-qualified lookup. Impl
-            // indexing runs immediately after lowering this header; leaving
-            // a nominal self path unresolved at that point turns a valid
-            // impl into an unclassified dispatch shape and makes every
-            // method on it unreachable.
-                self.lookup_global_res(&qualified, PathResolutionScope::Type)
-                .or_else(|| match self.workspace.resolve_module_path_final(
-                    &self.package_id,
-                    &self.module_path,
-                    &qualified,
-                    fp_core::ast::resolve::Namespace::Type,
-                ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(
-                        hir::Res::Def(id),
-                    ) => Some(hir::Res::Def(id)),
-                    _ => None,
-                })
-                .or_else(|| {
-                    let prefix = self.module_path.join(&names[..names.len() - 1]);
-                    match self.workspace.resolve_module_name(
-                        &self.package_id,
-                        &prefix,
-                        names.last()?,
-                        fp_core::ast::resolve::Namespace::Type,
-                    ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
-                        _ => None,
-                    }
-                })
-        };
-        if let Some(resolved) = resolved {
-            path.res = Some(resolved);
-        }
-        self_ty
-    }
-
     pub(super) fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::Impl> {
         let saved_impl_self_ty = self.current_impl_self_ty.clone();
         self.push_type_scope();
@@ -444,8 +385,9 @@ impl AstToHirLowerer {
             let generics = self.transform_generics(&impl_block.generics_params);
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let lowered_self_ty = self.transform_type_to_hir(&self_ty_ast)?;
-            let self_ty = self.resolve_impl_self_type(lowered_self_ty);
+            let self_ty = lowered_self_ty;
             self.current_impl_self_ty = Some(self_ty.clone());
+            let impl_key = self.impl_self_key(&self_ty).ok();
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),
@@ -481,7 +423,20 @@ impl AstToHirLowerer {
                         if function_body_is_compiler_intrinsic_marker(&method) {
                             method.body = None;
                         }
-                        let method_def_id = self.def_id_for_item(item);
+                        let method_def_id = impl_key
+                            .as_ref()
+                            .and_then(|key| {
+                                self.impl_items
+                                    .get(&(key.clone(), func.name.name.clone().into()))
+                                    .cloned()
+                            })
+                            .unwrap_or_else(|| self.def_id_for_item(item));
+                        if let Some(key) = impl_key.clone() {
+                            self.impl_items.insert(
+                                (key, func.name.name.clone().into()),
+                                method_def_id.clone(),
+                            );
+                        }
                         if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func.attrs) {
                             if let Some(kind) =
                                 fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
@@ -523,7 +478,20 @@ impl AstToHirLowerer {
                         // during predeclare (e.g. `char::MIN` elsewhere)
                         // would point at a `DefId` this `ImplItem` never
                         // actually carries.
-                        let const_def_id = self.def_id_for_item(item);
+                        let const_def_id = impl_key
+                            .as_ref()
+                            .and_then(|key| {
+                                self.impl_items
+                                    .get(&(key.clone(), const_item.name.name.clone().into()))
+                                    .cloned()
+                            })
+                            .unwrap_or_else(|| self.def_id_for_item(item));
+                        if let Some(key) = impl_key.clone() {
+                            self.impl_items.insert(
+                                (key, const_item.name.name.clone().into()),
+                                const_def_id.clone(),
+                            );
+                        }
                         items.push(hir::ImplItem {
                             def_id: const_def_id,
                             hir_id: self.next_id(),

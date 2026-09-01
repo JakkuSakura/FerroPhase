@@ -326,8 +326,7 @@ enum ImplShapeClass {
 }
 
 /// Structurally classifies `impl_item`'s own self-type (no type-checking
-/// needed — this only looks at the HIR shape, specifically `Res` as
-/// already recorded by `ast_to_hir`'s `canonical_type_path`/self-type
+/// needed — this only looks at the HIR shape and its resolved `Res`
 /// lowering) into a shape-bucket key, a blanket impl over one of
 /// `impl_item`'s own generic params, or `Unclassified` if it's neither a
 /// recognized concrete shape nor a resolved nominal ADT path (already
