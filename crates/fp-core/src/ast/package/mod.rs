@@ -131,8 +131,8 @@ pub struct AstPackage {
     /// Persistent module-resolution state populated by the AST resolver.
     pub module_tree: crate::ast::resolve::ModuleTree,
     /// AST node resolutions produced before lowering.
-    pub resolutions: HashMap<ItemId, crate::ast::resolve::AstRes>,
-    pub expr_resolutions: HashMap<crate::ast::ExprId, crate::ast::resolve::AstRes>,
+    pub resolutions: HashMap<ItemId, crate::hir::Res>,
+    pub expr_resolutions: HashMap<crate::ast::ExprId, crate::hir::Res>,
 
     /// All known module paths within this package.
     pub module_paths: HashSet<QualifiedPath>,

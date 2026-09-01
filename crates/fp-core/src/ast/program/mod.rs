@@ -292,7 +292,7 @@ impl AstProgram {
         &self,
         path: &QualifiedPath,
         namespace: crate::ast::resolve::Namespace,
-    ) -> Option<crate::ast::resolve::AstRes> {
+    ) -> Option<crate::hir::Res> {
         let root = path.head()?.replace('-', "_");
         let package_id = self
             .crates()
@@ -319,7 +319,7 @@ impl AstProgram {
         requester: &PackageId,
         path: &QualifiedPath,
         namespace: crate::ast::resolve::Namespace,
-    ) -> Option<crate::ast::resolve::AstRes> {
+    ) -> Option<crate::hir::Res> {
         let root = path.head()?.replace('-', "_");
         let target = self
             .crates

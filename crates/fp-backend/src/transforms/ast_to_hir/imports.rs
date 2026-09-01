@@ -17,7 +17,7 @@ impl AstToHirLowerer {
                 namespace,
             ) {
                 fp_core::ast::resolve::ResolutionResult::Found(
-                    fp_core::ast::resolve::AstRes::Def(id),
+                    hir::Res::Def(id),
                 ) => Some(hir::Res::Def(id)),
                 _ => None,
             }
@@ -382,7 +382,7 @@ impl AstToHirLowerer {
                     namespace,
                 ) {
                     fp_core::ast::resolve::ResolutionResult::Found(
-                        fp_core::ast::resolve::AstRes::Def(id),
+                        hir::Res::Def(id),
                     ) => Some(hir::Res::Def(id)),
                     _ => None,
                 }
@@ -572,7 +572,7 @@ impl AstToHirLowerer {
                 &self.package_id, &self.module_path, path, namespace,
             ) {
                 fp_core::ast::resolve::ResolutionResult::Found(
-                    fp_core::ast::resolve::AstRes::Def(id),
+                    hir::Res::Def(id),
                 ) => Some(hir::Res::Def(id)),
                 _ => None,
             }
@@ -688,7 +688,7 @@ impl AstToHirLowerer {
         namespace: fp_core::ast::resolve::Namespace,
     ) -> Option<hir::Res> {
         if let Some(res) = self.workspace.resolve_external_path_from(&self.package_id, path, namespace) {
-            if let fp_core::ast::resolve::AstRes::Def(def_id) = res {
+            if let hir::Res::Def(def_id) = res {
                 return Some(hir::Res::Def(def_id));
             }
         }

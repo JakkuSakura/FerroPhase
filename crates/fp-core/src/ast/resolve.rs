@@ -18,53 +18,34 @@ pub enum Namespace {
 /// The shared symbol representation used by all compiler stages.
 pub use crate::hir::Symbol;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AstRes {
-    Module(QualifiedPath),
-    Item(ItemId),
-    /// A definition identity allocated during AST/package resolution. HIR
-    /// lowering consumes this directly; it does not resolve the name again.
-    Def(crate::hir::DefId),
-    Local(u64),
-    Parameter(u64),
-    Generic(u64),
-    Builtin(String),
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Binding {
     Module {
         target: QualifiedPath,
         span: Span,
     },
     Definition {
-        target: ItemId,
-        namespace: Namespace,
-        span: Span,
-    },
-    DefinitionId {
         target: crate::hir::DefId,
         namespace: Namespace,
         span: Span,
     },
     Import {
-        target: AstRes,
+        target: crate::hir::Res,
         namespace: Namespace,
         span: Span,
     },
     Alias {
-        target: ItemId,
+        target: crate::hir::DefId,
         span: Span,
     },
     EnumVariant {
-        enum_item: ItemId,
-        variant: ItemId,
+        enum_item: crate::hir::DefId,
+        variant: crate::hir::DefId,
         span: Span,
     },
     AssociatedItem {
-        owner: ItemId,
-        item: ItemId,
+        owner: crate::hir::DefId,
+        item: crate::hir::DefId,
         namespace: Namespace,
         span: Span,
     },
@@ -77,22 +58,22 @@ pub enum Binding {
         namespace: Namespace,
     },
     Local {
-        id: u64,
+        id: crate::hir::HirId,
         namespace: Namespace,
         span: Span,
     },
     Parameter {
-        id: u64,
+        id: crate::hir::HirId,
         namespace: Namespace,
         span: Span,
     },
     Generic {
-        id: u64,
+        id: crate::hir::DefId,
         namespace: Namespace,
         span: Span,
     },
     Macro {
-        id: ItemId,
+        id: crate::hir::DefId,
         span: Span,
     },
     Error {
@@ -106,10 +87,6 @@ impl Binding {
         match self {
             Self::Module { .. }
             | Self::Definition {
-                namespace: Namespace::Type,
-                ..
-            }
-            | Self::DefinitionId {
                 namespace: Namespace::Type,
                 ..
             }
@@ -128,7 +105,6 @@ impl Binding {
                 ..
             } => Namespace::Type,
             Self::Definition { namespace, .. }
-            | Self::DefinitionId { namespace, .. }
             | Self::Import { namespace, .. }
             | Self::AssociatedItem { namespace, .. }
             | Self::Local { namespace, .. }
@@ -227,9 +203,9 @@ pub enum DeclarationOutcome {
     Conflict,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResolutionResult {
-    Found(AstRes),
+    Found(crate::hir::Res),
     Ambiguous,
     NotFound,
 }
@@ -387,13 +363,13 @@ impl ModuleTree {
         };
         let mut result = self.resolve(module, first, namespace, rules);
         for segment in rest {
-            let AstRes::Module(next) = (match result {
+            let crate::hir::Res::Module(next) = (match result {
                 ResolutionResult::Found(res) => res,
                 _ => return ResolutionResult::NotFound,
             }) else {
                 return ResolutionResult::NotFound;
             };
-            result = self.resolve(&next, segment, namespace, rules);
+            result = self.resolve(&QualifiedPath::from_slice(&next), segment, namespace, rules);
         }
         result
     }
@@ -411,31 +387,29 @@ impl ModuleTree {
         rules: ResolutionRules,
     ) -> ResolutionResult {
         match self.resolve_path(module, path, namespace, rules) {
-            ResolutionResult::Found(AstRes::Module(_))
-            | ResolutionResult::Found(AstRes::Item(_)) => {
-                ResolutionResult::Found(AstRes::Error)
+            ResolutionResult::Found(crate::hir::Res::Module(_)) => {
+                ResolutionResult::Found(crate::hir::Res::Error)
             }
             result => result,
         }
     }
 }
 
-fn binding_to_res(binding: &Binding) -> AstRes {
+fn binding_to_res(binding: &Binding) -> crate::hir::Res {
     match binding {
-        Binding::Module { target, .. } => AstRes::Module(target.clone()),
-        Binding::Definition { target, .. } | Binding::Alias { target, .. } => AstRes::Item(*target),
-        Binding::DefinitionId { target, .. } => AstRes::Def(target.clone()),
+        Binding::Module { target, .. } => crate::hir::Res::Module(target.segments.clone()),
+        Binding::Definition { target, .. } | Binding::Alias { target, .. } => crate::hir::Res::Def(target.clone()),
         Binding::Import { target, .. } => target.clone(),
         Binding::EnumVariant { variant, .. } | Binding::AssociatedItem { item: variant, .. } => {
-            AstRes::Item(*variant)
+            crate::hir::Res::Def(variant.clone())
         }
-        Binding::ExternCrate { package, .. } => AstRes::Builtin(package.clone()),
-        Binding::Builtin { name, .. } => AstRes::Builtin(name.clone()),
-        Binding::Local { id, .. } => AstRes::Local(*id),
-        Binding::Parameter { id, .. } => AstRes::Parameter(*id),
-        Binding::Generic { id, .. } => AstRes::Generic(*id),
-        Binding::Macro { id, .. } => AstRes::Item(*id),
-        Binding::Error { .. } => AstRes::Error,
+        Binding::ExternCrate { package, .. } => crate::hir::Res::BuiltinName(package.clone()),
+        Binding::Builtin { name, .. } => crate::hir::Res::BuiltinName(name.clone()),
+        Binding::Local { id, .. } => crate::hir::Res::Local(id.clone()),
+        Binding::Parameter { id, .. } => crate::hir::Res::Parameter(id.clone()),
+        Binding::Generic { id, .. } => crate::hir::Res::Generic(id.clone()),
+        Binding::Macro { id, .. } => crate::hir::Res::Def(id.clone()),
+        Binding::Error { .. } => crate::hir::Res::Error,
     }
 }
 
@@ -536,23 +510,28 @@ impl LocalScope {
 /// package module tree, and is the only component that performs name lookup.
 #[derive(Debug)]
 pub struct AstResolver<'a> {
-    package_id: Option<crate::hir::PackageId>,
+    /// The package that owns every definition allocated by this resolver.
+    /// Resolution must always have an explicit owner; synthesizing a package
+    /// identity would make DefIds silently refer to a non-existent crate.
+    package_id: crate::hir::PackageId,
     next_def_id: u32,
     item_def_ids: HashMap<ItemId, crate::hir::DefId>,
     pub modules: &'a mut ModuleTree,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
-    resolutions: HashMap<ItemId, AstRes>,
-    expr_resolutions: HashMap<ExprId, AstRes>,
+    resolutions: HashMap<ItemId, crate::hir::Res>,
+    expr_resolutions: HashMap<ExprId, crate::hir::Res>,
 }
 
 impl<'a> AstResolver<'a> {
     pub fn from_provider(
+        package_id: crate::hir::PackageId,
         modules: &'a mut ModuleTree,
         provider: &dyn crate::ast::package::provider::PackageProvider,
     ) -> Self {
         Self::new(
+            package_id,
             modules,
             provider.declaration_rules(),
             provider.resolution_rules(),
@@ -560,12 +539,13 @@ impl<'a> AstResolver<'a> {
     }
 
     pub fn new(
+        package_id: crate::hir::PackageId,
         modules: &'a mut ModuleTree,
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
     ) -> Self {
         Self {
-            package_id: None,
+            package_id,
             next_def_id: 1,
             item_def_ids: HashMap::new(),
             modules,
@@ -583,20 +563,14 @@ impl<'a> AstResolver<'a> {
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
     ) -> Self {
-        let mut resolver = Self::new(modules, declaration_rules, resolution_rules);
-        resolver.package_id = Some(package_id);
-        resolver
+        Self::new(package_id, modules, declaration_rules, resolution_rules)
     }
 
     fn item_def_id(&mut self, item: ItemId) -> crate::hir::DefId {
         if let Some(def_id) = self.item_def_ids.get(&item) {
             return def_id.clone();
         }
-        let package_id = self
-            .package_id
-            .clone()
-            .expect("package-aware resolver required for DefId allocation");
-        let def_id = crate::hir::DefId::new(package_id, self.next_def_id);
+        let def_id = crate::hir::DefId::new(self.package_id.clone(), self.next_def_id);
         self.next_def_id += 1;
         self.item_def_ids.insert(item, def_id.clone());
         def_id
@@ -610,12 +584,16 @@ impl<'a> AstResolver<'a> {
         namespace: Namespace,
         span: Span,
     ) -> DeclarationOutcome {
-        if self.package_id.is_some() {
-            let def_id = self.item_def_id(item);
-            self.declare_definition_id(module, name, def_id, namespace, span)
-        } else {
-            self.declare_definition(module, name, item, namespace, span)
-        }
+        let def_id = self.item_def_id(item);
+        self.declare_module(
+            module,
+            name,
+            Binding::Definition {
+                target: def_id,
+                namespace,
+                span,
+            },
+        )
     }
 
     pub fn enter_scope(&mut self) {
@@ -649,32 +627,11 @@ impl<'a> AstResolver<'a> {
         namespace: Namespace,
         span: Span,
     ) -> DeclarationOutcome {
+        let def_id = self.item_def_id(item);
         self.declare_module(
             module,
             name,
             Binding::Definition {
-                target: item,
-                namespace,
-                span,
-            },
-        )
-    }
-
-    /// Register a definition whose final identity was allocated during AST
-    /// package construction. Consumers can carry the resulting `DefId`
-    /// directly into HIR without a second name-resolution pass.
-    pub fn declare_definition_id(
-        &mut self,
-        module: &QualifiedPath,
-        name: impl Into<Symbol>,
-        def_id: crate::hir::DefId,
-        namespace: Namespace,
-        span: Span,
-    ) -> DeclarationOutcome {
-        self.declare_module(
-            module,
-            name,
-            Binding::DefinitionId {
                 target: def_id,
                 namespace,
                 span,
@@ -689,14 +646,15 @@ impl<'a> AstResolver<'a> {
         item: ItemId,
         span: Span,
     ) -> DeclarationOutcome {
-        self.declare_module(module, name, Binding::Macro { id: item, span })
+        let def_id = self.item_def_id(item);
+        self.declare_module(module, name, Binding::Macro { id: def_id, span })
     }
 
     pub fn declare_import(
         &mut self,
         module: &QualifiedPath,
         name: impl Into<Symbol>,
-        target: AstRes,
+        target: crate::hir::Res,
         namespace: Namespace,
         span: Span,
     ) -> DeclarationOutcome {
@@ -769,32 +727,35 @@ impl<'a> AstResolver<'a> {
             result = self.resolve(module, first, namespace);
         }
         for segment in rest {
-            let ResolutionResult::Found(AstRes::Module(next)) = result else {
+            let ResolutionResult::Found(crate::hir::Res::Module(next)) = result else {
                 return ResolutionResult::NotFound;
             };
-            result = self
-                .modules
-                .resolve(&next, segment, namespace, self.resolution_rules);
+            result = self.modules.resolve(
+                &QualifiedPath::from_slice(&next),
+                segment,
+                namespace,
+                self.resolution_rules,
+            );
         }
         result
     }
 
-    pub fn record_resolution(&mut self, id: ItemId, result: AstRes) {
+    pub fn record_resolution(&mut self, id: ItemId, result: crate::hir::Res) {
         self.resolutions.insert(id, result);
     }
-    pub fn resolution(&self, id: ItemId) -> Option<&AstRes> {
+    pub fn resolution(&self, id: ItemId) -> Option<&crate::hir::Res> {
         self.resolutions.get(&id)
     }
 
-    pub fn resolution_table(&self) -> &HashMap<ItemId, AstRes> {
+    pub fn resolution_table(&self) -> &HashMap<ItemId, crate::hir::Res> {
         &self.resolutions
     }
 
-    pub fn record_expr_resolution(&mut self, id: ExprId, result: AstRes) {
+    pub fn record_expr_resolution(&mut self, id: ExprId, result: crate::hir::Res) {
         self.expr_resolutions.insert(id, result);
     }
 
-    pub fn expr_resolution(&self, id: ExprId) -> Option<&AstRes> {
+    pub fn expr_resolution(&self, id: ExprId) -> Option<&crate::hir::Res> {
         self.expr_resolutions.get(&id)
     }
 
@@ -808,12 +769,12 @@ impl<'a> AstResolver<'a> {
             .resolve_path_final(module, path, namespace, self.resolution_rules)
     }
 
-    pub fn expr_resolution_table(&self) -> &HashMap<ExprId, AstRes> {
+    pub fn expr_resolution_table(&self) -> &HashMap<ExprId, crate::hir::Res> {
         &self.expr_resolutions
     }
 
-    /// Collect declarations from parsed package items. This is intentionally
-    /// AST-only; HIR identities are assigned later by the lowering boundary.
+    /// Collect declarations from parsed package items and allocate their
+    /// semantic HIR identities before lowering begins.
     pub fn collect_package_items(&mut self, items: &[crate::ast::package::PackageItem]) {
         for package_item in items {
             let module = package_item.module_path.clone();
@@ -829,7 +790,7 @@ impl<'a> AstResolver<'a> {
     pub fn resolve_imports(
         &mut self,
         pending: &mut Vec<ImportSpec>,
-        mut lookup: impl FnMut(&Self, &ImportSpec) -> Option<AstRes>,
+        mut lookup: impl FnMut(&Self, &ImportSpec) -> Option<crate::hir::Res>,
     ) {
         loop {
             let mut progress = false;
@@ -862,12 +823,8 @@ impl<'a> AstResolver<'a> {
         // Declarations are resolved identities too: recording the item here
         // lets downstream stages consume the AST result table without having
         // to reconstruct an identity from the syntax node.
-        if self.package_id.is_none() {
-            self.record_resolution(id, AstRes::Item(id));
-        } else {
-            let def_id = self.item_def_id(id);
-            self.record_resolution(id, AstRes::Def(def_id));
-        }
+        let def_id = self.item_def_id(id);
+        self.record_resolution(id, crate::hir::Res::Def(def_id));
         match item.kind() {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
@@ -962,11 +919,11 @@ mod tests {
         );
         assert!(matches!(
             tree.resolve(&root, "Thing", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(1))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(1)))
         ));
         assert!(matches!(
             tree.resolve(&root, "Thing", Namespace::Value, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(2))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(2)))
         ));
     }
 
@@ -999,7 +956,7 @@ mod tests {
         );
         assert_eq!(
             resolver.resolve(&root, "x", Namespace::Value),
-            ResolutionResult::Found(AstRes::Local(9))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1073,7 +1030,7 @@ mod tests {
                 &QualifiedPath::new(vec!["m".into(), "Thing".into()]),
                 Namespace::Type,
             ),
-            ResolutionResult::Found(AstRes::Item(42))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(42)))
         );
     }
 
@@ -1106,7 +1063,7 @@ mod tests {
         };
         assert_eq!(
             tree.resolve(&child, "x", Namespace::Value, with_parent),
-            ResolutionResult::Found(AstRes::Item(7))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(7)))
         );
     }
 
@@ -1136,11 +1093,11 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&root, "log", Namespace::Value, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(1))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(1)))
         );
         assert_eq!(
             tree.resolve(&root, "log", Namespace::Macro, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(2))
+            ResolutionResult::Found(crate::hir::Res::Def(crate::hir::DefId::local(2)))
         );
     }
 
@@ -1234,11 +1191,11 @@ mod tests {
         );
         assert!(matches!(
             tree.resolve(&path, "x", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(1))
+            ResolutionResult::Found(crate::hir::Res::Error)
         ));
         assert!(matches!(
             tree.resolve(&path, "x", Namespace::Value, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(2))
+            ResolutionResult::Found(crate::hir::Res::Error)
         ));
     }
 
@@ -1285,7 +1242,7 @@ mod tests {
         );
         assert_eq!(
             resolver.resolve(&path, "x", Namespace::Value),
-            ResolutionResult::Found(AstRes::Local(2))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1318,7 +1275,7 @@ mod tests {
         resolver.leave_scope();
         assert_eq!(
             resolver.resolve(&path, "x", Namespace::Value),
-            ResolutionResult::Found(AstRes::Local(1))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1340,7 +1297,7 @@ mod tests {
         );
         assert_eq!(
             resolver.resolve(&root(), "arg", Namespace::Value),
-            ResolutionResult::Found(AstRes::Parameter(3))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1362,7 +1319,7 @@ mod tests {
         );
         assert_eq!(
             resolver.resolve(&root(), "T", Namespace::Type),
-            ResolutionResult::Found(AstRes::Generic(4))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1381,7 +1338,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "i32", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Builtin("i32".into()))
+            ResolutionResult::Found(crate::hir::Res::BuiltinName("i32".into()))
         );
     }
 
@@ -1400,7 +1357,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "Alias", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(5))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1420,7 +1377,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "Some", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(7))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1441,7 +1398,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "CONST", Namespace::Value, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Item(9))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1460,7 +1417,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "dep", Namespace::Value, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Builtin("dep".into()))
+            ResolutionResult::Found(crate::hir::Res::BuiltinName("dep".into()))
         );
     }
 
@@ -1479,7 +1436,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "bad", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Error)
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1507,7 +1464,7 @@ mod tests {
         );
         assert_eq!(
             resolver.resolve_macro(&child, "m"),
-            ResolutionResult::Found(AstRes::Item(10))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 
@@ -1544,7 +1501,7 @@ mod tests {
         );
         assert_eq!(
             tree.resolve(&path, "Thing", Namespace::Type, ResolutionRules::default()),
-            ResolutionResult::Found(AstRes::Def(def_id))
+            ResolutionResult::Found(crate::hir::Res::Def(def_id))
         );
     }
 
@@ -1569,7 +1526,7 @@ mod tests {
                 &QualifiedPath::new(vec!["f".into()]),
                 Namespace::Value
             ),
-            ResolutionResult::Found(AstRes::Item(12))
+            ResolutionResult::Found(crate::hir::Res::Error)
         );
     }
 

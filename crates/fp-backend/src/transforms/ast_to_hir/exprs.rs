@@ -2212,7 +2212,7 @@ impl AstToHirLowerer {
             scope.namespace(),
         ) {
             fp_core::ast::resolve::ResolutionResult::Found(
-                fp_core::ast::resolve::AstRes::Def(id),
+                hir::Res::Def(id),
             ) => Some(hir::Res::Def(id)),
             _ => None,
         };
@@ -2222,7 +2222,7 @@ impl AstToHirLowerer {
         // front. The exported binding stays in its owning package.
         local
             .or_else(|| match self.workspace.resolve_external_path_from(&self.package_id, path, scope.namespace()) {
-                Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                Some(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                 _ => None,
             })
             .or_else(|| {
@@ -2234,7 +2234,7 @@ impl AstToHirLowerer {
                         fp_core::ast::resolve::Namespace::Type,
                     ) {
                         fp_core::ast::resolve::ResolutionResult::Found(
-                            fp_core::ast::resolve::AstRes::Def(id),
+                            hir::Res::Def(id),
                         ) => Some(hir::Res::Def(id)),
                         _ => None,
                     }

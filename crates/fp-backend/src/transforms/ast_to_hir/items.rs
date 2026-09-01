@@ -401,7 +401,7 @@ impl AstToHirLowerer {
             self.lookup_global_res(&qualified, PathResolutionScope::Type)
                 .or_else(|| {
                     match self.workspace.resolve_external_path_from(&self.package_id, &qualified, fp_core::ast::resolve::Namespace::Type) {
-                        Some(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        Some(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }
                 })
@@ -412,7 +412,7 @@ impl AstToHirLowerer {
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
                     fp_core::ast::resolve::ResolutionResult::Found(
-                        fp_core::ast::resolve::AstRes::Def(id),
+                        hir::Res::Def(id),
                     ) => Some(hir::Res::Def(id)),
                     _ => None,
                 })
@@ -424,7 +424,7 @@ impl AstToHirLowerer {
                         names.last()?,
                         fp_core::ast::resolve::Namespace::Type,
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }
                 })

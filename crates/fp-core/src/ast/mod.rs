@@ -38,7 +38,7 @@ pub use json::*;
 pub use macros::*;
 pub use pat::*;
 pub use resolve::{
-    AstRes, AstResolver, Binding, DeclarationOutcome, DeclarationRules, LocalScope,
+    AstResolver, Binding, DeclarationOutcome, DeclarationRules, LocalScope,
     ModuleTree as ResolveModuleTree, Namespace, ResolutionResult, ResolutionRules, Symbol,
 };
 pub use schema::*;

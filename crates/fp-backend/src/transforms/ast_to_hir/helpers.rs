@@ -132,7 +132,7 @@ impl AstToHirLowerer {
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }
                 })
@@ -660,7 +660,7 @@ impl AstToHirLowerer {
                     &self.package_id, &self.module_path, &full_path,
                     fp_core::ast::resolve::Namespace::Value,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                     _ => None,
                 } {
                     let predeclared_variant = self
@@ -759,7 +759,7 @@ impl AstToHirLowerer {
         {
             let primitive_path = self.canonicalize_segments(&segments);
             if let fp_core::ast::resolve::ResolutionResult::Found(
-                fp_core::ast::resolve::AstRes::Def(id),
+                hir::Res::Def(id),
             ) = self.workspace.resolve_module_path_final(
                 &self.package_id,
                 &self.module_path,
@@ -812,7 +812,7 @@ impl AstToHirLowerer {
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }
                 });
@@ -830,7 +830,7 @@ impl AstToHirLowerer {
                         leaf,
                         scope.namespace(),
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     }
                 });
@@ -1032,7 +1032,7 @@ impl AstToHirLowerer {
                             canonical_res = match self.workspace.resolve_module_name(
                                 &self.package_id, &parent, last, scope.namespace(),
                             ) {
-                                fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                                fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                                 _ => None,
                             };
                         }
@@ -1342,7 +1342,7 @@ impl AstToHirLowerer {
                             scope.namespace(),
                         )
                     {
-                        if let fp_core::ast::resolve::AstRes::Def(id) = res {
+                        if let hir::Res::Def(id) = res {
                             base.res = Some(hir::Res::Def(id));
                         }
                     }

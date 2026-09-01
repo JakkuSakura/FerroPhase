@@ -163,8 +163,8 @@ pub struct AstToHirLowerer {
     resolved_names: ResolvedNameTable,
     /// Results produced by the AST-stage resolver. Lowering may translate an
     /// AST identity into a HIR identity, but does not own first-time lookup.
-    ast_resolutions: HashMap<ast::ItemId, fp_core::ast::resolve::AstRes>,
-    ast_expr_resolutions: HashMap<ast::ExprId, fp_core::ast::resolve::AstRes>,
+    ast_resolutions: HashMap<ast::ItemId, hir::Res>,
+    ast_expr_resolutions: HashMap<ast::ExprId, hir::Res>,
     target_env: TargetEnv,
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
@@ -426,7 +426,7 @@ impl AstToHirLowerer {
         self
     }
 
-    fn ast_resolution(&self, item: ast::ItemId) -> Option<&fp_core::ast::resolve::AstRes> {
+    fn ast_resolution(&self, item: ast::ItemId) -> Option<&hir::Res> {
         self.ast_resolutions.get(&item)
     }
 
@@ -801,7 +801,7 @@ impl AstToHirLowerer {
     /// `ns`, with no visibility filtering. This is reserved for canonical
     /// paths owned by the current definition; ordinary references go through
     /// the AST resolver's visibility-aware APIs.
-    fn tree_lookup_raw(&self, path: &fp_core::ast::path::QualifiedPath, ns: fp_core::ast::resolve::Namespace) -> Option<fp_core::ast::resolve::AstRes> {
+    fn tree_lookup_raw(&self, path: &fp_core::ast::path::QualifiedPath, ns: fp_core::ast::resolve::Namespace) -> Option<hir::Res> {
         match self.workspace.resolve_module_path_final(
             &self.package_id,
             &self.module_path,
@@ -817,7 +817,7 @@ impl AstToHirLowerer {
         let prelude = fp_core::ast::path::QualifiedPath::new(vec!["prelude".to_owned()]);
         match self.workspace.resolve_module_name(&self.package_id, &prelude, name, ns) {
             fp_core::ast::resolve::ResolutionResult::Found(
-                fp_core::ast::resolve::AstRes::Def(def_id),
+                hir::Res::Def(def_id),
             ) => Some(hir::Res::Def(def_id)),
             _ => None,
         }
@@ -832,14 +832,14 @@ impl AstToHirLowerer {
     /// canonicalization should expand).
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
         match self.workspace.resolve_local(name, fp_core::ast::resolve::Namespace::Type) {
-            fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
             _ => None,
         }
     }
 
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
         match self.workspace.resolve_local(name, fp_core::ast::resolve::Namespace::Value) {
-            fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+            fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
             _ => None,
         }
     }
@@ -859,7 +859,7 @@ impl AstToHirLowerer {
             fp_core::ast::resolve::Namespace::Type,
         ) {
             fp_core::ast::resolve::ResolutionResult::Found(
-                fp_core::ast::resolve::AstRes::Def(def_id),
+                hir::Res::Def(def_id),
             ) => Some(hir::Res::Def(def_id)),
             _ => None,
         }
@@ -901,7 +901,7 @@ impl AstToHirLowerer {
                     &self.package_id, &self.module_path, &qualified,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                     _ => None,
                 };
                 is_trait(resolved)
@@ -913,7 +913,7 @@ impl AstToHirLowerer {
                     &self.package_id, &self.module_path, &path,
                     fp_core::ast::resolve::Namespace::Type,
                 ) {
-                    fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                    fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                     _ => None,
                 };
                 is_trait(resolved)
@@ -951,7 +951,7 @@ impl AstToHirLowerer {
             fp_core::ast::resolve::Namespace::Value,
         ) {
             fp_core::ast::resolve::ResolutionResult::Found(
-                fp_core::ast::resolve::AstRes::Def(def_id),
+                hir::Res::Def(def_id),
             ) => Some(hir::Res::Def(def_id)),
             _ => None,
         }
@@ -3875,7 +3875,7 @@ impl AstToHirLowerer {
                         &self.package_id, &self.module_path, &source_path,
                         fp_core::ast::resolve::Namespace::Type,
                     ) {
-                        fp_core::ast::resolve::ResolutionResult::Found(fp_core::ast::resolve::AstRes::Def(id)) => Some(hir::Res::Def(id)),
+                        fp_core::ast::resolve::ResolutionResult::Found(hir::Res::Def(id)) => Some(hir::Res::Def(id)),
                         _ => None,
                     };
                     let source_fields: Vec<ast::StructuralField> = source_def_id
