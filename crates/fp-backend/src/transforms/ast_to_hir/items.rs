@@ -430,7 +430,7 @@ impl AstToHirLowerer {
                                     .get(&(key.clone(), func.name.name.clone().into()))
                                     .cloned()
                             })
-                            .unwrap_or_else(|| self.def_id_for_item(item));
+                            .unwrap_or_else(|| self.next_def_id());
                         if let Some(key) = impl_key.clone() {
                             self.impl_items.insert(
                                 (key, func.name.name.clone().into()),
@@ -471,7 +471,7 @@ impl AstToHirLowerer {
                         let assoc_const = self.transform_const_def(const_item)?;
                         // Must reuse the same `DefId` `predeclare_items`
                         // already allocated and registered this const's
-                        // value-path under (`self.def_id_for_item`, same
+                        // value-path under (`next_def_id`, same
                         // as the `DefFunction` arm above does for
                         // methods) — a fresh `next_def_id()` here mints an
                         // unrelated number, so any reference resolved
@@ -485,7 +485,7 @@ impl AstToHirLowerer {
                                     .get(&(key.clone(), const_item.name.name.clone().into()))
                                     .cloned()
                             })
-                            .unwrap_or_else(|| self.def_id_for_item(item));
+                            .unwrap_or_else(|| self.next_def_id());
                         if let Some(key) = impl_key.clone() {
                             self.impl_items.insert(
                                 (key, const_item.name.name.clone().into()),
@@ -620,7 +620,7 @@ impl AstToHirLowerer {
                                     return None;
                                 };
                                 (trait_func.name.name == func.name.name)
-                                    .then(|| self.def_id_for_item(item))
+                                    .then(|| self.next_def_id())
                             });
                             if let Some(trait_method_def_id) = trait_method_def_id {
                                 if let Some(op) =
@@ -708,7 +708,7 @@ impl AstToHirLowerer {
                         // reads when a concrete impl doesn't redeclare it.
                         let function =
                             self.transform_function_with_body(func, Some(self_ty.clone()), true)?;
-                        let method_def_id = self.def_id_for_item(item);
+                        let method_def_id = self.next_def_id();
                         if let Some(tag) =
                             fp_core::intrinsics::extract_op_attr(&func.attrs, "method")
                         {
@@ -734,7 +734,7 @@ impl AstToHirLowerer {
                         // fallback signature source.
                         let function =
                             self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
-                        let method_def_id = self.def_id_for_item(item);
+                        let method_def_id = self.next_def_id();
                         if let Some(tag) =
                             fp_core::intrinsics::extract_op_attr(&func_decl.attrs, "method")
                         {
@@ -771,7 +771,7 @@ impl AstToHirLowerer {
                             })
                             .collect();
                         items.push(hir::TraitItem {
-                            def_id: self.def_id_for_item(item),
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: decl_type.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocType(hir::TraitAssocType {
@@ -783,7 +783,7 @@ impl AstToHirLowerer {
                     ast::ItemKind::DefConst(const_item) => {
                         let konst = self.transform_const_def(const_item)?;
                         items.push(hir::TraitItem {
-                            def_id: self.def_id_for_item(item),
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: const_item.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {
@@ -796,7 +796,7 @@ impl AstToHirLowerer {
                     ast::ItemKind::DeclConst(const_item) => {
                         let ty = self.transform_type_to_hir(&const_item.ty)?;
                         items.push(hir::TraitItem {
-                            def_id: self.def_id_for_item(item),
+                            def_id: self.next_def_id(),
                             hir_id: self.next_id(),
                             name: const_item.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {

@@ -65,26 +65,26 @@ impl AstToHirLowerer {
             }
             match item.kind() {
                 ItemKind::Module(module) => {
-                    self.allocate_def_id_for_item(item);
+                    self.next_def_id();
                     self.record_module_def(module.name.as_str());
                     self.push_module_scope(&module.name.name, &module.visibility);
                     self.predeclare_items(&module.items, tolerant)?;
                     self.pop_module_scope();
                 }
                 ItemKind::DefConst(def_const) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
                 }
                 ItemKind::DefStatic(def_static) if attrs_has_name(&def_static.attrs, "host") => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_value_def(&def_static.name.name, def_id, &def_static.visibility);
                 }
                 ItemKind::DeclStatic(decl) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
                 }
                 ItemKind::DefStruct(def_struct) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &def_struct.name.name,
                         def_id.clone(),
@@ -102,7 +102,7 @@ impl AstToHirLowerer {
                         .insert(def_id, def_struct.value.fields.clone());
                 }
                 ItemKind::DefStructural(def_structural) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &def_structural.name.name,
                         def_id.clone(),
@@ -120,7 +120,7 @@ impl AstToHirLowerer {
                         .insert(def_id, def_structural.value.fields.clone());
                 }
                 ItemKind::OpaqueType(opaque_def) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &opaque_def.name.name,
                         def_id.clone(),
@@ -129,7 +129,7 @@ impl AstToHirLowerer {
                     self.struct_field_defs.insert(def_id, Vec::new());
                 }
                 ItemKind::DefEnum(def_enum) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &def_enum.name.name,
                         def_id.clone(),
@@ -176,7 +176,7 @@ impl AstToHirLowerer {
                     }
                 }
                 ItemKind::DefFunction(def_fn) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
                 }
                 ItemKind::DeclFunction(decl_fn) => {
@@ -187,11 +187,11 @@ impl AstToHirLowerer {
                     // re-exports like `pub use macos::*;`) can already see
                     // them when it enumerates the module tree's value
                     // bindings.
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_value_def(&decl_fn.name.name, def_id, &ast::Visibility::Public);
                 }
                 ItemKind::DefTrait(def_trait) => {
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &def_trait.name.name,
                         def_id.clone(),
@@ -205,7 +205,7 @@ impl AstToHirLowerer {
                     self.trait_def_modules
                         .insert(def_trait.name.name.clone(), self.module_path.clone());
                     for trait_item in &def_trait.items {
-                        self.allocate_def_id_for_item(trait_item);
+                        self.next_def_id();
                     }
                 }
                 ItemKind::DefType(def_type) => {
@@ -214,7 +214,7 @@ impl AstToHirLowerer {
                     // table for substitution, but also publish the normal
                     // type binding so dependent crates resolve it through
                     // the HIR definition graph like rustc does.
-                    let def_id = self.allocate_def_id_for_item(item);
+                    let def_id = self.next_def_id();
                     self.register_type_def(
                         &def_type.name.name,
                         def_id.clone(),
@@ -292,7 +292,7 @@ impl AstToHirLowerer {
                         // do for an ordinary module-qualified alias RHS.
                         let defer = false;
                         if !defer {
-                            let def_id = self.allocate_def_id_for_item(item);
+                            let def_id = self.next_def_id();
                             self.register_type_def(
                                 &def_type.name.name,
                                 def_id.clone(),
@@ -326,12 +326,12 @@ impl AstToHirLowerer {
                     // — everything else keeps today's immediate behavior,
                     // including its immediate failure modes. Checked via
                     // `resolve_type_symbol` (non-mutating) *before* the
-                    // first mutation below (`allocate_def_id_for_item`),
+                    // first mutation below (`next_def_id`),
                     // so a deferred item has made zero state changes and
                     // is safe to fully re-run later, unmodified.
                     let defer = false;
                     if !defer {
-                        let impl_def_id = self.allocate_def_id_for_item(item);
+                        let impl_def_id = self.next_def_id();
                         // A self-type can be permanently unresolvable — not a
                         // timing issue an import-order retry would fix, but a
                         // genuine dead end (e.g. its target type lives in a
@@ -370,14 +370,14 @@ impl AstToHirLowerer {
                         for impl_item in &impl_block.items {
                             match impl_item.kind() {
                                 ast::ItemKind::DefFunction(function) => {
-                                    let def_id = self.allocate_def_id_for_item(impl_item);
+                                    let def_id = self.next_def_id();
                                     self.impl_items.insert(
                                         (impl_key.clone(), function.name.name.clone().into()),
                                         def_id,
                                     );
                                 }
                                 ast::ItemKind::DefConst(constant) => {
-                                    let def_id = self.allocate_def_id_for_item(impl_item);
+                                    let def_id = self.next_def_id();
                                     self.impl_items.insert(
                                         (impl_key.clone(), constant.name.name.clone().into()),
                                         def_id,
@@ -390,13 +390,13 @@ impl AstToHirLowerer {
                         // Collection still assigns stable identities to the
                         // impl and its members. Header resolution is owned by
                         // the AST resolver before lowering.
-                        self.allocate_def_id_for_item(item);
+                        self.next_def_id();
                         for impl_item in &impl_block.items {
                             if matches!(
                                 impl_item.kind(),
                                 ast::ItemKind::DefFunction(_) | ast::ItemKind::DefConst(_)
                             ) {
-                                self.allocate_def_id_for_item(impl_item);
+                                self.next_def_id();
                             }
                         }
                     }
