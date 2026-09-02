@@ -150,6 +150,7 @@ pub struct AstToHirLowerer {
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
+    local_scope: fp_core::hir::resolve::LocalScope,
     /// The whole workspace's HIR (every already-published dependency
     /// package, plus this package once transformed) — required upfront for
     /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
@@ -326,6 +327,7 @@ impl AstToHirLowerer {
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             workspace,
+            local_scope: fp_core::hir::resolve::LocalScope::new(),
             hir_program,
             diagnostics: DiagnosticManager::new(),
         }
@@ -372,7 +374,7 @@ impl AstToHirLowerer {
             .file_id(file_path.as_ref())
             .unwrap_or(0);
         self.current_position = 0;
-        self.workspace.reset_local_scope();
+        self.local_scope = fp_core::hir::resolve::LocalScope::new();
         self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
@@ -534,11 +536,11 @@ impl AstToHirLowerer {
         self.module_path.push(name.to_string());
         let child_visibility = self.compute_child_visibility(visibility);
         let _ = child_visibility;
-        self.workspace.enter_local_scope();
+        self.local_scope.enter();
     }
 
     fn pop_module_scope(&mut self) {
-        self.workspace.leave_local_scope();
+        self.local_scope.leave();
         self.module_path.pop();
     }
 
@@ -583,10 +585,7 @@ impl AstToHirLowerer {
     /// resolution that came from one of the other tiers (a real path that
     /// canonicalization should expand).
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self
-            .workspace
-            .resolve_local(name, fp_core::hir::resolve::Namespace::Type)
-        {
+        match self.local_scope.resolve(name, fp_core::hir::resolve::Namespace::Type, self.workspace.provider().resolution_rules()) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
@@ -595,10 +594,7 @@ impl AstToHirLowerer {
     }
 
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self
-            .workspace
-            .resolve_local(name, fp_core::hir::resolve::Namespace::Value)
-        {
+        match self.local_scope.resolve(name, fp_core::hir::resolve::Namespace::Value, self.workspace.provider().resolution_rules()) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
@@ -727,11 +723,11 @@ impl AstToHirLowerer {
     }
 
     fn push_type_scope(&mut self) {
-        self.workspace.enter_local_scope();
+        self.local_scope.enter();
     }
 
     fn pop_type_scope(&mut self) {
-        self.workspace.leave_local_scope();
+        self.local_scope.leave();
     }
 
     /// Create a span for the current position

@@ -28,9 +28,6 @@ pub struct AstProgram {
     /// of providers (previously O(providers × package-list) per lookup,
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
-    /// Explicit AST local-resolution state. Lowering borrows this facade;
-    /// it does not own lexical/local binding maps.
-    local_scope: Rc<RefCell<crate::hir::resolve::LocalScope>>,
 }
 
 impl AstProgram {
@@ -38,40 +35,7 @@ impl AstProgram {
         Self {
             crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
-            local_scope: Rc::new(RefCell::new(crate::hir::resolve::LocalScope::new())),
         }
-    }
-
-    pub fn reset_local_scope(&self) {
-        *self.local_scope.borrow_mut() = crate::hir::resolve::LocalScope::new();
-    }
-
-    pub fn enter_local_scope(&self) {
-        self.local_scope.borrow_mut().enter();
-    }
-
-    pub fn leave_local_scope(&self) {
-        self.local_scope.borrow_mut().leave();
-    }
-
-    pub fn resolve_local(
-        &self,
-        name: &str,
-        namespace: crate::hir::resolve::Namespace,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.local_scope
-            .borrow()
-            .resolve(name, namespace, self.provider().resolution_rules())
-    }
-
-    pub fn declare_local(
-        &self,
-        name: impl Into<crate::hir::resolve::Symbol>,
-        binding: crate::hir::resolve::Binding,
-    ) -> crate::hir::resolve::DeclarationOutcome {
-        self.local_scope
-            .borrow_mut()
-            .declare(name, binding, self.provider().declaration_rules())
     }
 
     /// Publish a package source slot and return its compiler-owned result.

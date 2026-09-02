@@ -2,7 +2,7 @@ use super::*;
 
 impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
-        self.workspace.reset_local_scope();
+        self.local_scope = fp_core::hir::resolve::LocalScope::new();
         self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.current_owner = None;
         self.local_id = 0;
