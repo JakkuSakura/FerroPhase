@@ -10,7 +10,7 @@ use fp_core::hir;
 use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
-    ResolutionRules,
+    ResolutionResult, ResolutionRules,
 };
 use fp_core::span::Span;
 use std::cell::RefCell;
@@ -69,8 +69,9 @@ impl<'hir> AstResolver<'hir> {
         name: impl Into<Symbol>,
         binding: Binding,
     ) -> DeclarationOutcome {
+        let rules = self.declaration_rules;
         self.package_tree_mut()
-            .declare(module, name, binding, self.declaration_rules)
+            .declare(module, name, binding, rules)
     }
 
     pub fn declare_import(
@@ -97,6 +98,46 @@ impl<'hir> AstResolver<'hir> {
             let module = package_item.module_path.clone();
             self.package_tree_mut().ensure_module(&module);
             self.collect_item(&module, &package_item.item);
+        }
+        let preludes = self.package.borrow().prelude_modules.clone();
+        for prelude in preludes {
+            if let ResolutionResult::Found(hir::Res::Module(def_id)) =
+                self.package_tree().resolve_path(
+                    &QualifiedPath::new(prelude.package_id.clone(), Vec::new()),
+                    &prelude.path,
+                    Namespace::Type,
+                    self.resolution_rules,
+                )
+            {
+                if !self.hir_package.prelude_modules.contains(&def_id) {
+                    self.hir_package.prelude_modules.push(def_id);
+                }
+            }
+        }
+        // Make resolved prelude modules part of the package's root lookup
+        // scope, matching the implicit-import behavior expected by callers.
+        let prelude_ids = self.hir_package.prelude_modules.clone();
+        for def_id in prelude_ids {
+            let Some(path) = self.package_tree().path_for_module(&def_id) else {
+                continue;
+            };
+            let entries: Vec<_> = self
+                .package_tree()
+                .bindings(&path)
+                .flat_map(|(symbol, bindings)| {
+                    bindings
+                        .iter()
+                        .cloned()
+                        .map(move |binding| (symbol.clone(), binding))
+                })
+                .collect();
+            for (name, binding) in entries {
+                self.declare_module(
+                    &QualifiedPath::new(self.package.borrow().package_id.clone(), Vec::new()),
+                    name,
+                    binding,
+                );
+            }
         }
     }
 
@@ -209,7 +250,10 @@ impl<'hir> AstResolver<'hir> {
                         .keys()
                         .filter_map(|name| {
                             match source.resolve(
-                                &QualifiedPath::new(Vec::new()),
+                                &QualifiedPath::new(
+                                    self.package.borrow().package_id.clone(),
+                                    Vec::new(),
+                                ),
                                 name.as_str(),
                                 directive.namespace,
                                 self.resolution_rules,
