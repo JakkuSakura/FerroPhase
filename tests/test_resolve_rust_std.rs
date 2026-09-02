@@ -52,6 +52,49 @@ fn resolves_items_within_std_package() {
     assert_failures("std package", failures);
 }
 
+#[test]
+fn resolves_core_f128_constants_from_external_package() {
+    let prepared = prepare_std();
+    let current_package = register_external_package(&prepared);
+    assert_paths_resolve(
+        &prepared,
+        &current_package,
+        [
+            "core::f128::consts::PI",
+            "core::f128::consts::TAU",
+            "core::f128::consts::GOLDEN_RATIO",
+            "core::f128::consts::EULER_GAMMA",
+            "core::f128::consts::FRAC_PI_2",
+            "core::f128::consts::FRAC_PI_3",
+            "core::f128::consts::FRAC_PI_4",
+            "core::f128::consts::FRAC_PI_6",
+            "core::f128::consts::FRAC_PI_8",
+        ],
+    );
+}
+
+#[test]
+fn resolves_std_runtime_and_thread_items_within_std_package() {
+    let prepared = prepare_std();
+    let std_package = PackageId::new("std");
+    assert_paths_resolve(
+        &prepared,
+        &std_package,
+        [
+            "rt::__rust_abort",
+            "rt::handle_rt_panic",
+            "rt::init",
+            "rt::thread_cleanup",
+            "rt::cleanup",
+            "rt::lang_start_internal",
+            "rt::lang_start",
+            "thread::local::LocalKey",
+            "thread::local::AccessError",
+            "thread::local::panic_access_error",
+        ],
+    );
+}
+
 struct PreparedStd {
     program: Rc<AstProgram>,
     hir_program: Rc<std::cell::RefCell<HirProgram>>,
@@ -179,6 +222,39 @@ fn assert_failures(scope: &str, failures: Vec<String>) {
         failures.len(),
         failures.join("\n")
     );
+}
+
+fn assert_paths_resolve(
+    prepared: &PreparedStd,
+    current_package: &PackageId,
+    paths: impl IntoIterator<Item = &'static str>,
+) {
+    let mut failures = Vec::new();
+    for path in paths {
+        let parsed = Path::new(PathPrefix::Root, path.split("::").map(Into::into).collect());
+        let mut resolved = false;
+        let mut ambiguous = false;
+        for namespace in [Namespace::Type, Namespace::Value, Namespace::Macro] {
+            match prepared.resolver.resolve_parsed_path(
+                current_package,
+                &InPackagePath::new(Vec::new()),
+                &parsed,
+                namespace,
+            ) {
+                ResolutionResult::Found(_) => resolved = true,
+                ResolutionResult::Ambiguous => ambiguous = true,
+                ResolutionResult::NotFound(_) => {}
+            }
+        }
+        if !resolved && ambiguous {
+            eprintln!("{path} is ambiguous during resolution");
+        } else if !resolved {
+            let message = format!("`{path}` was not resolved");
+            eprintln!("{message}");
+            failures.push(message);
+        }
+    }
+    assert_failures("focused", failures);
 }
 
 fn collect_known_items(
