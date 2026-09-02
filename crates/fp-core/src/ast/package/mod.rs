@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use semver::{Version, VersionReq};
 
-use crate::ast::module::{FeatureRef, ModuleId};
+use crate::ast::module::FeatureRef;
 pub use crate::package::PackageId;
 use crate::vfs::VirtualPath;
 
@@ -93,8 +93,8 @@ impl PackageDescriptor {
 pub mod provider;
 
 use crate::ast::path::QualifiedPath;
-use crate::ast::{FunctionSignature, Item, MethodSignature, TypeEnum, TypeStruct};
-use std::collections::{HashMap, HashSet};
+use crate::ast::{Item, MethodSignature};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PackageItem {
@@ -118,11 +118,7 @@ pub struct PackagePath {
 }
 
 /// A package's own AST/source-level content — both what a `PackageProvider`
-/// hands back (raw parsed source: `items`/`referenced_paths`)
-/// and, once typechecked, the definitions typechecking derives from it
-/// (`struct_defs`/`enum_defs`/`function_sigs`/...). One type across both
-/// stages rather than two near-identical ones: the typecheck-derived fields
-/// are simply empty until typechecking fills them in. Pairs with
+/// hands back (raw parsed source: `items`/`referenced_paths`). Pairs with
 /// `hir::HirPackage`/`mir::MirPackage`/`lir::LirPackage` as this layer's
 /// `XxxPackage` (there's no separate `AstProgram` — `items` is already the
 /// AST layer's un-lowered content, with no further flattening step the way
@@ -147,16 +143,10 @@ pub struct AstPackage {
     /// source file. Empty for untyped/fallback loads.
     pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
 
-    /// Compiled type and function definitions, keyed by
-    /// fully-qualified path (e.g. `["std","meta","TypeBuilder"]`). Empty
-    /// until typechecking populates them.
-    pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
-    pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
-    pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
 
     /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
     /// by `SelfType`'s own fully-qualified path -- deliberately not a field
-    /// on `TypeStruct`/`TypeEnum` themselves (nothing outside `fp-typing`
+    /// on AST item types themselves (nothing outside `fp-typing`
     /// ever reads a struct/enum's methods, so embedding it in the shared
     /// `Ty` representation every other crate also constructs would be
     /// storage those crates never use). One shared table regardless of
@@ -174,9 +164,6 @@ impl AstPackage {
             prelude_modules: Vec::new(),
             items: Vec::new(),
             referenced_paths: HashMap::new(),
-            struct_defs: HashMap::new(),
-            enum_defs: HashMap::new(),
-            function_sigs: HashMap::new(),
             method_sigs: HashMap::new(),
         }
     }
