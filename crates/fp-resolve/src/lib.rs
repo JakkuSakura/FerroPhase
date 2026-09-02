@@ -19,7 +19,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-pub struct AstResolver<'hir> {
+pub mod package;
+
+pub struct InPackageResolver<'hir> {
     hir_package: &'hir mut hir::HirPackage,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
@@ -30,7 +32,7 @@ pub struct AstResolver<'hir> {
     ast_program: Rc<AstProgram>,
 }
 
-impl<'hir> AstResolver<'hir> {
+impl<'hir> InPackageResolver<'hir> {
     pub fn new(
         ast_package_id: PackageId,
         hir_package: &'hir mut hir::HirPackage,
@@ -591,7 +593,7 @@ impl Resolver {
             let package = package.borrow();
             (package.package_id.clone(), package.items())
         };
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             package_id,
             hir_package,
             self.program.provider().declaration_rules(),
@@ -635,7 +637,7 @@ mod tests {
             },
             DeclarationRules::rust(),
         );
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut modules,
             DeclarationRules::rust(),
@@ -668,7 +670,7 @@ mod tests {
     fn worklist_retains_quiescent_unresolved_directive() {
         let root = InPackagePath::new(Vec::new());
         let mut modules = ModuleTree::new();
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut modules,
             DeclarationRules::rust(),
@@ -706,7 +708,7 @@ mod tests {
             },
             DeclarationRules::rust(),
         );
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut modules,
             DeclarationRules::rust(),
@@ -754,7 +756,7 @@ mod tests {
             },
             DeclarationRules::rust(),
         );
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut modules,
             DeclarationRules::rust(),
@@ -799,7 +801,7 @@ mod tests {
             },
             DeclarationRules::rust(),
         );
-        let mut resolver = AstResolver::new(
+        let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut modules,
             DeclarationRules::rust(),
