@@ -100,21 +100,77 @@ impl<'hir> InPackageResolver<'hir> {
         if !result.is_not_found() {
             return result;
         }
+        let unqualified = if external_package.as_ref() == Some(&target_package_id) {
+            Some(InPackagePath::new(
+                parsed.segments[1..]
+                    .iter()
+                    .map(|segment| segment.as_str().to_owned())
+                    .collect(),
+            ))
+        } else {
+            None
+        };
+        let result = unqualified
+            .as_ref()
+            .map(|path| {
+                package
+                    .module_tree
+                    .resolve_path(&root, path, namespace, self.resolution_rules)
+            })
+            .unwrap_or(result);
+        if !result.is_not_found() {
+            return result;
+        }
+
+        // Associated items are type-directed and are resolved by type
+        // checking. Resolve the type prefix here so later phases still get
+        // its stable identity without incorrectly exposing impl members as
+        // module bindings.
+        if parsed.segments.len() > 1 {
+            let type_namespace = Namespace::Type;
+            let absolute_prefix = InPackagePath::new(
+                absolute
+                    .segments
+                    .iter()
+                    .take(absolute.segments.len() - 1)
+                    .cloned()
+                    .collect(),
+            );
+            let mut prefix_result = package.module_tree.resolve_path(
+                &root,
+                &absolute_prefix,
+                type_namespace,
+                self.resolution_rules,
+            );
+            if prefix_result.is_not_found() {
+                if let Some(unqualified) = &unqualified {
+                    let prefix = InPackagePath::new(
+                        unqualified
+                            .segments
+                            .iter()
+                            .take(unqualified.segments.len().saturating_sub(1))
+                            .cloned()
+                            .collect(),
+                    );
+                    prefix_result = package.module_tree.resolve_path(
+                        &root,
+                        &prefix,
+                        type_namespace,
+                        self.resolution_rules,
+                    );
+                }
+            }
+            if let ResolutionResult::Found(hir::Res::Def(type_def_id)) = prefix_result {
+                return ResolutionResult::Found(hir::Res::Def(type_def_id));
+            }
+        }
+
         if external_package.as_ref() != Some(&target_package_id) {
             return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
                 target_package_id,
             ));
         }
-        let mut unqualified_segments = Vec::with_capacity(parsed.segments.len().saturating_sub(1));
-        for segment in &parsed.segments[1..] {
-            unqualified_segments.push(segment.as_str().to_owned());
-        }
-        package.module_tree.resolve_path(
-            &root,
-            &InPackagePath::new(unqualified_segments),
-            namespace,
-            self.resolution_rules,
-        )
+        result
     }
 
     fn package_tree(&self) -> &ModuleTree {
