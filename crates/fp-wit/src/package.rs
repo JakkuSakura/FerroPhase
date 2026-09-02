@@ -97,7 +97,7 @@ impl WitPackageProvider {
         let graph = descriptor;
         let mut package =
             AstPackage::new(package_id.clone(), package_id.as_str().to_string(), graph);
-        package.items = items;
+        package.set_items(items);
         Ok(package)
     }
 }

@@ -58,7 +58,7 @@ impl CSourceSerializer {
     /// Returns `Vec<(relative_path, code)>` with two entries per module.
     pub fn serialize_package(&self, source: &AstPackage) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
-        for module in fp_core::ast::package::split_package_into_modules(source) {
+        for module in source.modules.clone() {
             let rel_path = module.relative_path();
             let file = File {
                 path: std::path::PathBuf::from(&rel_path),

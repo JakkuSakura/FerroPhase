@@ -37,13 +37,11 @@ fn package_from_items_as(
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::AstPackage> {
     let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
-    source.items = items
-        .into_iter()
-        .map(|item| fp_core::ast::package::PackageItem {
-            module_path: QualifiedPath::new(Vec::new()),
-            item,
-        })
-        .collect();
+    source.modules.push(fp_core::ast::package::PackageModule {
+        name: String::new(),
+        items,
+        children: Vec::new(),
+    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
@@ -65,13 +63,11 @@ fn package_from_module_items(
 ) -> Result<fp_core::ast::package::AstPackage> {
     let package_id = PackageId::new("test");
     let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
-    source.items = items
-        .into_iter()
-        .map(|item| fp_core::ast::package::PackageItem {
-            module_path: QualifiedPath::new(module_path.clone()),
-            item,
-        })
-        .collect();
+    source.modules.push(fp_core::ast::package::PackageModule {
+        name: module_path.last().cloned().unwrap_or_default(),
+        items,
+        children: Vec::new(),
+    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
@@ -109,13 +105,11 @@ fn package_from_items_with_paths_as(
             ));
         }
     }
-    source.items = items
-        .into_iter()
-        .map(|(module_path, item)| fp_core::ast::package::PackageItem {
-            module_path: QualifiedPath::new(module_path),
-            item,
-        })
-        .collect();
+    source.modules.push(fp_core::ast::package::PackageModule {
+        name: String::new(),
+        items: items.into_iter().map(|(_, item)| item).collect(),
+        children: Vec::new(),
+    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)

@@ -158,7 +158,7 @@ impl PythonPackageProvider {
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph);
-        package.items = items;
+        package.set_items(items);
         Ok(package)
     }
 }

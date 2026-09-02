@@ -44,23 +44,6 @@ pub(crate) fn std_dependency() -> DependencyDescriptor {
     }
 }
 
-fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
-    for item in items {
-        if let ItemKind::Module(module) = item.kind() {
-            flatten_items(
-                &path.with_segment(module.name.as_str().to_owned()),
-                &module.items,
-                output,
-            );
-        } else {
-            output.push(PackageItem {
-                module_path: path.clone(),
-                item: item.clone(),
-            });
-        }
-    }
-}
-
 fn load_embedded_package(
     package_name: &str,
     root: std::path::PathBuf,
@@ -84,11 +67,10 @@ fn load_embedded_package(
         let result = frontend
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
-        flatten_items(
+        items.extend(AstPackage::flatten_module_items(
             &QualifiedPath::new(module_path.clone()),
             &result.ast.items,
-            &mut items,
-        );
+        ));
         descriptors.push(ModuleDescriptor {
             id: ModuleId::new(module_path.join("::")),
             package: package_id.clone(),
@@ -110,7 +92,7 @@ fn load_embedded_package(
     };
     let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
-    krate.items = items;
+    krate.set_items(items);
     Ok(krate)
 }
 

@@ -93,7 +93,7 @@ impl PackageDescriptor {
 pub mod provider;
 
 use crate::ast::path::QualifiedPath;
-use crate::ast::{Item, MethodSignature};
+use crate::ast::{Item, ItemKind};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -131,8 +131,8 @@ pub struct AstPackage {
 
     pub prelude_modules: Vec<PackagePath>,
 
-    /// All parsed source items with their fully qualified source paths.
-    pub items: Vec<PackageItem>,
+    /// Parsed module roots. Items are flattened on demand by `items()`.
+    pub modules: Vec<PackageModule>,
 
     /// For typed compiles (`typecheck_package`): each item's own
     /// qualified path (module path + name, plain `"::"`-free segments) ->
@@ -142,17 +142,6 @@ pub struct AstPackage {
     /// echoing whatever `use` items happened to already exist in the
     /// source file. Empty for untyped/fallback loads.
     pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
-
-
-    /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
-    /// by `SelfType`'s own fully-qualified path -- deliberately not a field
-    /// on AST item types themselves (nothing outside `fp-typing`
-    /// ever reads a struct/enum's methods, so embedding it in the shared
-    /// `Ty` representation every other crate also constructs would be
-    /// storage those crates never use). One shared table regardless of
-    /// whether `SelfType` resolves to a struct, an enum, or anything else
-    /// nominal -- registration and lookup don't need to branch on that.
-    pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
 }
 
 impl AstPackage {
@@ -162,9 +151,8 @@ impl AstPackage {
             name: name.into(),
             package,
             prelude_modules: Vec::new(),
-            items: Vec::new(),
+            modules: Vec::new(),
             referenced_paths: HashMap::new(),
-            method_sigs: HashMap::new(),
         }
     }
 
@@ -182,19 +170,96 @@ impl AstPackage {
                 package_id.as_str(),
             ),
         );
-        source.items.push(PackageItem {
-            module_path: QualifiedPath::new(Vec::new()),
-            item,
+        source.modules.push(PackageModule {
+            name: String::new(),
+            items: vec![item],
+            children: Vec::new(),
         });
         source
+    }
+
+    pub fn items(&self) -> Vec<PackageItem> {
+        let mut output = Vec::new();
+        for module in &self.modules {
+            let path = QualifiedPath::new(self.package_id.clone(), Vec::new());
+            let path = if module.name.is_empty() {
+                path
+            } else {
+                path.with_segment(module.name.clone())
+            };
+            Self::flatten_module_items_into(&path, &module.items, &mut |_| false, &mut output);
+            Self::flatten_child_modules(&path, &module.children, &mut output);
+        }
+        output
+    }
+
+    fn flatten_child_modules(
+        parent: &QualifiedPath,
+        modules: &[PackageModule],
+        output: &mut Vec<PackageItem>,
+    ) {
+        for module in modules {
+            let path = parent.with_segment(module.name.clone());
+            Self::flatten_module_items_into(&path, &module.items, &mut |_| false, output);
+            Self::flatten_child_modules(&path, &module.children, output);
+        }
+    }
+
+    /// Flattens nested AST modules into source items carrying their module
+    /// paths. Providers can use this once instead of maintaining their own
+    /// recursive module walkers.
+    pub fn flatten_module_items(
+        module_path: &QualifiedPath,
+        items: &[Item],
+    ) -> Vec<PackageItem> {
+        let mut output = Vec::new();
+        Self::flatten_module_items_into(module_path, items, &mut |_| false, &mut output);
+        output
+    }
+
+    pub fn flatten_module_items_filtered(
+        module_path: &QualifiedPath,
+        items: &[Item],
+        skip: &mut impl FnMut(&Item) -> bool,
+    ) -> Vec<PackageItem> {
+        let mut output = Vec::new();
+        Self::flatten_module_items_into(module_path, items, skip, &mut output);
+        output
+    }
+
+    fn flatten_module_items_into(
+        module_path: &QualifiedPath,
+        items: &[Item],
+        skip: &mut impl FnMut(&Item) -> bool,
+        output: &mut Vec<PackageItem>,
+    ) {
+        for item in items {
+            if skip(item) {
+                continue;
+            }
+            if let ItemKind::Module(module) = item.kind() {
+                Self::flatten_module_items_into(
+                    &module_path.with_segment(module.name.as_str().to_owned()),
+                    &module.items,
+                    skip,
+                    output,
+                );
+            } else {
+                output.push(PackageItem {
+                    module_path: module_path.clone(),
+                    item: item.clone(),
+                });
+            }
+        }
     }
 }
 
 /// One module's worth of items within a package, grouped by module path.
 #[derive(Clone, Debug)]
 pub struct PackageModule {
-    pub path: QualifiedPath,
+    pub name: String,
     pub items: Vec<Item>,
+    pub children: Vec<PackageModule>,
 }
 
 impl PackageModule {
@@ -202,31 +267,8 @@ impl PackageModule {
     /// `"config"`, `"repo/backend"`) — the convention every backend
     /// serializer uses to lay out one source file per module.
     pub fn relative_path(&self) -> String {
-        self.path.segments.join("/")
+        self.name.clone()
     }
-}
-
-/// Groups a package's items by their module path — the same per-module
-/// split every backend serializer needs to lay out one source file per
-/// module. Shared here instead of duplicated per-backend (previously
-/// reimplemented identically in `KotlinSerializer::serialize_package` and
-/// the CLI's per-module fallback loop). Returned in path-sorted order for
-/// stable output.
-pub fn split_package_into_modules(source: &AstPackage) -> Vec<PackageModule> {
-    let mut modules: BTreeMap<Vec<String>, Vec<Item>> = BTreeMap::new();
-    for pkg_item in &source.items {
-        modules
-            .entry(pkg_item.module_path.segments.clone())
-            .or_default()
-            .push(pkg_item.item.clone());
-    }
-    modules
-        .into_iter()
-        .map(|(segments, items)| PackageModule {
-            path: QualifiedPath::new(segments),
-            items,
-        })
-        .collect()
 }
 
 /// Resolves the `DefId` of the function named `function_name` anywhere in

@@ -31,7 +31,7 @@ impl PythonSerializer {
         &self,
         source: &fp_core::ast::package::AstPackage,
     ) -> Result<Vec<(String, String)>> {
-        fp_core::ast::package::split_package_into_modules(source)
+        source.modules.clone()
             .into_iter()
             .map(|module| {
                 let rel_path = module.relative_path();

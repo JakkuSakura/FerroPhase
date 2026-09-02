@@ -37,13 +37,11 @@ fn package_from_file(
         "roundtrip",
         fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "roundtrip"),
     );
-    source.items = items
-        .into_iter()
-        .map(|item| fp_core::ast::package::PackageItem {
-            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
-            item,
-        })
-        .collect();
+    source.modules.push(fp_core::ast::package::PackageModule {
+        name: String::new(),
+        items,
+        children: Vec::new(),
+    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let source = provider
         .load_package_source(&package_id)

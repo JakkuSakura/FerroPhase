@@ -12,23 +12,6 @@ use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
 
-fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
-    for item in items {
-        if let ItemKind::Module(module) = item.kind() {
-            flatten_items(
-                &path.with_segment(module.name.as_str().to_owned()),
-                &module.items,
-                output,
-            );
-        } else {
-            output.push(PackageItem {
-                module_path: path.clone(),
-                item: item.clone(),
-            });
-        }
-    }
-}
-
 /// Resolves a Ferro root file and its declared external modules into one
 /// package source snapshot. Filesystem access stays behind the VFS boundary.
 pub struct FerroModuleSourceResolver {
@@ -85,7 +68,7 @@ impl FerroModuleSourceResolver {
         let graph = package;
 
         let mut source = AstPackage::new(package_id, package_name, graph);
-        source.items = items;
+        source.set_items(items);
         Ok(source)
     }
 
@@ -124,7 +107,7 @@ impl FerroModuleSourceResolver {
             exports: Vec::new(),
             requires_features: Vec::new(),
         });
-        flatten_items(&module_path, &module_items, items);
+        items.extend(AstPackage::flatten_module_items(&module_path, &module_items));
 
         self.collect_external_declarations(
             package,

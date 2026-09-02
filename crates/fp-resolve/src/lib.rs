@@ -503,7 +503,7 @@ impl Resolver {
             let package = package.borrow();
             (
                 package.package_id.clone(),
-                package.items.clone(),
+                package.items(),
             )
         };
         let mut resolver = AstResolver::new(

@@ -579,7 +579,7 @@ fn package_source_from_items(
     };
     let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
-    source.items = items.to_vec();
+    source.set_items(items.to_vec());
     source
 }
 
@@ -716,11 +716,11 @@ impl RustExternalApiProvider {
                 ProviderError::other(format!("failed to parse {} API: {error}", id))
             })?;
         let mut items = Vec::new();
-        flatten_items(
+        items.extend(AstPackage::flatten_module_items_filtered(
             &QualifiedPath::new(vec![id.as_str().to_owned()]),
             &parsed.ast.items,
-            &mut items,
-        );
+            &mut |item| is_cfg_test(item_attrs(item)),
+        ));
         let mut metadata = PackageMetadata::default();
         // These provider-owned API facades are Rust crates from the
         // resolver's point of view. Their signatures intentionally use the
@@ -1221,32 +1221,6 @@ fn discover_items(
     Ok(())
 }
 
-fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
-    for item in items {
-        if is_cfg_test(item_attrs(item)) {
-            // Rust-test-only code (`#[cfg(test)] mod tests { .. }` or a
-            // standalone `#[cfg(test)] fn`) was never meant to exist in a
-            // transpiled target — skip it (and, for a module, everything
-            // nested inside it) entirely rather than trying to transpile
-            // test-harness code (`std::process::Command`, `std::fs`,
-            // tempdirs, ...) that has no equivalent here.
-            continue;
-        }
-        if let ItemKind::Module(module) = item.kind() {
-            flatten_items(
-                &path.with_segment(module.name.as_str().to_owned()),
-                &module.items,
-                output,
-            );
-        } else {
-            output.push(PackageItem {
-                module_path: path.clone(),
-                item: item.clone(),
-            });
-        }
-    }
-}
-
 /// Attributes for the item kinds that can plausibly carry `#[cfg(test)]`.
 fn item_attrs(item: &Item) -> &[Attribute] {
     match item.kind() {
@@ -1471,7 +1445,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     };
     let graph = package;
     let mut krate = AstPackage::new(package_id, crate_name, graph);
-    krate.items = items;
+    krate.set_items(items);
     Ok(krate)
 }
 
@@ -1502,11 +1476,11 @@ fn load_embedded_fp_package(
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
         register_threadlocal_serializer(result.serializer.clone());
-        flatten_items(
+        items.extend(AstPackage::flatten_module_items_filtered(
             &QualifiedPath::new(module_path.clone()),
             &result.ast.items,
-            &mut items,
-        );
+            &mut |item| is_cfg_test(item_attrs(item)),
+        ));
         descriptors.push(ModuleDescriptor {
             id: ModuleId::new(module_path.join("::")),
             package: package_id.clone(),
@@ -1528,7 +1502,7 @@ fn load_embedded_fp_package(
     };
     let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
-    krate.items = items;
+    krate.set_items(items);
     Ok(krate)
 }
 

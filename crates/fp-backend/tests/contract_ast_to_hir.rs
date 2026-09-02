@@ -73,14 +73,11 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
             "test",
         )),
     );
-    source.items = file
-        .items
-        .into_iter()
-        .map(|item| PackageItem {
-            module_path: QualifiedPath::new(Vec::new()),
-            item,
-        })
-        .collect();
+    source.modules.push(fp_core::ast::package::PackageModule {
+        name: String::new(),
+        items: file,
+        children: Vec::new(),
+    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
