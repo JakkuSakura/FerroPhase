@@ -1,18 +1,22 @@
 use super::worklist::ResolutionWorklist;
+use fp_core::ast::Path;
 use fp_core::ast::package::PackageId;
-use fp_core::ast::path::InPackagePath;
+use fp_core::ast::path::{InPackagePath, PathPrefix};
 use fp_core::ast::program::AstProgram;
 use fp_core::hir;
+use fp_core::hir::HirProgram;
 use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
     ResolutionResult, ResolutionRules,
 };
 use fp_core::span::Span;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 pub struct InPackageResolver<'hir> {
     hir_package: &'hir mut hir::HirPackage,
+    hir_program: Rc<RefCell<HirProgram>>,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
@@ -23,20 +27,81 @@ pub struct InPackageResolver<'hir> {
 }
 
 impl<'hir> InPackageResolver<'hir> {
-    pub fn resolve_path(
-        package: &hir::HirPackage,
-        path: &InPackagePath,
+    pub fn resolve_parsed_path(
+        &self,
+        current_package_id: &PackageId,
+        location: &InPackagePath,
+        parsed: &Path,
         namespace: Namespace,
-        rules: ResolutionRules,
     ) -> ResolutionResult {
-        package
-            .module_tree
-            .resolve_path(&InPackagePath::new(Vec::new()), path, namespace, rules)
+        if parsed.is_empty() {
+            return ResolutionResult::NotFound(
+                fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
+            );
+        }
+        let hir_program = self.hir_program.borrow();
+        let mut external_package = None;
+        if let Some(head) = parsed.head() {
+            for package_id in hir_program.packages.keys() {
+                if hir::HirProgram::external_crate_name(package_id) == head {
+                    external_package = Some(package_id.clone());
+                    break;
+                }
+            }
+        }
+        let target_package_id = match parsed.prefix {
+            PathPrefix::Plain | PathPrefix::Root => external_package
+                .clone()
+                .unwrap_or_else(|| current_package_id.clone()),
+            PathPrefix::Crate | PathPrefix::SelfMod | PathPrefix::Super(_) => {
+                current_package_id.clone()
+            }
+        };
+        let Some(absolute) = parsed.resolve_from(location) else {
+            return ResolutionResult::NotFound(
+                fp_core::hir::resolve::ResolutionNotFound::InvalidParent {
+                    location: location.clone(),
+                    depth: match parsed.prefix {
+                        PathPrefix::Super(depth) => depth,
+                        _ => 0,
+                    },
+                },
+            );
+        };
+        let Some(package) = hir_program.package(&target_package_id) else {
+            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
+                target_package_id,
+            ));
+        };
+        let root = InPackagePath::new(Vec::new());
+        let result =
+            package
+                .module_tree
+                .resolve_path(&root, &absolute, namespace, ResolutionRules::rust());
+        if !result.is_not_found() {
+            return result;
+        }
+        if external_package.as_ref() != Some(&target_package_id) {
+            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
+                target_package_id,
+            ));
+        }
+        let mut unqualified_segments = Vec::with_capacity(parsed.segments.len().saturating_sub(1));
+        for segment in &parsed.segments[1..] {
+            unqualified_segments.push(segment.as_str().to_owned());
+        }
+        package.module_tree.resolve_path(
+            &root,
+            &InPackagePath::new(unqualified_segments),
+            namespace,
+            ResolutionRules::rust(),
+        )
     }
 
     pub fn new(
         ast_package_id: PackageId,
         hir_package: &'hir mut hir::HirPackage,
+        hir_program: Rc<RefCell<HirProgram>>,
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
         ast_program: Rc<AstProgram>,
@@ -44,6 +109,7 @@ impl<'hir> InPackageResolver<'hir> {
         let _ = ast_package_id;
         Self {
             hir_package,
+            hir_program,
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
@@ -509,6 +575,7 @@ mod tests {
         let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut hir_package,
+            Rc::new(RefCell::new(HirProgram::new())),
             DeclarationRules::rust(),
             ResolutionRules::rust(),
             test_program(),
@@ -545,6 +612,7 @@ mod tests {
         let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut hir_package,
+            Rc::new(RefCell::new(HirProgram::new())),
             DeclarationRules::rust(),
             ResolutionRules::rust(),
             test_program(),
@@ -583,6 +651,7 @@ mod tests {
         let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut hir_package,
+            Rc::new(RefCell::new(HirProgram::new())),
             DeclarationRules::rust(),
             ResolutionRules::rust(),
             test_program(),
@@ -634,6 +703,7 @@ mod tests {
         let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut hir_package,
+            Rc::new(RefCell::new(HirProgram::new())),
             DeclarationRules::rust(),
             ResolutionRules::rust(),
             test_program(),
@@ -682,6 +752,7 @@ mod tests {
         let mut resolver = InPackageResolver::new(
             hir::PackageId::new("test"),
             &mut hir_package,
+            Rc::new(RefCell::new(HirProgram::new())),
             DeclarationRules::rust(),
             ResolutionRules::rust(),
             test_program(),

@@ -5,11 +5,11 @@
 
 use fp_core::ast::Path;
 use fp_core::ast::package::PackageId;
-use fp_core::ast::path::{InPackagePath, PathPrefix};
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir;
 use fp_core::hir::HirProgram;
-use fp_core::hir::resolve::{Namespace, ResolutionResult, ResolutionRules};
+use fp_core::hir::resolve::{Namespace, ResolutionResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -18,14 +18,14 @@ pub mod worklist;
 
 pub struct Resolver {
     program: Rc<AstProgram>,
-    hir_program: RefCell<HirProgram>,
+    hir_program: Rc<RefCell<HirProgram>>,
 }
 
 impl Resolver {
     pub fn new(program: Rc<AstProgram>) -> Self {
         Self {
             program,
-            hir_program: RefCell::new(HirProgram::new()),
+            hir_program: Rc::new(RefCell::new(HirProgram::new())),
         }
     }
 
@@ -39,69 +39,16 @@ impl Resolver {
         parsed: &Path,
         namespace: Namespace,
     ) -> ResolutionResult {
-        if parsed.is_empty() {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
-            );
-        }
-        let hir_program = self.hir_program.borrow();
-        let mut external_package = None;
-        if let Some(head) = parsed.head() {
-            for package_id in hir_program.packages.keys() {
-                if hir::HirProgram::external_crate_name(package_id) == head {
-                    external_package = Some(package_id.clone());
-                    break;
-                }
-            }
-        }
-        let target_package_id = match parsed.prefix {
-            PathPrefix::Plain | PathPrefix::Root => external_package
-                .clone()
-                .unwrap_or_else(|| current_package_id.clone()),
-            PathPrefix::Crate | PathPrefix::SelfMod | PathPrefix::Super(_) => {
-                current_package_id.clone()
-            }
-        };
-        let Some(absolute) = parsed.resolve_from(location) else {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::InvalidParent {
-                    location: location.clone(),
-                    depth: match parsed.prefix {
-                        PathPrefix::Super(depth) => depth,
-                        _ => 0,
-                    },
-                },
-            );
-        };
-        let Some(package) = hir_program.package(&target_package_id) else {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        };
-        let result = package::InPackageResolver::resolve_path(
-            &package,
-            &absolute,
-            namespace,
-            ResolutionRules::rust(),
+        let mut hir_package = hir::HirPackage::new(current_package_id.clone());
+        let resolver = package::InPackageResolver::new(
+            current_package_id.clone(),
+            &mut hir_package,
+            Rc::clone(&self.hir_program),
+            self.program.provider().declaration_rules(),
+            self.program.provider().resolution_rules(),
+            Rc::clone(&self.program),
         );
-        if !result.is_not_found() {
-            return result;
-        }
-        if external_package.as_ref() != Some(&target_package_id) {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        }
-        let mut unqualified_segments = Vec::with_capacity(parsed.segments.len().saturating_sub(1));
-        for segment in &parsed.segments[1..] {
-            unqualified_segments.push(segment.as_str().to_owned());
-        }
-        package::InPackageResolver::resolve_path(
-            &package,
-            &InPackagePath::new(unqualified_segments),
-            namespace,
-            ResolutionRules::rust(),
-        )
+        resolver.resolve_parsed_path(current_package_id, location, parsed, namespace)
     }
 
     pub fn resolve_package(
@@ -117,6 +64,7 @@ impl Resolver {
         let mut resolver = package::InPackageResolver::new(
             package_id,
             hir_package,
+            Rc::clone(&self.hir_program),
             self.program.provider().declaration_rules(),
             self.program.provider().resolution_rules(),
             Rc::clone(&self.program),
