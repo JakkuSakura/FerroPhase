@@ -9,7 +9,6 @@ fn file_with_item(item: Item) -> ast::File {
     ast::File {
         path: "test.fp".into(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: vec![item],
     }
 }

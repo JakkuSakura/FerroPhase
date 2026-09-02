@@ -307,7 +307,6 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
     File {
         path: path.to_path_buf(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items,
     }
 }
@@ -513,7 +512,6 @@ impl CSerializer {
                 let file = File {
                     path: PathBuf::from(&rel_path),
                     attrs: Vec::new(),
-                    collected_items: Vec::new(),
                     items: module.items,
                 };
                 let code = self.serialize_file(&file)?;

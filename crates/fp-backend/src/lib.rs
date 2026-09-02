@@ -161,7 +161,6 @@ mod tests {
         let file = File {
             path: PathBuf::from("dce_example.fp"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![
                 function_item("used_helper"),
                 function_item("unused_helper"),
@@ -215,7 +214,6 @@ mod tests {
         let file = File {
             path: PathBuf::from("shadow.fp"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::from(ItemKind::DefFunction(func))],
         };
 
@@ -274,7 +272,6 @@ mod tests {
         let file = File {
             path: PathBuf::from("reassign_param.fp"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::from(ItemKind::DefFunction(func))],
         };
 

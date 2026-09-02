@@ -37,7 +37,6 @@ fn serialize_basic_gdscript_module() {
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefStruct(user_struct)),
             Item::new(ItemKind::DefConst(const_item)),
@@ -160,7 +159,6 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefEnum(shape_enum)),
             Item::new(ItemKind::Impl(impl_shape)),
@@ -202,7 +200,6 @@ fn block_expr_with_leading_statements_errors_instead_of_silently_discarding_them
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: vec![Item::new(ItemKind::DefFunction(main_fn))],
     };
 
@@ -249,7 +246,6 @@ fn match_arm_with_unused_binding_errors_instead_of_silently_returning_null() {
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: vec![Item::new(ItemKind::DefFunction(main_fn))],
     };
 

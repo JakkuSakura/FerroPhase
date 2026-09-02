@@ -443,7 +443,6 @@ fn leaves_unresolved_result_operations_for_resolution() {
         File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefFunction(
                 ItemDefFunction::new_simple(
                     Ident::new("adapt"),

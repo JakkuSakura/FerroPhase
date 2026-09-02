@@ -49,8 +49,6 @@ common_struct! {
         pub path: PathBuf,
         #[serde(default)]
         pub attrs: Vec<Attribute>,
-        #[serde(default)]
-        pub collected_items: ItemChunk,
         pub items: ItemChunk,
     }
 }

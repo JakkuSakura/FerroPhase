@@ -75,7 +75,6 @@ impl LanguageFrontend for HclFrontend {
         let file = File {
             path: file_path,
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::Expr(expr))],
         };
 

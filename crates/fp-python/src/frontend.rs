@@ -73,7 +73,6 @@ impl LanguageFrontend for PythonFrontend {
         let file = File {
             path: Self::file_path(path),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items,
         };
 

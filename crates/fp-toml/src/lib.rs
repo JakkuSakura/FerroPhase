@@ -63,7 +63,6 @@ impl LanguageFrontend for TomlFrontend {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("<stdin>")),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::Expr(expr))],
         };
 

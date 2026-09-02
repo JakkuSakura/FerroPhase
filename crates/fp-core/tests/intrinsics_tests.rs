@@ -14,7 +14,6 @@ fn empty_file() -> File {
     File {
         path: PathBuf::from("test.fp"),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: Vec::new(),
     }
 }
@@ -128,7 +127,6 @@ fn ensure_function_decl_preserves_file_path() {
     let mut file = File {
         path: PathBuf::from("sample.fp"),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: Vec::new(),
     };
     let decl = make_function_decl("noop", Vec::new(), Ty::unit());

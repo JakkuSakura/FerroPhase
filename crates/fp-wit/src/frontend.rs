@@ -71,7 +71,6 @@ fn lower_document(document: &WitDocument, path: &Path) -> File {
     File {
         path: path_to_buf(path),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items,
     }
 }

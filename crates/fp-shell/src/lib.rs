@@ -112,7 +112,6 @@ pub fn compile_source_with_options(
     let lowered_file = File {
         path: source_path.to_path_buf(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items: lowered_items,
     };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());

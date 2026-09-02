@@ -383,7 +383,6 @@ impl KotlinSerializer {
             let file = File {
                 path: std::path::PathBuf::from(&mod_path),
                 attrs: Vec::new(),
-                collected_items: Vec::new(),
                 items: module.items,
             };
             // Every referenced-path entry is keyed by the REFERENCING
@@ -2588,7 +2587,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefEnum(error))],
         };
 
@@ -2623,7 +2621,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefFunction(main_fn))],
         };
 
@@ -2688,7 +2685,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefFunction(
                 ItemDefFunction::new_simple(Ident::new("unwrap_result"), body),
             ))],
@@ -2728,7 +2724,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefEnum(enum_item))],
         };
 
@@ -2780,7 +2775,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![
                 Item::new(ItemKind::DefTrait(contract)),
                 Item::new(ItemKind::DefStruct(worker)),
@@ -2845,7 +2839,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![
                 Item::new(ItemKind::DefEnum(enum_item)),
                 Item::new(ItemKind::DefFunction(
@@ -2914,7 +2907,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefFunction(
                 ItemDefFunction::new_simple(Ident::new("parse"), body),
             ))],
@@ -2964,7 +2956,6 @@ mod tests {
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::DefFunction(
                 ItemDefFunction::new_simple(Ident::new("native_option"), body),
             ))],

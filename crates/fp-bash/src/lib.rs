@@ -1620,7 +1620,6 @@ mod tests {
         let file = File {
             path: PathBuf::from("test.fp"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items,
         };
         BashTarget::new()

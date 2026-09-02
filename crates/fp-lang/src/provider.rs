@@ -6,7 +6,7 @@ use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata,
+    PackageMetadata, PackagePath,
 };
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::{File, Item, ItemKind};
@@ -70,7 +70,6 @@ fn load_embedded_package(
         modules.push(fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(module_path.last().cloned().unwrap_or_default()),
-            collected_items: Vec::new(),
             items: result.ast.items,
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
@@ -95,12 +94,17 @@ fn load_embedded_package(
         metadata: Default::default(),
     };
     let graph = package;
-    Ok(AstPackage::new(
-        PackageId::new(package_name),
-        package_name,
-        graph,
-        modules,
-    ))
+    let mut result = AstPackage::new(PackageId::new(package_name), package_name, graph, modules);
+    if package_name == STD_PACKAGE_NAME {
+        result.prelude_modules.push(PackagePath {
+            package_id: result.package_id.clone(),
+            path: QualifiedPath::new(
+                result.package_id.clone(),
+                vec!["prelude".into(), "v1".into()],
+            ),
+        });
+    }
+    Ok(result)
 }
 
 impl PackageProvider for FerroPhaseProvider {

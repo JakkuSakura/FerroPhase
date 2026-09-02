@@ -807,7 +807,6 @@ mod tests {
             .serialize_file(&File {
                 path: Default::default(),
                 attrs: Vec::new(),
-                collected_items: Vec::new(),
                 items: vec![item],
             })
             .expect("serialize materialized Vec parameter");
@@ -854,7 +853,6 @@ mod tests {
             .serialize_file(&File {
                 path: Default::default(),
                 attrs: Vec::new(),
-                collected_items: Vec::new(),
                 items: vec![item],
             })
             .expect("serialize materialized Kotlin types");

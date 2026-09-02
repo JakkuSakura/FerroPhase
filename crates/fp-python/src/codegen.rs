@@ -40,7 +40,6 @@ impl PythonSerializer {
                 let file = File {
                     path: std::path::PathBuf::from(&rel_path),
                     attrs: Vec::new(),
-                    collected_items: Vec::new(),
                     items: module.items,
                 };
                 let code = self.serialize_file(&file)?;
@@ -1162,7 +1161,6 @@ def pick(flag, left, right):
         let file = File {
             path: Default::default(),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![Item::new(ItemKind::Impl(impl_block))],
         };
 

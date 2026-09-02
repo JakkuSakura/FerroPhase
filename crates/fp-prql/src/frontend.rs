@@ -66,7 +66,6 @@ impl LanguageFrontend for PrqlFrontend {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("<prql>")),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: Vec::new(),
         };
 

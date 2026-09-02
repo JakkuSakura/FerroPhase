@@ -193,7 +193,6 @@ impl LanguageFrontend for FerroFrontend {
         let file = File {
             path: std::path::PathBuf::from("<expr>"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items: vec![fp_core::ast::Item::new(fp_core::ast::ItemKind::Expr(
                 expr.clone(),
             ))],

@@ -66,7 +66,6 @@ fn parse_file(root: TsNode, source: &str) -> Result<File> {
     Ok(File {
         path: Default::default(),
         attrs: Vec::new(),
-        collected_items: Vec::new(),
         items,
     })
 }

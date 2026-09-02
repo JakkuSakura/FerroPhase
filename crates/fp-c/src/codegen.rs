@@ -63,7 +63,6 @@ impl CSourceSerializer {
             let file = File {
                 path: std::path::PathBuf::from(&rel_path),
                 attrs: Vec::new(),
-                collected_items: Vec::new(),
                 items: module.items,
             };
             let (header, src) = self.serialize_file(&file)?;

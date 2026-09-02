@@ -66,7 +66,6 @@ impl<'a> Parser<'a> {
         Ok(File {
             path: std::path::PathBuf::from("<lean>"),
             attrs: Vec::new(),
-            collected_items: Vec::new(),
             items,
         })
     }

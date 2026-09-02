@@ -11,7 +11,6 @@ pub fn annotate_collected_items(file: &mut File) {
 }
 
 fn annotate_file(file: &mut File, module_path: &QualifiedPath) {
-    file.collected_items = direct_items(&file.items);
     for item in &mut file.items {
         annotate_item(item, module_path);
     }

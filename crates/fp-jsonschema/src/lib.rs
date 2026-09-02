@@ -75,7 +75,6 @@ impl LanguageFrontend for JsonSchemaFrontend {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| std::path::PathBuf::from("<stdin>")),
                 attrs: Vec::new(),
-                collected_items: Vec::new(),
                 items: Vec::new(),
             },
             snapshot: Some(snapshot),

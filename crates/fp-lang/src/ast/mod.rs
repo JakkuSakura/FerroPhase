@@ -156,12 +156,7 @@ impl FerroPhaseParser {
             }
             eyre::eyre!(err)
         })?;
-        Ok(fp_core::ast::File {
-            path,
-            attrs,
-            collected_items: Vec::new(),
-            items,
-        })
+        Ok(fp_core::ast::File { path, attrs, items })
     }
 
     /// Parse top-level content into a `ScriptBlock` directly — no `File`,
