@@ -182,9 +182,7 @@ impl FerroModuleSourceResolver {
                 file_path,
                 directory_path
             ))),
-            (false, false) => Err(ProviderError::ModuleNotFound(ModuleId::new(
-                module_path.to_key(),
-            ))),
+            (false, false) => Err(ProviderError::ModuleNotFound(module_path.to_key())),
             (true, false) => self.read_source(&file_path),
             (false, true) => self.read_source(&directory_path),
         }

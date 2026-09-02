@@ -64,7 +64,6 @@ fn annotate_trait(def: &mut ItemDefTrait, module_path: &QualifiedPath) {
 }
 
 fn annotate_impl(impl_block: &mut ItemImpl, module_path: &QualifiedPath) {
-    impl_block.collected_items = direct_items(&impl_block.items);
     for item in &mut impl_block.items {
         annotate_item(item, module_path);
     }

@@ -359,8 +359,6 @@ common_struct! {
         pub self_ty: Expr,
         #[serde(default)]
         pub generics_params: Vec<GenericParam>,
-        #[serde(default)]
-        pub collected_items: ItemChunk,
         pub items: ItemChunk,
     }
 }
@@ -373,7 +371,6 @@ impl ItemImpl {
             trait_ty: None,
             self_ty: Expr::ident(self_ty).into(),
             generics_params: Vec::new(),
-            collected_items: Vec::new(),
             items,
         }
     }
@@ -384,7 +381,6 @@ impl ItemImpl {
             trait_ty,
             self_ty,
             generics_params: Vec::new(),
-            collected_items: Vec::new(),
             items,
         }
     }

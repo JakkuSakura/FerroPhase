@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
@@ -86,7 +86,7 @@ impl GoLangPackageProvider {
                 ))
             })?;
             if module_paths.insert(module_path.clone()) {
-                let module_id = ModuleId::new(module_path.to_key());
+                let module_id = module_path.to_key();
                 descriptors.push(ModuleDescriptor {
                     id: module_id,
                     package: package_id.clone(),

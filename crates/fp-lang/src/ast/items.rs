@@ -989,7 +989,6 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
         trait_ty,
         self_ty,
         generics_params,
-        collected_items: Vec::new(),
         items,
     })))
 }

@@ -4,30 +4,9 @@
 //! as distinct from `ast::item::Module` (the AST node for a `mod` block
 //! itself) and from path *resolution* (`ast::path`).
 
-use std::fmt::{self, Display};
-
 use crate::vfs::VirtualPath;
 
 pub type FeatureRef = String;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ModuleId(pub String);
-
-impl ModuleId {
-    pub fn new<S: Into<String>>(path: S) -> Self {
-        Self(path.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Display for ModuleId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ModuleLanguage {
@@ -71,7 +50,7 @@ impl SymbolDescriptor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModuleDescriptor {
-    pub id: ModuleId,
+    pub id: String,
     pub package: crate::ast::package::PackageId,
     pub language: ModuleLanguage,
     pub module_path: Vec<String>,

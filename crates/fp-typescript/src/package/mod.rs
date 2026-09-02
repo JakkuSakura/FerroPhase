@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
@@ -38,7 +38,7 @@ const SKIP_DIR_NAMES: &[&str] = &[
 pub struct TypeScriptPackageProvider {
     root: PathBuf,
     packages: RwLock<HashMap<PackageId, Arc<PackageDescriptor>>>,
-    modules: RwLock<HashMap<ModuleId, Arc<ModuleDescriptor>>>,
+    modules: RwLock<HashMap<String, Arc<ModuleDescriptor>>>,
 }
 
 impl TypeScriptPackageProvider {
@@ -112,11 +112,7 @@ impl TypeScriptPackageProvider {
             let relative = path.strip_prefix(&self.root).unwrap_or(&path);
             let virtual_path = VirtualPath::from_path(relative);
             let module_path = module_path_from_file(relative);
-            let module_id = ModuleId::new(format!(
-                "{}::{}",
-                package_id.as_str(),
-                module_path.join("::")
-            ));
+            let module_id = format!("{}::{}", package_id.as_str(), module_path.join("::"));
 
             descriptors.push(ModuleDescriptor {
                 id: module_id,

@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::ast::module::ModuleId;
 use crate::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageMetadata};
 use crate::vfs::VirtualPath;
 
@@ -12,7 +11,7 @@ pub enum ProviderError {
     #[error("package not found: {0}")]
     PackageNotFound(PackageId),
     #[error("module not found: {0}")]
-    ModuleNotFound(ModuleId),
+    ModuleNotFound(String),
     #[error("metadata error: {0}")]
     Metadata(String),
     #[error("{0}")]

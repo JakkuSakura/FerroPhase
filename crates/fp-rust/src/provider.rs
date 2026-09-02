@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
@@ -560,7 +560,7 @@ fn package_source_from_items(
     let descriptors: Vec<ModuleDescriptor> = paths
         .into_iter()
         .map(|path| ModuleDescriptor {
-            id: ModuleId::new(&path.to_key()),
+            id: path.to_key(),
             package: id.clone(),
             language: ModuleLanguage::Rust,
             module_path: path.segments.clone(),
@@ -824,7 +824,7 @@ impl RustStdProvider {
     /// sysroot crate. Metadata is loaded before package source, so leaving
     /// this index empty makes valid definitions unreachable during name
     /// resolution even though the parser can publish them later.
-    fn module_ids_of(crate_name: &str) -> Vec<ModuleId> {
+    fn module_ids_of(crate_name: &str) -> Vec<String> {
         let prefix = format!("{crate_name}/");
         let mut module_ids: Vec<_> = crate::embedded_std::module_paths()
             .iter()
@@ -845,7 +845,7 @@ impl RustStdProvider {
                     path.extend(segments);
                     path
                 };
-                Some(ModuleId::new(&module_path.join("::")))
+                Some(module_path.join("::"))
             })
             .collect();
         module_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -1200,7 +1200,7 @@ fn discover_items(
         let file_items = parse(&target_file, &source)?;
         if let Some((package_id, language, descriptors)) = descriptor_ctx.as_mut() {
             descriptors.push(ModuleDescriptor {
-                id: ModuleId::new(&child_path.to_key()),
+                id: child_path.to_key(),
                 package: (*package_id).clone(),
                 language: (*language).clone(),
                 module_path: child_path.segments.clone(),
@@ -1399,7 +1399,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     if let Some(source) = read(&root_file) {
         let root_items = parse(&root_file, &source)?;
         descriptors.push(ModuleDescriptor {
-            id: ModuleId::new(&root_module_path.to_key()),
+            id: root_module_path.to_key(),
             package: package_id.clone(),
             language: ModuleLanguage::Rust,
             module_path: root_module_path.segments.clone(),
@@ -1496,7 +1496,7 @@ fn load_embedded_fp_package(
             &mut |item| is_cfg_test(item_attrs(item)),
         ));
         descriptors.push(ModuleDescriptor {
-            id: ModuleId::new(module_path.join("::")),
+            id: module_path.join("::"),
             package: package_id.clone(),
             language: ModuleLanguage::Ferro,
             module_path,

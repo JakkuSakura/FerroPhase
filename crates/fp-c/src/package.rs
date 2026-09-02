@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
@@ -80,7 +80,7 @@ impl CPackageProvider {
             })?;
             module_paths.insert(module_path.clone());
             descriptors.push(ModuleDescriptor {
-                id: ModuleId::new(module_path.to_key()),
+                id: module_path.to_key(),
                 package: package_id.clone(),
                 language: ModuleLanguage::Other("c".to_string()),
                 module_path: module_path.segments.clone(),
