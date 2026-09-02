@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
+use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId};
 use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;

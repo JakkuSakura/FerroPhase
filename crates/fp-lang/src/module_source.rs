@@ -199,11 +199,6 @@ impl FerroModuleSourceResolver {
     }
 }
 
-fn package_name_from_path(path: &InPackagePath) -> ProviderResult<&str> {
-    path.head()
-        .ok_or_else(|| ProviderError::other("root module path has no package segment"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

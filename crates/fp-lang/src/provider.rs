@@ -1,14 +1,14 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use fp_core::ast::File;
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId,
     PackageMetadata, PackagePath,
 };
 use fp_core::ast::path::InPackagePath;
-use fp_core::ast::{File, Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 

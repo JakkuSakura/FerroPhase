@@ -817,57 +817,6 @@ impl RustStdProvider {
             _ => vec![],
         }
     }
-
-    /// Return the ordinary Rust module identities known to the embedded
-    /// sysroot crate. Metadata is loaded before package source, so leaving
-    /// this index empty makes valid definitions unreachable during name
-    /// resolution even though the parser can publish them later.
-    fn module_ids_of(crate_name: &str) -> Vec<String> {
-        let prefix = format!("{crate_name}/");
-        let mut module_ids: Vec<_> = crate::embedded_std::module_paths()
-            .iter()
-            .filter_map(|relative| {
-                let relative = relative.strip_prefix(&prefix)?;
-                let module_path = if relative == "lib.rs" {
-                    vec![crate_name.to_string()]
-                } else {
-                    let mut segments: Vec<_> = relative
-                        .trim_end_matches(".rs")
-                        .split('/')
-                        .map(str::to_owned)
-                        .collect();
-                    if segments.last().map(String::as_str) == Some("mod") {
-                        segments.pop();
-                    }
-                    let mut path = vec![crate_name.to_string()];
-                    path.extend(segments);
-                    path
-                };
-                Some(module_path.join("::"))
-            })
-            .collect();
-        module_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        module_ids.dedup();
-        module_ids
-    }
-
-    /// The `std` crate is a facade: a number of its public modules are
-    /// `pub use` aliases to `core` or `alloc`, so they have no backing
-    /// `std/<name>.rs` file.  They are nevertheless real modules in the
-    /// crate namespace and must be present in crate metadata before a
-    /// dependent package is lowered.  The definitions remain owned by the
-    /// source crate reached by the re-export, matching rustc's crate
-    /// metadata model.
-    fn public_facade_module_ids(crate_name: &str) -> &'static [&'static str] {
-        match crate_name {
-            STD_PACKAGE_NAME => &[
-                "any", "array", "cell", "char", "clone", "cmp", "convert", "default", "future",
-                "hint", "iter", "marker", "mem", "ops", "option", "pin", "ptr", "range", "result",
-                "slice", "str", "string", "vec",
-            ],
-            _ => &[],
-        }
-    }
 }
 
 impl PackageProvider for RustStdProvider {
