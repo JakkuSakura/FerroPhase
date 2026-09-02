@@ -117,6 +117,7 @@ impl<'hir> AstResolver<'hir> {
         // Make resolved prelude modules part of the package's root lookup
         // scope, matching the implicit-import behavior expected by callers.
         let prelude_ids = self.hir_package.prelude_modules.clone();
+        let root_package_id = self.package.borrow().package_id.clone();
         for def_id in prelude_ids {
             let Some(path) = self.package_tree().path_for_module(&def_id) else {
                 continue;
@@ -133,7 +134,7 @@ impl<'hir> AstResolver<'hir> {
                 .collect();
             for (name, binding) in entries {
                 self.declare_module(
-                    &QualifiedPath::new(self.package.borrow().package_id.clone(), Vec::new()),
+                    &QualifiedPath::new(root_package_id.clone(), Vec::new()),
                     name,
                     binding,
                 );

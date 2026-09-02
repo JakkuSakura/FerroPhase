@@ -8,6 +8,9 @@ publish = false
 
 [dev-dependencies]
 criterion = "0.8"
+fp-core = { path = "crates/fp-core" }
+fp-resolve = { path = "crates/fp-resolve" }
+fp-rust = { path = "crates/fp-rust" }
 
 [[bench]]
 name = "eight_queens"

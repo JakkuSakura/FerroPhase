@@ -1159,6 +1159,9 @@ name = "fp"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "fp-core",
+ "fp-resolve",
+ "fp-rust",
 ]
 
 [[package]]
