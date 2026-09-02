@@ -46,6 +46,16 @@ impl<'hir> InPackageResolver<'hir> {
         }
     }
 
+    pub fn resolve_package(&mut self, package_id: &PackageId) -> fp_core::error::Result<()> {
+        let package = self.ast_program.get_ast_package(package_id);
+        let items = package.borrow().items();
+        self.collect_package_items(&items);
+        let mut worklist = ResolutionWorklist::default();
+        self.collect_imports(&items, &mut worklist);
+        self.resolve_worklist(&mut worklist);
+        Ok(())
+    }
+
     pub fn resolve_parsed_path(
         &self,
         current_package_id: &PackageId,

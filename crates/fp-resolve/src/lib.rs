@@ -50,29 +50,4 @@ impl Resolver {
         );
         resolver.resolve_parsed_path(current_package_id, location, parsed, namespace)
     }
-
-    pub fn resolve_package(
-        &self,
-        package_id: &PackageId,
-        hir_package: &mut hir::HirPackage,
-    ) -> fp_core::error::Result<()> {
-        let package = self.program.get_ast_package(package_id);
-        let (package_id, items) = {
-            let package = package.borrow();
-            (package.package_id.clone(), package.items())
-        };
-        let mut resolver = package::InPackageResolver::new(
-            package_id,
-            hir_package,
-            Rc::clone(&self.hir_program),
-            self.program.provider().declaration_rules(),
-            self.program.provider().resolution_rules(),
-            Rc::clone(&self.program),
-        );
-        resolver.collect_package_items(&items);
-        let mut worklist = worklist::ResolutionWorklist::default();
-        resolver.collect_imports(&items, &mut worklist);
-        resolver.resolve_worklist(&mut worklist);
-        Ok(())
-    }
 }

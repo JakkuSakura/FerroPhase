@@ -618,12 +618,18 @@ impl CompilerDriver {
         // against the very package that lowering will return; the AST
         // resolver does not maintain a second allocation counter.
         let hir_program = self.state.borrow().hir_program_rc().rc();
-        fp_resolve::Resolver::new(
-            std::rc::Rc::clone(&self.state.borrow().workspace),
+        let workspace = std::rc::Rc::clone(&self.state.borrow().workspace);
+        let mut package_resolver = fp_resolve::package::InPackageResolver::new(
+            package_source.package_id.clone(),
+            generator.hir_package_mut(),
             hir_program,
-        )
-        .resolve_package(&package_source.package_id, generator.hir_package_mut())
-        .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
+            workspace.provider().declaration_rules(),
+            workspace.provider().resolution_rules(),
+            workspace,
+        );
+        package_resolver
+            .resolve_package(&package_source.package_id)
+            .map_err(|error| CompilerDriverError::InternalCompilerError(error.to_string()))?;
         let hir_package = generator.transform_package(package_source)?;
         Ok((hir_package, generator.exported_symbols()))
     }

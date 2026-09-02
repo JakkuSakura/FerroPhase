@@ -28,7 +28,6 @@ fn resolves_items_from_external_package() {
             &current_package,
             package_id,
             items,
-            true,
             &mut failures,
         );
     }
@@ -46,7 +45,6 @@ fn resolves_items_within_std_package() {
         &std_package,
         "std",
         known_items(&prepared, &std_package),
-        false,
         &mut failures,
     );
     assert_failures("std package", failures);
@@ -118,8 +116,16 @@ fn prepare_std() -> PreparedStd {
     let resolver = Resolver::new(Rc::clone(&program), Rc::clone(&hir_program));
     for package_id in &package_ids {
         let mut hir_package = HirPackage::new(package_id.clone());
-        resolver
-            .resolve_package(package_id, &mut hir_package)
+        let mut package_resolver = fp_resolve::package::InPackageResolver::new(
+            package_id.clone(),
+            &mut hir_package,
+            Rc::clone(&hir_program),
+            provider.declaration_rules(),
+            provider.resolution_rules(),
+            Rc::clone(&program),
+        );
+        package_resolver
+            .resolve_package(package_id)
             .unwrap_or_else(|error| panic!("failed to resolve `{package_id}`: {error}"));
         hir_program.borrow_mut().publish_package(hir_package);
     }
@@ -148,9 +154,16 @@ fn register_external_package(prepared: &PreparedStd) -> PackageId {
         .program
         .begin_package(package_id.clone(), source, LirDataLayout::x86_64());
     let mut hir_package = HirPackage::new(package_id.clone());
-    prepared
-        .resolver
-        .resolve_package(&package_id, &mut hir_package)
+    let mut package_resolver = fp_resolve::package::InPackageResolver::new(
+        package_id.clone(),
+        &mut hir_package,
+        Rc::clone(&prepared.hir_program),
+        prepared.program.provider().declaration_rules(),
+        prepared.program.provider().resolution_rules(),
+        Rc::clone(&prepared.program),
+    );
+    package_resolver
+        .resolve_package(&package_id)
         .expect("failed to resolve external package");
     prepared
         .hir_program
@@ -176,15 +189,10 @@ fn assert_resolved_items(
     current_package: &PackageId,
     owner_package: &str,
     items: Vec<(InPackagePath, Item)>,
-    external: bool,
     failures: &mut Vec<String>,
 ) {
     for (path, item) in items {
-        let mut segments = if external {
-            vec![owner_package.to_owned()]
-        } else {
-            Vec::new()
-        };
+        let mut segments = vec![owner_package.to_owned()];
         segments.extend(path.segments.iter().cloned());
         let mut resolved = false;
         let mut ambiguous = false;
