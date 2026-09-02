@@ -450,7 +450,6 @@ pub(super) fn parse_const_block_expr(input: &mut &[Token], file: FileId) -> Moda
     *input = probe;
     Ok(ExprKind::ConstBlock(ExprConstBlock {
         span: body.span(),
-        collected_items: Vec::new(),
         expr: Box::new(body),
     })
     .into())

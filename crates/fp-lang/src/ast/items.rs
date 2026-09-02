@@ -613,7 +613,6 @@ fn parse_fn_item_core(
         let quote_block = parse_balanced_quote_block(input, file)?;
         let quote_expr = Expr::from(ExprKind::Quote(fp_core::ast::ExprQuote {
             span: quote_block.span,
-            collected_items: Vec::new(),
             block: quote_block,
             kind: Some(QuoteFragmentKind::Item),
         }));

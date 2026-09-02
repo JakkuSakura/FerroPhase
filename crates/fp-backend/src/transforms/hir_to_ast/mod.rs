@@ -1156,7 +1156,6 @@ impl<'a> HirToAstLifter<'a> {
             hir::ExprKind::ConstBlock(const_block) => {
                 Expr::new(ast::ExprKind::ConstBlock(ast::ExprConstBlock {
                     span: expr.span,
-                    collected_items: Vec::new(),
                     expr: Box::new(self.lift_expr(&const_block.body)?),
                 }))
             }
@@ -1236,7 +1235,6 @@ impl<'a> HirToAstLifter<'a> {
         }
         Ok(ExprBlock {
             span: Span::null(),
-            collected_items: Vec::new(),
             stmts,
         })
     }
@@ -1550,7 +1548,6 @@ impl<'a> HirToAstLifter<'a> {
             hir::TypeExprKind::TypeBinaryOp(_) => Ty::Unknown(ast::TypeUnknown),
             hir::TypeExprKind::ConstBlock(_, body) => Ty::ConstBlock(ast::ExprConstBlock {
                 span: ty.span,
-                collected_items: Vec::new(),
                 expr: Box::new(self.lift_expr(body)?),
             }),
             hir::TypeExprKind::Type => Ty::Type(ast::TypeType {

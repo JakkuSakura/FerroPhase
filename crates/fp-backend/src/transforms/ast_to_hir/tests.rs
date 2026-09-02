@@ -355,7 +355,6 @@ fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
 fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
     let const_block_ty = ast::Ty::ConstBlock(ast::ExprConstBlock {
         span: Span::null(),
-        collected_items: Vec::new(),
         expr: Box::new(ast::Expr::value(ast::Value::int(1))),
     });
     let type_item = ast::Item::from(ast::ItemKind::DefType(ast::ItemDefType {
@@ -389,7 +388,6 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
 fn nested_type_position_const_block_lowers_to_dedicated_hir_node() -> Result<()> {
     let const_block_ty = ast::Ty::ConstBlock(ast::ExprConstBlock {
         span: Span::null(),
-        collected_items: Vec::new(),
         expr: Box::new(ast::Expr::value(ast::Value::int(2))),
     });
 

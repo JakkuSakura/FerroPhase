@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId,

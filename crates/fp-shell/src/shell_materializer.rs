@@ -374,9 +374,6 @@ fn inject_with_contexts(
             inject_with_contexts(repeat.len.as_mut(), sigs, context);
         }
         ExprKind::ConstBlock(const_block) => {
-            for item in &mut const_block.collected_items {
-                inject_with_contexts_in_item(item, sigs);
-            }
             inject_with_contexts(const_block.expr.as_mut(), sigs, context);
         }
         ExprKind::Paren(paren) => inject_with_contexts(paren.expr.as_mut(), sigs, context),
