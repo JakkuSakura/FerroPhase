@@ -22,10 +22,10 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(program: Rc<AstProgram>) -> Self {
+    pub fn new(program: Rc<AstProgram>, hir_program: Rc<RefCell<HirProgram>>) -> Self {
         Self {
             program,
-            hir_program: Rc::new(RefCell::new(HirProgram::new())),
+            hir_program,
         }
     }
 

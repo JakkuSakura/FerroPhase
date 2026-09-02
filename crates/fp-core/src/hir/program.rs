@@ -11,6 +11,11 @@ impl SharedHirProgram {
     pub fn new(program: HirProgram) -> Self {
         Self(Rc::new(RefCell::new(program)))
     }
+
+    /// Returns a clone of the underlying shared HIR program handle.
+    pub fn rc(&self) -> Rc<RefCell<HirProgram>> {
+        Rc::clone(&self.0)
+    }
     pub fn publish_package(&self, package: HirPackage) {
         self.0.borrow_mut().publish_package(package);
     }

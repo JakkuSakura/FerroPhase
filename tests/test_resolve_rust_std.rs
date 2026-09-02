@@ -7,6 +7,7 @@ use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir::HirPackage;
+use fp_core::hir::HirProgram;
 use fp_core::hir::resolve::{Namespace, ResolutionResult};
 use fp_core::lir::LirDataLayout;
 use fp_resolve::Resolver;
@@ -30,7 +31,8 @@ fn resolves_every_named_rust_std_declaration() {
         program.begin_package(package_id.clone(), source, LirDataLayout::x86_64());
     }
 
-    let resolver = Resolver::new(Rc::clone(&program));
+    let hir_program = Rc::new(std::cell::RefCell::new(HirProgram::new()));
+    let resolver = Resolver::new(Rc::clone(&program), hir_program);
     let mut failures = Vec::new();
     for package_id in &package_ids {
         let mut hir_package = HirPackage::new(package_id.clone());
