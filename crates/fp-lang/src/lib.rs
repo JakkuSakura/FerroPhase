@@ -9,7 +9,6 @@ pub use macro_parser::{
 };
 pub use normalization::FerroIntrinsicNormalizer;
 pub mod embedded_libc;
-pub mod module_path;
 pub mod module_source;
 pub mod normalization;
 mod serializer;

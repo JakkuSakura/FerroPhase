@@ -33,7 +33,8 @@ fn dispatch_module_path(
 ) -> Vec<String> {
     match language {
         LanguageKind::Magnet | LanguageKind::Rust => {
-            fp_lang::module_path::estimate_module_path(&package.root_path, path)
+            let _ = (package, path);
+            todo!("Rust/Magnet module-path resolution is pending the AST module model migration")
         }
         LanguageKind::Python => fp_python::estimate_module_path(&package.root_path, path),
         LanguageKind::JavaScript | LanguageKind::TypeScript => {
