@@ -72,7 +72,7 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
         vec![fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(""),
-            items: file,
+            items: file.items,
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
         }],
@@ -91,6 +91,9 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     let package = workspace.begin_package(package_id, loaded, data_layout);
     let package = package.borrow();
     let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
@@ -101,6 +104,9 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
 fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
     let ast_expr = support::ast::literal_expr(42);
     let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
@@ -132,6 +138,9 @@ fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
     use fp_core::ast::{Expr, ExprKind, ExprTry};
 
     let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );

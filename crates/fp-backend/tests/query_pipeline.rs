@@ -33,6 +33,9 @@ fn lower_to_mir(program: hir::HirPackage) -> fp_core::Result<mir::MirCodeUnit> {
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
     let query = QueryDocument::sql("SELECT 42", SqlDialect::Generic).with_name("query.sql");
     let mut hir_generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
@@ -108,6 +111,9 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         .collect(),
     });
     let mut hir_generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
@@ -173,6 +179,9 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         .expect("expected a single top-level expression");
 
     let mut hir_generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
