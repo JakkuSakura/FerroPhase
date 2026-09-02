@@ -91,25 +91,60 @@ impl SharedHirProgram {
         self.0.borrow().method_resolution(hir_id)
     }
 
-    pub fn resolve_module_name(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, name: &str, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
-        self.0.borrow().resolve_module_name(package_id, module, name, namespace, rules)
+    pub fn resolve_module_name(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::QualifiedPath,
+        name: &str,
+        namespace: crate::hir::resolve::Namespace,
+        rules: crate::hir::resolve::ResolutionRules,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.0
+            .borrow()
+            .resolve_module_name(package_id, module, name, namespace, rules)
     }
-    pub fn resolve_module_path(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, path: &crate::ast::path::QualifiedPath, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
-        self.0.borrow().resolve_module_path(package_id, module, path, namespace, rules)
+    pub fn resolve_module_path(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::QualifiedPath,
+        namespace: crate::hir::resolve::Namespace,
+        rules: crate::hir::resolve::ResolutionRules,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.0
+            .borrow()
+            .resolve_module_path(package_id, module, path, namespace, rules)
     }
-    pub fn module_exists(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> bool {
+    pub fn module_exists(
+        &self,
+        package_id: &PackageId,
+        path: &crate::ast::path::QualifiedPath,
+    ) -> bool {
         self.0.borrow().module_exists(package_id, path)
     }
     pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::QualifiedPath> {
         self.0.borrow().module_path(def_id)
     }
-    pub fn resolve_module_path_final(&self, package_id: &PackageId, module: &crate::ast::path::QualifiedPath, path: &crate::ast::path::QualifiedPath, namespace: crate::hir::resolve::Namespace, rules: crate::hir::resolve::ResolutionRules) -> crate::hir::resolve::ResolutionResult {
+    pub fn resolve_module_path_final(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::QualifiedPath,
+        namespace: crate::hir::resolve::Namespace,
+        rules: crate::hir::resolve::ResolutionRules,
+    ) -> crate::hir::resolve::ResolutionResult {
         match self.resolve_module_path(package_id, module, path, namespace, rules) {
-            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error),
+            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
+                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error)
+            }
             result => result,
         }
     }
-    pub fn module_member_names(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> Option<Vec<crate::hir::resolve::Symbol>> {
+    pub fn module_member_names(
+        &self,
+        package_id: &PackageId,
+        path: &crate::ast::path::QualifiedPath,
+    ) -> Option<Vec<crate::hir::resolve::Symbol>> {
         self.package(package_id).and_then(|package| {
             package
                 .borrow()
@@ -269,11 +304,19 @@ impl HirProgram {
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
         self.package(package_id)
-            .map(|package| package.module_tree.resolve_path(module, path, namespace, rules))
+            .map(|package| {
+                package
+                    .module_tree
+                    .resolve_path(module, path, namespace, rules)
+            })
             .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
     }
 
-    pub fn module_exists(&self, package_id: &PackageId, path: &crate::ast::path::QualifiedPath) -> bool {
+    pub fn module_exists(
+        &self,
+        package_id: &PackageId,
+        path: &crate::ast::path::QualifiedPath,
+    ) -> bool {
         self.package(package_id)
             .map(|package| package.module_tree.module(path).is_some())
             .unwrap_or(false)
@@ -287,9 +330,9 @@ impl HirProgram {
     /// Lookup a nominal struct by its declared name. This is a HIR data query,
     /// not name resolution; source-name resolution remains owned by AST.
     pub fn struct_def_id(&self, name: &str) -> Option<DefId> {
-        self.packages.values().find_map(|package| {
-            package.borrow().struct_defs_by_name.get(name).cloned()
-        })
+        self.packages
+            .values()
+            .find_map(|package| package.borrow().struct_defs_by_name.get(name).cloned())
     }
 
     /// Returns the Rust source spelling of a package's external-crate root.
@@ -633,6 +676,7 @@ impl HirProgram {
                 .collect::<Vec<_>>()
         })
     }
+<<<<<<< HEAD
 
     /// Resolves `path` (in namespace `ns`) starting from `from_module` in
     /// package `from`, falling through to another already-compiled

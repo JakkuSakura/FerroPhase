@@ -105,7 +105,14 @@ impl ZigPackageProvider {
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph, Vec::new());
-        package.modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+        package.modules.push(fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            collected_items: Vec::new(),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        });
         Ok(package)
     }
 }

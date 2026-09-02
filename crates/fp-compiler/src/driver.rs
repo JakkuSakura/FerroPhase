@@ -595,31 +595,25 @@ impl CompilerDriver {
         package_source: &fp_core::ast::package::AstPackage,
         hir_package_id: hir::PackageId,
         resolution_only: bool,
-    ) -> Result<
-        (
-            hir::HirPackage,
-            std::collections::HashMap<String, hir::Res>,
-        ),
-        CompilerDriverError,
-    > {
+    ) -> Result<(hir::HirPackage, std::collections::HashMap<String, hir::Res>), CompilerDriverError>
+    {
         let normalizer = self
             .state
             .borrow()
             .workspace
             .provider()
             .intrinsic_normalizer();
-        let mut generator =
-            AstToHirLowerer::new(
-                self.state.borrow().workspace.clone(),
-                self.state.borrow().hir_program_rc(),
-                hir_package_id,
-            )
-                .with_intrinsic_normalizer(normalizer)
-                .with_lowering_config(HirLoweringConfig {
-                    capabilities: self.state.borrow().backend_capabilities(),
-                    operations: self.state.borrow().source_operations().unwrap_or_default(),
-                    resolution_only,
-                });
+        let mut generator = AstToHirLowerer::new(
+            self.state.borrow().workspace.clone(),
+            self.state.borrow().hir_program_rc(),
+            hir_package_id,
+        )
+        .with_intrinsic_normalizer(normalizer)
+        .with_lowering_config(HirLoweringConfig {
+            capabilities: self.state.borrow().backend_capabilities(),
+            operations: self.state.borrow().source_operations().unwrap_or_default(),
+            resolution_only,
+        });
         // DefId allocation belongs to the destination HIR package. Resolve
         // against the very package that lowering will return; the AST
         // resolver does not maintain a second allocation counter.

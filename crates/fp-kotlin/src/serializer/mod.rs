@@ -2364,10 +2364,7 @@ fn is_byte_array_index(expr: &Expr) -> bool {
 /// (`.len()` → `.size` not `.length`; range-indexing → `.subList(...)` not
 /// `.substring(...)`).
 fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if matches!(
-        None,
-        Some(Ty::Vec(_)) | Some(Ty::Slice(_))
-    ) {
+    if matches!(None, Some(Ty::Vec(_)) | Some(Ty::Slice(_))) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.field_element_types.contains_key(&n))
@@ -2425,10 +2422,7 @@ fn is_string_like_ty(ty: Option<&Ty>) -> bool {
 /// `enum class` has no synthesized `.copy()` either — the call should drop
 /// entirely rather than map to Kotlin's data-class `.copy()` convention.
 fn is_known_enum_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if matches!(
-        None,
-        Some(Ty::Enum(_))
-    ) {
+    if matches!(None, Some(Ty::Enum(_))) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.enum_field_names.contains(&n))

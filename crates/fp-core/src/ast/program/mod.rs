@@ -70,14 +70,8 @@ impl AstProgram {
     /// compilation session. Consumers such as name resolution use this
     /// rather than inspecting an `AstPackage`'s storage directly.
     pub fn package_metadata(&self, package_id: &PackageId) -> Option<PackageMetadata> {
-        self.compiled_package(package_id).and_then(|package| {
-            package
-                .borrow()
-                .package
-                .metadata
-                .clone()
-                .into()
-        })
+        self.compiled_package(package_id)
+            .and_then(|package| package.borrow().package.metadata.clone().into())
     }
 
     /// Direct lookup of an AST package by its shared package id.
@@ -171,11 +165,7 @@ mod tests {
         let parent = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
-            AstPackage::new(
-                PackageId::new("dependency"),
-                "dependency",
-                Vec::new(),
-            ),
+            AstPackage::new(PackageId::new("dependency"), "dependency", Vec::new()),
             crate::lir::LirDataLayout::x86_64(),
         );
 
@@ -193,11 +183,7 @@ mod tests {
         let child = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
-            AstPackage::new(
-                PackageId::new("dependency"),
-                "dependency",
-                Vec::new(),
-            ),
+            AstPackage::new(PackageId::new("dependency"), "dependency", Vec::new()),
             crate::lir::LirDataLayout::x86_64(),
         );
 

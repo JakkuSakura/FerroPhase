@@ -467,9 +467,15 @@ impl ClosureLowering {
 
     fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
         Self::ensure_closure_has_function_ty(expr, None, None);
-        let ast::ExprKind::Closure(closure_ref) = expr.kind() else { return Ok(None); };
+        let ast::ExprKind::Closure(closure_ref) = expr.kind() else {
+            return Ok(None);
+        };
         let fn_ty = ast::TypeFunction {
-            params: closure_ref.params.iter().map(|_| ast::Ty::Any(ast::TypeAny)).collect(),
+            params: closure_ref
+                .params
+                .iter()
+                .map(|_| ast::Ty::Any(ast::TypeAny))
+                .collect(),
             generics_params: Vec::new(),
             ret_ty: closure_ref.ret_ty.clone(),
         };
@@ -578,17 +584,13 @@ impl ClosureLowering {
         }
 
         let mut rewritten_body = (*closure.body).clone();
-        let inferred_ret_ty = fn_ty
-            .ret_ty
-            .as_ref()
-            .and_then(|ty| {
-                if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
-                    None
-                } else {
-                    Some(ty.as_ref().clone())
-                }
-            })
-            ;
+        let inferred_ret_ty = fn_ty.ret_ty.as_ref().and_then(|ty| {
+            if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
+                None
+            } else {
+                Some(ty.as_ref().clone())
+            }
+        });
         let fallback_ret_ty = fn_ty.ret_ty.as_ref().and_then(|ty| {
             if matches!(ty.as_ref(), ast::Ty::Unknown(_)) {
                 None

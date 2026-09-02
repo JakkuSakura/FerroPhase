@@ -5,9 +5,7 @@ use std::sync::Arc;
 use fp_core::ast::module::ModuleId;
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{
-    AstPackage, PackageDescriptor, PackageId, PackageMetadata,
-};
+use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageMetadata};
 use fp_core::ast::path::QualifiedPath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
@@ -180,7 +178,14 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 .parse_file(&source, &abs)
                 .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
             let path = module_path_from_relative(&rel);
-            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(path.tail().unwrap_or("")), collected_items: Vec::new(), items: result.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+            modules.push(fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(path.tail().unwrap_or("")),
+                collected_items: Vec::new(),
+                items: result.ast.items,
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
+            });
         }
 
         if let Ok(mut c) = self.cache.write() {

@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
-    ItemChunk, Name, Pattern, Ty, Value, ValueFunction,
+    BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, Pattern, Ty, Value,
+    ValueFunction, get_threadlocal_serializer,
 };
 use crate::intrinsics::CallKind;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -299,11 +299,7 @@ where
 }
 
 fn span_or(span: Span, fallback: Span) -> Span {
-    if span.is_null() {
-        fallback
-    } else {
-        span
-    }
+    if span.is_null() { fallback } else { span }
 }
 
 impl ExprInvokeTarget {

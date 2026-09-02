@@ -6,17 +6,17 @@
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::program::AstProgram;
+use fp_core::hir;
+use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
     ResolutionRules,
 };
-use fp_core::hir;
 use fp_core::span::Span;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::cell::{RefCell};
-use fp_core::hir::Symbol;
 
 pub struct AstResolver<'hir> {
     package: Rc<RefCell<fp_core::ast::package::AstPackage>>,
@@ -203,28 +203,25 @@ impl<'hir> AstResolver<'hir> {
         let mut made_progress = false;
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
-                let members = self
-                    .package_tree()
-                    .module(&directive.target)
-                    .map(|source| {
-                        source
-                            .symbols
-                            .keys()
-                            .filter_map(|name| {
-                                match source.resolve(
-                                    &QualifiedPath::new(Vec::new()),
-                                    name.as_str(),
-                                    directive.namespace,
-                                    self.resolution_rules,
-                                ) {
-                                    fp_core::hir::resolve::ResolutionResult::Found(res) => {
-                                        Some((name.clone(), res))
-                                    }
-                                    _ => None,
+                let members = self.package_tree().module(&directive.target).map(|source| {
+                    source
+                        .symbols
+                        .keys()
+                        .filter_map(|name| {
+                            match source.resolve(
+                                &QualifiedPath::new(Vec::new()),
+                                name.as_str(),
+                                directive.namespace,
+                                self.resolution_rules,
+                            ) {
+                                fp_core::hir::resolve::ResolutionResult::Found(res) => {
+                                    Some((name.clone(), res))
                                 }
-                            })
-                            .collect::<Vec<_>>()
-                    });
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
                 let Some(members) = members else {
                     deferred.push_back(directive);
                     if worklist.queue.is_empty() && !made_progress {
@@ -501,10 +498,7 @@ impl Resolver {
         let package = self.program.get_ast_package(package_id);
         let (package_id, items) = {
             let package = package.borrow();
-            (
-                package.package_id.clone(),
-                package.items(),
-            )
+            (package.package_id.clone(), package.items())
         };
         let mut resolver = AstResolver::new(
             package_id,

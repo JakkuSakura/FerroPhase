@@ -1412,7 +1412,7 @@ impl<'a> HirToAstLifter<'a> {
                     .collect::<Result<Vec<_>>>()?,
             })),
             hir::PatKind::TupleStruct(path, items) => {
-                    let mut lifted = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+                let mut lifted = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
                     name: Name::path(self.lift_path(path)),
                     patterns: items
                         .iter()
@@ -1445,7 +1445,7 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
             hir::PatKind::Variant(path) => {
-                    let mut lifted = Pattern::new(PatternKind::Variant(PatternVariant {
+                let mut lifted = Pattern::new(PatternKind::Variant(PatternVariant {
                     name: Expr::path(self.lift_path(path)),
                     pattern: None,
                 }));
@@ -2637,10 +2637,9 @@ mod tests {
             (dir_entry_file_type_id.clone(), "dir_entry_file_type"),
             (file_type_is_dir_id.clone(), "file_type_is_dir"),
         ] {
-            package.def_paths.insert(
-                def_id,
-                hir::DefPath::new(vec![hir::Symbol::new(operation)]),
-            );
+            package
+                .def_paths
+                .insert(def_id, hir::DefPath::new(vec![hir::Symbol::new(operation)]));
         }
         for (expr, def_id) in [
             (&output_call, command_output_id),

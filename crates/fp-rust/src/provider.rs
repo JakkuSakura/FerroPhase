@@ -579,7 +579,14 @@ fn package_source_from_items(
     };
     let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph, Vec::new());
-    source.modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items: items.to_vec(), visibility: fp_core::ast::Visibility::Public, is_external: false });
+    source.modules.push(fp_core::ast::Module {
+        attrs: Vec::new(),
+        name: fp_core::ast::Ident::new(""),
+        collected_items: Vec::new(),
+        items: items.to_vec(),
+        visibility: fp_core::ast::Visibility::Public,
+        is_external: false,
+    });
     source
 }
 
@@ -1445,7 +1452,14 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     };
     let graph = package;
     let mut krate = AstPackage::new(package_id, crate_name, graph, Vec::new());
-    krate.modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+    krate.modules.push(fp_core::ast::Module {
+        attrs: Vec::new(),
+        name: fp_core::ast::Ident::new(""),
+        collected_items: Vec::new(),
+        items,
+        visibility: fp_core::ast::Visibility::Public,
+        is_external: false,
+    });
     Ok(krate)
 }
 
@@ -1501,8 +1515,20 @@ fn load_embedded_fp_package(
         metadata: Default::default(),
     };
     let graph = package;
-    let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph, Vec::new());
-    krate.modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+    let mut krate = AstPackage::new(
+        PackageId::new(package_name),
+        package_name,
+        graph,
+        Vec::new(),
+    );
+    krate.modules.push(fp_core::ast::Module {
+        attrs: Vec::new(),
+        name: fp_core::ast::Ident::new(""),
+        collected_items: Vec::new(),
+        items,
+        visibility: fp_core::ast::Visibility::Public,
+        is_external: false,
+    });
     Ok(krate)
 }
 

@@ -115,7 +115,6 @@ impl DefPath {
         }
     }
 
-
     pub fn join(&self, separator: &str) -> String {
         self.segments
             .iter()

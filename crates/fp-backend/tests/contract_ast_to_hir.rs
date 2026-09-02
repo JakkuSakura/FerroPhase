@@ -68,13 +68,14 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     let source = AstPackage::new(
         package_id.clone(),
         "test",
-        fp_core::ast::package::PackageDescriptor::empty(
-            package_id.clone(),
-            "test",
-        ),
+        fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"),
         vec![fp_core::ast::Module {
-            attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items: file,
-            visibility: fp_core::ast::Visibility::Public, is_external: false,
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            collected_items: Vec::new(),
+            items: file,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
         }],
     );
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);

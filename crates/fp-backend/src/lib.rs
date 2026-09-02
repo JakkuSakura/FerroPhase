@@ -26,7 +26,10 @@ pub use transforms as transformations;
 /// items structurally on its own, so no flattening is needed here either.
 fn package_from_file(
     file: &fp_core::ast::File,
-) -> fp_core::Result<(std::rc::Rc<fp_core::ast::program::AstProgram>, fp_core::ast::package::AstPackage)> {
+) -> fp_core::Result<(
+    std::rc::Rc<fp_core::ast::program::AstProgram>,
+    fp_core::ast::package::AstPackage,
+)> {
     use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 
     let package_id = fp_core::ast::package::PackageId::new("roundtrip");
@@ -49,9 +52,9 @@ fn package_from_file(
     let source = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(
-        std::sync::Arc::new(provider),
-    ));
+    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+        provider,
+    )));
     let data_layout = fp_core::lir::LirDataLayout::new(
         64,
         8,

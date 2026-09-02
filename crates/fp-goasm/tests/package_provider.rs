@@ -29,11 +29,15 @@ fn directory_provider_discovers_nested_goasm_modules() {
     assert_eq!(package.items.len(), 2);
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "main")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "main")
     );
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "nested::helper")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "nested::helper")
     );
 
     let metadata = provider.load_package_metadata(&packages[0]).unwrap();

@@ -67,7 +67,14 @@ fn load_embedded_package(
         let result = frontend
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
-        modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.last().cloned().unwrap_or_default()), collected_items: Vec::new(), items: result.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+        modules.push(fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(module_path.last().cloned().unwrap_or_default()),
+            collected_items: Vec::new(),
+            items: result.ast.items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        });
         descriptors.push(ModuleDescriptor {
             id: ModuleId::new(module_path.join("::")),
             package: package_id.clone(),
@@ -88,7 +95,12 @@ fn load_embedded_package(
         metadata: Default::default(),
     };
     let graph = package;
-    Ok(AstPackage::new(PackageId::new(package_name), package_name, graph, modules))
+    Ok(AstPackage::new(
+        PackageId::new(package_name),
+        package_name,
+        graph,
+        modules,
+    ))
 }
 
 impl PackageProvider for FerroPhaseProvider {
@@ -333,7 +345,8 @@ mod tests {
                 .load_package_source(&PackageId::new(package))
                 .expect("embedded package source should load");
             assert!(
-                source.items.iter().all(|item| item.module_path
+                source.items.iter().all(|item| item
+                    .module_path
                     .segments
                     .first()
                     .is_some_and(|segment| segment == package)),

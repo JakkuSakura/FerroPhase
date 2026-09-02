@@ -585,7 +585,11 @@ impl AstToHirLowerer {
     /// resolution that came from one of the other tiers (a real path that
     /// canonicalization should expand).
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.local_scope.resolve(name, fp_core::hir::resolve::Namespace::Type, self.workspace.provider().resolution_rules()) {
+        match self.local_scope.resolve(
+            name,
+            fp_core::hir::resolve::Namespace::Type,
+            self.workspace.provider().resolution_rules(),
+        ) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
@@ -594,7 +598,11 @@ impl AstToHirLowerer {
     }
 
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.local_scope.resolve(name, fp_core::hir::resolve::Namespace::Value, self.workspace.provider().resolution_rules()) {
+        match self.local_scope.resolve(
+            name,
+            fp_core::hir::resolve::Namespace::Value,
+            self.workspace.provider().resolution_rules(),
+        ) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }

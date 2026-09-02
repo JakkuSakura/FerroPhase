@@ -51,7 +51,6 @@ fn parse_expr_ast_parses_basic_binary_ops() {
     assert!(matches!(expr.kind(), ExprKind::BinOp(_)));
 }
 
-
 #[test]
 fn parse_raw_references_preserves_pointer_kind_and_mutability() {
     let parser = FerroPhaseParser::new();

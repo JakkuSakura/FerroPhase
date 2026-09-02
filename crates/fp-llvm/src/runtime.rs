@@ -41,10 +41,7 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
             if !kwargs.is_empty() {
                 return Ok(MaterializeOutcome::Unchanged);
             }
-            if args
-                .iter()
-                .any(|_| false)
-            {
+            if args.iter().any(|_| false) {
                 return Ok(MaterializeOutcome::Unchanged);
             }
             if args.iter().any(|arg| is_missing_printf_type_info(arg)) {
@@ -229,9 +226,9 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
         ExprKind::Value(value) => infer_printf_spec_for_value(value.as_ref()),
         ExprKind::Select(select) => infer_printf_spec_for_select(select),
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
-        ExprKind::Reference(reference) => {
-            Err(fp_core::error::Error::from("missing type information for printf argument".to_string()))
-        }
+        ExprKind::Reference(reference) => Err(fp_core::error::Error::from(
+            "missing type information for printf argument".to_string(),
+        )),
         _ => Err(fp_core::error::Error::from(
             "missing type information for printf argument".to_string(),
         )),
@@ -240,7 +237,9 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
 
 fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<Expr>)> {
     let _ = select;
-    Err(fp_core::error::Error::from("missing type information for printf argument".to_string()))
+    Err(fp_core::error::Error::from(
+        "missing type information for printf argument".to_string(),
+    ))
     /*match &obj_ty {
         Ty::Struct(struct_ty) => {
             let field = struct_ty

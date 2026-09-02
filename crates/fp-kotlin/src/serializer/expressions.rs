@@ -24,10 +24,7 @@ impl KotlinEmitter {
                 // Kotlin has no byte-literal syntax — a `u8` value (self.g. from a Rust
                 // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
                 // usable where an actual `Byte` (not `Int`) is expected.
-                let is_u8 = matches!(
-                    None,
-                    Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
-                );
+                let is_u8 = matches!(None, Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8))));
                 if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
                     Ok(format!("{}.toByte()", rendered))
                 } else {
@@ -66,9 +63,7 @@ impl KotlinEmitter {
                 // precede it. Look the exact Kotlin spelling up in the same
                 // `enum_variant_names` registry `render_match_pat` already
                 // uses for the pattern case.
-                if let Some(enum_name) =
-                    enum_name_from_ty(None)
-                {
+                if let Some(enum_name) = enum_name_from_ty(None) {
                     let variant_name = match name {
                         fp_core::ast::Name::Path(p) => p.segments.last().map(|s| s.name.clone()),
                         fp_core::ast::Name::Ident(id) => Some(id.name.clone()),

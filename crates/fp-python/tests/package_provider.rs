@@ -28,11 +28,15 @@ fn directory_provider_discovers_python_sources_and_metadata() {
     assert_eq!(package.items.len(), 2);
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "demo")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "demo")
     );
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "demo::nested::helpers")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "demo::nested::helpers")
     );
 
     let metadata = provider.load_package_metadata(&packages[0]).unwrap();

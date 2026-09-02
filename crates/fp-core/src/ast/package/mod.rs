@@ -170,10 +170,7 @@ impl AstPackage {
         Self::new(
             package_id.clone(),
             package_id.as_str(),
-            PackageDescriptor::empty(
-                package_id.clone(),
-                package_id.as_str(),
-            ),
+            PackageDescriptor::empty(package_id.clone(), package_id.as_str()),
             vec![Module {
                 attrs: Vec::new(),
                 name: Ident::new(""),
@@ -201,10 +198,7 @@ impl AstPackage {
     /// Flattens nested AST modules into source items carrying their module
     /// paths. Providers can use this once instead of maintaining their own
     /// recursive module walkers.
-    pub fn flatten_module_items(
-        module_path: &QualifiedPath,
-        items: &[Item],
-    ) -> Vec<PackageItem> {
+    pub fn flatten_module_items(module_path: &QualifiedPath, items: &[Item]) -> Vec<PackageItem> {
         let mut output = Vec::new();
         Self::flatten_module_items_into(module_path, items, &mut |_| false, &mut output);
         output

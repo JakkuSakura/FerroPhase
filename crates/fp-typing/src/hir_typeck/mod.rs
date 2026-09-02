@@ -5230,10 +5230,7 @@ impl HirTypeChecker {
                             // a fallback signature source — if the impl
                             // doesn't redeclare it, that's a genuine "method
                             // not found" case, not something to paper over.
-                            if trait_item.name == *method
-                                && (function.body.is_some()
-                                    )
-                            {
+                            if trait_item.name == *method && (function.body.is_some()) {
                                 let signature = scope.function_signature(function).await?;
                                 let method_actuals = scope.method_call_actuals(&signature, actuals);
                                 let Some((mut substitutions, mut result)) = scope

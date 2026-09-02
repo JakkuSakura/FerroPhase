@@ -28,11 +28,15 @@ fn directory_provider_discovers_and_loads_c_sources() {
     assert_eq!(package.items.len(), 7);
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "main")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "main")
     );
     assert!(
         package
-            .items.iter().any(|item| item.module_path.to_key() == "include::api")
+            .items
+            .iter()
+            .any(|item| item.module_path.to_key() == "include::api")
     );
     assert!(
         package
@@ -40,7 +44,6 @@ fn directory_provider_discovers_and_loads_c_sources() {
             .iter()
             .any(|item| matches!(item.item.kind(), ItemKind::DeclFunction(_)))
     );
-
 }
 
 #[test]

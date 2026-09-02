@@ -1,6 +1,6 @@
 use crate::ast::{
-    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
-    Value, ValueUnit,
+    BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty, Value, ValueUnit,
+    get_threadlocal_serializer,
 };
 use crate::span::Span;
 use crate::{common_enum, common_struct};
@@ -89,10 +89,7 @@ common_struct! {
 
 impl Expr {
     pub fn new(kind: ExprKind) -> Self {
-        Self {
-            span: None,
-            kind,
-        }
+        Self { span: None, kind }
     }
 
     pub fn span(&self) -> Span {

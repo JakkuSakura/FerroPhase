@@ -18,7 +18,9 @@ impl SyclSerializer {
         &self,
         source: &fp_core::ast::package::AstPackage,
     ) -> fp_core::error::Result<Vec<(String, String)>> {
-        source.modules.clone()
+        source
+            .modules
+            .clone()
             .into_iter()
             .map(|module| {
                 let rel_path = module.relative_path();

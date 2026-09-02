@@ -608,8 +608,7 @@ impl AstToHirLowerer {
                                 };
                                 (trait_func.name.name == func.name.name).then(|| self.next_def_id())
                             });
-                            if let Some(trait_method_def_id) = trait_method_def_id {
-                            }
+                            if let Some(trait_method_def_id) = trait_method_def_id {}
                             items.push(hir::ImplItem {
                                 def_id: self.next_def_id(),
                                 hir_id: self.next_id(),

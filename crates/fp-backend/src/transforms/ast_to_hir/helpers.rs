@@ -837,10 +837,13 @@ impl AstToHirLowerer {
                         }
                     }
                 }
-                if let Some(module_path) = self.resolve_value_symbol(first.name.as_str()).and_then(|res| match res {
-                    hir::Res::Module(id) => self.hir_program.module_path(&id),
-                    _ => None,
-                }) {
+                if let Some(module_path) =
+                    self.resolve_value_symbol(first.name.as_str())
+                        .and_then(|res| match res {
+                            hir::Res::Module(id) => self.hir_program.module_path(&id),
+                            _ => None,
+                        })
+                {
                     let mut canonical = module_path.segments;
                     canonical.extend(
                         segments

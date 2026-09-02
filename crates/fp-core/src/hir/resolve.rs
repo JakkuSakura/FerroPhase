@@ -265,13 +265,13 @@ impl ModuleTree {
     /// paths are an implementation detail of traversal; the public
     /// resolution result carries the module's `DefId`.
     pub fn path_for_module(&self, def_id: &crate::hir::DefId) -> Option<QualifiedPath> {
-        fn visit(
-            tree: &ModuleTree,
-            def_id: &crate::hir::DefId,
-        ) -> Option<QualifiedPath> {
+        fn visit(tree: &ModuleTree, def_id: &crate::hir::DefId) -> Option<QualifiedPath> {
             for bindings in tree.symbols.values() {
                 for binding in bindings {
-                    if let Binding::Module { def_id: id, target, .. } = binding {
+                    if let Binding::Module {
+                        def_id: id, target, ..
+                    } = binding
+                    {
                         if id == def_id {
                             return Some(target.clone());
                         }

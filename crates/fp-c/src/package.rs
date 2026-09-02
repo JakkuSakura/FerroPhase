@@ -88,7 +88,14 @@ impl CPackageProvider {
                 exports: Vec::new(),
                 requires_features: Vec::new(),
             });
-            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")), collected_items: Vec::new(), items: parsed.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+            modules.push(fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")),
+                collected_items: Vec::new(),
+                items: parsed.ast.items,
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
+            });
         }
 
         let descriptor = PackageDescriptor {

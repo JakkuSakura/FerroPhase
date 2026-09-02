@@ -4,8 +4,8 @@
 //! tooling can load ASTs produced by a previous build when running inside a
 //! reduced environment.
 
-use crate::ast::File;
 use crate::Result;
+use crate::ast::File;
 use serde::Deserialize;
 use std::fs;
 use std::io::Read;

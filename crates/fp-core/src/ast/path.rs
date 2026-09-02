@@ -12,8 +12,8 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
 use crate::package::PackageId;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPath {
@@ -98,7 +98,6 @@ impl QualifiedPath {
     pub fn to_key(&self) -> String {
         segments_to_key(&self.segments)
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -128,7 +127,10 @@ pub fn resolve_path(
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone())),
+        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(
+            module_path.package_id.clone(),
+            parsed.segments.clone(),
+        )),
         PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
         PathPrefix::Super(depth) => module_path
             .parent_n(depth)
@@ -148,11 +150,17 @@ pub fn resolve_path(
             } else {
                 let local = QualifiedPath::new(module_path.package_id.clone(), vec![first.clone()]);
                 if module_defs.contains(&local) {
-                    return Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone()));
+                    return Some(QualifiedPath::new(
+                        module_path.package_id.clone(),
+                        parsed.segments.clone(),
+                    ));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone()));
+                return Some(QualifiedPath::new(
+                    module_path.package_id.clone(),
+                    parsed.segments.clone(),
+                ));
             }
             None
         }

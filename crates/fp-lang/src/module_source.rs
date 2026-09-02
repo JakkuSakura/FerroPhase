@@ -58,7 +58,12 @@ impl FerroModuleSourceResolver {
         let package_name = package.name.clone();
         let graph = package;
 
-        Ok(AstPackage::new(package_id, package_name, graph, vec![module]))
+        Ok(AstPackage::new(
+            package_id,
+            package_name,
+            graph,
+            vec![module],
+        ))
     }
 
     fn load_module_tree(
@@ -72,25 +77,73 @@ impl FerroModuleSourceResolver {
         source_paths: &mut HashSet<VirtualPath>,
     ) -> ProviderResult<Module> {
         if !module_paths.insert(module_path.clone()) {
-            return Err(ProviderError::other(format!("duplicate module path {}", module_path.to_key())));
+            return Err(ProviderError::other(format!(
+                "duplicate module path {}",
+                module_path.to_key()
+            )));
         }
         if is_root && !source_paths.insert(source_path.clone()) {
-            return Err(ProviderError::other(format!("source file {} belongs to multiple modules", source_path)));
+            return Err(ProviderError::other(format!(
+                "source file {} belongs to multiple modules",
+                source_path
+            )));
         }
         for item in &mut items {
-            let ItemKind::Module(module) = item.kind_mut() else { continue };
+            let ItemKind::Module(module) = item.kind_mut() else {
+                continue;
+            };
             let child_path = module_path.with_segment(module.name.as_str().to_owned());
             let child = if module.is_external {
-                let (child_source_path, source) = self.load_external_module(&source_path, module.name.as_str(), &child_path, is_root)?;
-                let parsed = self.frontend.parse_file(&source, &child_source_path.to_path_buf()).map_err(|error| ProviderError::other(format!("failed to parse module {}: {}", child_path.to_key(), error)))?;
-                self.load_module_tree(package, child_path, child_source_path, parsed.ast.items, false, module_paths, source_paths)?
+                let (child_source_path, source) = self.load_external_module(
+                    &source_path,
+                    module.name.as_str(),
+                    &child_path,
+                    is_root,
+                )?;
+                let parsed = self
+                    .frontend
+                    .parse_file(&source, &child_source_path.to_path_buf())
+                    .map_err(|error| {
+                        ProviderError::other(format!(
+                            "failed to parse module {}: {}",
+                            child_path.to_key(),
+                            error
+                        ))
+                    })?;
+                self.load_module_tree(
+                    package,
+                    child_path,
+                    child_source_path,
+                    parsed.ast.items,
+                    false,
+                    module_paths,
+                    source_paths,
+                )?
             } else {
                 let nested = std::mem::take(&mut module.items);
-                self.load_module_tree(package, child_path, source_path.clone(), nested, false, module_paths, source_paths)?
+                self.load_module_tree(
+                    package,
+                    child_path,
+                    source_path.clone(),
+                    nested,
+                    false,
+                    module_paths,
+                    source_paths,
+                )?
             };
             module.items = child.items;
         }
-        Ok(Module { attrs: Vec::new(), name: Ident::new(if is_root { "" } else { module_path.tail().unwrap_or("") }), items, visibility: Visibility::Public, is_external: false })
+        Ok(Module {
+            attrs: Vec::new(),
+            name: Ident::new(if is_root {
+                ""
+            } else {
+                module_path.tail().unwrap_or("")
+            }),
+            items,
+            visibility: Visibility::Public,
+            is_external: false,
+        })
     }
 
     fn load_external_module(
