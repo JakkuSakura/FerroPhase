@@ -1,7 +1,6 @@
 use super::worklist::ResolutionWorklist;
-use fp_core::ast::Path;
 use fp_core::ast::package::PackageId;
-use fp_core::ast::path::{InPackagePath, PathPrefix};
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir;
 use fp_core::hir::HirProgram;
@@ -16,7 +15,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 pub struct InPackageResolver<'hir> {
     hir_package: &'hir mut hir::HirPackage,
-    hir_program: Rc<RefCell<HirProgram>>,
+    _hir_program: Rc<RefCell<HirProgram>>,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
@@ -38,7 +37,7 @@ impl<'hir> InPackageResolver<'hir> {
         let _ = ast_package_id;
         Self {
             hir_package,
-            hir_program,
+            _hir_program: hir_program,
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
@@ -54,133 +53,6 @@ impl<'hir> InPackageResolver<'hir> {
         self.collect_imports(&items, &mut worklist);
         self.resolve_worklist(&mut worklist);
         Ok(())
-    }
-
-    pub fn resolve_parsed_path(
-        &self,
-        current_package_id: &PackageId,
-        location: &InPackagePath,
-        parsed: &Path,
-        namespace: Namespace,
-    ) -> ResolutionResult {
-        if parsed.is_empty() {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
-            );
-        }
-        let hir_program = self.hir_program.borrow();
-        let mut external_package = None;
-        if let Some(head) = parsed.head() {
-            for package_id in hir_program.packages.keys() {
-                if hir::HirProgram::external_crate_name(package_id) == head {
-                    external_package = Some(package_id.clone());
-                    break;
-                }
-            }
-        }
-        let target_package_id = match parsed.prefix {
-            PathPrefix::Plain | PathPrefix::Root => external_package
-                .clone()
-                .unwrap_or_else(|| current_package_id.clone()),
-            PathPrefix::Crate | PathPrefix::SelfMod | PathPrefix::Super(_) => {
-                current_package_id.clone()
-            }
-        };
-        let Some(absolute) = parsed.resolve_from(location) else {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::InvalidParent {
-                    location: location.clone(),
-                    depth: match parsed.prefix {
-                        PathPrefix::Super(depth) => depth,
-                        _ => 0,
-                    },
-                },
-            );
-        };
-        let Some(package) = hir_program.package(&target_package_id) else {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        };
-        let root = InPackagePath::new(Vec::new());
-        let result =
-            package
-                .module_tree
-                .resolve_path(&root, &absolute, namespace, self.resolution_rules);
-        if !result.is_not_found() {
-            return result;
-        }
-        let unqualified = if external_package.as_ref() == Some(&target_package_id) {
-            Some(InPackagePath::new(
-                parsed.segments[1..]
-                    .iter()
-                    .map(|segment| segment.as_str().to_owned())
-                    .collect(),
-            ))
-        } else {
-            None
-        };
-        let result = unqualified
-            .as_ref()
-            .map(|path| {
-                package
-                    .module_tree
-                    .resolve_path(&root, path, namespace, self.resolution_rules)
-            })
-            .unwrap_or(result);
-        if !result.is_not_found() {
-            return result;
-        }
-
-        // Associated items are type-directed and are resolved by type
-        // checking. Resolve the type prefix here so later phases still get
-        // its stable identity without incorrectly exposing impl members as
-        // module bindings.
-        if parsed.segments.len() > 1 {
-            let type_namespace = Namespace::Type;
-            let absolute_prefix = InPackagePath::new(
-                absolute
-                    .segments
-                    .iter()
-                    .take(absolute.segments.len() - 1)
-                    .cloned()
-                    .collect(),
-            );
-            let mut prefix_result = package.module_tree.resolve_path(
-                &root,
-                &absolute_prefix,
-                type_namespace,
-                self.resolution_rules,
-            );
-            if prefix_result.is_not_found() {
-                if let Some(unqualified) = &unqualified {
-                    let prefix = InPackagePath::new(
-                        unqualified
-                            .segments
-                            .iter()
-                            .take(unqualified.segments.len().saturating_sub(1))
-                            .cloned()
-                            .collect(),
-                    );
-                    prefix_result = package.module_tree.resolve_path(
-                        &root,
-                        &prefix,
-                        type_namespace,
-                        self.resolution_rules,
-                    );
-                }
-            }
-            if let ResolutionResult::Found(hir::Res::Def(type_def_id)) = prefix_result {
-                return ResolutionResult::Found(hir::Res::Def(type_def_id));
-            }
-        }
-
-        if external_package.as_ref() != Some(&target_package_id) {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        }
-        result
     }
 
     fn package_tree(&self) -> &ModuleTree {
