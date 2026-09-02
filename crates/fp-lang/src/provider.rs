@@ -345,7 +345,7 @@ mod tests {
                 .load_package_source(&PackageId::new(package))
                 .expect("embedded package source should load");
             assert!(
-                source.items.iter().all(|item| item
+                source.items().iter().all(|item| item
                     .module_path
                     .segments
                     .first()

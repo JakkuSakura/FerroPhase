@@ -944,10 +944,10 @@ mod tests {
         let mut aliases = HashMap::new();
         aliases.insert(alias.clone(), path_type(Res::Def(target.clone()), "Target"));
 
-        let class = classify_impl_shape(
-            &impl_for(path_type(Res::Def(alias), "Alias"), Generics::default()),
-            &aliases,
-        );
+        let class = classify_impl_shape(&impl_for(
+            path_type(Res::Def(alias), "Alias"),
+            Generics::default(),
+        ));
         assert!(matches!(class, ImplShapeClass::Nominal(did) if did == target));
     }
 
@@ -966,10 +966,7 @@ mod tests {
             }],
             where_clause: None,
         };
-        let class = classify_impl_shape(
-            &impl_for(path_type(Res::Def(param), "T"), generics),
-            &HashMap::new(),
-        );
+        let class = classify_impl_shape(&impl_for(path_type(Res::Def(param), "T"), generics));
         assert!(matches!(class, ImplShapeClass::Blanket));
     }
 }

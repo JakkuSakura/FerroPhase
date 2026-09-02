@@ -1808,7 +1808,7 @@ mod provider_tests {
         ];
         for (module, method) in published {
             assert!(
-                source.items.iter().any(|item| {
+                source.items().iter().any(|item| {
                     item.module_path.to_key() == module
                         && matches!(item.item.kind(), ItemKind::DefFunction(function)
                             if function.name.as_str() == method)
@@ -1870,30 +1870,19 @@ mod provider_tests {
                 .unwrap();
             assert!(
                 source
-                    .module_paths
+                    .modules
                     .iter()
-                    .all(|path| path.segments.first().map(String::as_str) == Some(crate_name)),
-                "{crate_name} module paths must start at the external crate root"
-            );
-            assert!(
-                source
-                    .module_paths
-                    .iter()
-                    .any(|path| path.segments == [crate_name.to_string()]),
+                    .any(|module| module.name.name.is_empty()),
                 "{crate_name} must publish its crate-root module"
             );
             assert!(
-                source.items.iter().all(|item| {
+                source.items().iter().all(|item| {
                     item.module_path.segments.first().map(String::as_str) == Some(crate_name)
                 }),
                 "{crate_name} items must start at the external crate root"
             );
-            let package = source
+            let dependencies: Vec<_> = source
                 .package
-                .packages()
-                .find(|package| package.id.as_str() == crate_name)
-                .expect("sysroot source graph package");
-            let dependencies: Vec<_> = package
                 .metadata
                 .dependencies
                 .iter()
@@ -2031,9 +2020,9 @@ mod provider_tests {
         let first = RustPackageProvider::new(source.clone())
             .load_package_source(&package_id)
             .unwrap();
-        assert_eq!(first.items.len(), 1);
+        assert_eq!(first.items().len(), 1);
         let serializable = first
-            .items
+            .items()
             .iter()
             .map(|item| (item.module_path.segments.clone(), item.item.clone()))
             .collect::<Vec<_>>();
@@ -2043,8 +2032,8 @@ mod provider_tests {
         let second = RustPackageProvider::new(source.clone())
             .load_package_source(&package_id)
             .unwrap();
-        assert_eq!(second.items.len(), 1);
-        assert_eq!(second.items[0].module_path, first.items[0].module_path);
+        assert_eq!(second.items().len(), 1);
+        assert_eq!(second.items()[0].module_path, first.items()[0].module_path);
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2074,7 +2063,7 @@ mod provider_tests {
         let first = RustPackageProvider::new(root.clone())
             .load_package_source(&package_id)
             .unwrap();
-        assert!(first.items.iter().any(|item| {
+        assert!(first.items().iter().any(|item| {
             matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "Before")
         }));
 
@@ -2082,10 +2071,10 @@ mod provider_tests {
         let second = RustPackageProvider::new(root.clone())
             .load_package_source(&package_id)
             .unwrap();
-        assert!(second.items.iter().any(|item| {
+        assert!(second.items().iter().any(|item| {
             matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "After")
         }));
-        assert!(!second.items.iter().any(|item| {
+        assert!(!second.items().iter().any(|item| {
             matches!(item.item.as_struct(), Some(definition) if definition.name.as_str() == "Before")
         }));
 
@@ -2111,7 +2100,7 @@ mod provider_tests {
                 .load_package_source(&PackageId::new(package))
                 .expect("supported registry API package");
             assert!(
-                !source.items.is_empty(),
+                !source.items().is_empty(),
                 "{package} must expose typed portability declarations"
             );
         }

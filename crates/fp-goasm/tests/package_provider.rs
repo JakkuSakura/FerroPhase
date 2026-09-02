@@ -26,16 +26,16 @@ fn directory_provider_discovers_nested_goasm_modules() {
     assert_eq!(packages.len(), 1);
 
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.items.len(), 2);
+    assert_eq!(package.items().len(), 2);
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "main")
     );
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "nested::helper")
     );

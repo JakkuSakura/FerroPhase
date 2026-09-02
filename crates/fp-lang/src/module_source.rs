@@ -263,7 +263,7 @@ mod tests {
             .expect("resolve package source");
 
         let paths = source
-            .items
+            .items()
             .iter()
             .map(|item| item.module_path.to_key())
             .collect::<HashSet<_>>();

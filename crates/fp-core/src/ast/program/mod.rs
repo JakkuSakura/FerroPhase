@@ -157,6 +157,7 @@ impl AstProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::package::PackageDescriptor;
     use crate::ast::package::provider::EmptyProvider;
 
     #[test]
@@ -165,7 +166,12 @@ mod tests {
         let parent = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
-            AstPackage::new(PackageId::new("dependency"), "dependency", Vec::new()),
+            AstPackage::new(
+                PackageId::new("dependency"),
+                "dependency",
+                PackageDescriptor::empty(PackageId::new("dependency"), "dependency"),
+                Vec::new(),
+            ),
             crate::lir::LirDataLayout::x86_64(),
         );
 
@@ -183,7 +189,12 @@ mod tests {
         let child = &workspace;
         let dependency = parent.begin_package(
             PackageId::new("dependency"),
-            AstPackage::new(PackageId::new("dependency"), "dependency", Vec::new()),
+            AstPackage::new(
+                PackageId::new("dependency"),
+                "dependency",
+                PackageDescriptor::empty(PackageId::new("dependency"), "dependency"),
+                Vec::new(),
+            ),
             crate::lir::LirDataLayout::x86_64(),
         );
 

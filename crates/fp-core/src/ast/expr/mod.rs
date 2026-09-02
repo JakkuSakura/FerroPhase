@@ -240,8 +240,8 @@ mod tests {
     fn expr_parts_preserve_span_metadata() {
         let expr = Expr::name(Name::from_ident(Ident::new("value"))).with_span(Span::null());
 
-        let (id, span, kind) = expr.into_parts();
-        let rebuilt = Expr::from_parts(id, span, kind);
+        let (span, kind) = expr.into_parts();
+        let rebuilt = Expr::from_parts(span, kind);
 
         assert_eq!(rebuilt.span(), Span::null());
     }

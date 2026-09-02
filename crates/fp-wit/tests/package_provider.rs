@@ -15,7 +15,7 @@ fn directory_provider_loads_wit_interfaces() {
     let provider = fp_wit::package::WitPackageProvider::discover(directory.path()).unwrap();
     let packages = provider.list_packages().unwrap();
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.items.len(), 1);
+    assert_eq!(package.items().len(), 1);
 }
 
 #[test]

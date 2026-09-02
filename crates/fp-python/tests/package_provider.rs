@@ -25,16 +25,16 @@ fn directory_provider_discovers_python_sources_and_metadata() {
     assert_eq!(packages[0].as_str(), "demo");
 
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.items.len(), 2);
+    assert_eq!(package.items().len(), 2);
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "demo")
     );
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "demo::nested::helpers")
     );

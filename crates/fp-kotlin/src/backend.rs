@@ -1369,9 +1369,6 @@ fn materialize_expr_types(expr: &mut Expr) {
     match expr.kind_mut() {
         ExprKind::Block(block) => {
             materialize_block(&mut block.stmts);
-            for item in &mut block.collected_items {
-                materialize_kotlin_types(item);
-            }
         }
         ExprKind::If(expr_if) => {
             materialize_expr_types(&mut expr_if.cond);
@@ -1401,9 +1398,6 @@ fn materialize_expr_types(expr: &mut Expr) {
         }
         ExprKind::ConstBlock(block) => {
             materialize_expr_types(&mut block.expr);
-            for item in &mut block.collected_items {
-                materialize_kotlin_types(item);
-            }
         }
         ExprKind::Match(expr_match) => {
             if let Some(scrutinee) = &mut expr_match.scrutinee {
@@ -1553,9 +1547,6 @@ fn materialize_expr_types(expr: &mut Expr) {
         }
         ExprKind::Quote(quote) => {
             materialize_block(&mut quote.block.stmts);
-            for item in &mut quote.block.collected_items {
-                materialize_kotlin_types(item);
-            }
         }
         ExprKind::Splice(splice) => materialize_expr_types(&mut splice.token),
         ExprKind::Name(_)

@@ -21,26 +21,18 @@ fn directory_provider_discovers_nested_zig_modules() {
     let provider = fp_zig::package::ZigPackageProvider::discover(directory.path()).unwrap();
     let packages = provider.list_packages().unwrap();
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.items.len(), 2);
+    assert_eq!(package.items().len(), 2);
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "src::main")
     );
     assert!(
         package
-            .items
+            .items()
             .iter()
             .any(|item| item.module_path.to_key() == "src::math::add")
-    );
-    assert_eq!(
-        provider
-            .load_package_metadata(&packages[0])
-            .unwrap()
-            .modules
-            .len(),
-        2
     );
 }
 

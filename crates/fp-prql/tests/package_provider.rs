@@ -14,7 +14,7 @@ fn directory_provider_loads_prql_documents() {
     let provider = fp_prql::package::PrqlPackageProvider::discover(directory.path()).unwrap();
     let packages = provider.list_packages().unwrap();
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert!(package.items.is_empty());
+    assert!(package.items().is_empty());
 }
 
 #[test]
