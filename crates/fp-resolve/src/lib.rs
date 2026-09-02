@@ -39,191 +39,69 @@ impl Resolver {
         parsed: &Path,
         namespace: Namespace,
     ) -> ResolutionResult {
+        use fp_core::hir::resolve::ResolutionNotFound;
         if parsed.is_empty() {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
-            );
+            return ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
         }
         let hir_program = self.hir_program.borrow();
-        let mut external_package = None;
-        if let Some(head) = parsed.head() {
-            for package_id in hir_program.packages.keys() {
-                if hir::HirProgram::external_crate_name(package_id) == head {
-                    external_package = Some(package_id.clone());
-                    break;
+        let external_package = parsed.head().and_then(|head| {
+            hir_program
+                .packages
+                .keys()
+                .find(|id| hir::HirProgram::external_crate_name(id) == head)
+                .cloned()
+        });
+        let target_package_id = external_package
+            .clone()
+            .unwrap_or_else(|| current_package_id.clone());
+        let root = fp_core::hir::resolve::ModuleData::virtual_root_for(target_package_id.clone());
+        let mut module = root;
+        let skip_external = external_package.is_some()
+            && matches!(parsed.prefix, PathPrefix::Plain | PathPrefix::Root);
+        if !skip_external && !matches!(parsed.prefix, PathPrefix::Root | PathPrefix::Crate) {
+            let start_segments = match parsed.prefix {
+                PathPrefix::Super(depth) => {
+                    let Some(parent) = location.segments.len().checked_sub(depth) else {
+                        return ResolutionResult::NotFound(ResolutionNotFound::InvalidParent {
+                            location: location.clone(),
+                            depth,
+                        });
+                    };
+                    &location.segments[..parent]
                 }
+                _ => &location.segments,
+            };
+            match hir_program.resolve_module_location_segments(&target_package_id, start_segments) {
+                ResolutionResult::Found(hir::Res::Module(start)) => module = start,
+                result => return result,
             }
         }
-        let target_package_id = match parsed.prefix {
-            PathPrefix::Plain | PathPrefix::Root => external_package
-                .clone()
-                .unwrap_or_else(|| current_package_id.clone()),
-            PathPrefix::Crate | PathPrefix::SelfMod | PathPrefix::Super(_) => {
-                current_package_id.clone()
-            }
-        };
-        let Some(absolute) = parsed.resolve_from(location) else {
-            return ResolutionResult::NotFound(
-                fp_core::hir::resolve::ResolutionNotFound::InvalidParent {
-                    location: location.clone(),
-                    depth: match parsed.prefix {
-                        PathPrefix::Super(depth) => depth,
-                        _ => 0,
-                    },
-                },
-            );
-        };
-        let root = fp_core::hir::resolve::ModuleData::virtual_root_for(target_package_id.clone());
-        let mut result =
-            ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
-        let mut module = root.clone();
-        for (index, segment) in absolute.segments.iter().enumerate() {
-            let segment_namespace = if index + 1 == absolute.segments.len() {
+        let first = usize::from(skip_external);
+        let count = parsed.segments.len().saturating_sub(first);
+        if count == 0 {
+            return ResolutionResult::Found(hir::Res::Module(module));
+        }
+        for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
+            let segment_namespace = if offset + 1 == count {
                 namespace
             } else {
                 Namespace::Type
             };
-            result = hir_program.resolve_module_child(&module, segment, segment_namespace);
-            if index + 1 == absolute.segments.len() {
-                break;
+            let result = hir_program.resolve_module_child(&module, segment, segment_namespace);
+            if offset + 1 == count {
+                return result;
             }
             match result {
-                ResolutionResult::Found(hir::Res::Module(ref next)) => {
-                    module = next.clone();
-                }
+                ResolutionResult::Found(hir::Res::Module(next)) => module = next,
                 ResolutionResult::Found(found) => {
-                    result = ResolutionResult::NotFound(
-                        fp_core::hir::resolve::ResolutionNotFound::ExpectedModule {
-                            path: absolute.clone(),
-                            found,
-                        },
-                    );
-                    break;
+                    return ResolutionResult::NotFound(ResolutionNotFound::ExpectedModule {
+                        path: location.clone(),
+                        found,
+                    });
                 }
-                _ => break,
+                result => return result,
             }
         }
-        if !result.is_not_found() {
-            return result;
-        }
-        let unqualified = if external_package.as_ref() == Some(&target_package_id) {
-            Some(InPackagePath::new(
-                parsed.segments[1..]
-                    .iter()
-                    .map(|segment| segment.as_str().to_owned())
-                    .collect(),
-            ))
-        } else {
-            None
-        };
-        let result = if let Some(path) = &unqualified {
-            let mut result =
-                ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
-            let mut module = root.clone();
-            for (index, segment) in path.segments.iter().enumerate() {
-                let segment_namespace = if index + 1 == path.segments.len() {
-                    namespace
-                } else {
-                    Namespace::Type
-                };
-                result = hir_program.resolve_module_child(&module, segment, segment_namespace);
-                if index + 1 == path.segments.len() {
-                    break;
-                }
-                match result {
-                    ResolutionResult::Found(hir::Res::Module(ref next)) => {
-                        module = next.clone();
-                    }
-                    ResolutionResult::Found(found) => {
-                        result = ResolutionResult::NotFound(
-                            fp_core::hir::resolve::ResolutionNotFound::ExpectedModule {
-                                path: path.clone(),
-                                found,
-                            },
-                        );
-                        break;
-                    }
-                    _ => break,
-                }
-            }
-            result
-        } else {
-            result
-        };
-        if !result.is_not_found() {
-            return result;
-        }
-        if parsed.segments.len() > 1 {
-            let type_namespace = Namespace::Type;
-            let absolute_prefix = InPackagePath::new(
-                absolute
-                    .segments
-                    .iter()
-                    .take(absolute.segments.len() - 1)
-                    .cloned()
-                    .collect(),
-            );
-            let mut prefix_result =
-                ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
-            let mut module = root.clone();
-            for (index, segment) in absolute_prefix.segments.iter().enumerate() {
-                let segment_namespace = if index + 1 == absolute_prefix.segments.len() {
-                    type_namespace
-                } else {
-                    Namespace::Type
-                };
-                prefix_result =
-                    hir_program.resolve_module_child(&module, segment, segment_namespace);
-                if index + 1 == absolute_prefix.segments.len() {
-                    break;
-                }
-                let ResolutionResult::Found(hir::Res::Module(ref next)) = prefix_result else {
-                    break;
-                };
-                module = next.clone();
-            }
-            if prefix_result.is_not_found() {
-                if let Some(unqualified) = &unqualified {
-                    let prefix = InPackagePath::new(
-                        unqualified
-                            .segments
-                            .iter()
-                            .take(unqualified.segments.len().saturating_sub(1))
-                            .cloned()
-                            .collect(),
-                    );
-                    prefix_result = ResolutionResult::NotFound(
-                        fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
-                    );
-                    let mut module = root.clone();
-                    for (index, segment) in prefix.segments.iter().enumerate() {
-                        let segment_namespace = if index + 1 == prefix.segments.len() {
-                            type_namespace
-                        } else {
-                            Namespace::Type
-                        };
-                        prefix_result =
-                            hir_program.resolve_module_child(&module, segment, segment_namespace);
-                        if index + 1 == prefix.segments.len() {
-                            break;
-                        }
-                        let ResolutionResult::Found(hir::Res::Module(ref next)) = prefix_result
-                        else {
-                            break;
-                        };
-                        module = next.clone();
-                    }
-                }
-            }
-            if let ResolutionResult::Found(hir::Res::Def(type_def_id)) = prefix_result {
-                return ResolutionResult::Found(hir::Res::Def(type_def_id));
-            }
-        }
-        if external_package.as_ref() != Some(&target_package_id) {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        }
-        result
+        ResolutionResult::NotFound(ResolutionNotFound::EmptyPath)
     }
 }

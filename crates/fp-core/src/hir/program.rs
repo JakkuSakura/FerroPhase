@@ -323,6 +323,32 @@ impl HirProgram {
             ))
     }
 
+    pub fn resolve_module_location(
+        &self,
+        package_id: &PackageId,
+        location: &crate::ast::path::InPackagePath,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.resolve_module_location_segments(package_id, &location.segments)
+    }
+
+    pub fn resolve_module_location_segments(
+        &self,
+        package_id: &PackageId,
+        segments: &[String],
+    ) -> crate::hir::resolve::ResolutionResult {
+        let mut module = crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone());
+        for segment in segments {
+            match self.resolve_module_child(&module, segment, crate::hir::resolve::Namespace::Type)
+            {
+                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(next)) => {
+                    module = next;
+                }
+                result => return result,
+            }
+        }
+        crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(module))
+    }
+
     /// Publishes a completed package snapshot into this program.
     ///
     /// The package is the owner of its `def_map`, source-path metadata, module tree,
