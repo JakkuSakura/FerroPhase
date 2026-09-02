@@ -3129,7 +3129,7 @@ impl<'a> BodyBuilder<'a> {
                     let hir::ItemKind::Function(_) = item.kind else {
                         return None;
                     };
-                    let path = program.def_path(item.def_id.clone())?;
+                    let path = program.source_path(item.def_id.clone())?;
                     (path
                         .segments
                         .iter()

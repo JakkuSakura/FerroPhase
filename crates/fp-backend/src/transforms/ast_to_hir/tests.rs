@@ -1503,7 +1503,7 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
         .find(|item| matches!(item.kind, hir::ItemKind::TypeAlias(_)))
         .expect("ordinary aliases must be published as HIR items");
     assert_eq!(alias.def_id.package_id.as_str(), "test");
-    assert!(program.def_paths.contains_key(&alias.def_id));
+    assert!(program.def_map.contains_key(&alias.def_id));
     assert!(
         program
             .module_tree
@@ -1746,7 +1746,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
             .collect::<Vec<_>>(),
         vec!["dependency", "api", "PublicType"]
     );
-    assert!(!consumer.def_paths.contains_key(&public_type_id));
+    assert!(!consumer.def_map.contains_key(&public_type_id));
     Ok(())
 }
 

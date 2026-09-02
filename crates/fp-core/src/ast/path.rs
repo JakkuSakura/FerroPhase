@@ -6,7 +6,7 @@
 //! caller, which needs its own state (module path, module tree, symbol
 //! tables, workspace) throughout, not a free function reached into via
 //! several closures. Lives under `ast` rather than a shared crate-root
-//! module — like every other IR here (`hir::Path`/`hir::DefPath`,
+//! module — like every other IR here (`hir::Path`,
 //! `mir::ident::Path`), path values are owned by the stage that defines
 //! them, not centralized across stages.
 
@@ -84,6 +84,15 @@ impl InPackagePath {
 
     pub fn to_key(&self) -> String {
         segments_to_key(&self.segments)
+    }
+
+    pub fn to_ast_path(&self) -> crate::ast::Path {
+        crate::ast::Path::plain(
+            self.segments
+                .iter()
+                .map(|segment| crate::ast::Ident::new(segment.clone()))
+                .collect(),
+        )
     }
 }
 

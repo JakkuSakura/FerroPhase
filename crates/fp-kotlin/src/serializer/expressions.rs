@@ -55,9 +55,9 @@ impl KotlinEmitter {
                 // `types::FileStatus::Modified` used as a plain value, not a
                 // match pattern) — resolve the declaring enum's real name from
                 // this expression's own resolved type (`Ty::Expr` wrapping the
-                // real `DefPath`-derived path built by
+                // real source-path metadata built by
                 // `HirToAstLifter::def_id_to_ty`) rather than guessing from the
-                // path text: a `DefPath`'s own declaring segment is
+                // path text: the item's own declaring segment is
                 // structurally always last, so `ty()`'s last path segment is
                 // the real enum name regardless of how many module segments
                 // precede it. Look the exact Kotlin spelling up in the same
@@ -1055,9 +1055,9 @@ pub(super) fn pattern_portable_op(pat: &Option<fp_core::ast::BPattern>) -> Optio
 
 /// The enum's own bare declared name for an enum-variant VALUE expression,
 /// derived from the expression's real resolved type (`Ty::Expr` wrapping the
-/// real, `DefPath`-derived path `HirToAstLifter::def_id_to_ty` builds from
+/// real source path `HirToAstLifter::def_id_to_ty` builds from
 /// the type-checker's own resolved `DefId` — never derived from this
-/// particular use's own path text). A `DefPath`'s own declaring segment is
+/// particular use's own path text). An item's own declaring segment is
 /// structurally always last (module segments only ever precede it), so the
 /// last path segment reliably names the real enum regardless of how many
 /// module segments precede it — no position-counting/guessing needed.

@@ -41,7 +41,6 @@ impl SharedHirProgram {
     pub fn snapshot(&self) -> Rc<HirProgram> {
         Rc::new(self.0.borrow().clone())
     }
-
     pub fn item(&self, def_id: DefId) -> Option<Item> {
         self.0.borrow().item(def_id)
     }
@@ -62,8 +61,8 @@ impl SharedHirProgram {
         self.0.borrow().all_items().collect()
     }
 
-    pub fn def_path(&self, def_id: DefId) -> Option<DefPath> {
-        self.0.borrow().def_path(def_id)
+    pub fn source_path(&self, def_id: DefId) -> Option<crate::ast::path::InPackagePath> {
+        self.0.borrow().source_path(def_id)
     }
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
         self.0.borrow().member_owner(def_id)
@@ -282,7 +281,7 @@ impl SharedHirProgram {
 /// packages, each already an `Rc<RefCell<HirPackage>>`, for a consumer like
 /// `HirToMirLowerer` to dispatch cross-package `DefId` lookups against) is
 /// then just a handful of `Rc` clones, never a deep clone of every
-/// dependency's own items/def_map/def_paths.
+/// dependency's own items/def_map/source paths.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HirProgram {
     pub packages: HashMap<PackageId, Rc<RefCell<HirPackage>>>,
@@ -306,7 +305,7 @@ impl HirProgram {
 
     /// Publishes a completed package snapshot into this program.
     ///
-    /// The package is the owner of its `def_map`, `def_paths`, module tree,
+    /// The package is the owner of its `def_map`, source-path metadata, module tree,
     /// and derived lookup indexes.  `HirProgram` stores that package by
     /// `PackageId`; it must not reconstruct or take ownership of those
     /// tables in a second global copy.  Reindex the owned snapshot before
@@ -398,21 +397,16 @@ impl HirProgram {
             .flat_map(|package| package.borrow().items.clone().into_iter())
     }
 
-    /// A definition's fully-qualified path, wherever its owning package
-    /// lives — routes to that package's own `def_paths` via the `DefId`'s
-    /// own `package_id`, so a caller never has to know or track which
-    /// package a `DefId` came from before asking this question.
-    pub fn def_path(&self, def_id: DefId) -> Option<DefPath> {
-        self.package(&def_id.package_id)?
-            .def_paths
-            .get(&def_id)
-            .cloned()
-    }
-
     pub fn item(&self, def_id: DefId) -> Option<Item> {
         self.package(&def_id.package_id)?
             .def_map
             .get(&def_id)
+            .cloned()
+    }
+
+    pub fn source_path(&self, def_id: DefId) -> Option<crate::ast::path::InPackagePath> {
+        self.package(&def_id.package_id)?
+            .source_path(&def_id)
             .cloned()
     }
 
@@ -723,8 +717,6 @@ impl HirProgram {
                 .collect::<Vec<_>>()
         })
     }
-<<<<<<< HEAD
-
     /// Resolves `path` (in namespace `ns`) starting from `from_module` in
     /// package `from`, falling through to another already-compiled
     /// package's own module tree when `path`'s root names a different

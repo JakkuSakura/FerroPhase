@@ -59,16 +59,9 @@ pub struct HirPackage {
     /// Prelude modules participating in this package's resolved namespace.
     /// Their identities are assigned in the HIR package's DefId space.
     pub prelude_modules: Vec<DefId>,
-    /// Fully-qualified path for a definition's `DefId`, recorded once at
-    /// first registration (module segments + the definition's own bare
-    /// name as the last segment). Analogous to rustc's `DefPathTable`:
-    /// item `name` fields are always bare, local identifiers, and a
-    /// qualified path — when one is needed for lookup/diagnostics — is
-    /// computed by consulting this table rather than stored redundantly
-    /// on the item itself. A missing entry means the definition has no
-    /// meaningful module qualification (e.g. impl methods, addressed by
-    /// (type, method) pair instead, or synthetic items).
-    pub def_paths: HashMap<DefId, DefPath>,
+    /// Source/module paths retained only for diagnostics and source re-emission.
+    /// Semantic identity is always the map key (`DefId`).
+    pub source_paths: HashMap<DefId, crate::ast::path::InPackagePath>,
     /// `DefId`s of items whose HIR form is a structural stand-in, not a
     /// real lowering of the original source construct — for example, a
     /// trait declaration may also have a placeholder `Const` entry so the
@@ -453,7 +446,7 @@ impl HirPackage {
             next_def_id: 1,
             module_tree: crate::hir::resolve::ModuleTree::new(),
             prelude_modules: Vec::new(),
-            def_paths: HashMap::new(),
+            source_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
             intrinsic_defs: HashMap::new(),
             struct_defs_by_name: HashMap::new(),
@@ -622,10 +615,8 @@ impl HirPackage {
         self.def_map.get(def_id)
     }
 
-    /// Point lookup into `def_paths` — same-package counterpart of
-    /// `HirProgram::def_path`.
-    pub fn def_path(&self, def_id: &DefId) -> Option<&DefPath> {
-        self.def_paths.get(def_id)
+    pub fn source_path(&self, def_id: &DefId) -> Option<&crate::ast::path::InPackagePath> {
+        self.source_paths.get(def_id)
     }
 
     /// Every definition this package knows about, including nested/local

@@ -269,11 +269,11 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
         .expect("math::add present in program");
     assert_eq!(
         program
-            .def_paths
+            .source_paths
             .get(&add_item.def_id)
-            .map(|p| p.to_segments()),
+            .map(|p| p.segments.clone()),
         Some(vec!["math".to_string(), "add".to_string()]),
-        "add's qualified path should be recorded in def_paths, not baked into sig.name"
+        "add's source path should be recorded separately, not baked into sig.name"
     );
 
     let call_item = program
@@ -399,11 +399,11 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         .expect("math::add present in program");
     assert_eq!(
         program
-            .def_paths
+            .source_paths
             .get(&add_item.def_id)
-            .map(|p| p.to_segments()),
+            .map(|p| p.segments.clone()),
         Some(vec!["math".to_string(), "add".to_string()]),
-        "add's qualified path should be recorded in def_paths, not baked into sig.name"
+        "add's source path should be recorded separately, not baked into sig.name"
     );
 
     let callers_item = program
@@ -413,11 +413,11 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         .expect("callers::call present in program");
     assert_eq!(
         program
-            .def_paths
+            .source_paths
             .get(&callers_item.def_id)
-            .map(|p| p.to_segments()),
+            .map(|p| p.segments.clone()),
         Some(vec!["callers".to_string(), "call".to_string()]),
-        "call's qualified path should be recorded in def_paths, not baked into sig.name"
+        "call's source path should be recorded separately, not baked into sig.name"
     );
 
     let add_def_id = add_item.def_id.clone();

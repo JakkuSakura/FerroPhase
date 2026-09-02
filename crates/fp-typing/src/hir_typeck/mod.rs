@@ -2246,11 +2246,15 @@ impl HirTypeChecker {
             }
             let formatter_append = method.as_str() == "append"
                 && matches!(&receiver_ty.kind, TyKind::Ref(_, inner, _)
-                    if matches!(&inner.kind, TyKind::Adt(adt, _)
-                        if self
-                            .program_rc()
-                            .def_path(adt.did.clone())
-                        .is_some_and(|path| path.segments.last().is_some_and(|name| name.as_str() == "Formatter"))));
+                if matches!(&inner.kind, TyKind::Adt(adt, _)
+                    if self
+                        .program_rc()
+                        .item(adt.did.clone())
+                        .is_some_and(|item| match &item.kind {
+                            hir::ItemKind::Struct(def) => def.name.as_str() == "Formatter",
+                            hir::ItemKind::Enum(def) => def.name.as_str() == "Formatter",
+                            _ => false,
+                        })));
             if formatter_append {
                 return Ok(self.unit_ty());
             }
@@ -3529,7 +3533,7 @@ impl HirTypeChecker {
             if !matches!(path.res, Some(hir::Res::Def(_))) && path.segments.len() >= 2 {
                 let trait_name = &path.segments[path.segments.len() - 2].name;
                 // Use only the namespace-qualified export index. The old
-                // package-wide `def_paths` scan selected an arbitrary same-
+                // package-wide source-path scan selected an arbitrary same-
                 // named trait from an unrelated module and made resolution
                 // depend on fallback ordering.
                 let found = None::<hir::Res>;
@@ -5944,16 +5948,21 @@ impl HirTypeChecker {
             return false;
         }
         let program = self.program_rc();
-        let Some(path) = program.def_path(expected_def.did.clone()) else {
+        let Some(item) = program.item(expected_def.did.clone()) else {
             return false;
         };
-        let Some(name) = path.segments.last() else {
-            return false;
+        let is_wrapper = match &item.kind {
+            hir::ItemKind::Struct(def) => matches!(
+                def.name.as_str(),
+                "UnsafeCell" | "SyncUnsafeCell" | "Cell" | "RefCell"
+            ),
+            hir::ItemKind::Enum(def) => matches!(
+                def.name.as_str(),
+                "UnsafeCell" | "SyncUnsafeCell" | "Cell" | "RefCell"
+            ),
+            _ => false,
         };
-        if !matches!(
-            name.as_str(),
-            "UnsafeCell" | "SyncUnsafeCell" | "Cell" | "RefCell"
-        ) {
+        if !is_wrapper {
             return false;
         }
         expected_args

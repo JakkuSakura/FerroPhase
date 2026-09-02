@@ -16,7 +16,7 @@ pub mod refinement;
 pub mod resolve;
 pub mod ty;
 
-pub use ident::{DefPath, Symbol};
+pub use ident::Symbol;
 pub use package::HirPackage;
 pub use path::HirPath;
 pub use program::{HirProgram, SharedHirProgram};

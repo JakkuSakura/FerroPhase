@@ -798,9 +798,9 @@ impl CompilerDriver {
         current_package_id: PackageId,
         hir_package_id: hir::PackageId,
     ) -> Result<(), CompilerDriverError> {
-        // Scoped narrowly — `lift_items_by_path`/`referenced_paths_by_path`
+        // Scoped narrowly — DefId-indexed HIR-to-AST lifting/references
         // return owned data, so nothing here needs to outlive this block.
-        let (lifted_items_by_path, referenced_paths_by_path) = {
+        let (lifted_items_by_def_id, referenced_defs_by_def_id) = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
             let hir_program = state.hir_program();
@@ -827,14 +827,14 @@ impl CompilerDriver {
             } else {
                 lifter
             };
-            // `lift_items_by_path` treats an `impl` block as an opaque
+            // The DefId-indexed lifter treats an `impl` block as an opaque
             // placeholder — merge in each impl *method*'s own lifted
             // body too (keyed by its own qualified path, disjoint from
             // any top-level item's), or typed/normalized impl method
             // bodies never get spliced back in at all.
-            let mut lifted_items_by_path = lifter.lift_items_by_path();
-            lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
-            (lifted_items_by_path, lifter.referenced_paths_by_path())
+            let mut lifted_items_by_def_id = lifter.lift_items_by_def_id();
+            lifted_items_by_def_id.extend(lifter.lift_impl_methods_by_def_id());
+            (lifted_items_by_def_id, lifter.referenced_defs_by_def_id())
         };
         if let Some(pkg) = self
             .state
@@ -848,26 +848,8 @@ impl CompilerDriver {
             // single, canonical reconciliation point.
             // Module-owned AST items are the source of truth; reconciliation is
             // performed during lowering from the module tree.
-            pkg.referenced_paths = referenced_paths_by_path
-                .into_iter()
-                .map(|(key, values)| {
-                    let key: Vec<String> = key
-                        .segments
-                        .iter()
-                        .map(|s| s.as_str().to_string())
-                        .collect();
-                    let values: Vec<Vec<String>> = values
-                        .into_iter()
-                        .map(|path| {
-                            path.segments
-                                .iter()
-                                .map(|s| s.as_str().to_string())
-                                .collect()
-                        })
-                        .collect();
-                    (key, values)
-                })
-                .collect();
+            let _ = referenced_defs_by_def_id;
+            pkg.referenced_paths.clear();
         }
         return Ok(());
     }
@@ -1291,7 +1273,7 @@ fn preserve_source_declaration_metadata(source: &Item, typed: &mut Item) {
 /// An `impl` block's own qualified name is its self-type's name (mirrors
 /// `ast_to_hir::self_type_first_segment_name`, which resolves the same
 /// question at HIR-lowering time) — used to reconstruct the same
-/// `DefPath` shape `HirToAstLifter::lift_impl_methods_by_path` records
+/// DefId shape `HirToAstLifter::lift_impl_methods_by_def_id` records
 /// each method's typed body under, from the untyped source alone. Only
 /// handles the common bare-ident/simple-path shape (`impl Foo { .. }`/
 /// `impl foo::Bar { .. }`) — a self-type written as something

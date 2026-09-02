@@ -247,7 +247,7 @@ impl AstPackage {
 /// in the package is named `function_name`. Pure over an already-borrowed
 /// `hir::HirPackage` so both `CompilerDriver` and `AstProgram` callers can
 /// share this without either depending on the other. See
-/// `crate::hir::HirPackage::def_paths`'s doc comment for why `sig.name` is
+/// HIR source-path metadata's doc comment for why `sig.name` is
 /// always the bare, local identifier and disambiguation instead relies on
 /// the recorded def path.
 ///

@@ -241,7 +241,7 @@ impl<'a> HirToAstLifter<'a> {
         if !self.capabilities.portable_operations {
             return None;
         }
-        let path = self.hir_program.def_path(def_id.clone())?;
+        let path = self.hir_program.source_path(def_id.clone())?;
         let segments = path
             .segments
             .iter()
@@ -302,7 +302,7 @@ impl<'a> HirToAstLifter<'a> {
     /// shape every backend serializer already knows how to consume.
     /// Strict: propagates the first per-item lift error rather than
     /// tolerating it (unlike the lenient, per-item-tolerant
-    /// [`lift_items_by_path`](Self::lift_items_by_path) used by the real
+    /// [`lift_items_by_def_id`](Self::lift_items_by_def_id) used by the real
     /// typed-splice pipeline) — appropriate for a correctness-oriented
     /// roundtrip/test, where a silently-dropped item would hide a real bug.
     pub fn lift_items(&self) -> Result<Vec<Item>> {
@@ -331,17 +331,14 @@ impl<'a> HirToAstLifter<'a> {
     /// shape) is simply omitted from the result instead of aborting the
     /// whole program — the caller keeps that one item's original,
     /// untyped source form rather than losing typed info for every other
-    /// item in the package. Items with no entry in `def_paths` (e.g.
+    /// item in the package. Items without a source-path entry (e.g.
     /// synthetic struct definitions for anonymous/structural literals,
     /// `register_structural_value_def`/`materialize_enum_struct_payload`
     /// in `ast_to_hir/mod.rs`) have no source counterpart to splice onto
     /// and are likewise omitted.
-    pub fn lift_items_by_path(&self) -> HashMap<hir::DefPath, Item> {
+    pub fn lift_items_by_def_id(&self) -> HashMap<hir::DefId, Item> {
         let mut lifted = Vec::new();
         for item in &self.package.items {
-            let Some(path) = self.def_path_for(&item.def_id) else {
-                continue;
-            };
             // Synthetic HIR definitions have no corresponding source item to
             // splice back into. Traits are no longer placeholders: lifting
             // their typed method signatures keeps interface suspension in
@@ -354,17 +351,17 @@ impl<'a> HirToAstLifter<'a> {
             let Ok(ast_item) = self.lift_item(item) else {
                 continue;
             };
-            lifted.push((path, ast_item));
+            lifted.push((item.def_id.clone(), ast_item));
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
         let items = self.reconstruct_closures(items.clone()).unwrap_or(items);
         paths.into_iter().zip(items).collect()
     }
 
-    /// `lift_items_by_path` treats an `hir::ItemKind::Impl` as an opaque,
+    /// `lift_items_by_def_id` treats an `hir::ItemKind::Impl` as an opaque,
     /// un-lifted placeholder (real per-target impl-block emission happens
     /// downstream, per-backend) — so a typed-splice consumer keyed only by
-    /// `lift_items_by_path`'s map never sees any impl *method*'s typed
+    /// `lift_items_by_def_id`'s map never sees any impl *method*'s typed
     /// body at all, and permanently falls back to that method's original,
     /// untyped, pre-typecheck source form (confirmed: this is why
     /// `Ok(...)`/`Some(...)` calls inside impl methods never reached
@@ -384,7 +381,7 @@ impl<'a> HirToAstLifter<'a> {
     /// own module needs to already be public; a method that unexpectedly
     /// becomes visible here doesn't break anything Kotlin-side the way an
     /// incorrectly-hidden one would).
-    pub fn lift_impl_methods_by_path(&self) -> HashMap<hir::DefPath, Item> {
+    pub fn lift_impl_methods_by_def_id(&self) -> HashMap<hir::DefId, Item> {
         let mut lifted = Vec::new();
         for item in &self.package.items {
             let hir::ItemKind::Impl(imp) = &item.kind else {
@@ -392,9 +389,6 @@ impl<'a> HirToAstLifter<'a> {
             };
             for impl_item in &imp.items {
                 let hir::ImplItemKind::Method(function) = &impl_item.kind else {
-                    continue;
-                };
-                let Some(path) = self.def_path_for(&impl_item.def_id) else {
                     continue;
                 };
                 let synthetic_item = hir::Item {
@@ -407,7 +401,7 @@ impl<'a> HirToAstLifter<'a> {
                 let Ok(ast_item) = self.lift_function_item(&synthetic_item, function) else {
                     continue;
                 };
-                lifted.push((path, ast_item));
+                lifted.push((impl_item.def_id.clone(), ast_item));
             }
         }
         let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
@@ -416,7 +410,7 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     /// For each item (keyed by its own qualified path, same key shape as
-    /// [`lift_items_by_path`](Self::lift_items_by_path)), the qualified
+    /// [`lift_items_by_def_id`](Self::lift_items_by_def_id)), the source
     /// paths of every OTHER definition it references — used to compute
     /// which imports a target backend actually needs for spliced-in
     /// content, instead of only ever echoing whatever `use` items
@@ -424,21 +418,18 @@ impl<'a> HirToAstLifter<'a> {
     /// `emit_import`). Deliberately just facts (fully-qualified paths),
     /// not a target-specific "is this external" classification — that
     /// judgment belongs in each backend, not here.
-    pub fn referenced_paths_by_path(&self) -> HashMap<hir::DefPath, Vec<hir::DefPath>> {
+    pub fn referenced_defs_by_def_id(&self) -> HashMap<hir::DefId, Vec<hir::DefId>> {
         let empty_tail_map = HashMap::new();
         let mut result = HashMap::new();
         for item in &self.package.items {
-            let Some(path) = self.def_path_for(&item.def_id) else {
-                continue;
-            };
             let mut work = std::collections::VecDeque::new();
             crate::optimizer::hir::collect_item_refs(item, &empty_tail_map, &mut work);
             let referenced = work
                 .into_iter()
                 .filter(|def_id| *def_id != item.def_id)
-                .filter_map(|def_id| self.def_path_for(&def_id))
+                .filter(|def_id| self.package.def_map.contains_key(def_id))
                 .collect::<Vec<_>>();
-            result.insert(path, referenced);
+            result.insert(item.def_id.clone(), referenced);
         }
         result
     }
@@ -594,8 +585,8 @@ impl<'a> HirToAstLifter<'a> {
     fn lift_trait_item(&self, item: &hir::Item, trait_def: &hir::Trait) -> Result<Item> {
         let trait_name = self
             .hir_program
-            .def_path(item.def_id.clone())
-            .and_then(|path| path.segments.last().cloned())
+            .source_path(item.def_id.clone())
+            .and_then(|path| path.segments.last().cloned().map(hir::Symbol::new))
             .unwrap_or_else(|| hir::Symbol::new("Trait"));
         let mut items = Vec::new();
         for trait_item in &trait_def.items {
@@ -1757,7 +1748,7 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let path = self.def_path_for(&adt.did)?;
+                    let path = self.source_path_for(&adt.did)?;
                     let name = path.segments.last()?.as_str().to_owned();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
                         Ident::new(format!("{}<{}>", name, args.join(", "))),
@@ -1801,7 +1792,7 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let path = self.def_path_for(&adt.did)?;
+                let path = self.source_path_for(&adt.did)?;
                 let name = path.segments.last()?.as_str().to_owned();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
@@ -1850,7 +1841,7 @@ impl<'a> HirToAstLifter<'a> {
             // "Arc" (dropping the trait name entirely).
             TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
                 hir::ty::ExistentialPredicate::Trait(trait_ref) => {
-                    self.def_path_for(&trait_ref.def_id).and_then(|path| {
+                    self.source_path_for(&trait_ref.def_id).and_then(|path| {
                         path.segments
                             .last()
                             .map(|segment| segment.as_str().to_owned())
@@ -1863,7 +1854,7 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn def_id_to_ty(&self, def_id: &DefId) -> Option<ast::Ty> {
-        let path = self.def_path_for(def_id)?;
+        let path = self.source_path_for(def_id)?;
         if path.segments.is_empty() {
             return None;
         }
@@ -1872,8 +1863,8 @@ impl<'a> HirToAstLifter<'a> {
 
     /// The workspace owns authoritative `DefId` paths for both the current
     /// package and dependencies.
-    fn def_path_for(&self, def_id: &DefId) -> Option<hir::DefPath> {
-        self.hir_program.def_path(def_id.clone())
+    fn source_path_for(&self, def_id: &DefId) -> Option<fp_core::ast::path::InPackagePath> {
+        self.hir_program.source_path(def_id.clone())
     }
 
     /// `?` has several source-language implementations. Only Rust's
@@ -1886,7 +1877,7 @@ impl<'a> HirToAstLifter<'a> {
         else {
             return false;
         };
-        let Some(path) = self.def_path_for(&adt.did) else {
+        let Some(path) = self.source_path_for(&adt.did) else {
             return false;
         };
         path.segments
@@ -2357,12 +2348,9 @@ mod tests {
         let dependency_id = hir::PackageId::new("dependency");
         let dependency_def = hir::DefId::new(dependency_id.clone(), 7);
         let mut dependency = hir::HirPackage::new(dependency_id);
-        dependency.def_paths.insert(
+        dependency.source_paths.insert(
             dependency_def.clone(),
-            hir::DefPath::new(vec![
-                hir::Symbol::new("dependency"),
-                hir::Symbol::new("Widget"),
-            ]),
+            fp_core::ast::path::InPackagePath::new(vec!["dependency".into(), "Widget".into()]),
         );
 
         let mut workspace = hir::HirProgram::new();
@@ -2373,7 +2361,7 @@ mod tests {
 
         let lifted = lifter
             .def_id_to_ty(&dependency_def)
-            .expect("dependency DefPath metadata should be sufficient");
+            .expect("dependency source-path metadata should be sufficient");
         let Ty::Expr(expr) = lifted else {
             panic!("expected a path-shaped AST type");
         };
@@ -2393,12 +2381,9 @@ mod tests {
         let callee_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 4);
 
         let mut package = hir::HirPackage::new(package_id.clone());
-        package.def_paths.insert(
+        package.source_paths.insert(
             associated_id.clone(),
-            hir::DefPath::new(vec![
-                hir::Symbol::new("String"),
-                hir::Symbol::new("from_utf8_lossy"),
-            ]),
+            fp_core::ast::path::InPackagePath::new(vec!["String".into(), "from_utf8_lossy".into()]),
         );
         package.record_method_resolution(call_id.clone(), associated_id);
         let call = hir::Expr {
@@ -2634,9 +2619,10 @@ mod tests {
             (dir_entry_file_type_id.clone(), "dir_entry_file_type"),
             (file_type_is_dir_id.clone(), "file_type_is_dir"),
         ] {
-            package
-                .def_paths
-                .insert(def_id, hir::DefPath::new(vec![hir::Symbol::new(operation)]));
+            package.source_paths.insert(
+                def_id,
+                fp_core::ast::path::InPackagePath::new(vec![operation.to_string()]),
+            );
         }
         for (expr, def_id) in [
             (&output_call, command_output_id),
@@ -2747,14 +2733,14 @@ mod tests {
             expr: None,
         };
         let mut alloc = hir::HirPackage::new(hir::PackageId::new("alloc"));
-        alloc.def_paths.insert(
+        alloc.source_paths.insert(
             vec_def_id.clone(),
-            hir::DefPath::new(vec![hir::Symbol::new("alloc"), hir::Symbol::new("Vec")]),
+            fp_core::ast::path::InPackagePath::new(vec!["alloc".into(), "Vec".into()]),
         );
         let mut std = hir::HirPackage::new(hir::PackageId::new("std"));
-        std.def_paths.insert(
+        std.source_paths.insert(
             command_def_id.clone(),
-            hir::DefPath::new(vec![hir::Symbol::new("std"), hir::Symbol::new("Command")]),
+            fp_core::ast::path::InPackagePath::new(vec!["std".into(), "Command".into()]),
         );
         let package = hir::HirPackage::new(package_id);
         package.record_type_expr_type(
@@ -2818,7 +2804,7 @@ mod tests {
                                 .map(|segment| segment.ident.as_str())
                                 .collect::<Vec<_>>()
                                 .join("."),
-                            other => panic!("expected DefPath type name, got {other:?}"),
+                            other => panic!("expected source path type name, got {other:?}"),
                         },
                         other => panic!("expected nominal type, got {other:?}"),
                     },
@@ -2891,12 +2877,12 @@ mod tests {
         let try_id = hir::HirId::new(hir::OwnerId::root(package_id.clone()), 2);
 
         let mut result_package = hir::HirPackage::new(result_package_id);
-        result_package.def_paths.insert(
+        result_package.source_paths.insert(
             result_def_id.clone(),
-            hir::DefPath::new(vec![
-                hir::Symbol::new("core"),
-                hir::Symbol::new("result"),
-                hir::Symbol::new("Result"),
+            fp_core::ast::path::InPackagePath::new(vec![
+                "core".into(),
+                "result".into(),
+                "Result".into(),
             ]),
         );
         let root = hir::HirPackage::new(package_id);
@@ -3000,15 +2986,15 @@ mod tests {
         };
         let mut package = hir::HirPackage::new(package_id);
         package.items.push(trait_item);
-        package.def_paths.insert(
+        package.source_paths.insert(
             trait_id,
-            hir::DefPath::new(vec![hir::Symbol::new("RepoBrowse")]),
+            fp_core::ast::path::InPackagePath::new(vec!["RepoBrowse".into()]),
         );
         let mut workspace = hir::HirProgram::new();
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
 
-        let lifted = lifter.lift_items_by_path();
+        let lifted = lifter.lift_items_by_def_id();
         let trait_item = lifted
             .values()
             .next()

@@ -69,7 +69,7 @@ fn mangles_function_path_into_lir_name() {
 
     let return_ty = Ty::int(IntTy::I32);
     // `mir::Function.name` is already the fully-qualified name by the time
-    // HIR->MIR lowering constructs it (see `hir::HirProgram::def_paths`) —
+    // HIR->MIR lowering constructs it from source-path metadata —
     // there is no separate `path` field for LIR mangling to reconstruct
     // from.
     let function = mir::Function {

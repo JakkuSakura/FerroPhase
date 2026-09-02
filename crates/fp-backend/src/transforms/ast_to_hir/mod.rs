@@ -41,6 +41,25 @@ const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
 }
+
+fn source_item_name(item: &ast::Item) -> Option<String> {
+    match item.kind() {
+        ast::ItemKind::DefStruct(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefStructural(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefEnum(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefType(def) => Some(def.name.name.clone()),
+        ast::ItemKind::OpaqueType(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefConst(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefStatic(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefFunction(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DefTrait(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DeclType(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DeclConst(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DeclStatic(def) => Some(def.name.name.clone()),
+        ast::ItemKind::DeclFunction(def) => Some(def.name.name.clone()),
+        _ => None,
+    }
+}
 // TOOD: split into multiple files?
 /// Generator for transforming AST to HIR (High-level IR)
 ///
@@ -90,12 +109,12 @@ pub struct AstToHirLowerer {
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
-    /// This package's own HIR content — `items`/`def_map`/`def_paths`/
+    /// This package's own HIR content — `items`/`def_map`/source paths/
     /// `intrinsic_defs`/`placeholder_defs`,
     /// plus the AST-owned `module_tree` (see `fp_core::hir::resolve::ModuleTree`'s doc
     /// comment). Written into directly throughout lowering — no private
     /// scratch copy, no mirror/extend step at `transform_package`'s return
-    /// points (the earlier design this replaced kept separate `def_paths`/
+    /// points (the earlier design this replaced kept separate source-path/
     /// `intrinsic_defs`/`placeholder_defs`
     /// fields here and copied them into a freshly-built `hir::HirPackage` at
     /// several return points instead).
@@ -343,9 +362,9 @@ impl AstToHirLowerer {
     /// or copied into a separate table.
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
         self.package
-            .def_paths
+            .source_paths
             .iter()
-            .map(|(def_id, path)| (path.join("::"), hir::Res::Def(def_id.clone())))
+            .map(|(def_id, path)| (path.to_key(), hir::Res::Def(def_id.clone())))
             .collect()
     }
 
@@ -401,6 +420,22 @@ impl AstToHirLowerer {
     fn register_type_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
         let res = hir::Res::Def(def_id);
         self.record_type_symbol(name, res, visibility);
+    }
+
+    fn record_source_path(
+        &mut self,
+        program: &mut hir::HirPackage,
+        item: &ast::Item,
+        def_id: &hir::DefId,
+    ) {
+        let Some(name) = source_item_name(item) else {
+            return;
+        };
+        let path = self.qualify_path(&name);
+        self.package
+            .source_paths
+            .insert(def_id.clone(), path.clone());
+        program.source_paths.insert(def_id.clone(), path);
     }
 
     /// Binds `path`'s last segment as `res` in namespace `ns`, at the
@@ -1021,7 +1056,6 @@ impl AstToHirLowerer {
             .items
             .extend(std::mem::take(&mut self.local_dispatch_items));
         program.def_map = self.program_def_map.clone();
-        program.def_paths = self.package.def_paths.clone();
         for (def_id, block) in self.package.anonymous_consts() {
             program.add_anonymous_const(def_id, block);
         }
@@ -1180,7 +1214,6 @@ impl AstToHirLowerer {
         self.program_def_map
             .insert(item.def_id.clone(), item.clone());
         program.items.push(item);
-        program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program
             .intrinsic_defs
@@ -1232,7 +1265,6 @@ impl AstToHirLowerer {
         // Keep them in the program index even though they are not top-level
         // program items.
         program.def_map = self.program_def_map.clone();
-        program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
         program
             .intrinsic_defs
@@ -1320,6 +1352,7 @@ impl AstToHirLowerer {
             ItemKind::Import(import) => Ok(()),
             ItemKind::DefType(def_type) => {
                 if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
+                    self.record_source_path(program, item, &hir_item.def_id);
                     program
                         .def_map
                         .insert(hir_item.def_id.clone(), hir_item.clone());
@@ -1356,6 +1389,7 @@ impl AstToHirLowerer {
             }
             ItemKind::DeclFunction(decl) => {
                 let hir_item = self.transform_decl_function(item, decl)?;
+                self.record_source_path(program, item, &hir_item.def_id);
                 program
                     .def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
@@ -1376,6 +1410,7 @@ impl AstToHirLowerer {
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
+                self.record_source_path(program, item, &hir_item.def_id);
                 program
                     .def_map
                     .insert(hir_item.def_id.clone(), hir_item.clone());
@@ -1881,7 +1916,7 @@ impl AstToHirLowerer {
                 // `ast::Item` instead of anything lifted from this HIR
                 // shape — recording `def_id` in `placeholder_defs`
                 // (mirrored into `hir::HirPackage::placeholder_defs`) lets
-                // `HirToAstLifter::lift_items_by_path` skip lifting this
+                // `HirToAstLifter::lift_items_by_def_id` skips lifting this
                 // item, so typed-splice (`typecheck_package`) falls back to
                 // the real trait declaration for codegen. This real
                 // `hir::ItemKind::Trait` shape exists purely so HIR

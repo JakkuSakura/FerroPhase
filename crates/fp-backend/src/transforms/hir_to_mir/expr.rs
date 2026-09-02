@@ -343,7 +343,7 @@ pub struct HirToMirLowerer {
     /// `new` inserts a fresh empty one if the `package_id` isn't already
     /// present, and `transform` re-inserts the freshly-typechecked package
     /// under the same id — so every lookup method (`hir_item`,
-    /// `hir_def_path`, `hir_all_items`) reads straight off this map with no
+    /// source-path metadata, `hir_all_items`) reads straight off this map with no
     /// separate "current package first" fallback.
     pub(super) hir_program: hir::SharedHirProgram,
     /// The id of the package this instance is currently lowering — its HIR
@@ -542,11 +542,11 @@ impl HirToMirLowerer {
         self.hir_program.item(def_id)
     }
 
-    /// Same dispatch as `hir_item`, for `def_paths` — used by
-    /// `def_path_str`, which every `register_struct`/`register_enum` call
-    /// now goes through instead of being handed a whole `def_paths` map.
-    pub(crate) fn hir_def_path(&self, def_id: hir::DefId) -> Option<hir::DefPath> {
-        self.hir_program.def_path(def_id)
+    pub(crate) fn hir_source_path(
+        &self,
+        def_id: hir::DefId,
+    ) -> Option<fp_core::ast::path::InPackagePath> {
+        self.hir_program.source_path(def_id)
     }
 
     /// Every item `hir_program` knows about (which always includes
@@ -643,8 +643,8 @@ impl HirToMirLowerer {
         // eliminating that repetition needs a cache that outlives a
         // single `HirToMirLowerer` instance (e.g. on `CompilerState`), which
         // is out of scope for this pass. `register_struct`/`register_enum`
-        // no longer need a `def_paths` map handed to them (they dispatch
-        // through `hir_def_path` themselves), so there's no borrow-vs-
+        // no longer need a source-path map handed to them (they dispatch
+        // through `hir_source_path` themselves), so there's no borrow-vs-
         // `&mut self` conflict left to work around here at all.
         let items: Vec<hir::Item> = self
             .hir_all_items()
@@ -2430,8 +2430,8 @@ impl HirToMirLowerer {
     }
 
     pub(super) fn def_path_str(&self, def_id: hir::DefId, bare_name: &str) -> String {
-        self.hir_def_path(def_id)
-            .map(|path| path.to_string())
+        self.hir_source_path(def_id)
+            .map(|path| path.to_key())
             .unwrap_or_else(|| bare_name.to_string())
     }
 
@@ -2588,8 +2588,8 @@ impl HirToMirLowerer {
     pub(super) fn finalize_adt_definitions(&mut self, program: &hir::HirPackage) {
         for item in &program.items {
             self.current_item_path = self
-                .hir_def_path(item.def_id.clone())
-                .map(|path| path.join("::"));
+                .hir_source_path(item.def_id.clone())
+                .map(|path| path.to_key());
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {
                     let mir_fields = strukt

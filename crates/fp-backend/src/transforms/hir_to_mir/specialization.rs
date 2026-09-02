@@ -55,7 +55,7 @@ impl HirToMirLowerer {
             return Ok(());
         }
         let previous_item_path = self.current_item_path.take();
-        self.current_item_path = self.hir_def_path(def_id).map(|path| path.join("::"));
+        self.current_item_path = self.hir_source_path(def_id).map(|path| path.to_key());
         let result = self
             .lower_function(&item, function)
             .map_err(|error| format!("while lowering `{}`: {error}", function.sig.name));
@@ -113,8 +113,8 @@ impl HirToMirLowerer {
         }
         let previous_item_path = self.current_item_path.take();
         self.current_item_path = self
-            .hir_def_path(def_id.clone())
-            .map(|path| path.join("::"));
+            .hir_source_path(def_id.clone())
+            .map(|path| path.to_key());
         let result = self
             .lower_method(
                 def_id,
