@@ -2353,7 +2353,7 @@ mod tests {
     }
 
     #[test]
-    fn dependency_def_path_metadata_is_enough_for_lifting_type_names() {
+    fn dependency_source_path_metadata_is_enough_for_lifting_type_names() {
         let root_id = hir::PackageId::new("root");
         let dependency_id = hir::PackageId::new("dependency");
         let dependency_def = hir::DefId::new(dependency_id.clone(), 7);
