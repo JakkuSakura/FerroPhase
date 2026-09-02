@@ -614,6 +614,7 @@ fn parse_fn_item_core(
         let quote_expr = Expr::from(ExprKind::Quote(fp_core::ast::ExprQuote {
             span: quote_block.span,
             block: quote_block,
+            collected_items: Vec::new(),
             kind: Some(QuoteFragmentKind::Item),
         }));
         ExprBlock::new_expr(quote_expr)
@@ -1955,7 +1956,6 @@ fn parse_mod_item(
         return Ok(Item::from(ItemKind::Module(Module {
             attrs,
             name,
-            collected_items: Vec::new(),
             items: Vec::new(),
             visibility,
             is_external: true,
@@ -1986,7 +1986,6 @@ fn parse_mod_item(
     Ok(Item::from(ItemKind::Module(Module {
         attrs,
         name,
-        collected_items: Vec::new(),
         items,
         visibility,
         is_external: false,

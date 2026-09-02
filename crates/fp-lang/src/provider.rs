@@ -2,13 +2,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
     PackageMetadata, PackagePath,
 };
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{File, Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
@@ -98,10 +97,7 @@ fn load_embedded_package(
     if package_name == STD_PACKAGE_NAME {
         result.prelude_modules.push(PackagePath {
             package_id: result.package_id.clone(),
-            path: QualifiedPath::new(
-                result.package_id.clone(),
-                vec!["prelude".into(), "v1".into()],
-            ),
+            path: InPackagePath::new(vec!["prelude".into(), "v1".into()]),
         });
     }
     Ok(result)
@@ -210,7 +206,7 @@ struct InputPackageProvider {
 impl InputPackageProvider {
     fn new(
         package_id: PackageId,
-        module_path: QualifiedPath,
+        module_path: InPackagePath,
         source: File,
     ) -> ProviderResult<Self> {
         let descriptor = PackageDescriptor {
@@ -282,7 +278,7 @@ impl PackageProvider for InputPackageProvider {
 /// standalone file with no enclosing package/manifest).
 pub fn single_file_provider(
     package_id: PackageId,
-    module_path: QualifiedPath,
+    module_path: InPackagePath,
     source: File,
 ) -> fp_core::error::Result<Arc<dyn PackageProvider>> {
     let provider = InputPackageProvider::new(package_id, module_path, source)

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::vfs::VirtualPath;
 
 #[derive(Debug)]
@@ -51,7 +51,7 @@ impl ZigPackageProvider {
         }
 
         let mut descriptors = Vec::new();
-        let mut items = Vec::new();
+        let mut modules = Vec::new();
         let mut module_paths = HashSet::new();
         for file in files {
             let relative = file.strip_prefix(&self.root).map_err(|error| {
@@ -60,7 +60,7 @@ impl ZigPackageProvider {
                     file.display()
                 ))
             })?;
-            let module_path = QualifiedPath::new(module_path_for(relative));
+            let module_path = InPackagePath::new(module_path_for(relative));
             let source = std::fs::read_to_string(&file).map_err(|error| {
                 ProviderError::other(format!(
                     "failed to read Zig source {}: {error}",
@@ -87,10 +87,13 @@ impl ZigPackageProvider {
                     requires_features: Vec::new(),
                 });
             }
-            items.extend(parsed.items.into_iter().map(|item| PackageItem {
-                module_path: module_path.clone(),
-                item,
-            }));
+            modules.push(fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")),
+                items: parsed.items,
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
+            });
         }
 
         let descriptor = PackageDescriptor {
@@ -104,14 +107,7 @@ impl ZigPackageProvider {
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph, Vec::new());
-        package.modules.push(fp_core::ast::Module {
-            attrs: Vec::new(),
-            name: fp_core::ast::Ident::new(""),
-            collected_items: Vec::new(),
-            items,
-            visibility: fp_core::ast::Visibility::Public,
-            is_external: false,
-        });
+        package.modules = modules;
         Ok(package)
     }
 }
@@ -134,12 +130,7 @@ impl PackageProvider for ZigPackageProvider {
         if &package.package_id != id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {

@@ -1,8 +1,7 @@
 use std::hash::Hash;
 
 use crate::ast::{
-    BExpr, BItem, Expr, ExprKind, Ident, Item, Pattern, PatternIdent, PatternKind,
-    PatternType, Ty,
+    BExpr, BItem, Expr, ExprKind, Ident, Item, Pattern, PatternIdent, PatternKind, PatternType, Ty,
 };
 use crate::common_enum;
 use crate::common_struct;

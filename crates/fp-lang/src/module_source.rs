@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use fp_core::ast::package::provider::{ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{File, Ident, Item, ItemKind, Module, Visibility};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
@@ -28,7 +28,7 @@ impl FerroModuleSourceResolver {
     pub fn resolve_package_source(
         &self,
         mut package: PackageDescriptor,
-        root_module_path: QualifiedPath,
+        root_module_path: InPackagePath,
         root_file: File,
     ) -> ProviderResult<AstPackage> {
         if let Some(root_name) = root_module_path.head() {
@@ -69,11 +69,11 @@ impl FerroModuleSourceResolver {
     fn load_module_tree(
         &self,
         package: &PackageDescriptor,
-        module_path: QualifiedPath,
+        module_path: InPackagePath,
         source_path: VirtualPath,
         mut items: Vec<Item>,
         is_root: bool,
-        module_paths: &mut HashSet<QualifiedPath>,
+        module_paths: &mut HashSet<InPackagePath>,
         source_paths: &mut HashSet<VirtualPath>,
     ) -> ProviderResult<Module> {
         if !module_paths.insert(module_path.clone()) {
@@ -150,7 +150,7 @@ impl FerroModuleSourceResolver {
         &self,
         parent_source_path: &VirtualPath,
         name: &str,
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         is_root: bool,
     ) -> ProviderResult<(VirtualPath, String)> {
         let parent = parent_source_path
@@ -199,7 +199,7 @@ impl FerroModuleSourceResolver {
     }
 }
 
-fn package_name_from_path(path: &QualifiedPath) -> ProviderResult<&str> {
+fn package_name_from_path(path: &InPackagePath) -> ProviderResult<&str> {
     path.head()
         .ok_or_else(|| ProviderError::other("root module path has no package segment"))
 }
@@ -257,7 +257,7 @@ mod tests {
         let source = FerroModuleSourceResolver::new(filesystem)
             .resolve_package_source(
                 package(),
-                QualifiedPath::new(vec!["app".into(), "main".into()]),
+                InPackagePath::new(vec!["app".into(), "main".into()]),
                 root_file(&frontend),
             )
             .expect("resolve package source");
@@ -287,7 +287,7 @@ mod tests {
         let error = FerroModuleSourceResolver::new(filesystem)
             .resolve_package_source(
                 package(),
-                QualifiedPath::new(vec!["app".into(), "main".into()]),
+                InPackagePath::new(vec!["app".into(), "main".into()]),
                 root_file(&frontend),
             )
             .expect_err("ambiguous module source must fail");

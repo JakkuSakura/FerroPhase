@@ -8,7 +8,7 @@ use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
     PackageMetadata, TargetFilter,
 };
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 use semver::Version;
@@ -89,7 +89,7 @@ impl PythonPackageProvider {
         let mut module_paths = HashSet::new();
         for file in files {
             let module_path = crate::estimate_module_path(&self.root, &file);
-            let module_path = QualifiedPath::new(module_path);
+            let module_path = InPackagePath::new(module_path);
             let source = std::fs::read_to_string(&file).map_err(|error| {
                 ProviderError::other(format!(
                     "failed to read Python source {}: {error}",
@@ -115,7 +115,6 @@ impl PythonPackageProvider {
             modules.push(fp_core::ast::Module {
                 attrs: Vec::new(),
                 name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")),
-                collected_items: Vec::new(),
                 items: parsed.ast.items,
                 visibility: fp_core::ast::Visibility::Public,
                 is_external: false,
@@ -182,12 +181,7 @@ impl PackageProvider for PythonPackageProvider {
         if &package.package_id != id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {

@@ -8,7 +8,7 @@ use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderRe
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageId, PackageMetadata, TargetFilter,
 };
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 
@@ -72,7 +72,7 @@ impl GoLangPackageProvider {
             if path.is_empty() {
                 path.push("root".to_string());
             }
-            let module_path = QualifiedPath::new(path);
+            let module_path = InPackagePath::new(path);
             let source = std::fs::read_to_string(&file).map_err(|error| {
                 ProviderError::other(format!(
                     "failed to read Go source {}: {error}",
@@ -168,12 +168,7 @@ impl PackageProvider for GoLangPackageProvider {
         if &package.package_id != id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {

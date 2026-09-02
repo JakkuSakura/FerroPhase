@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageMetadata};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
@@ -165,7 +164,7 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 },
             };
             return FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
-                .resolve_package_source(descriptor, QualifiedPath::new(Vec::new()), file.ast);
+                .resolve_package_source(descriptor, InPackagePath::new(Vec::new()), file.ast);
         }
         let frontend = FerroFrontend::new();
         let mut modules = Vec::new();
@@ -180,7 +179,6 @@ impl PackageProvider for MagnetWorkspaceProvider {
             modules.push(fp_core::ast::Module {
                 attrs: Vec::new(),
                 name: fp_core::ast::Ident::new(path.tail().unwrap_or("")),
-                collected_items: Vec::new(),
                 items: result.ast.items,
                 visibility: fp_core::ast::Visibility::Public,
                 is_external: false,
@@ -209,9 +207,9 @@ impl MagnetWorkspaceProvider {
 /// relative to a package's source root (e.g. `"config.fp"` → `["config"]`).
 /// Exported so callers outside this module can compute the same tag a
 /// discovered package's items are already tagged with.
-pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
+pub fn module_path_from_relative(rel: &str) -> InPackagePath {
     if rel.is_empty() {
-        return QualifiedPath::new(Vec::new());
+        return InPackagePath::new(Vec::new());
     }
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");
     let mut parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
@@ -221,7 +219,7 @@ pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
     if parts.len() > 1 && parts.last().map(String::as_str) == Some("mod") {
         parts.pop();
     }
-    QualifiedPath::new(parts)
+    InPackagePath::new(parts)
 }
 
 fn package_source_from_modules(id: &PackageId, modules: &[fp_core::ast::Module]) -> AstPackage {

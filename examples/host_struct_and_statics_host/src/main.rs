@@ -6,7 +6,7 @@ use fp_compiler::{CompilerExecutor, CompilerSession};
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::CompositeProvider;
 use fp_core::ast::program::AstProgram;
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::lir::LirDataLayout;
 use fp_interpret::LirInterpreter;
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let package_id = PackageId::new("host_struct_and_statics_host");
     let workspace_provider = single_file_provider(
         package_id.clone(),
-        QualifiedPath::new(vec![package_id.as_str().to_owned()]),
+        InPackagePath::new(vec![package_id.as_str().to_owned()]),
         file,
     )?;
     let provider = CompositeProvider::new(
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     executor.run(session.driver().compile_package(&package_id))?;
     session.driver().select_entrypoint(
         &package_id,
-        &QualifiedPath::new(vec![package_id.as_str().to_owned()]),
+        &InPackagePath::new(vec![package_id.as_str().to_owned()]),
         "main",
     )?;
 
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| error.to_string())?;
     let main_def_id = session.driver().resolve_entrypoint_def_id(
         &package_id,
-        &QualifiedPath::new(vec![package_id.as_str().to_owned()]),
+        &InPackagePath::new(vec![package_id.as_str().to_owned()]),
         "main",
     )?;
     let ferro_result = interpreter

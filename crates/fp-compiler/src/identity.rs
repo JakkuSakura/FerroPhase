@@ -1,27 +1,27 @@
 use std::fmt::{self, Display};
 
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use serde::{Deserialize, Serialize};
 
 /// Resolved semantic identity for a work subject after identity-forming
 /// generic and comptime arguments are known.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FullyQualifiedPath {
-    path: QualifiedPath,
+pub struct FullyInPackagePath {
+    path: InPackagePath,
 }
 
-impl FullyQualifiedPath {
-    pub fn new(path: QualifiedPath) -> Self {
+impl FullyInPackagePath {
+    pub fn new(path: InPackagePath) -> Self {
         Self { path }
     }
 
     pub fn from_segments(segments: Vec<String>) -> Self {
         Self {
-            path: QualifiedPath::new(segments),
+            path: InPackagePath::new(segments),
         }
     }
 
-    pub fn path(&self) -> &QualifiedPath {
+    pub fn path(&self) -> &InPackagePath {
         &self.path
     }
 
@@ -36,7 +36,7 @@ impl FullyQualifiedPath {
     }
 }
 
-impl Display for FullyQualifiedPath {
+impl Display for FullyInPackagePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.path.to_key().fmt(f)
     }
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn resolved_identity_uses_qualified_path() {
-        let identity = FullyQualifiedPath::from_segments(vec![
+        let identity = FullyInPackagePath::from_segments(vec![
             "std".to_string(),
             "vec".to_string(),
             "Vec#{type i32}".to_string(),

@@ -90,10 +90,10 @@ JIT entries are keyed by the resolved fully qualified path plus ABI-relevant
 type information:
 
 ```text
-JitKey = FullyQualifiedPath + SignatureHash + AbiVersion + TargetFeatures
+JitKey = FullyInPackagePath + SignatureHash + AbiVersion + TargetFeatures
 ```
 
-`FullyQualifiedPath` already includes resolved generic and comptime arguments
+`FullyInPackagePath` already includes resolved generic and comptime arguments
 that affect identity. This lets generic and comptime specializations share the
 compiler scheduler's dependency model.
 

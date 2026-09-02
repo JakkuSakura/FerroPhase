@@ -6,7 +6,7 @@ use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageId};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 
@@ -57,7 +57,7 @@ impl SqlPackageProvider {
         let mut module_paths = HashSet::new();
         for file in files {
             let relative = file.strip_prefix(&self.root).unwrap_or(&file);
-            let module_path = QualifiedPath::new(module_path_for(relative));
+            let module_path = InPackagePath::new(module_path_for(relative));
             let source = std::fs::read_to_string(&file).map_err(|error| {
                 ProviderError::other(format!(
                     "failed to read SQL source {}: {error}",
@@ -125,12 +125,7 @@ impl PackageProvider for SqlPackageProvider {
         if &package.package_id != id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {

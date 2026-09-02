@@ -131,11 +131,11 @@ When a need blocks progress, the compiler assigns a `RequestId` and replaces the
 blocked AST node with that request. The scheduler later answers the request and
 the compiler applies the answer back to AST.
 
-`FullyQualifiedPath` is the resolved semantic identity for a work subject once
+`FullyInPackagePath` is the resolved semantic identity for a work subject once
 identity-forming generic and comptime arguments are known:
 
 ```text
-ResolvedIdentity = FullyQualifiedPath
+ResolvedIdentity = FullyInPackagePath
 ```
 
 Examples:

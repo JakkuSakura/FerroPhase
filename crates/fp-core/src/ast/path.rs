@@ -1,6 +1,6 @@
 //! Path-value machinery for a syntactic AST path (`ast::Path`): parsing a
 //! textual path spec (`ParsedPath`), and the fully-resolved absolute form
-//! used as a lookup key (`QualifiedPath`). Actual resolution against a real
+//! used as a lookup key (`InPackagePath`). Actual resolution against a real
 //! module tree (`parse_path`/`resolve_item_path`, as they used to be named
 //! here) lives on `fp-backend`'s `AstToHirLowerer` instead — its only real
 //! caller, which needs its own state (module path, module tree, symbol
@@ -12,7 +12,6 @@
 
 use std::collections::HashSet;
 
-use crate::package::PackageId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,32 +21,27 @@ pub struct ParsedPath {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct QualifiedPath {
-    pub package_id: PackageId,
+pub struct InPackagePath {
     pub segments: Vec<String>,
 }
 
-impl QualifiedPath {
-    pub fn new(package_id: PackageId, segments: Vec<String>) -> Self {
-        Self {
-            package_id,
-            segments,
-        }
-    }
-
-    pub fn with_package_id(package_id: PackageId, segments: Vec<String>) -> Self {
-        Self::new(package_id, segments)
+impl InPackagePath {
+    pub fn new(segments: Vec<String>) -> Self {
+        Self { segments }
     }
 
     pub fn from_slice(segments: &[String]) -> Self {
         Self {
-            package_id: PackageId::default(),
             segments: segments.to_vec(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.segments.len()
     }
 
     pub fn head(&self) -> Option<&str> {
@@ -69,19 +63,13 @@ impl QualifiedPath {
     pub fn with_segment(&self, segment: String) -> Self {
         let mut segments = self.segments.clone();
         segments.push(segment);
-        Self {
-            package_id: self.package_id.clone(),
-            segments,
-        }
+        Self { segments }
     }
 
     pub fn join(&self, extra: &[String]) -> Self {
         let mut segments = self.segments.clone();
         segments.extend(extra.iter().cloned());
-        Self {
-            package_id: self.package_id.clone(),
-            segments,
-        }
+        Self { segments }
     }
 
     pub fn parent_n(&self, depth: usize) -> Option<Self> {
@@ -90,7 +78,6 @@ impl QualifiedPath {
         }
         let keep = self.segments.len().saturating_sub(depth);
         Some(Self {
-            package_id: self.package_id.clone(),
             segments: self.segments[..keep].to_vec(),
         })
     }
@@ -117,20 +104,17 @@ pub enum PathError {
 
 pub fn resolve_path(
     parsed: &ParsedPath,
-    module_path: &QualifiedPath,
+    module_path: &InPackagePath,
     root_modules: &HashSet<String>,
     extern_prelude: &HashSet<String>,
-    module_defs: &HashSet<QualifiedPath>,
-) -> Option<QualifiedPath> {
+    module_defs: &HashSet<InPackagePath>,
+) -> Option<InPackagePath> {
     if parsed.segments.is_empty() {
         return None;
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(
-            module_path.package_id.clone(),
-            parsed.segments.clone(),
-        )),
+        PathPrefix::Root | PathPrefix::Crate => Some(InPackagePath::new(parsed.segments.clone())),
         PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
         PathPrefix::Super(depth) => module_path
             .parent_n(depth)
@@ -138,7 +122,7 @@ pub fn resolve_path(
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             let base = if module_path.head() == Some("bin") {
-                QualifiedPath::new(module_path.package_id.clone(), Vec::new())
+                InPackagePath::new(Vec::new())
             } else {
                 module_path.clone()
             };
@@ -148,19 +132,13 @@ pub fn resolve_path(
                     return Some(base.join(&parsed.segments));
                 }
             } else {
-                let local = QualifiedPath::new(module_path.package_id.clone(), vec![first.clone()]);
+                let local = InPackagePath::new(vec![first.clone()]);
                 if module_defs.contains(&local) {
-                    return Some(QualifiedPath::new(
-                        module_path.package_id.clone(),
-                        parsed.segments.clone(),
-                    ));
+                    return Some(InPackagePath::new(parsed.segments.clone()));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(QualifiedPath::new(
-                    module_path.package_id.clone(),
-                    parsed.segments.clone(),
-                ));
+                return Some(InPackagePath::new(parsed.segments.clone()));
             }
             None
         }
@@ -182,13 +160,13 @@ mod tests {
             segments: vec!["meta".to_string(), "TypeBuilder".to_string()],
         };
         let mut module_defs = HashSet::new();
-        module_defs.insert(QualifiedPath::new(vec![
+        module_defs.insert(InPackagePath::new(vec![
             "std".to_string(),
             "meta".to_string(),
         ]));
         let resolved = resolve_path(
             &parsed,
-            &QualifiedPath::new(vec!["std".to_string()]),
+            &InPackagePath::new(vec!["std".to_string()]),
             &HashSet::new(),
             &HashSet::new(),
             &module_defs,
@@ -196,7 +174,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             resolved,
-            QualifiedPath::new(vec![
+            InPackagePath::new(vec![
                 "std".to_string(),
                 "meta".to_string(),
                 "TypeBuilder".to_string()
@@ -211,10 +189,10 @@ mod tests {
             segments: vec!["fptest".to_string(), "config".to_string()],
         };
         let mut module_defs = HashSet::new();
-        module_defs.insert(QualifiedPath::new(vec!["fptest".to_string()]));
+        module_defs.insert(InPackagePath::new(vec!["fptest".to_string()]));
         let resolved = resolve_path(
             &parsed,
-            &QualifiedPath::new(vec!["bin".to_string(), "fptest".to_string()]),
+            &InPackagePath::new(vec!["bin".to_string(), "fptest".to_string()]),
             &HashSet::new(),
             &HashSet::new(),
             &module_defs,
@@ -222,7 +200,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             resolved,
-            QualifiedPath::new(vec!["fptest".to_string(), "config".to_string()])
+            InPackagePath::new(vec!["fptest".to_string(), "config".to_string()])
         );
     }
 }

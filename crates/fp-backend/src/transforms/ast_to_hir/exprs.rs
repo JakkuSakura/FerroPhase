@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::{PathPrefix, QualifiedPath};
+use fp_core::ast::path::{InPackagePath, PathPrefix};
 use fp_core::intrinsics::CallKind;
 use fp_core::query::lower_fp_expr_to_query;
 
@@ -15,7 +15,7 @@ impl AstToHirLowerer {
     /// no source spelling or declaration category is consulted.
     pub(super) fn enum_variant_for_type_path(
         &self,
-        type_path: &fp_core::ast::path::QualifiedPath,
+        type_path: &fp_core::ast::path::InPackagePath,
         variant_name: &str,
     ) -> Option<hir::Res> {
         // A bare nominal prefix is resolved relative to the current module
@@ -1014,7 +1014,7 @@ impl AstToHirLowerer {
                 .iter()
                 .map(|segment| segment.name.as_str().to_owned())
                 .collect();
-            let full_path = QualifiedPath::new(names);
+            let full_path = InPackagePath::new(names);
             path.res = self
                 .lookup_global_res(&full_path, PathResolutionScope::Value)
                 .or(path.res);
@@ -1090,7 +1090,7 @@ impl AstToHirLowerer {
                 }
             }
             _ => {
-                let qualified = QualifiedPath::new(
+                let qualified = InPackagePath::new(
                     path.segments
                         .iter()
                         .map(|seg| seg.name.as_str().to_owned())
@@ -2116,7 +2116,7 @@ impl AstToHirLowerer {
 
     pub(super) fn lookup_global_res(
         &self,
-        path: &fp_core::ast::path::QualifiedPath,
+        path: &fp_core::ast::path::InPackagePath,
         scope: PathResolutionScope,
     ) -> Option<hir::Res> {
         if path.segments.is_empty() {
@@ -2126,7 +2126,7 @@ impl AstToHirLowerer {
         // prefix is resolved to a nominal enum identity, then its variants
         // are searched by that identity.
         if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-            let prefix = QualifiedPath::new(
+            let prefix = InPackagePath::new(
                 path.segments[..path.segments.len() - 1]
                     .iter()
                     .cloned()

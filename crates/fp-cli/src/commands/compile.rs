@@ -233,7 +233,7 @@ fn provider_and_package_for_input(
 ) -> Result<(
     std::sync::Arc<dyn fp_core::ast::package::provider::PackageProvider>,
     PackageId,
-    fp_core::ast::path::QualifiedPath,
+    fp_core::ast::path::InPackagePath,
 )> {
     compiler::resolve_source_package(input, language, "cli")
 }

@@ -403,6 +403,7 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
                 block,
+                collected_items: Vec::new(),
                 kind: None,
             }));
             return Ok(ExprKind::Splice(ExprSplice {
@@ -528,6 +529,7 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
             let quote_expr = Expr::new(ExprKind::Quote(ExprQuote {
                 span: block.span,
                 block,
+                collected_items: Vec::new(),
                 kind: None,
             }));
             return Ok(ExprKind::Splice(ExprSplice {
@@ -1740,6 +1742,7 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     Ok(ExprKind::Quote(ExprQuote {
         span: block.span,
         block,
+        collected_items: Vec::new(),
         kind,
     })
     .into())

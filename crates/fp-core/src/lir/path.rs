@@ -1,4 +1,4 @@
-use crate::ast::path::QualifiedPath;
+use crate::ast::path::InPackagePath;
 use crate::lir::PackageId;
 
 /// Addresses one LIR lowering unit — a package plus the module path within
@@ -8,11 +8,11 @@ use crate::lir::PackageId;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LirPath {
     pub package_id: PackageId,
-    pub module_path: QualifiedPath,
+    pub module_path: InPackagePath,
 }
 
 impl LirPath {
-    pub fn new(package_id: PackageId, module_path: QualifiedPath) -> Self {
+    pub fn new(package_id: PackageId, module_path: InPackagePath) -> Self {
         Self {
             package_id,
             module_path,

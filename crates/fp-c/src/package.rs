@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
 
@@ -90,7 +90,6 @@ impl CPackageProvider {
             modules.push(fp_core::ast::Module {
                 attrs: Vec::new(),
                 name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")),
-                collected_items: Vec::new(),
                 items: parsed.ast.items,
                 visibility: fp_core::ast::Visibility::Public,
                 is_external: false,
@@ -129,12 +128,7 @@ impl PackageProvider for CPackageProvider {
         if &package.package_id != id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
@@ -179,7 +173,7 @@ fn collect_c_files(root: &Path, files: &mut Vec<PathBuf>) -> ProviderResult<()> 
     Ok(())
 }
 
-fn module_path_for(relative: &Path) -> QualifiedPath {
+fn module_path_for(relative: &Path) -> InPackagePath {
     let mut segments = Vec::new();
     for component in relative.components() {
         let std::path::Component::Normal(segment) = component else {
@@ -194,5 +188,5 @@ fn module_path_for(relative: &Path) -> QualifiedPath {
             .unwrap_or(segment);
         segments.push(segment.to_string());
     }
-    QualifiedPath::new(segments)
+    InPackagePath::new(segments)
 }

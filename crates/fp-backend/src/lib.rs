@@ -42,7 +42,6 @@ fn package_from_file(
         vec![fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(""),
-            collected_items: Vec::new(),
             items,
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,

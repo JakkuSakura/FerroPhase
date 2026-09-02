@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_lang::module_source::FerroModuleSourceResolver;
 
 pub fn in_memory_provider(
     package_id: PackageId,
-    module_path: QualifiedPath,
+    module_path: InPackagePath,
     source: fp_core::ast::File,
 ) -> ProviderResult<Arc<dyn PackageProvider>> {
     let descriptor = PackageDescriptor {

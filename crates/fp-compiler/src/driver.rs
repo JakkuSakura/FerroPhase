@@ -2,7 +2,7 @@ use fp_backend::transformations::{
     AstToHirLowerer, HirLoweringConfig, HirToMirLowerer, MirToLirLowerer,
 };
 use fp_core::ast::package::{DependencyDescriptor, PackageId};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_core::hir;
@@ -296,7 +296,7 @@ impl CompilerDriver {
     pub fn resolve_entrypoint_def_id(
         &self,
         package_id: &PackageId,
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         function_name: &str,
     ) -> Result<hir::DefId, CompilerDriverError> {
         let _ = module_path;
@@ -335,7 +335,7 @@ impl CompilerDriver {
     pub fn select_entrypoint(
         &mut self,
         package_id: &PackageId,
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         function_name: &str,
     ) -> Result<fp_core::lir::LirPath, CompilerDriverError> {
         let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
@@ -368,7 +368,7 @@ impl CompilerDriver {
     pub async fn compile_package_module_native(
         &mut self,
         package_id: &PackageId,
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         function_name: &str,
     ) -> Result<(), CompilerDriverError> {
         // Selecting an executable entrypoint must only build and register

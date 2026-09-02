@@ -31,7 +31,7 @@ impl AstToHirLowerer {
             ast::Ty::Expr(expr) => {
                 if let ast::ExprKind::Name(name) = expr.kind() {
                     let path = name.to_path();
-                    let qualified = fp_core::ast::path::QualifiedPath::new(
+                    let qualified = fp_core::ast::path::InPackagePath::new(
                         path.segments.iter().map(|seg| seg.name.clone()).collect(),
                     );
                     if let fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) =

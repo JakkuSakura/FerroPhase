@@ -4,7 +4,7 @@ use fp_core::ast;
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{AstPackage, PackageId};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::lir::LirDataLayout;
@@ -43,7 +43,6 @@ fn package_from_items_as(
         vec![ast::Module {
             attrs: Vec::new(),
             name: ast::Ident::new(""),
-            collected_items: Vec::new(),
             items,
             visibility: ast::Visibility::Public,
             is_external: false,
@@ -76,7 +75,6 @@ fn package_from_module_items(
         vec![ast::Module {
             attrs: Vec::new(),
             name: ast::Ident::new(module_path.last().cloned().unwrap_or_default()),
-            collected_items: Vec::new(),
             items,
             visibility: ast::Visibility::Public,
             is_external: false,
@@ -117,7 +115,6 @@ fn package_from_items_with_paths_as(
         vec![ast::Module {
             attrs: Vec::new(),
             name: ast::Ident::new(""),
-            collected_items: Vec::new(),
             items: items.into_iter().map(|(_, item)| item).collect(),
             visibility: ast::Visibility::Public,
             is_external: false,
@@ -239,14 +236,14 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
-    generator.module_path = QualifiedPath::new(vec!["dependency".to_string()]);
+    generator.module_path = InPackagePath::new(vec!["dependency".to_string()]);
     generator.record_type_symbol(
         "SharedType",
         hir::Res::Def(hir::DefId::new(hir::PackageId::new("7"), 1)),
         &ast::Visibility::Public,
     );
 
-    generator.module_path = QualifiedPath::new(vec!["consumer".to_string()]);
+    generator.module_path = InPackagePath::new(vec!["consumer".to_string()]);
     assert_eq!(generator.resolve_value_symbol("SharedType"), None);
     assert_eq!(generator.resolve_type_symbol("SharedType"), None);
 }
@@ -2376,7 +2373,7 @@ fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Resu
     );
     let program = generator.transform_package(&package)?;
     let reexport = generator.lookup_global_res(
-        &QualifiedPath::new(vec!["facade".to_string(), "Buffer".to_string()]),
+        &InPackagePath::new(vec!["facade".to_string(), "Buffer".to_string()]),
         PathResolutionScope::Type,
     );
     assert!(
@@ -3039,7 +3036,6 @@ fn transform_package_resolves_import_nested_inside_inline_module() -> Result<()>
     let nested_inline_module = ast::Item::from(ast::ItemKind::Module(ast::Module {
         attrs: Vec::new(),
         name: ident("ambiguous_macros_only"),
-        collected_items: Vec::new(),
         items: vec![prelude_use, make_fn_item],
         visibility: ast::Visibility::Public,
         is_external: false,

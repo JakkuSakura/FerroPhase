@@ -83,7 +83,7 @@ purposes (`ModuleLanguage` is used, e.g., to treat Rust crates and embedded
 `.fp` std uniformly). It is **not** a nested namespace with its own
 declaration syntax at the compiler-infrastructure level — providers construct
 one `ModuleDescriptor` per source file (see `CargoWorkspaceProvider::load_package_source`,
-which maps each file's relative path to a `QualifiedPath` via
+which maps each file's relative path to a `InPackagePath` via
 `module_path_from_relative`), not per `pub mod` block.
 
 The actual fine-grained unit the compiler operates on below the module level
@@ -91,7 +91,7 @@ is `PackageItem`:
 
 ```rust
 pub struct PackageItem {
-    pub path: QualifiedPath,   // which module (source file) this came from
+    pub path: InPackagePath,   // which module (source file) this came from
     pub item: Item,            // one top-level AST item: a fn/struct/enum/impl/...
 }
 ```

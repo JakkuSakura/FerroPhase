@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
+use fp_core::ast::path::{InPackagePath, ParsedPath, PathPrefix};
 
 impl AstToHirLowerer {
     pub(super) fn package_crate_root(&self) -> Vec<String> {
@@ -7,13 +7,13 @@ impl AstToHirLowerer {
             && matches!(current_root.as_str(), "core" | "alloc" | "std")
             && self.hir_program.module_exists(
                 &self.package_id,
-                &fp_core::ast::path::QualifiedPath::new(vec![current_root.clone()]),
+                &fp_core::ast::path::InPackagePath::new(vec![current_root.clone()]),
             )
         {
             return vec![current_root.clone()];
         }
         let root = hir::HirProgram::external_crate_name(&self.package_id);
-        let candidate = fp_core::ast::path::QualifiedPath::new(vec![root]);
+        let candidate = fp_core::ast::path::InPackagePath::new(vec![root]);
         if self.hir_program.module_exists(&self.package_id, &candidate) {
             return candidate.segments;
         }
@@ -167,7 +167,7 @@ impl AstToHirLowerer {
     /// path (as the old flat-map-based version did) or cache the result.
     fn cached_root_modules(&self) -> HashSet<String> {
         self.workspace
-            .module_member_names(&self.package_id, &QualifiedPath::new(Vec::new()))
+            .module_member_names(&self.package_id, &InPackagePath::new(Vec::new()))
             .into_iter()
             .flatten()
             .map(|name| name.to_string())
@@ -183,11 +183,11 @@ impl AstToHirLowerer {
         &self,
         parsed: &ParsedPath,
         scope: PathResolutionScope,
-    ) -> Option<QualifiedPath> {
+    ) -> Option<InPackagePath> {
         if parsed.segments.is_empty() {
             return None;
         }
-        let item_exists = |candidate: &QualifiedPath| {
+        let item_exists = |candidate: &InPackagePath| {
             self.tree_lookup_raw(candidate, scope.namespace()).is_some()
         };
         let scope_contains = |name: &str| match scope {
@@ -195,7 +195,7 @@ impl AstToHirLowerer {
             PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             PathResolutionScope::Trait => self.resolve_trait_symbol(name).is_some(),
         };
-        let module_exists = |p: &QualifiedPath| self.hir_program.module_exists(&self.package_id, p);
+        let module_exists = |p: &InPackagePath| self.hir_program.module_exists(&self.package_id, p);
 
         match parsed.prefix {
             PathPrefix::Root | PathPrefix::Crate => {
@@ -224,7 +224,7 @@ impl AstToHirLowerer {
                 // committing, so a candidate that doesn't actually resolve
                 // falls through to `None` instead of masking the caller's
                 // real fallback.
-                let literal = QualifiedPath::new(parsed.segments.clone());
+                let literal = InPackagePath::new(parsed.segments.clone());
                 if item_exists(&literal) || module_exists(&literal) {
                     return Some(literal);
                 }
@@ -235,7 +235,7 @@ impl AstToHirLowerer {
                     }
                     let mut candidate_segments = root_segs[..root_len].to_vec();
                     candidate_segments.extend(parsed.segments.iter().cloned());
-                    let candidate = QualifiedPath::new(candidate_segments);
+                    let candidate = InPackagePath::new(candidate_segments);
                     if item_exists(&candidate) || module_exists(&candidate) {
                         return Some(candidate);
                     }
@@ -250,7 +250,7 @@ impl AstToHirLowerer {
             PathPrefix::Plain => {
                 let first = parsed.segments.first()?;
                 let base = if self.module_path.head() == Some("bin") {
-                    QualifiedPath::new(Vec::new())
+                    InPackagePath::new(Vec::new())
                 } else {
                     self.module_path.clone()
                 };
@@ -262,7 +262,7 @@ impl AstToHirLowerer {
 
                 if parsed.segments.len() == 1 {
                     if scope_contains(first) {
-                        return Some(QualifiedPath::new(vec![first.clone()]));
+                        return Some(InPackagePath::new(vec![first.clone()]));
                     }
                     if !base.is_empty() {
                         let local = base.with_segment(first.clone());
@@ -270,13 +270,13 @@ impl AstToHirLowerer {
                             return Some(local);
                         }
                     } else {
-                        let local = QualifiedPath::new(parsed.segments.clone());
+                        let local = InPackagePath::new(parsed.segments.clone());
                         if item_exists(&local) {
                             return Some(local);
                         }
                     }
                     if root_modules.contains(first) {
-                        return Some(QualifiedPath::new(parsed.segments.clone()));
+                        return Some(InPackagePath::new(parsed.segments.clone()));
                     }
                     return None;
                 }
@@ -291,18 +291,18 @@ impl AstToHirLowerer {
                         return Some(local);
                     }
                 } else {
-                    let local = QualifiedPath::new(parsed.segments.clone());
+                    let local = InPackagePath::new(parsed.segments.clone());
                     if item_exists(&local) {
                         return Some(local);
                     }
-                    let module_candidate = QualifiedPath::new(vec![first.clone()]);
+                    let module_candidate = InPackagePath::new(vec![first.clone()]);
                     if module_exists(&module_candidate) {
                         return Some(local);
                     }
                 }
 
                 if root_modules.contains(first) {
-                    return Some(QualifiedPath::new(parsed.segments.clone()));
+                    return Some(InPackagePath::new(parsed.segments.clone()));
                 }
                 None
             }
@@ -473,7 +473,7 @@ impl AstToHirLowerer {
             let base_res = if segments.len() == 2 {
                 self.resolve_type_symbol(segments[0].name.as_str())
             } else {
-                let base_path = QualifiedPath::new(
+                let base_path = InPackagePath::new(
                     segments[..segments.len() - 1]
                         .iter()
                         .map(|segment| segment.name.as_str().to_owned())
@@ -644,11 +644,11 @@ impl AstToHirLowerer {
                         .skip(1)
                         .map(|segment| segment.name.as_str().to_string()),
                 );
-                let aliased = QualifiedPath::new(aliased);
+                let aliased = InPackagePath::new(aliased);
                 let module_member = aliased.segments.split_last().and_then(|(leaf, parent)| {
                     match self.hir_program.resolve_module_name(
                         &self.package_id,
-                        &QualifiedPath::new(parent.to_vec()),
+                        &InPackagePath::new(parent.to_vec()),
                         leaf,
                         scope.namespace(),
                     ) {
@@ -668,7 +668,7 @@ impl AstToHirLowerer {
                     let (leaf, parent) = rooted.split_last()?;
                     match self.hir_program.resolve_module_name(
                         &self.package_id,
-                        &QualifiedPath::new(parent.to_vec()),
+                        &InPackagePath::new(parent.to_vec()),
                         leaf,
                         scope.namespace(),
                     ) {
@@ -708,7 +708,7 @@ impl AstToHirLowerer {
             // of `io::error`. This is namespace resolution, not a retry or
             // a suffix scan; each candidate is a concrete lexical ancestor.
             for depth in (0..=self.module_path.segments.len()).rev() {
-                let local_path = fp_core::ast::path::QualifiedPath::new(
+                let local_path = fp_core::ast::path::InPackagePath::new(
                     self.module_path.segments[..depth].to_vec(),
                 )
                 .join(&suffix);
@@ -749,7 +749,7 @@ impl AstToHirLowerer {
             // strictly more specific than either the relative-module or
             // crate-root-guess candidates, so it takes precedence over
             // both.
-            let literal_path = QualifiedPath::new(
+            let literal_path = InPackagePath::new(
                 segments
                     .iter()
                     .map(|segment| segment.name.as_str().to_string())
@@ -804,7 +804,7 @@ impl AstToHirLowerer {
                         // `global_type_defs` (potentially thousands once
                         // vendored std is loaded) with a `format!`
                         // allocation per candidate.
-                        let type_paths = std::iter::empty::<QualifiedPath>();
+                        let type_paths = std::iter::empty::<InPackagePath>();
                         for type_path in type_paths {
                             let mut associated_path = type_path.segments;
                             associated_path.extend(
@@ -813,7 +813,7 @@ impl AstToHirLowerer {
                                     .skip(1)
                                     .map(|segment| segment.name.as_str().to_string()),
                             );
-                            let associated_path = QualifiedPath::new(associated_path);
+                            let associated_path = InPackagePath::new(associated_path);
                             if let Some(res) = self.lookup_global_res(&associated_path, scope) {
                                 return Ok(hir::Path {
                                     segments: associated_path
@@ -861,7 +861,7 @@ impl AstToHirLowerer {
                         };
                         canonical_segments.push(self.make_path_segment(seg, args));
                     }
-                    let canonical_path = QualifiedPath::new(canonical.clone());
+                    let canonical_path = InPackagePath::new(canonical.clone());
                     let mut canonical_res = self.lookup_global_res(&canonical_path, scope);
                     // Inline/file modules can be represented either at the
                     // package-root path or below the package crate root,
@@ -874,11 +874,11 @@ impl AstToHirLowerer {
                             let mut rooted = crate_root;
                             rooted.extend(canonical.clone());
                             canonical_res =
-                                self.lookup_global_res(&QualifiedPath::new(rooted), scope);
+                                self.lookup_global_res(&InPackagePath::new(rooted), scope);
                         }
                     }
                     if canonical_res.is_none() && canonical.len() > 1 {
-                        let parent = QualifiedPath::new(canonical[..canonical.len() - 1].to_vec());
+                        let parent = InPackagePath::new(canonical[..canonical.len() - 1].to_vec());
                         if let Some(last) = canonical.last() {
                             canonical_res = match self.hir_program.resolve_module_name(
                                 &self.package_id,
@@ -989,7 +989,7 @@ impl AstToHirLowerer {
                                 .skip(1)
                                 .map(|seg| seg.name.as_str().to_string()),
                         );
-                        let canonical_path = QualifiedPath::new(canonical.clone());
+                        let canonical_path = InPackagePath::new(canonical.clone());
                         resolved = self.lookup_global_res(&canonical_path, scope);
                         if resolved.is_none() && segments.len() == 1 {
                             resolved = self.lookup_global_res(&canonical_path, scope);
@@ -1047,7 +1047,7 @@ impl AstToHirLowerer {
             for crate_root in crate_root_candidates {
                 let mut relative_segments = crate_root;
                 relative_segments.extend(segments.iter().map(|seg| seg.name.as_str().to_string()));
-                let relative = QualifiedPath::new(relative_segments);
+                let relative = InPackagePath::new(relative_segments);
                 resolved = self.lookup_global_res(&relative, scope);
                 if resolved.is_some() {
                     break;
@@ -1109,7 +1109,7 @@ impl AstToHirLowerer {
                         .skip(1)
                         .map(|segment| segment.name.as_str().to_string()),
                 );
-                if let Some(res) = self.lookup_global_res(&QualifiedPath::new(qualified), scope) {
+                if let Some(res) = self.lookup_global_res(&InPackagePath::new(qualified), scope) {
                     resolved = Some(res);
                 }
             }
@@ -1494,8 +1494,8 @@ impl AstToHirLowerer {
         }
     }
 
-    pub(super) fn canonicalize_segments(&self, segments: &[hir::PathSegment]) -> QualifiedPath {
-        QualifiedPath::new(
+    pub(super) fn canonicalize_segments(&self, segments: &[hir::PathSegment]) -> InPackagePath {
+        InPackagePath::new(
             segments
                 .iter()
                 .map(|s| s.name.as_str().to_string())

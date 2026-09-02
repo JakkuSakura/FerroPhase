@@ -2,7 +2,7 @@ use fp_backend::transformations::AstToHirLowerer;
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{AstPackage, PackageId, PackageItem};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
@@ -72,7 +72,6 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
         vec![fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(""),
-            collected_items: Vec::new(),
             items: file,
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
@@ -221,7 +220,6 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
         fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("math"),
-            collected_items: Vec::new(),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
@@ -347,7 +345,6 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("math"),
-            collected_items: Vec::new(),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
@@ -384,7 +381,6 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("callers"),
-            collected_items: Vec::new(),
             items: vec![call_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,

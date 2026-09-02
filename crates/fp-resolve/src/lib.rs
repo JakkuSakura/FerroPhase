@@ -4,7 +4,7 @@
 //! that populate it before AST-to-HIR lowering.
 
 use fp_core::ast::package::PackageId;
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir;
 use fp_core::hir::Symbol;
@@ -24,7 +24,7 @@ pub struct AstResolver<'hir> {
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
-    resolutions: HashMap<QualifiedPath, hir::Res>,
+    resolutions: HashMap<InPackagePath, hir::Res>,
     /// Workspace registry used for extern-prelude lookup.  Keeping the
     /// registry (rather than cloned module trees) means imports resolve
     /// against the live AST packages and avoids a second, stale resolution
@@ -65,7 +65,7 @@ impl<'hir> AstResolver<'hir> {
 
     pub fn declare_module(
         &mut self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         name: impl Into<Symbol>,
         binding: Binding,
     ) -> DeclarationOutcome {
@@ -76,7 +76,7 @@ impl<'hir> AstResolver<'hir> {
 
     pub fn declare_import(
         &mut self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         name: impl Into<Symbol>,
         target: hir::Res,
         namespace: Namespace,
@@ -103,7 +103,7 @@ impl<'hir> AstResolver<'hir> {
         for prelude in preludes {
             if let ResolutionResult::Found(hir::Res::Module(def_id)) =
                 self.package_tree().resolve_path(
-                    &QualifiedPath::new(prelude.package_id.clone(), Vec::new()),
+                    &InPackagePath::new(Vec::new()),
                     &prelude.path,
                     Namespace::Type,
                     self.resolution_rules,
@@ -117,7 +117,6 @@ impl<'hir> AstResolver<'hir> {
         // Make resolved prelude modules part of the package's root lookup
         // scope, matching the implicit-import behavior expected by callers.
         let prelude_ids = self.hir_package.prelude_modules.clone();
-        let root_package_id = self.package.borrow().package_id.clone();
         for def_id in prelude_ids {
             let Some(path) = self.package_tree().path_for_module(&def_id) else {
                 continue;
@@ -133,22 +132,18 @@ impl<'hir> AstResolver<'hir> {
                 })
                 .collect();
             for (name, binding) in entries {
-                self.declare_module(
-                    &QualifiedPath::new(root_package_id.clone(), Vec::new()),
-                    name,
-                    binding,
-                );
+                self.declare_module(&InPackagePath::new(Vec::new()), name, binding);
             }
         }
     }
 
-    pub fn resolution_table(&self) -> &HashMap<QualifiedPath, hir::Res> {
+    pub fn resolution_table(&self) -> &HashMap<InPackagePath, hir::Res> {
         &self.resolutions
     }
 
     fn declare_definition(
         &mut self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         name: impl Into<Symbol>,
         namespace: Namespace,
         span: Span,
@@ -169,7 +164,7 @@ impl<'hir> AstResolver<'hir> {
         target
     }
 
-    fn collect_item(&mut self, module: &QualifiedPath, item: &fp_core::ast::Item) {
+    fn collect_item(&mut self, module: &InPackagePath, item: &fp_core::ast::Item) {
         use fp_core::ast::ItemKind;
 
         let span = item.span();
@@ -251,10 +246,7 @@ impl<'hir> AstResolver<'hir> {
                         .keys()
                         .filter_map(|name| {
                             match source.resolve(
-                                &QualifiedPath::new(
-                                    self.package.borrow().package_id.clone(),
-                                    Vec::new(),
-                                ),
+                                &InPackagePath::new(Vec::new()),
                                 name.as_str(),
                                 directive.namespace,
                                 self.resolution_rules,
@@ -309,24 +301,6 @@ impl<'hir> AstResolver<'hir> {
                 fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
                 _ => None,
             };
-            let target = target.or_else(|| {
-                let (root, rest) = directive.target.segments.split_first()?;
-                let package_id = self
-                    .ast_program
-                    .crates()
-                    .keys()
-                    .find(|id| id.as_str().replace('-', "_") == root.as_str())?
-                    .clone();
-                match self.ast_program.resolve_module_path(
-                    &package_id,
-                    &QualifiedPath::new(Vec::new()),
-                    &QualifiedPath::from_slice(rest),
-                    directive.namespace,
-                ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
-                    _ => None,
-                }
-            });
             if let Some(target) = target {
                 self.declare_import(
                     &directive.module,
@@ -353,7 +327,7 @@ impl<'hir> AstResolver<'hir> {
 
     fn collect_import_item(
         &self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         item: &fp_core::ast::Item,
         worklist: &mut ResolutionWorklist,
     ) {
@@ -394,23 +368,23 @@ impl<'hir> AstResolver<'hir> {
 
     fn import_path(
         &self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         path: &fp_core::ast::ItemImportPath,
-        mut base: QualifiedPath,
-    ) -> QualifiedPath {
+        mut base: InPackagePath,
+    ) -> InPackagePath {
         for segment in &path.segments {
             match segment {
-                fp_core::ast::ItemImportTree::Root => base = QualifiedPath::new(Vec::new()),
+                fp_core::ast::ItemImportTree::Root => base = InPackagePath::new(Vec::new()),
                 fp_core::ast::ItemImportTree::Crate => {
                     base = module
                         .head()
                         .filter(|head| {
                             self.package_tree()
-                                .module(&QualifiedPath::new(vec![(*head).to_owned()]))
+                                .module(&InPackagePath::new(vec![(*head).to_owned()]))
                                 .is_some()
                         })
-                        .map(|head| QualifiedPath::new(vec![head.to_owned()]))
-                        .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
+                        .map(|head| InPackagePath::new(vec![head.to_owned()]))
+                        .unwrap_or_else(|| InPackagePath::new(Vec::new()));
                 }
                 fp_core::ast::ItemImportTree::SelfMod => base = module.clone(),
                 fp_core::ast::ItemImportTree::SuperMod => {
@@ -428,10 +402,10 @@ impl<'hir> AstResolver<'hir> {
 
     fn collect_tree(
         &self,
-        module: &QualifiedPath,
-        prefix: QualifiedPath,
+        module: &InPackagePath,
+        prefix: InPackagePath,
         tree: &fp_core::ast::ItemImportTree,
-        out: &mut Vec<(QualifiedPath, Symbol, ImportKind)>,
+        out: &mut Vec<(InPackagePath, Symbol, ImportKind)>,
     ) {
         use fp_core::ast::ItemImportTree;
         match tree {
@@ -444,7 +418,7 @@ impl<'hir> AstResolver<'hir> {
             ItemImportTree::SuperMod => {
                 let target = prefix
                     .parent_n(1)
-                    .unwrap_or_else(|| QualifiedPath::new(Vec::new()));
+                    .unwrap_or_else(|| InPackagePath::new(Vec::new()));
                 if let Some(name) = target.tail().map(Symbol::from) {
                     out.push((target, name, ImportKind::Single));
                 }
@@ -492,9 +466,9 @@ impl<'hir> AstResolver<'hir> {
 
 #[derive(Debug, Clone)]
 pub struct ImportDirective {
-    pub module: QualifiedPath,
+    pub module: InPackagePath,
     pub name: Symbol,
-    pub target: QualifiedPath,
+    pub target: InPackagePath,
     pub namespace: Namespace,
     pub kind: ImportKind,
     pub visibility: fp_core::ast::Visibility,
@@ -573,7 +547,7 @@ mod tests {
 
     #[test]
     fn worklist_resolves_forward_alias_after_target_is_committed() {
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         let target = hir::DefId::local(7);
         let mut modules = ModuleTree::new();
         modules.declare(
@@ -597,7 +571,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root.clone(),
             name: Symbol::from("Alias"),
-            target: QualifiedPath::new(vec!["Target".into()]),
+            target: InPackagePath::new(vec!["Target".into()]),
             namespace: Namespace::Type,
             kind: ImportKind::Single,
             visibility: fp_core::ast::Visibility::Private,
@@ -617,7 +591,7 @@ mod tests {
 
     #[test]
     fn worklist_retains_quiescent_unresolved_directive() {
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         let mut modules = ModuleTree::new();
         let mut resolver = AstResolver::new(
             hir::PackageId::new("test"),
@@ -630,7 +604,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root,
             name: Symbol::from("MissingAlias"),
-            target: QualifiedPath::new(vec!["Missing".into()]),
+            target: InPackagePath::new(vec!["Missing".into()]),
             namespace: Namespace::Type,
             kind: ImportKind::Single,
             visibility: fp_core::ast::Visibility::Private,
@@ -644,7 +618,7 @@ mod tests {
 
     #[test]
     fn worklist_resolves_reexport_chain_independent_of_order() {
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         let target = hir::DefId::local(9);
         let mut modules = ModuleTree::new();
         modules.declare(
@@ -669,7 +643,7 @@ mod tests {
             worklist.push(ImportDirective {
                 module: root.clone(),
                 name: Symbol::from(name),
-                target: QualifiedPath::new(vec![source.into()]),
+                target: InPackagePath::new(vec![source.into()]),
                 namespace: Namespace::Type,
                 kind: ImportKind::Single,
                 visibility: fp_core::ast::Visibility::Private,
@@ -690,8 +664,8 @@ mod tests {
 
     #[test]
     fn worklist_expands_glob_members_into_destination_module() {
-        let root = QualifiedPath::new(Vec::new());
-        let source = QualifiedPath::new(vec!["source".into()]);
+        let root = InPackagePath::new(Vec::new());
+        let source = InPackagePath::new(vec!["source".into()]);
         let target = hir::DefId::local(11);
         let mut modules = ModuleTree::new();
         modules.ensure_module(&source);
@@ -736,8 +710,8 @@ mod tests {
 
     #[test]
     fn worklist_can_import_a_module_binding() {
-        let root = QualifiedPath::new(Vec::new());
-        let child = QualifiedPath::new(vec!["child".into()]);
+        let root = InPackagePath::new(Vec::new());
+        let child = InPackagePath::new(vec!["child".into()]);
         let mut modules = ModuleTree::new();
         modules.ensure_module(&child);
         modules.declare(

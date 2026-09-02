@@ -142,7 +142,7 @@ impl LirPackage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirCodeUnit {
     pub package_id: PackageId,
-    pub module_path: crate::ast::path::QualifiedPath,
+    pub module_path: crate::ast::path::InPackagePath,
     pub kind: LirCodeUnitKind,
 }
 

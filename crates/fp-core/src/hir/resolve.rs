@@ -4,7 +4,7 @@
 //! expansion and AST→HIR lowering. HIR receives resolved identities; it does
 //! not perform first-time lexical or module lookup.
 
-use crate::ast::path::QualifiedPath;
+use crate::ast::path::InPackagePath;
 use crate::span::Span;
 use std::collections::HashMap;
 
@@ -21,7 +21,7 @@ pub use crate::hir::Symbol;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Binding {
     Module {
-        target: QualifiedPath,
+        target: InPackagePath,
         def_id: crate::hir::DefId,
         span: Span,
     },
@@ -234,7 +234,7 @@ impl ModuleTree {
         }
     }
 
-    pub fn ensure_module(&mut self, path: &QualifiedPath) -> &mut ModuleTree {
+    pub fn ensure_module(&mut self, path: &InPackagePath) -> &mut ModuleTree {
         let mut current = self;
         for segment in &path.segments {
             current = current
@@ -245,7 +245,7 @@ impl ModuleTree {
         current
     }
 
-    pub fn module(&self, path: &QualifiedPath) -> Option<&ModuleTree> {
+    pub fn module(&self, path: &InPackagePath) -> Option<&ModuleTree> {
         let mut current = self;
         for segment in &path.segments {
             current = current.children.get(&Symbol::from(segment.as_str()))?;
@@ -253,7 +253,7 @@ impl ModuleTree {
         Some(current)
     }
 
-    pub fn module_mut(&mut self, path: &QualifiedPath) -> Option<&mut ModuleTree> {
+    pub fn module_mut(&mut self, path: &InPackagePath) -> Option<&mut ModuleTree> {
         let mut current = self;
         for segment in &path.segments {
             current = current.children.get_mut(&Symbol::from(segment.as_str()))?;
@@ -264,8 +264,8 @@ impl ModuleTree {
     /// Find the source path associated with a module definition.  Module
     /// paths are an implementation detail of traversal; the public
     /// resolution result carries the module's `DefId`.
-    pub fn path_for_module(&self, def_id: &crate::hir::DefId) -> Option<QualifiedPath> {
-        fn visit(tree: &ModuleTree, def_id: &crate::hir::DefId) -> Option<QualifiedPath> {
+    pub fn path_for_module(&self, def_id: &crate::hir::DefId) -> Option<InPackagePath> {
+        fn visit(tree: &ModuleTree, def_id: &crate::hir::DefId) -> Option<InPackagePath> {
             for bindings in tree.symbols.values() {
                 for binding in bindings {
                     if let Binding::Module {
@@ -290,14 +290,14 @@ impl ModuleTree {
 
     pub fn bindings(
         &self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
     ) -> impl Iterator<Item = (&Symbol, &Vec<Binding>)> {
         self.module(module)
             .into_iter()
             .flat_map(|m| m.symbols.iter())
     }
 
-    pub fn candidates(&self, module: &QualifiedPath, symbol: &str) -> Option<&[Binding]> {
+    pub fn candidates(&self, module: &InPackagePath, symbol: &str) -> Option<&[Binding]> {
         self.module(module)?
             .symbols
             .get(&Symbol::from(symbol))
@@ -306,7 +306,7 @@ impl ModuleTree {
 
     pub fn declare(
         &mut self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         symbol: impl Into<Symbol>,
         binding: Binding,
         rules: DeclarationRules,
@@ -341,7 +341,7 @@ impl ModuleTree {
 
     pub fn resolve(
         &self,
-        module: &QualifiedPath,
+        module: &InPackagePath,
         symbol: &str,
         namespace: Namespace,
         rules: ResolutionRules,
@@ -372,8 +372,8 @@ impl ModuleTree {
 
     pub fn resolve_path(
         &self,
-        module: &QualifiedPath,
-        path: &QualifiedPath,
+        module: &InPackagePath,
+        path: &InPackagePath,
         namespace: Namespace,
         rules: ResolutionRules,
     ) -> ResolutionResult {
@@ -403,8 +403,8 @@ impl ModuleTree {
     /// lowering.
     pub fn resolve_path_final(
         &self,
-        module: &QualifiedPath,
-        path: &QualifiedPath,
+        module: &InPackagePath,
+        path: &InPackagePath,
         namespace: Namespace,
         rules: ResolutionRules,
     ) -> ResolutionResult {
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn shared_symbol_map_keeps_namespaces_distinct() {
         let mut tree = ModuleTree::new();
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         assert_eq!(
             tree.declare(
                 &root,
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn conflicting_bindings_are_ambiguous() {
         let mut tree = ModuleTree::new();
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         tree.declare(
             &root,
             "x",
@@ -606,8 +606,8 @@ mod tests {
     #[test]
     fn nested_modules_resolve_qualified_paths() {
         let mut tree = ModuleTree::new();
-        let root = QualifiedPath::new(Vec::new());
-        let nested = QualifiedPath::new(vec!["m".into()]);
+        let root = InPackagePath::new(Vec::new());
+        let nested = InPackagePath::new(vec!["m".into()]);
         tree.ensure_module(&nested);
         tree.declare(
             &root,
@@ -628,7 +628,7 @@ mod tests {
         assert!(matches!(
             tree.resolve_path(
                 &root,
-                &QualifiedPath::new(vec!["m".into(), "Thing".into()]),
+                &InPackagePath::new(vec!["m".into(), "Thing".into()]),
                 Namespace::Type,
                 ResolutionRules::rust(),
             ),
@@ -639,8 +639,8 @@ mod tests {
     #[test]
     fn parent_module_lookup_is_policy_controlled() {
         let mut tree = ModuleTree::new();
-        let root = QualifiedPath::new(Vec::new());
-        let child = QualifiedPath::new(vec!["child".into()]);
+        let root = InPackagePath::new(Vec::new());
+        let child = InPackagePath::new(vec!["child".into()]);
         tree.declare(
             &root,
             "x",
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn macro_and_value_bindings_use_separate_namespaces() {
         let mut tree = ModuleTree::new();
-        let root = QualifiedPath::new(Vec::new());
+        let root = InPackagePath::new(Vec::new());
         tree.declare(
             &root,
             "log",

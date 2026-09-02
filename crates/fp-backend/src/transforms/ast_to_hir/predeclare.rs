@@ -3,7 +3,7 @@ use super::*;
 impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
         self.local_scope = fp_core::hir::resolve::LocalScope::new();
-        self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
+        self.module_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         self.current_owner = None;
         self.local_id = 0;
         self.current_position = 0;
@@ -127,7 +127,7 @@ impl AstToHirLowerer {
 
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
-                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::InPackagePath::new(vec![
                             def_enum.name.name.clone(),
                             variant.name.name.clone(),
                         ]);
@@ -209,7 +209,7 @@ impl AstToHirLowerer {
                                     let variant_def_id = self.next_def_id();
 
                                     let variant_path =
-                                        fp_core::ast::path::QualifiedPath::new(vec![
+                                        fp_core::ast::path::InPackagePath::new(vec![
                                             def_type.name.name.clone(),
                                             variant.name.name.clone(),
                                         ]);

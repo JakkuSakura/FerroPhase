@@ -92,7 +92,7 @@ explicitly requested by syntax or semantics, but can compute values, types,
 declarations, and AST-producing results. Both can contribute to a request
 identity once the compiler knows enough AST and semantic context.
 
-`FullyQualifiedPath` is the resolved identity and already includes resolved
+`FullyInPackagePath` is the resolved identity and already includes resolved
 generic and comptime arguments that affect identity.
 
 Examples:

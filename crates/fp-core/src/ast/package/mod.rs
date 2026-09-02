@@ -92,7 +92,7 @@ impl PackageDescriptor {
 
 pub mod provider;
 
-use crate::ast::path::QualifiedPath;
+use crate::ast::path::InPackagePath;
 use crate::ast::{Ident, Item, ItemKind, Module, Visibility};
 use std::collections::HashMap;
 
@@ -107,14 +107,14 @@ pub struct PackageItem {
     /// `module_path` (not `path`) specifically to make that contract
     /// unambiguous: a prior name of plain `path` invited exactly the wrong
     /// assumption that it was a per-item fully-qualified path.
-    pub module_path: QualifiedPath,
+    pub module_path: InPackagePath,
     pub item: Item,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PackagePath {
     pub package_id: PackageId,
-    pub path: QualifiedPath,
+    pub path: InPackagePath,
 }
 
 /// A package's own AST/source-level content — both what a `PackageProvider`
@@ -184,7 +184,7 @@ impl AstPackage {
     pub fn items(&self) -> Vec<PackageItem> {
         let mut output = Vec::new();
         for module in &self.modules {
-            let path = QualifiedPath::new(self.package_id.clone(), Vec::new());
+            let path = InPackagePath::new(Vec::new());
             let path = if module.name.as_str().is_empty() {
                 path
             } else {
@@ -198,14 +198,14 @@ impl AstPackage {
     /// Flattens nested AST modules into source items carrying their module
     /// paths. Providers can use this once instead of maintaining their own
     /// recursive module walkers.
-    pub fn flatten_module_items(module_path: &QualifiedPath, items: &[Item]) -> Vec<PackageItem> {
+    pub fn flatten_module_items(module_path: &InPackagePath, items: &[Item]) -> Vec<PackageItem> {
         let mut output = Vec::new();
         Self::flatten_module_items_into(module_path, items, &mut |_| false, &mut output);
         output
     }
 
     pub fn flatten_module_items_filtered(
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         items: &[Item],
         skip: &mut impl FnMut(&Item) -> bool,
     ) -> Vec<PackageItem> {
@@ -215,7 +215,7 @@ impl AstPackage {
     }
 
     fn flatten_module_items_into(
-        module_path: &QualifiedPath,
+        module_path: &InPackagePath,
         items: &[Item],
         skip: &mut impl FnMut(&Item) -> bool,
         output: &mut Vec<PackageItem>,

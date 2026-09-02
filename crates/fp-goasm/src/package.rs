@@ -5,7 +5,7 @@ use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::vfs::VirtualPath;
 
 #[derive(Debug)]
@@ -43,14 +43,7 @@ impl PackageProvider for GoPackageProvider {
                 fp_core::ast::package::provider::ProviderError::PackageNotFound(id.clone()),
             );
         }
-        package
-            .package
-            .package(id)
-            .cloned()
-            .map(Arc::new)
-            .ok_or_else(|| {
-                fp_core::ast::package::provider::ProviderError::PackageNotFound(id.clone())
-            })
+        Ok(Arc::new(package.package.clone()))
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
@@ -155,7 +148,6 @@ impl GoPackageProvider {
         package.modules.push(fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(""),
-            collected_items: Vec::new(),
             items,
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
@@ -191,7 +183,7 @@ fn collect_goasm_files(root: &Path, files: &mut Vec<PathBuf>) -> ProviderResult<
     Ok(())
 }
 
-fn module_path_for(relative: &Path) -> QualifiedPath {
+fn module_path_for(relative: &Path) -> InPackagePath {
     let mut segments = Vec::new();
     for component in relative.components() {
         let std::path::Component::Normal(segment) = component else {
@@ -206,7 +198,7 @@ fn module_path_for(relative: &Path) -> QualifiedPath {
             segments.push(segment.to_string());
         }
     }
-    QualifiedPath::new(segments)
+    InPackagePath::new(segments)
 }
 
 /// A standalone `.goasm` file (not a project directory) is Go-style native

@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_compiler::{
-    CompilerDriver, CompilerExecutor, CompilerSession, FullyQualifiedPath, PipelineMode,
+    CompilerDriver, CompilerExecutor, CompilerSession, FullyInPackagePath, PipelineMode,
 };
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::PackageProvider;
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::{
     ast::File,
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
@@ -193,7 +193,7 @@ pub(crate) fn module_path_for_language(
     language: &str,
     package_root: &Path,
     input: &Path,
-) -> Result<QualifiedPath> {
+) -> Result<InPackagePath> {
     match language {
         "rust" | "rs" => {
             let rel = input.strip_prefix(package_root.join("src")).map_err(|_| {
@@ -229,14 +229,14 @@ pub(crate) fn module_path_for_language(
 }
 
 #[cfg(feature = "lang-typescript")]
-fn module_path_for_typescript(package_root: &Path, input: &Path) -> Result<QualifiedPath> {
-    Ok(QualifiedPath::new(
+fn module_path_for_typescript(package_root: &Path, input: &Path) -> Result<InPackagePath> {
+    Ok(InPackagePath::new(
         fp_typescript::package::estimate_module_path(package_root, input),
     ))
 }
 
 #[cfg(not(feature = "lang-typescript"))]
-fn module_path_for_typescript(_package_root: &Path, _input: &Path) -> Result<QualifiedPath> {
+fn module_path_for_typescript(_package_root: &Path, _input: &Path) -> Result<InPackagePath> {
     Err(CliError::Compilation(
         "typescript support not compiled into this build".to_string(),
     ))
@@ -262,7 +262,7 @@ fn resolve_input_package(
     input: SourceInput,
     language: &str,
     identity: &CompilerIdentity,
-) -> Result<(Arc<dyn PackageProvider>, PackageId, QualifiedPath)> {
+) -> Result<(Arc<dyn PackageProvider>, PackageId, InPackagePath)> {
     match input {
         SourceInput::Path(path) => {
             if let Some((provider, package_id, package_root_abs)) =
@@ -297,7 +297,7 @@ fn resolve_input_package(
                             path.display()
                         ))
                     })?;
-                let module_path = QualifiedPath::new(Vec::new());
+                let module_path = InPackagePath::new(Vec::new());
                 Ok((provider, package_id, module_path))
             }
         }
@@ -322,7 +322,7 @@ pub fn resolve_source_package(
     path: &Path,
     language: &str,
     package: &str,
-) -> Result<(Arc<dyn PackageProvider>, PackageId, QualifiedPath)> {
+) -> Result<(Arc<dyn PackageProvider>, PackageId, InPackagePath)> {
     let identity = CompilerIdentity::for_file(package, path);
     resolve_input_package(SourceInput::Path(path.to_path_buf()), language, &identity)
 }
@@ -558,7 +558,7 @@ fn emit_typing_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
 }
 
 struct CompilerIdentity {
-    path: FullyQualifiedPath,
+    path: FullyInPackagePath,
 }
 
 struct LoweredProgram {
@@ -677,7 +677,7 @@ impl CompilerIdentity {
     }
 
     fn new(segments: Vec<String>) -> Self {
-        let path = FullyQualifiedPath::from_segments(segments);
+        let path = FullyInPackagePath::from_segments(segments);
         Self { path }
     }
 }

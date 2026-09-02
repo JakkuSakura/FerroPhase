@@ -211,10 +211,7 @@ pub fn materialize_block(
     for stmt in block.stmts {
         stmts.push(materialize_stmt(stmt, strategy)?);
     }
-    Ok(ast::ExprBlock {
-        stmts,
-        ..block
-    })
+    Ok(ast::ExprBlock { stmts, ..block })
 }
 
 pub fn materialize_stmt(

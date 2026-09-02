@@ -14,8 +14,8 @@ terms consistently in docs, code, and diagnostics.
 - **Request** - A need for an artefact or answer that can block other work.
 - **RequestId** - Stable identity for a pending request before it is answered.
   Once identity-forming needs are answered, the semantic identity is expressed
-  by `FullyQualifiedPath`.
-- **FullyQualifiedPath** - Resolved identity for a concrete item, function,
+  by `FullyInPackagePath`.
+- **FullyInPackagePath** - Resolved identity for a concrete item, function,
   block, or specialization. It includes resolved generic and comptime arguments
   when those affect identity. It names the resolved work subject; it does not
   imply a separate code-unit abstraction.

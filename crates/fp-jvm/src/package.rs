@@ -54,7 +54,7 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     };
     if let Some(lir) = lir {
         source.items.push(fp_core::ast::package::PackageItem {
-            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_lir(lir),
         });
     }

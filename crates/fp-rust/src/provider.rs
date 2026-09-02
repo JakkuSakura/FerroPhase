@@ -10,7 +10,7 @@ use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
     PackageMetadata,
 };
-use fp_core::ast::path::QualifiedPath;
+use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
 use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
 use fp_core::frontend::LanguageFrontend;
@@ -271,7 +271,7 @@ impl RustPackageProvider {
                 let items = cached
                     .into_iter()
                     .map(|(module_path, item)| PackageItem {
-                        module_path: QualifiedPath::new(module_path),
+                        module_path: InPackagePath::new(module_path),
                         item,
                     })
                     .collect::<Vec<_>>();
@@ -325,7 +325,7 @@ impl RustPackageProvider {
                 &env,
                 file_dir,
                 &children_base_dir,
-                &QualifiedPath::new(Vec::new()),
+                &InPackagePath::new(Vec::new()),
                 &root_items,
                 None,
                 &mut items,
@@ -530,14 +530,14 @@ fn same_path(left: &Path, right: &Path) -> bool {
 /// relative to a package's source root (e.g. `"config.rs"` → `["config"]`).
 /// Exported so callers outside this module (e.g. a single-file compile that
 /// wants to match a real package's own tagging) can compute the same tag.
-pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
+pub fn rs_relative_to_module_path(rel: &str) -> InPackagePath {
     // The crate root file (`lib.rs`/`main.rs`, never nested in a
     // subdirectory) defines crate-root-level items directly, not a `lib::`/
     // `main::` submodule — tag it with an empty path so
     // `AstToHirLowerer::transform_package`'s per-item `with_module_scope` (which
     // pushes one scope level per path segment) doesn't wrongly nest them.
     if rel.is_empty() || (!rel.contains('/') && (rel == "lib.rs" || rel == "main.rs")) {
-        return QualifiedPath::new(Vec::new());
+        return InPackagePath::new(Vec::new());
     }
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");
     let mut parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
@@ -547,7 +547,7 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     if parts.len() > 1 && parts.last().map(String::as_str) == Some("mod") {
         parts.pop();
     }
-    QualifiedPath::new(parts)
+    InPackagePath::new(parts)
 }
 
 fn package_source_from_items(
@@ -582,7 +582,6 @@ fn package_source_from_items(
     source.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        collected_items: Vec::new(),
         items: items.to_vec(),
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
@@ -724,7 +723,7 @@ impl RustExternalApiProvider {
             })?;
         let mut items = Vec::new();
         items.extend(AstPackage::flatten_module_items_filtered(
-            &QualifiedPath::new(vec![id.as_str().to_owned()]),
+            &InPackagePath::new(vec![id.as_str().to_owned()]),
             &parsed.ast.items,
             &mut |item| is_cfg_test(item_attrs(item)),
         ));
@@ -1116,7 +1115,7 @@ fn discover_items(
     env: &TargetEnv,
     file_dir: &Path,
     children_base_dir: &Path,
-    module_path: &QualifiedPath,
+    module_path: &InPackagePath,
     items: &[Item],
     descriptor_ctx: Option<(&PackageId, ModuleLanguage, &mut Vec<ModuleDescriptor>)>,
     items_out: &mut Vec<PackageItem>,
@@ -1395,7 +1394,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     // on-disk Cargo project's own crate root (a single, self-contained
     // package with no shared cross-crate namespace) collapses to `[]` (see
     // `rs_relative_to_module_path`, used there instead).
-    let root_module_path = QualifiedPath::new(vec![crate_name.to_string()]);
+    let root_module_path = InPackagePath::new(vec![crate_name.to_string()]);
     if let Some(source) = read(&root_file) {
         let root_items = parse(&root_file, &source)?;
         descriptors.push(ModuleDescriptor {
@@ -1455,7 +1454,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     krate.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        collected_items: Vec::new(),
         items,
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
@@ -1491,7 +1489,7 @@ fn load_embedded_fp_package(
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
         register_threadlocal_serializer(result.serializer.clone());
         items.extend(AstPackage::flatten_module_items_filtered(
-            &QualifiedPath::new(module_path.clone()),
+            &InPackagePath::new(module_path.clone()),
             &result.ast.items,
             &mut |item| is_cfg_test(item_attrs(item)),
         ));
@@ -1524,7 +1522,6 @@ fn load_embedded_fp_package(
     krate.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        collected_items: Vec::new(),
         items,
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,

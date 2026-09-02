@@ -143,12 +143,12 @@ impl DefPath {
         self.segments.iter().map(|s| s.name.clone()).collect()
     }
 
-    /// Build a `DefPath` from an `ast::path::QualifiedPath` — the
+    /// Build a `DefPath` from an `ast::path::InPackagePath` — the
     /// resolved-against-the-module-tree form a name takes on *before* its
     /// `DefId` is assigned. The one place this segment-list conversion
     /// happens, so callers never hand-roll
     /// `segments.iter().cloned().map(Symbol::new).collect()` themselves.
-    pub fn from_qualified_path(path: &crate::ast::path::QualifiedPath) -> Self {
+    pub fn from_qualified_path(path: &crate::ast::path::InPackagePath) -> Self {
         Self::new(path.segments.iter().cloned().map(Symbol::new).collect())
     }
 }

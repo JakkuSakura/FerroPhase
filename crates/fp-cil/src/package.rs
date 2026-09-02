@@ -32,7 +32,7 @@ pub fn provider_for_path(root: &Path) -> Option<Arc<dyn PackageProvider>> {
         if let Ok(text) = String::from_utf8(bytes) {
             if let Ok(lir) = crate::parse_cil_program(&text) {
                 source.items.push(fp_core::ast::package::PackageItem {
-                    module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+                    module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
                     item: fp_core::ast::Item::precompiled_lir(lir),
                 });
             }

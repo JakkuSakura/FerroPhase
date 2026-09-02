@@ -94,7 +94,7 @@ impl SharedHirProgram {
     pub fn resolve_module_name(
         &self,
         package_id: &PackageId,
-        module: &crate::ast::path::QualifiedPath,
+        module: &crate::ast::path::InPackagePath,
         name: &str,
         namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
@@ -106,8 +106,8 @@ impl SharedHirProgram {
     pub fn resolve_module_path(
         &self,
         package_id: &PackageId,
-        module: &crate::ast::path::QualifiedPath,
-        path: &crate::ast::path::QualifiedPath,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
         namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
@@ -118,18 +118,18 @@ impl SharedHirProgram {
     pub fn module_exists(
         &self,
         package_id: &PackageId,
-        path: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::InPackagePath,
     ) -> bool {
         self.0.borrow().module_exists(package_id, path)
     }
-    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::QualifiedPath> {
+    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::InPackagePath> {
         self.0.borrow().module_path(def_id)
     }
     pub fn resolve_module_path_final(
         &self,
         package_id: &PackageId,
-        module: &crate::ast::path::QualifiedPath,
-        path: &crate::ast::path::QualifiedPath,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
         namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
@@ -143,7 +143,7 @@ impl SharedHirProgram {
     pub fn module_member_names(
         &self,
         package_id: &PackageId,
-        path: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::InPackagePath,
     ) -> Option<Vec<crate::hir::resolve::Symbol>> {
         self.package(package_id).and_then(|package| {
             package
@@ -285,7 +285,7 @@ impl HirProgram {
     pub fn resolve_module_name(
         &self,
         package_id: &PackageId,
-        module: &crate::ast::path::QualifiedPath,
+        module: &crate::ast::path::InPackagePath,
         name: &str,
         namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
@@ -298,8 +298,8 @@ impl HirProgram {
     pub fn resolve_module_path(
         &self,
         package_id: &PackageId,
-        module: &crate::ast::path::QualifiedPath,
-        path: &crate::ast::path::QualifiedPath,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
         namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
@@ -315,14 +315,14 @@ impl HirProgram {
     pub fn module_exists(
         &self,
         package_id: &PackageId,
-        path: &crate::ast::path::QualifiedPath,
+        path: &crate::ast::path::InPackagePath,
     ) -> bool {
         self.package(package_id)
             .map(|package| package.module_tree.module(path).is_some())
             .unwrap_or(false)
     }
 
-    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::QualifiedPath> {
+    pub fn module_path(&self, def_id: &DefId) -> Option<crate::ast::path::InPackagePath> {
         self.package(&def_id.package_id)
             .and_then(|package| package.module_tree.path_for_module(def_id))
     }

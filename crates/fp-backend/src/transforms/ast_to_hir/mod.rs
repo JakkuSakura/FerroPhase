@@ -60,7 +60,7 @@ pub struct AstToHirLowerer {
     local_id: u32,
     current_file: FileId,
     current_position: u32,
-    module_path: fp_core::ast::path::QualifiedPath,
+    module_path: fp_core::ast::path::InPackagePath,
     /// Semantic index for associated items. The key is the resolved impl
     /// self-type identity plus the associated name; source paths and aliases
     /// never participate in this index.
@@ -86,7 +86,7 @@ pub struct AstToHirLowerer {
     /// path instead finds nothing, exactly the same shape of bug
     /// `trait_generic_scope_bindings` fixed for a trait's own generic
     /// parameters.
-    trait_def_modules: HashMap<String, fp_core::ast::path::QualifiedPath>,
+    trait_def_modules: HashMap<String, fp_core::ast::path::InPackagePath>,
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
@@ -101,7 +101,7 @@ pub struct AstToHirLowerer {
     /// several return points instead).
     ///
     /// `module_tree` specifically replaces the old `module_defs:
-    /// HashSet<QualifiedPath>` (module *existence*, `module_exists`/
+    /// HashSet<InPackagePath>` (module *existence*, `module_exists`/
     /// `ensure_module`) and `crate_roots: HashMap<String, Vec<String>>`
     /// (a sub-crate root is just a child of the tree's crate-root node,
     /// not a separate table), and — since `ModuleTree`'s bindings now
@@ -306,7 +306,7 @@ impl AstToHirLowerer {
             local_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
-            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
             impl_items: HashMap::new(),
             impl_generic_param_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
@@ -375,7 +375,7 @@ impl AstToHirLowerer {
             .unwrap_or(0);
         self.current_position = 0;
         self.local_scope = fp_core::hir::resolve::LocalScope::new();
-        self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
+        self.module_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
         self.unimplemented_type_def_ids.clear();
@@ -548,9 +548,9 @@ impl AstToHirLowerer {
         self.qualify_path(name).to_key()
     }
 
-    fn qualify_path(&self, name: &str) -> fp_core::ast::path::QualifiedPath {
+    fn qualify_path(&self, name: &str) -> fp_core::ast::path::InPackagePath {
         if self.module_path.is_empty() {
-            fp_core::ast::path::QualifiedPath::new(vec![name.to_string()])
+            fp_core::ast::path::InPackagePath::new(vec![name.to_string()])
         } else {
             self.module_path.with_segment(name.to_string())
         }
@@ -563,7 +563,7 @@ impl AstToHirLowerer {
     /// the AST resolver's visibility-aware APIs.
     fn tree_lookup_raw(
         &self,
-        path: &fp_core::ast::path::QualifiedPath,
+        path: &fp_core::ast::path::InPackagePath,
         ns: fp_core::hir::resolve::Namespace,
     ) -> Option<hir::Res> {
         match self.hir_program.resolve_module_path_final(
@@ -677,7 +677,7 @@ impl AstToHirLowerer {
                 is_trait(resolved)
             })
             .or_else(|| {
-                let path = fp_core::ast::path::QualifiedPath::new(vec![name.to_owned()]);
+                let path = fp_core::ast::path::InPackagePath::new(vec![name.to_owned()]);
                 let resolved = match self.hir_program.resolve_module_path_final(
                     &self.package_id,
                     &self.module_path,
@@ -817,12 +817,12 @@ impl AstToHirLowerer {
     /// Transform a module's items into HIR directly, without an `ast::File`
     /// wrapper — used for on-demand compilation of workspace-crate modules
     /// (e.g. `std::meta`), where the driver already has
-    /// `(QualifiedPath, Vec<Item>)` in hand. Unlike `transform_package`, this
+    /// `(InPackagePath, Vec<Item>)` in hand. Unlike `transform_package`, this
     /// sets `module_path` to the real module identity rather than always
     /// leaving it empty.
     pub fn transform_module(
         &mut self,
-        module_path: &fp_core::ast::path::QualifiedPath,
+        module_path: &fp_core::ast::path::InPackagePath,
         items: &[ast::Item],
     ) -> Result<hir::HirPackage> {
         self.transform_module_inner(module_path, module_path.to_key(), items)
@@ -832,7 +832,7 @@ impl AstToHirLowerer {
     /// available in the typing context.
     pub async fn transform_module_async(
         &mut self,
-        module_path: &fp_core::ast::path::QualifiedPath,
+        module_path: &fp_core::ast::path::InPackagePath,
         items: &[ast::Item],
         typing_shared: std::rc::Rc<std::cell::RefCell<fp_typing::HirTypeChecker>>,
     ) -> Result<hir::HirPackage> {
@@ -930,7 +930,7 @@ impl AstToHirLowerer {
             )?;
         }
         let generated_count = lowered_items.len() - original_len;
-        let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
+        let root_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         let package_items: Vec<fp_core::ast::package::PackageItem> = lowered_items
             .into_iter()
             .enumerate()
@@ -1188,7 +1188,7 @@ impl AstToHirLowerer {
 
     fn transform_module_inner<P: AsRef<Path>>(
         &mut self,
-        module_path: &fp_core::ast::path::QualifiedPath,
+        module_path: &fp_core::ast::path::InPackagePath,
         file_label: P,
         items: &[ast::Item],
     ) -> Result<hir::HirPackage> {
@@ -1242,7 +1242,7 @@ impl AstToHirLowerer {
 
     fn with_module_scope<T>(
         &mut self,
-        module_path: &fp_core::ast::path::QualifiedPath,
+        module_path: &fp_core::ast::path::InPackagePath,
         action: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
         let depth = module_path.segments.len();
@@ -1709,7 +1709,7 @@ impl AstToHirLowerer {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::InPackagePath::new(vec![
                             enum_def.name.name.clone(),
                             variant.name.name.clone(),
                         ]);
@@ -3092,7 +3092,7 @@ impl AstToHirLowerer {
                     // the source struct happens to be registered at the
                     // crate root.
                     let source_path =
-                        fp_core::ast::path::QualifiedPath::new(vec![source_name.to_owned()]);
+                        fp_core::ast::path::InPackagePath::new(vec![source_name.to_owned()]);
                     let source_def_id = match self.hir_program.resolve_module_path_final(
                         &self.package_id,
                         &self.module_path,
@@ -3184,7 +3184,7 @@ impl AstToHirLowerer {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::InPackagePath::new(vec![
                             def_type.name.name.clone(),
                             variant.name.name.clone(),
                         ]);

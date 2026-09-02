@@ -82,7 +82,7 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         if let Ok(source) = workspace.package_source(package_id) {
             // A native archive (`NativeObjectPackageProvider::from_archive`)
             // tags each member with its own name as a non-empty
-            // `QualifiedPath`. Every other precompiled provider (plain
+            // `InPackagePath`. Every other precompiled provider (plain
             // object/asm, or a foreign artifact like CIL/JVM that also
             // carries a best-effort `PrecompiledLir` alongside its
             // `PrecompiledArtifact`) always uses an empty path on every
@@ -93,7 +93,7 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
                 .iter()
                 .any(|pkg_item| !pkg_item.module_path.is_empty());
             if is_archive {
-                let members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)> = source
+                let members: Vec<(fp_core::ast::path::InPackagePath, PrecompiledMember)> = source
                     .items
                     .iter()
                     .filter_map(|pkg_item| match pkg_item.item.kind() {
@@ -167,7 +167,7 @@ impl NativeEmitter {
     /// `container/pipeline.rs` archive transpile used to do.
     fn emit_precompiled_archive(
         &self,
-        members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)>,
+        members: Vec<(fp_core::ast::path::InPackagePath, PrecompiledMember)>,
     ) -> Result<PathBuf> {
         let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
         let mut out_members = Vec::with_capacity(members.len());
@@ -475,7 +475,7 @@ impl NativeObjectPackageProvider {
     pub fn from_asm(package_id: fp_core::ast::package::PackageId, asm: AsmProgram) -> Self {
         let mut source = Self::empty_source(&package_id);
         source.items.push(fp_core::ast::package::PackageItem {
-            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_asm(asm),
         });
         Self::from_source(package_id, source)
@@ -483,7 +483,7 @@ impl NativeObjectPackageProvider {
 
     /// A native archive (`.a`/`.lib`) given directly as `fp compile`'s
     /// input — one item per member, each tagged with the member's own
-    /// name as its `QualifiedPath` (so `NativeEmitter::emit_package_artifact`
+    /// name as its `InPackagePath` (so `NativeEmitter::emit_package_artifact`
     /// can recover it when repacking the retargeted archive). A member
     /// recognized as an object file lifts to `PrecompiledAsm`, the same
     /// as a standalone object; anything else (e.g. a symbol-table member)
@@ -511,7 +511,7 @@ impl NativeObjectPackageProvider {
                 fp_core::ast::Item::precompiled_artifact(member.data)
             };
             source.items.push(fp_core::ast::package::PackageItem {
-                module_path: fp_core::ast::path::QualifiedPath::new(vec![member.name]),
+                module_path: fp_core::ast::path::InPackagePath::new(vec![member.name]),
                 item,
             });
         }

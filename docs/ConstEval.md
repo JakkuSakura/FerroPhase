@@ -63,7 +63,7 @@ different language features:
 - comptime arguments must be explicitly requested by syntax or semantics;
 - comptime can produce values, types, declarations, and AST fragments.
 
-`FullyQualifiedPath` is the resolved identity and already contains resolved
+`FullyInPackagePath` is the resolved identity and already contains resolved
 generic and comptime arguments that affect identity.
 
 If a comptime argument changes generated AST shape, it is part of the request
