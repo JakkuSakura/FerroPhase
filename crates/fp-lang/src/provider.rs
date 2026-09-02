@@ -53,7 +53,7 @@ fn load_embedded_package(
     let frontend = FerroFrontend::new();
     let package_id = PackageId::new(package_name);
     let mut descriptors = Vec::new();
-    let mut items = Vec::new();
+    let mut modules = Vec::new();
 
     for relative_str in module_paths {
         let path = root.join(relative_str);
@@ -67,10 +67,7 @@ fn load_embedded_package(
         let result = frontend
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
-        items.extend(AstPackage::flatten_module_items(
-            &QualifiedPath::new(module_path.clone()),
-            &result.ast.items,
-        ));
+        modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.last().cloned().unwrap_or_default()), collected_items: Vec::new(), items: result.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
         descriptors.push(ModuleDescriptor {
             id: ModuleId::new(module_path.join("::")),
             package: package_id.clone(),
@@ -91,9 +88,7 @@ fn load_embedded_package(
         metadata: Default::default(),
     };
     let graph = package;
-    let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
-    krate.set_items(items);
-    Ok(krate)
+    Ok(AstPackage::new(PackageId::new(package_name), package_name, graph, modules))
 }
 
 impl PackageProvider for FerroPhaseProvider {

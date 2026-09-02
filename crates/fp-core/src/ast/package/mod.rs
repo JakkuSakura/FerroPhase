@@ -93,7 +93,7 @@ impl PackageDescriptor {
 pub mod provider;
 
 use crate::ast::path::QualifiedPath;
-use crate::ast::{Item, ItemKind};
+use crate::ast::{Ident, Item, ItemKind, Module, Visibility};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -132,7 +132,7 @@ pub struct AstPackage {
     pub prelude_modules: Vec<PackagePath>,
 
     /// Parsed module roots. Items are flattened on demand by `items()`.
-    pub modules: Vec<PackageModule>,
+    pub modules: Vec<Module>,
 
     /// For typed compiles (`typecheck_package`): each item's own
     /// qualified path (module path + name, plain `"::"`-free segments) ->
@@ -145,13 +145,18 @@ pub struct AstPackage {
 }
 
 impl AstPackage {
-    pub fn new(package_id: PackageId, name: impl Into<String>, package: PackageDescriptor) -> Self {
+    pub fn new(
+        package_id: PackageId,
+        name: impl Into<String>,
+        package: PackageDescriptor,
+        modules: Vec<Module>,
+    ) -> Self {
         Self {
             package_id,
             name: name.into(),
             package,
             prelude_modules: Vec::new(),
-            modules: Vec::new(),
+            modules,
             referenced_paths: HashMap::new(),
         }
     }
@@ -162,47 +167,36 @@ impl AstPackage {
     /// asm, goasm, urcl, jvm-bytecode, cil, ...) needs, with no real module
     /// graph behind it.
     pub fn single_item(package_id: PackageId, item: Item) -> Self {
-        let mut source = Self::new(
+        Self::new(
             package_id.clone(),
             package_id.as_str(),
             PackageDescriptor::empty(
                 package_id.clone(),
                 package_id.as_str(),
             ),
-        );
-        source.modules.push(PackageModule {
-            name: String::new(),
-            items: vec![item],
-            children: Vec::new(),
-        });
-        source
+            vec![Module {
+                attrs: Vec::new(),
+                name: Ident::new(""),
+                collected_items: Vec::new(),
+                items: vec![item],
+                visibility: Visibility::Public,
+                is_external: false,
+            }],
+        )
     }
 
     pub fn items(&self) -> Vec<PackageItem> {
         let mut output = Vec::new();
         for module in &self.modules {
             let path = QualifiedPath::new(self.package_id.clone(), Vec::new());
-            let path = if module.name.is_empty() {
+            let path = if module.name.as_str().is_empty() {
                 path
             } else {
-                path.with_segment(module.name.clone())
+                path.with_segment(module.name.as_str().to_owned())
             };
             Self::flatten_module_items_into(&path, &module.items, &mut |_| false, &mut output);
-            Self::flatten_child_modules(&path, &module.children, &mut output);
         }
         output
-    }
-
-    fn flatten_child_modules(
-        parent: &QualifiedPath,
-        modules: &[PackageModule],
-        output: &mut Vec<PackageItem>,
-    ) {
-        for module in modules {
-            let path = parent.with_segment(module.name.clone());
-            Self::flatten_module_items_into(&path, &module.items, &mut |_| false, output);
-            Self::flatten_child_modules(&path, &module.children, output);
-        }
     }
 
     /// Flattens nested AST modules into source items carrying their module
@@ -251,23 +245,6 @@ impl AstPackage {
                 });
             }
         }
-    }
-}
-
-/// One module's worth of items within a package, grouped by module path.
-#[derive(Clone, Debug)]
-pub struct PackageModule {
-    pub name: String,
-    pub items: Vec<Item>,
-    pub children: Vec<PackageModule>,
-}
-
-impl PackageModule {
-    /// The module's path as a `/`-joined relative file path (e.g.
-    /// `"config"`, `"repo/backend"`) — the convention every backend
-    /// serializer uses to lay out one source file per module.
-    pub fn relative_path(&self) -> String {
-        self.name.clone()
     }
 }
 

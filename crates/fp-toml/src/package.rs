@@ -53,7 +53,7 @@ impl TomlPackageProvider {
         }
         let frontend = crate::TomlFrontend::new();
         let mut descriptors = Vec::new();
-        let mut items = Vec::new();
+        let mut modules = Vec::new();
         let mut module_paths = HashSet::new();
         for file in files {
             let relative = file.strip_prefix(&self.root).unwrap_or(&file);
@@ -81,10 +81,7 @@ impl TomlPackageProvider {
                     requires_features: Vec::new(),
                 });
             }
-            items.extend(parsed.ast.items.into_iter().map(|item| PackageItem {
-                module_path: module_path.clone(),
-                item,
-            }));
+            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")), collected_items: Vec::new(), items: parsed.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
         }
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
@@ -95,10 +92,7 @@ impl TomlPackageProvider {
             metadata: Default::default(),
         };
         let graph = descriptor;
-        let mut package =
-            AstPackage::new(package_id, self.package_id().as_str().to_string(), graph);
-        package.set_items(items);
-        Ok(package)
+        Ok(AstPackage::new(package_id, self.package_id().as_str().to_string(), graph, modules))
     }
 }
 

@@ -56,7 +56,7 @@ impl CPackageProvider {
             ProviderError::other(format!("failed to initialize C frontend: {error}"))
         })?;
         let mut descriptors = Vec::with_capacity(files.len());
-        let mut items = Vec::new();
+        let mut modules = Vec::new();
         let mut module_paths = HashSet::new();
         for file in files {
             let relative = file.strip_prefix(&self.root).map_err(|error| {
@@ -88,10 +88,7 @@ impl CPackageProvider {
                 exports: Vec::new(),
                 requires_features: Vec::new(),
             });
-            items.extend(parsed.ast.items.into_iter().map(|item| PackageItem {
-                module_path: module_path.clone(),
-                item,
-            }));
+            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")), collected_items: Vec::new(), items: parsed.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
         }
 
         let descriptor = PackageDescriptor {
@@ -104,9 +101,7 @@ impl CPackageProvider {
         };
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();
-        let mut package = AstPackage::new(package_id, package_name, graph);
-        package.set_items(items);
-        Ok(package)
+        Ok(AstPackage::new(package_id, package_name, graph, modules))
     }
 }
 

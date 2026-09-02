@@ -1,6 +1,5 @@
 use crate::ast::package::provider::PackageProvider;
 use crate::ast::package::{AstPackage, PackageId, PackageMetadata};
-use crate::ast::path::QualifiedPath;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;

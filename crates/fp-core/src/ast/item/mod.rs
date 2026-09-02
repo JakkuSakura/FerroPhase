@@ -331,6 +331,12 @@ impl Module {
     pub fn span(&self) -> Span {
         Span::union(self.items.iter().map(Item::span))
     }
+
+    /// Relative source path used by serializers for a module root.
+    /// Nested modules remain represented structurally in `items`.
+    pub fn relative_path(&self) -> String {
+        self.name.as_str().to_owned()
+    }
 }
 
 common_enum! {

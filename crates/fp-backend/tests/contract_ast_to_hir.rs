@@ -65,19 +65,18 @@ fn make_fn(
 /// `transform_package` needs.
 fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     let package_id = PackageId::new("test");
-    let mut source = AstPackage::new(
+    let source = AstPackage::new(
         package_id.clone(),
         "test",
-        PackageGraph::new(fp_core::ast::package::PackageDescriptor::empty(
+        fp_core::ast::package::PackageDescriptor::empty(
             package_id.clone(),
             "test",
-        )),
+        ),
+        vec![fp_core::ast::Module {
+            attrs: Vec::new(), name: fp_core::ast::Ident::new(""), collected_items: Vec::new(), items: file,
+            visibility: fp_core::ast::Visibility::Public, is_external: false,
+        }],
     );
-    source.modules.push(fp_core::ast::package::PackageModule {
-        name: String::new(),
-        items: file,
-        children: Vec::new(),
-    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)

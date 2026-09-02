@@ -32,16 +32,19 @@ fn package_from_file(
     let package_id = fp_core::ast::package::PackageId::new("roundtrip");
     let mut items = file.items.clone();
     transforms::ast_to_hir::strip_doc_attrs_in_items(&mut items);
-    let mut source = fp_core::ast::package::AstPackage::new(
+    let source = fp_core::ast::package::AstPackage::new(
         package_id.clone(),
         "roundtrip",
         fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "roundtrip"),
+        vec![fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            collected_items: Vec::new(),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        }],
     );
-    source.modules.push(fp_core::ast::package::PackageModule {
-        name: String::new(),
-        items,
-        children: Vec::new(),
-    });
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let source = provider
         .load_package_source(&package_id)

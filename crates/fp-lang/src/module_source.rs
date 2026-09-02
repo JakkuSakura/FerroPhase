@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{ProviderError, ProviderResult};
-use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageItem};
+use fp_core::ast::package::{AstPackage, PackageDescriptor};
 use fp_core::ast::path::QualifiedPath;
-use fp_core::ast::{File, Item, ItemKind};
+use fp_core::ast::{File, Ident, Item, ItemKind, Module, Visibility};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
@@ -44,145 +42,56 @@ impl FerroModuleSourceResolver {
         }
 
         let root_source_path = VirtualPath::from_path(&root_file.path);
-        let mut modules = Vec::new();
-        let mut items = Vec::new();
         let mut module_paths = HashSet::new();
         let mut source_paths = HashSet::new();
-
-        self.collect_module(
+        let module = self.load_module_tree(
             &package,
             root_module_path,
             root_source_path,
             root_file.items,
             true,
-            &mut modules,
-            &mut items,
             &mut module_paths,
             &mut source_paths,
         )?;
-
-        modules.sort_by_key(|module| module.module_path.join("::"));
 
         let package_id = package.id.clone();
         let package_name = package.name.clone();
         let graph = package;
 
-        let mut source = AstPackage::new(package_id, package_name, graph);
-        source.set_items(items);
-        Ok(source)
+        Ok(AstPackage::new(package_id, package_name, graph, vec![module]))
     }
 
-    fn collect_module(
+    fn load_module_tree(
         &self,
         package: &PackageDescriptor,
         module_path: QualifiedPath,
         source_path: VirtualPath,
-        module_items: Vec<Item>,
+        mut items: Vec<Item>,
         is_root: bool,
-        modules: &mut Vec<ModuleDescriptor>,
-        items: &mut Vec<PackageItem>,
         module_paths: &mut HashSet<QualifiedPath>,
         source_paths: &mut HashSet<VirtualPath>,
-    ) -> ProviderResult<()> {
+    ) -> ProviderResult<Module> {
         if !module_paths.insert(module_path.clone()) {
-            return Err(ProviderError::other(format!(
-                "duplicate module path {}",
-                module_path.to_key()
-            )));
+            return Err(ProviderError::other(format!("duplicate module path {}", module_path.to_key())));
         }
-        if !source_paths.insert(source_path.clone()) {
-            return Err(ProviderError::other(format!(
-                "source file {} belongs to multiple modules",
-                source_path
-            )));
+        if is_root && !source_paths.insert(source_path.clone()) {
+            return Err(ProviderError::other(format!("source file {} belongs to multiple modules", source_path)));
         }
-
-        let module_id = ModuleId::new(module_path.to_key());
-        modules.push(ModuleDescriptor {
-            id: module_id,
-            package: package.id.clone(),
-            language: ModuleLanguage::Ferro,
-            module_path: module_path.segments.clone(),
-            source: source_path.clone(),
-            exports: Vec::new(),
-            requires_features: Vec::new(),
-        });
-        items.extend(AstPackage::flatten_module_items(&module_path, &module_items));
-
-        self.collect_external_declarations(
-            package,
-            &module_path,
-            &source_path,
-            &module_items,
-            is_root,
-            modules,
-            items,
-            module_paths,
-            source_paths,
-        )
-    }
-
-    fn collect_external_declarations(
-        &self,
-        package: &PackageDescriptor,
-        parent_module_path: &QualifiedPath,
-        parent_source_path: &VirtualPath,
-        items: &[Item],
-        is_root: bool,
-        modules: &mut Vec<ModuleDescriptor>,
-        source_items: &mut Vec<PackageItem>,
-        module_paths: &mut HashSet<QualifiedPath>,
-        source_paths: &mut HashSet<VirtualPath>,
-    ) -> ProviderResult<()> {
-        for item in items {
-            let ItemKind::Module(module) = item.kind() else {
-                continue;
-            };
-            if module.is_external {
-                let child_path = parent_module_path.with_segment(module.name.as_str().to_owned());
-                let (source_path, source) = self.load_external_module(
-                    parent_source_path,
-                    module.name.as_str(),
-                    &child_path,
-                    is_root,
-                )?;
-                let parsed = self
-                    .frontend
-                    .parse_file(&source, &source_path.to_path_buf())
-                    .map_err(|error| {
-                        ProviderError::other(format!(
-                            "failed to parse module {} at {}: {}",
-                            child_path.to_key(),
-                            source_path,
-                            error
-                        ))
-                    })?;
-                self.collect_module(
-                    package,
-                    child_path,
-                    source_path,
-                    parsed.ast.items,
-                    false,
-                    modules,
-                    source_items,
-                    module_paths,
-                    source_paths,
-                )?;
+        for item in &mut items {
+            let ItemKind::Module(module) = item.kind_mut() else { continue };
+            let child_path = module_path.with_segment(module.name.as_str().to_owned());
+            let child = if module.is_external {
+                let (child_source_path, source) = self.load_external_module(&source_path, module.name.as_str(), &child_path, is_root)?;
+                let parsed = self.frontend.parse_file(&source, &child_source_path.to_path_buf()).map_err(|error| ProviderError::other(format!("failed to parse module {}: {}", child_path.to_key(), error)))?;
+                self.load_module_tree(package, child_path, child_source_path, parsed.ast.items, false, module_paths, source_paths)?
             } else {
-                self.collect_external_declarations(
-                    package,
-                    &parent_module_path.with_segment(module.name.as_str().to_owned()),
-                    parent_source_path,
-                    &module.items,
-                    is_root,
-                    modules,
-                    source_items,
-                    module_paths,
-                    source_paths,
-                )?;
-            }
+                let nested = std::mem::take(&mut module.items);
+                self.load_module_tree(package, child_path, source_path.clone(), nested, false, module_paths, source_paths)?
+            };
+            module.items = child.items;
+            module.collected_items = child.collected_items;
         }
-        Ok(())
+        Ok(Module { attrs: Vec::new(), name: Ident::new(if is_root { "" } else { module_path.tail().unwrap_or("") }), collected_items: Vec::new(), items, visibility: Visibility::Public, is_external: false })
     }
 
     fn load_external_module(

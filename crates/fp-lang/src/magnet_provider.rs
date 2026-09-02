@@ -1,12 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
+use fp_core::ast::module::ModuleId;
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    AstPackage, PackageDescriptor, PackageId, PackageItem, PackageMetadata,
+    AstPackage, PackageDescriptor, PackageId, PackageMetadata,
 };
 use fp_core::ast::path::QualifiedPath;
 use fp_core::frontend::LanguageFrontend;
@@ -58,7 +58,7 @@ pub struct MagnetWorkspaceProvider {
     #[allow(dead_code)]
     root: PathBuf,
     members: Vec<(String, MemberRoot)>,
-    cache: std::sync::RwLock<HashMap<String, Vec<PackageItem>>>,
+    cache: std::sync::RwLock<HashMap<String, Vec<fp_core::ast::Module>>>,
 }
 
 impl MagnetWorkspaceProvider {
@@ -143,8 +143,8 @@ impl PackageProvider for MagnetWorkspaceProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if let Ok(c) = self.cache.read() {
-            if let Some(items) = c.get(id.as_str()) {
-                return Ok(package_source_from_items(id, items));
+            if let Some(modules) = c.get(id.as_str()) {
+                return Ok(package_source_from_modules(id, modules));
             }
         }
 
@@ -171,7 +171,7 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 .resolve_package_source(descriptor, QualifiedPath::new(Vec::new()), file.ast);
         }
         let frontend = FerroFrontend::new();
-        let mut items = Vec::new();
+        let mut modules = Vec::new();
 
         for (rel, abs) in member_root.sources() {
             let source = std::fs::read_to_string(&abs)
@@ -180,17 +180,14 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 .parse_file(&source, &abs)
                 .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
             let path = module_path_from_relative(&rel);
-            items.extend(result.ast.items.into_iter().map(|item| PackageItem {
-                module_path: path.clone(),
-                item,
-            }));
+            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(path.tail().unwrap_or("")), collected_items: Vec::new(), items: result.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
         }
 
         if let Ok(mut c) = self.cache.write() {
-            c.insert(id.as_str().to_string(), items.clone());
+            c.insert(id.as_str().to_string(), modules.clone());
         }
 
-        Ok(package_source_from_items(id, &items))
+        Ok(package_source_from_modules(id, &modules))
     }
 }
 
@@ -223,20 +220,7 @@ pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
     QualifiedPath::new(parts)
 }
 
-fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackage {
-    let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
-    let descriptors: Vec<ModuleDescriptor> = paths
-        .into_iter()
-        .map(|path| ModuleDescriptor {
-            id: ModuleId::new(&path.to_key()),
-            package: id.clone(),
-            language: ModuleLanguage::Ferro,
-            module_path: path.segments.clone(),
-            source: VirtualPath::from_path(Path::new(".")),
-            exports: Vec::new(),
-            requires_features: Vec::new(),
-        })
-        .collect();
+fn package_source_from_modules(id: &PackageId, modules: &[fp_core::ast::Module]) -> AstPackage {
     let package = PackageDescriptor {
         id: id.clone(),
         name: id.as_str().to_string(),
@@ -246,7 +230,5 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
         metadata: Default::default(),
     };
     let graph = package;
-    let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
-    source.set_items(items.to_vec());
-    source
+    AstPackage::new(id.clone(), id.as_str(), graph, modules.to_vec())
 }

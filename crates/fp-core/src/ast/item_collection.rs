@@ -6,7 +6,7 @@ use crate::ast::{
 };
 
 pub fn annotate_collected_items(file: &mut File) {
-    let root = QualifiedPath::new(Vec::new());
+    let root = QualifiedPath::new(crate::package::PackageId::default(), Vec::new());
     annotate_file(file, &root);
 }
 

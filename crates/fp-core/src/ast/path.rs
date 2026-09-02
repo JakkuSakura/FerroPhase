@@ -128,7 +128,7 @@ pub fn resolve_path(
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(parsed.segments.clone())),
+        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone())),
         PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
         PathPrefix::Super(depth) => module_path
             .parent_n(depth)
@@ -136,7 +136,7 @@ pub fn resolve_path(
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             let base = if module_path.head() == Some("bin") {
-                QualifiedPath::new(Vec::new())
+                QualifiedPath::new(module_path.package_id.clone(), Vec::new())
             } else {
                 module_path.clone()
             };
@@ -146,13 +146,13 @@ pub fn resolve_path(
                     return Some(base.join(&parsed.segments));
                 }
             } else {
-                let local = QualifiedPath::new(vec![first.clone()]);
+                let local = QualifiedPath::new(module_path.package_id.clone(), vec![first.clone()]);
                 if module_defs.contains(&local) {
-                    return Some(QualifiedPath::new(parsed.segments.clone()));
+                    return Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone()));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(QualifiedPath::new(parsed.segments.clone()));
+                return Some(QualifiedPath::new(module_path.package_id.clone(), parsed.segments.clone()));
             }
             None
         }

@@ -36,12 +36,10 @@ fn package_from_items_as(
     package_id: PackageId,
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::AstPackage> {
-    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
-    source.modules.push(fp_core::ast::package::PackageModule {
-        name: String::new(),
-        items,
-        children: Vec::new(),
-    });
+    let source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"), vec![ast::Module {
+        attrs: Vec::new(), name: ast::Ident::new(""), collected_items: Vec::new(), items,
+        visibility: ast::Visibility::Public, is_external: false,
+    }]);
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
@@ -62,12 +60,10 @@ fn package_from_module_items(
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::AstPackage> {
     let package_id = PackageId::new("test");
-    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
-    source.modules.push(fp_core::ast::package::PackageModule {
-        name: module_path.last().cloned().unwrap_or_default(),
-        items,
-        children: Vec::new(),
-    });
+    let source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"), vec![ast::Module {
+        attrs: Vec::new(), name: ast::Ident::new(module_path.last().cloned().unwrap_or_default()), collected_items: Vec::new(), items,
+        visibility: ast::Visibility::Public, is_external: false,
+    }]);
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
@@ -96,20 +92,10 @@ fn package_from_items_with_paths_as(
     package_id: PackageId,
     items: Vec<(Vec<String>, ast::Item)>,
 ) -> Result<fp_core::ast::package::AstPackage> {
-    let mut source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"));
-    for (module_path, _) in &items {
-        if !module_path.is_empty() {
-            source.module_tree.ensure_module(&QualifiedPath::new(
-                package_id.clone(),
-                module_path.clone(),
-            ));
-        }
-    }
-    source.modules.push(fp_core::ast::package::PackageModule {
-        name: String::new(),
-        items: items.into_iter().map(|(_, item)| item).collect(),
-        children: Vec::new(),
-    });
+    let source = AstPackage::new(package_id.clone(), "test", fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"), vec![ast::Module {
+        attrs: Vec::new(), name: ast::Ident::new(""), collected_items: Vec::new(), items: items.into_iter().map(|(_, item)| item).collect(),
+        visibility: ast::Visibility::Public, is_external: false,
+    }]);
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
