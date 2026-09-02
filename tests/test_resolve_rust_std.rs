@@ -32,13 +32,14 @@ fn resolves_every_named_rust_std_declaration() {
     }
 
     let hir_program = Rc::new(std::cell::RefCell::new(HirProgram::new()));
-    let resolver = Resolver::new(Rc::clone(&program), hir_program);
+    let resolver = Resolver::new(Rc::clone(&program), Rc::clone(&hir_program));
     let mut failures = Vec::new();
     for package_id in &package_ids {
         let mut hir_package = HirPackage::new(package_id.clone());
         resolver
             .resolve_package(package_id, &mut hir_package)
             .unwrap_or_else(|error| panic!("failed to resolve `{package_id}`: {error}"));
+        hir_program.borrow_mut().publish_package(hir_package);
     }
 
     for package_id in &package_ids {

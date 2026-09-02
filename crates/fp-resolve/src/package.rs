@@ -278,6 +278,18 @@ impl<'hir> InPackageResolver<'hir> {
             ItemKind::DefFunction(def) => {
                 self.declare_definition(module, &def.name, Namespace::Value, span);
             }
+            ItemKind::DeclType(def) => {
+                self.declare_definition(module, &def.name, Namespace::Type, span);
+            }
+            ItemKind::DeclConst(def) => {
+                self.declare_definition(module, &def.name, Namespace::Value, span);
+            }
+            ItemKind::DeclStatic(def) => {
+                self.declare_definition(module, &def.name, Namespace::Value, span);
+            }
+            ItemKind::DeclFunction(def) => {
+                self.declare_definition(module, &def.name, Namespace::Value, span);
+            }
             ItemKind::Macro(mac) => {
                 if let Some(name) = mac.declared_name.as_ref() {
                     let target = self.item_def_id();
