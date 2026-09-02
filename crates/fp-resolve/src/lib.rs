@@ -13,7 +13,6 @@ use fp_core::hir::resolve::{
     ResolutionResult, ResolutionRules,
 };
 use fp_core::span::Span;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -22,7 +21,6 @@ pub struct AstResolver<'hir> {
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
-    resolutions: HashMap<InPackagePath, hir::Res>,
     /// Authoritative AST package registry used for package-directed lookup.
     /// The resolver retains the program instead of cloning package/module
     /// state into a second registry.
@@ -43,7 +41,6 @@ impl<'hir> AstResolver<'hir> {
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
-            resolutions: HashMap::new(),
             ast_program,
         }
     }
@@ -139,10 +136,6 @@ impl<'hir> AstResolver<'hir> {
         }
     }
 
-    pub fn resolution_table(&self) -> &HashMap<InPackagePath, hir::Res> {
-        &self.resolutions
-    }
-
     fn declare_definition(
         &mut self,
         module: &InPackagePath,
@@ -152,8 +145,6 @@ impl<'hir> AstResolver<'hir> {
     ) -> hir::DefId {
         let target = self.item_def_id();
         let name: Symbol = name.into();
-        let path = module.with_segment(name.to_string());
-        self.resolutions.insert(path, hir::Res::Def(target.clone()));
         self.declare_module(
             module,
             name,
@@ -174,8 +165,6 @@ impl<'hir> AstResolver<'hir> {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
                 let module_def_id = self.item_def_id();
-                self.resolutions
-                    .insert(child_path.clone(), hir::Res::Def(module_def_id.clone()));
                 self.package_tree_mut().ensure_module(&child_path);
                 self.declare_module(
                     module,
