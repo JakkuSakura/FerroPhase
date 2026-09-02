@@ -46,7 +46,6 @@ fn annotate_item(item: &mut Item, module_path: &QualifiedPath) {
 
 fn annotate_module(module: &mut Module, module_path: &QualifiedPath) {
     let next_module = module_path.with_segment(module.name.as_str().to_string());
-    module.collected_items = direct_items(&module.items);
     for item in &mut module.items {
         annotate_item(item, &next_module);
     }

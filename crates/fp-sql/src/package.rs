@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
+use fp_core::ast::package::{AstPackage, PackageId};
 use fp_core::ast::path::QualifiedPath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::VirtualPath;
@@ -81,7 +81,7 @@ impl SqlPackageProvider {
                     requires_features: Vec::new(),
                 });
             }
-            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")), collected_items: Vec::new(), items: parsed.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
+            modules.push(fp_core::ast::Module { attrs: Vec::new(), name: fp_core::ast::Ident::new(module_path.tail().unwrap_or("")), items: parsed.ast.items, visibility: fp_core::ast::Visibility::Public, is_external: false });
         }
         let descriptor = PackageDescriptor {
             id: package_id.clone(),

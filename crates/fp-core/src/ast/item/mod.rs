@@ -319,8 +319,6 @@ common_struct! {
         #[serde(default)]
         pub attrs: Vec<Attribute>,
         pub name: Ident,
-        #[serde(default)]
-        pub collected_items: ItemChunk,
         pub items: ItemChunk,
         pub visibility: Visibility,
         #[serde(default)]

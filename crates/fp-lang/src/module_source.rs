@@ -89,9 +89,8 @@ impl FerroModuleSourceResolver {
                 self.load_module_tree(package, child_path, source_path.clone(), nested, false, module_paths, source_paths)?
             };
             module.items = child.items;
-            module.collected_items = child.collected_items;
         }
-        Ok(Module { attrs: Vec::new(), name: Ident::new(if is_root { "" } else { module_path.tail().unwrap_or("") }), collected_items: Vec::new(), items, visibility: Visibility::Public, is_external: false })
+        Ok(Module { attrs: Vec::new(), name: Ident::new(if is_root { "" } else { module_path.tail().unwrap_or("") }), items, visibility: Visibility::Public, is_external: false })
     }
 
     fn load_external_module(

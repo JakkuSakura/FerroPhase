@@ -177,7 +177,6 @@ impl AstPackage {
             vec![Module {
                 attrs: Vec::new(),
                 name: Ident::new(""),
-                collected_items: Vec::new(),
                 items: vec![item],
                 visibility: Visibility::Public,
                 is_external: false,
