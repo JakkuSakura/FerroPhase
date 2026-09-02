@@ -6,8 +6,7 @@ use std::sync::{Arc, RwLock};
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
 };
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
@@ -87,7 +86,7 @@ fn hash_source_bytes(hash: &mut u64, bytes: &[u8]) {
 
 pub struct RustPackageProvider {
     members: Vec<(String, MemberRoot)>,
-    cache: RwLock<HashMap<String, (String, Vec<PackageItem>)>>,
+    cache: RwLock<HashMap<String, (String, Vec<Item>)>>,
     disk_cache: fp_core::cache::DiskCache,
 }
 
@@ -236,7 +235,17 @@ impl PackageProvider for RustPackageProvider {
         let member_root = self.resolve_root(id)?;
         let items = self.package_items(id, member_root)?;
         let metadata = self.load_package_metadata(id)?.metadata.clone();
-        Ok(package_source_from_items(id, &items, metadata))
+        let mut descriptor = PackageDescriptor::empty(id.clone(), id.as_str());
+        descriptor.metadata = metadata;
+        let mut source = AstPackage::new(id.clone(), id.as_str(), descriptor, Vec::new());
+        source.modules.push(fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        });
+        Ok(source)
     }
 }
 
@@ -251,11 +260,7 @@ impl RustPackageProvider {
     /// `mod`-graph awareness at all). Cached per package id, shared by
     /// `load_package_metadata` and `load_package_source` so whichever
     /// runs first does the real work.
-    fn package_items(
-        &self,
-        id: &PackageId,
-        member_root: &MemberRoot,
-    ) -> ProviderResult<Vec<PackageItem>> {
+    fn package_items(&self, id: &PackageId, member_root: &MemberRoot) -> ProviderResult<Vec<Item>> {
         let fingerprint = Self::source_fingerprint(member_root);
         let cache_key = format!("rust/package-source/{id}/{fingerprint}");
         if let Ok(c) = self.cache.read() {
@@ -266,14 +271,7 @@ impl RustPackageProvider {
             }
         }
         if let Ok(Some(bytes)) = self.disk_cache.get(&cache_key) {
-            if let Ok(cached) = serde_json::from_slice::<Vec<(Vec<String>, Item)>>(&bytes) {
-                let items = cached
-                    .into_iter()
-                    .map(|(module_path, item)| PackageItem {
-                        module_path: InPackagePath::new(module_path),
-                        item,
-                    })
-                    .collect::<Vec<_>>();
+            if let Ok(items) = serde_json::from_slice::<Vec<Item>>(&bytes) {
                 if let Ok(mut c) = self.cache.write() {
                     c.insert(id.as_str().to_string(), (fingerprint, items.clone()));
                 }
@@ -318,7 +316,7 @@ impl RustPackageProvider {
             let root_items = parse(&root_file, &source)?;
             let file_dir = root_file.parent().unwrap_or(&base_dir);
             let children_base_dir = children_base_dir_for(&root_file);
-            discover_items(
+            items = discover_items(
                 &read,
                 &mut parse,
                 &env,
@@ -327,18 +325,13 @@ impl RustPackageProvider {
                 &InPackagePath::new(Vec::new()),
                 &root_items,
                 None,
-                &mut items,
             )?;
         }
 
         if let Ok(mut c) = self.cache.write() {
             c.insert(id.as_str().to_string(), (fingerprint, items.clone()));
         }
-        let serializable = items
-            .iter()
-            .map(|item| (item.module_path.segments.clone(), item.item.clone()))
-            .collect::<Vec<_>>();
-        if let Ok(bytes) = serde_json::to_vec(&serializable) {
+        if let Ok(bytes) = serde_json::to_vec(&items) {
             let _ = self.disk_cache.put(&cache_key, &bytes);
         }
         Ok(items)
@@ -549,45 +542,6 @@ pub fn rs_relative_to_module_path(rel: &str) -> InPackagePath {
     InPackagePath::new(parts)
 }
 
-fn package_source_from_items(
-    id: &PackageId,
-    items: &[PackageItem],
-    metadata: PackageMetadata,
-) -> AstPackage {
-    use std::collections::HashSet;
-    let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
-    let descriptors: Vec<ModuleDescriptor> = paths
-        .into_iter()
-        .map(|path| ModuleDescriptor {
-            id: path.to_key(),
-            package: id.clone(),
-            language: ModuleLanguage::Rust,
-            module_path: path.segments.clone(),
-            source: VirtualPath::from_path(Path::new(".")),
-            exports: Vec::new(),
-            requires_features: Vec::new(),
-        })
-        .collect();
-    let package = PackageDescriptor {
-        id: id.clone(),
-        name: id.as_str().to_string(),
-        version: None,
-        manifest_path: VirtualPath::from_path(Path::new("Cargo.toml")),
-        root: VirtualPath::from_path(Path::new(".")),
-        metadata,
-    };
-    let graph = package;
-    let mut source = AstPackage::new(id.clone(), id.as_str(), graph, Vec::new());
-    source.modules.push(fp_core::ast::Module {
-        attrs: Vec::new(),
-        name: fp_core::ast::Ident::new(""),
-        items: items.iter().map(|item| item.item.clone()).collect(),
-        visibility: fp_core::ast::Visibility::Public,
-        is_external: false,
-    });
-    source
-}
-
 const CORE_PACKAGE_NAME: &str = "core";
 const ALLOC_PACKAGE_NAME: &str = "alloc";
 const STD_PACKAGE_NAME: &str = "std";
@@ -720,12 +674,12 @@ impl RustExternalApiProvider {
             .map_err(|error| {
                 ProviderError::other(format!("failed to parse {} API: {error}", id))
             })?;
-        let mut items = Vec::new();
-        items.extend(AstPackage::flatten_module_items_filtered(
-            &InPackagePath::new(vec![id.as_str().to_owned()]),
-            &parsed.ast.items,
-            &mut |item| is_cfg_test(item_attrs(item)),
-        ));
+        let items = parsed
+            .ast
+            .items
+            .into_iter()
+            .filter(|item| !is_cfg_test(item_attrs(item)))
+            .collect();
         let mut metadata = PackageMetadata::default();
         // These provider-owned API facades are Rust crates from the
         // resolver's point of view. Their signatures intentionally use the
@@ -744,7 +698,23 @@ impl RustExternalApiProvider {
             optional: false,
             target: Default::default(),
         });
-        Ok(package_source_from_items(id, &items, metadata))
+        let descriptor = PackageDescriptor {
+            id: id.clone(),
+            name: id.as_str().to_owned(),
+            version: None,
+            manifest_path: VirtualPath::from_path(Path::new(".")),
+            root: VirtualPath::from_path(Path::new(".")),
+            metadata,
+        };
+        let mut package = AstPackage::new(id.clone(), id.as_str(), descriptor, Vec::new());
+        package.modules.push(fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        });
+        Ok(package)
     }
 }
 
@@ -1066,9 +1036,9 @@ fn discover_items(
     module_path: &InPackagePath,
     items: &[Item],
     descriptor_ctx: Option<(&PackageId, ModuleLanguage, &mut Vec<ModuleDescriptor>)>,
-    items_out: &mut Vec<PackageItem>,
-) -> ProviderResult<()> {
+) -> ProviderResult<Vec<Item>> {
     let mut descriptor_ctx = descriptor_ctx;
+    let mut items_out = Vec::new();
     for item in items {
         if !item_enabled_by_cfg(item, env) {
             continue;
@@ -1088,7 +1058,7 @@ fn discover_items(
                 if let Some(expanded) =
                     fp_lang::expand_item_macro_invocation(&item_macro.invocation, &HashMap::new())
                 {
-                    discover_items(
+                    items_out.extend(discover_items(
                         read,
                         parse,
                         env,
@@ -1099,17 +1069,13 @@ fn discover_items(
                         descriptor_ctx
                             .as_mut()
                             .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
-                        items_out,
-                    )?;
+                    )?);
                     continue;
                 }
             }
         }
         let ItemKind::Module(module) = item.kind() else {
-            items_out.push(PackageItem {
-                module_path: module_path.clone(),
-                item: item.clone(),
-            });
+            items_out.push(item.clone());
             continue;
         };
         let child_path = module_path.with_segment(module.name.as_str().to_owned());
@@ -1119,7 +1085,8 @@ fn discover_items(
             // unchanged, only its plain, unredirected children move one
             // level deeper by name.
             let child_base_dir = children_base_dir.join(module.name.as_str());
-            discover_items(
+            let mut resolved_module = module.clone();
+            resolved_module.items = discover_items(
                 read,
                 parse,
                 env,
@@ -1130,8 +1097,8 @@ fn discover_items(
                 descriptor_ctx
                     .as_mut()
                     .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
-                items_out,
             )?;
+            items_out.push(Item::from(ItemKind::Module(resolved_module)));
             continue;
         }
         let Some((target_file, source)) = resolve_external_mod(
@@ -1158,7 +1125,8 @@ fn discover_items(
         }
         let child_file_dir = target_file.parent().unwrap_or(file_dir).to_path_buf();
         let child_base_dir = children_base_dir_for(&target_file);
-        discover_items(
+        let mut resolved_module = module.clone();
+        resolved_module.items = discover_items(
             read,
             parse,
             env,
@@ -1169,10 +1137,10 @@ fn discover_items(
             descriptor_ctx
                 .as_mut()
                 .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
-            items_out,
         )?;
+        items_out.push(Item::from(ItemKind::Module(resolved_module)));
     }
-    Ok(())
+    Ok(items_out)
 }
 
 /// Attributes for the item kinds that can plausibly carry `#[cfg(test)]`.
@@ -1337,12 +1305,10 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
 
     // Real rustc absolute paths this corpus actually uses (`core::option::
     // Option`, `std::result::Result`, ...) name each sub-crate as an
-    // explicit leading segment — the crate root's *own* qualified path is
-    // therefore `[crate_name]` (e.g. `["core"]`), not empty; only a plain
-    // on-disk Cargo project's own crate root (a single, self-contained
-    // package with no shared cross-crate namespace) collapses to `[]` (see
-    // `rs_relative_to_module_path`, used there instead).
-    let root_module_path = InPackagePath::new(vec![crate_name.to_string()]);
+    // The crate name is the package identity, not a module segment. Module
+    // paths are rooted at the package's own anonymous module; cross-package
+    // `core::...`/`std::...` prefixes are handled by package resolution.
+    let root_module_path = InPackagePath::new(Vec::new());
     if let Some(source) = read(&root_file) {
         let root_items = parse(&root_file, &source)?;
         descriptors.push(ModuleDescriptor {
@@ -1354,7 +1320,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             exports: Vec::new(),
             requires_features: Vec::new(),
         });
-        discover_items(
+        items = discover_items(
             &read,
             &mut parse,
             &env,
@@ -1363,7 +1329,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             &root_module_path,
             &root_items,
             Some((&package_id, ModuleLanguage::Rust, &mut descriptors)),
-            &mut items,
         )?;
     }
     eprintln!(
@@ -1402,7 +1367,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     krate.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        items: items.into_iter().map(|item| item.item).collect(),
+        items,
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
     });
