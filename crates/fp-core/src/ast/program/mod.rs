@@ -1,9 +1,6 @@
-// ── Compiled workspace context (typer lookup) ────────────────────
-
 use crate::ast::package::provider::PackageProvider;
 use crate::ast::package::{AstPackage, PackageId, PackageMetadata};
 use crate::ast::path::QualifiedPath;
-use crate::ast::{MethodSignature, TypeEnum, TypeStruct};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -31,14 +28,6 @@ pub struct AstProgram {
     /// of providers (previously O(providers × package-list) per lookup,
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
-    /// Memoized, name-sorted snapshot of `crates`'s values — the package
-    /// set only ever changes via `begin_package`/`import_package` (both
-    /// invalidate this), so `sorted_packages` doesn't need to rebuild a
-    /// `String` per package and re-sort on every one of its many callers
-    /// (`find_struct`/`find_enum`, `method_sigs`, ...) —
-    /// this runs once per unqualified
-    /// identifier/path reference across every compiled file.
-    sorted_packages_cache: Rc<RefCell<Option<Vec<Rc<RefCell<AstPackage>>>>>>,
     /// Explicit AST local-resolution state. Lowering borrows this facade;
     /// it does not own lexical/local binding maps.
     local_scope: Rc<RefCell<crate::hir::resolve::LocalScope>>,
@@ -49,25 +38,8 @@ impl AstProgram {
         Self {
             crates: Rc::new(RefCell::new(HashMap::new())),
             providers: provider,
-            sorted_packages_cache: Rc::new(RefCell::new(None)),
             local_scope: Rc::new(RefCell::new(crate::hir::resolve::LocalScope::new())),
         }
-    }
-
-    fn sorted_packages(&self) -> Vec<Rc<RefCell<AstPackage>>> {
-        if let Some(cached) = self.sorted_packages_cache.borrow().as_ref() {
-            return cached.clone();
-        }
-        let mut packages: Vec<_> = self
-            .crates
-            .borrow()
-            .iter()
-            .map(|(package_id, package)| (package_id.to_string(), package.clone()))
-            .collect();
-        packages.sort_by(|(left, _), (right, _)| left.cmp(right));
-        let packages: Vec<_> = packages.into_iter().map(|(_, package)| package).collect();
-        *self.sorted_packages_cache.borrow_mut() = Some(packages.clone());
-        packages
     }
 
     pub fn reset_local_scope(&self) {
@@ -116,17 +88,12 @@ impl AstProgram {
         self.crates
             .borrow_mut()
             .insert(source_package_id, krate.clone());
-        *self.sorted_packages_cache.borrow_mut() = None;
         krate
     }
 
     pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<AstPackage>>) {
         self.crates.borrow_mut().insert(package_id, package);
-        *self.sorted_packages_cache.borrow_mut() = None;
     }
-
-    // Cross-package HIR export lookup is owned by `hir::HirProgram`; AST
-    // packages intentionally expose no global first-match resolver.
 
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {
         self.crates.borrow().contains_key(package_id)
@@ -148,14 +115,6 @@ impl AstProgram {
                 .clone()
                 .into()
         })
-    }
-
-    /// Routes straight to the one package that could own `def_id`.
-    pub fn compiled_package_for_def(
-        &self,
-        def_id: crate::hir::DefId,
-    ) -> Option<Rc<RefCell<AstPackage>>> {
-        self.crates.borrow().get(&def_id.package_id).cloned()
     }
 
     /// Direct lookup of an AST package by its shared package id.
@@ -361,43 +320,6 @@ impl AstProgram {
             .collect()
     }
 
-    /// Search every crate for a struct at `path`, borrowing each crate just
-    /// long enough to check — the one clone that remains is the matched
-    /// item itself, needed regardless to build an owned `Ty::Struct(..)`.
-    pub fn find_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
-        for krate in self.sorted_packages() {
-            if let Some(s) = krate.borrow().struct_defs.get(path) {
-                return Some(s.clone());
-            }
-        }
-        None
-    }
-
-    /// Cross-crate counterpart to `find_struct`, for enums (e.g.
-    /// `std::option::Option`/`std::result::Result`, defined in `std`'s own
-    /// the enum's own package, not whatever crate is currently being typed).
-    pub fn find_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
-        for krate in self.sorted_packages() {
-            if let Some(e) = krate.borrow().enum_defs.get(path) {
-                return Some(e.clone());
-            }
-        }
-        None
-    }
-
-    /// Search every crate for `path`'s inherent methods (see
-    /// `AstPackage::method_sigs`'s doc comment) -- the cross-crate
-    /// counterpart to `own_method_sigs` in `fp-typing`, mirroring
-    /// `find_struct`/`find_enum` exactly.
-    pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, MethodSignature)>> {
-        for krate in self.sorted_packages() {
-            if let Some(sigs) = krate.borrow().method_sigs.get(path) {
-                return Some(sigs.clone());
-            }
-        }
-        None
-    }
-
     /// Borrow the root map directly. Used by callers that need to iterate
     /// every crate themselves (e.g. an early-return tail-name search, or
     /// gathering LIR units) rather than looking up one qualified path.
@@ -448,14 +370,6 @@ mod tests {
             .compiled_package(&PackageId::new("dependency"))
             .expect("package workspace should retain compiled dependencies");
         assert!(Rc::ptr_eq(&inherited, &dependency));
-        assert!(
-            child
-                .compiled_package_for_def(crate::hir::DefId::new(
-                    dependency.borrow().package_id.clone(),
-                    0,
-                ))
-                .is_some()
-        );
     }
 
     #[test]
@@ -479,13 +393,5 @@ mod tests {
                 .expect("package workspace should observe later package publication"),
             &dependency
         ));
-        assert!(
-            child
-                .compiled_package_for_def(crate::hir::DefId::new(
-                    dependency.borrow().package_id.clone(),
-                    0,
-                ))
-                .is_some()
-        );
     }
 }
