@@ -1,15 +1,15 @@
-use super::Resolver;
 use super::worklist::ResolutionWorklist;
+use super::Resolver;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir;
-use fp_core::hir::HirProgram;
-use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleData, Namespace,
     ResolutionResult, ResolutionRules,
 };
+use fp_core::hir::HirProgram;
+use fp_core::hir::Symbol;
 use fp_core::span::Span;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -49,13 +49,66 @@ impl<'hir> InPackageResolver<'hir> {
     }
 
     pub fn resolve_package(&mut self, package_id: &PackageId) -> fp_core::error::Result<()> {
-        let package = self.ast_program.get_ast_package(package_id);
-        let items = package.borrow().items();
-        self.collect_package_items(&items);
+        let module = self
+            .ast_program
+            .get_ast_package(package_id)
+            .borrow()
+            .module
+            .clone();
+        let root = InPackagePath::new(Vec::new());
         let mut worklist = ResolutionWorklist::default();
-        self.collect_imports(&items, &mut worklist);
+        self.collect_module(&root, &module.items, &mut worklist);
+        self.collect_preludes();
         self.resolve_worklist(&mut worklist);
         Ok(())
+    }
+
+    fn collect_module(
+        &mut self,
+        module: &InPackagePath,
+        items: &[fp_core::ast::Item],
+        worklist: &mut ResolutionWorklist,
+    ) {
+        for item in items {
+            self.ensure_module_bindings(module, item.span());
+            self.collect_item(module, item);
+            if !matches!(item.kind(), fp_core::ast::ItemKind::Module(_)) {
+                self.collect_import_item(module, item, worklist);
+            }
+            if let fp_core::ast::ItemKind::Module(child) = item.kind() {
+                let child_path = module.with_segment(child.name.name.clone());
+                self.collect_module(&child_path, &child.items, worklist);
+            }
+        }
+    }
+
+    fn collect_preludes(&mut self) {
+        let preludes = self
+            .ast_program
+            .get_ast_package(&self.hir_package.id)
+            .borrow()
+            .prelude_modules
+            .clone();
+        for prelude in preludes {
+            if let ResolutionResult::Found(hir::Res::Module(def_id)) =
+                self.module_data().resolve_module(
+                    &ModuleData::virtual_root_for(self.hir_package.id.clone()),
+                    &prelude.path.segments,
+                    Namespace::Type,
+                )
+            {
+                if !self.hir_package.prelude_modules.contains(&def_id) {
+                    self.hir_package.prelude_modules.push(def_id);
+                }
+            }
+        }
+        let prelude_ids = self.hir_package.prelude_modules.clone();
+        for def_id in prelude_ids {
+            let modules: Vec<_> = self.module_data().module_ids().cloned().collect();
+            for module in modules {
+                self.hir_package.module_data.copy_children(&def_id, &module);
+            }
+        }
     }
 
     fn module_data(&self) -> &ModuleData {
@@ -94,7 +147,8 @@ impl<'hir> InPackageResolver<'hir> {
         let Some(module_id) = self.module_id(module) else {
             return DeclarationOutcome::Conflict;
         };
-        self.module_data_mut().declare(&module_id, name, binding, rules)
+        self.module_data_mut()
+            .declare(&module_id, name, binding, rules)
     }
 
     pub fn declare_import(
@@ -116,64 +170,29 @@ impl<'hir> InPackageResolver<'hir> {
         )
     }
 
-    pub fn collect_package_items(&mut self, items: &[fp_core::ast::package::PackageItem]) {
-        for package_item in items {
-            let module = package_item.module_path.clone();
-            self.ensure_module_bindings(&module, package_item.item.span());
-            self.collect_item(&module, &package_item.item);
-        }
-        let preludes = self
-            .ast_program
-            .get_ast_package(&self.hir_package.id)
-            .borrow()
-            .prelude_modules
-            .clone();
-        for prelude in preludes {
-            if let ResolutionResult::Found(hir::Res::Module(def_id)) =
-                self.module_data().resolve_module(
-                    &InPackagePath::new(Vec::new()),
-                    &prelude.path,
-                    Namespace::Type,
-                    self.resolution_rules,
-                )
-            {
-                if !self.hir_package.prelude_modules.contains(&def_id) {
-                    self.hir_package.prelude_modules.push(def_id);
-                }
-            }
-        }
-        // Make resolved prelude modules part of the package's root lookup
-        // scope, matching the implicit-import behavior expected by callers.
-        let prelude_ids = self.hir_package.prelude_modules.clone();
-        for def_id in prelude_ids {
-            let modules: Vec<_> = self.hir_package.module_data.module_ids().cloned().collect();
-            for module in modules {
-                self.hir_package.module_data.copy_children(&def_id, &module);
-            }
-        }
-    }
-
     fn ensure_module_bindings(&mut self, path: &InPackagePath, span: Span) {
         let root = ModuleData::virtual_root_for(self.hir_package.id.clone());
         for index in 0..path.segments.len() {
             let parent = InPackagePath::new(path.segments[..index].to_vec());
             let child = path.segments[index].clone();
             let child_path = InPackagePath::new(path.segments[..=index].to_vec());
-            let existing = self.module_data().resolve_module(
-                &root,
-                &child_path.segments,
-                Namespace::Type,
-            );
+            let existing =
+                self.module_data()
+                    .resolve_module(&root, &child_path.segments, Namespace::Type);
             let module_id = match existing {
                 fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(id)) => id,
-                _ => self.item_def_id(),
+                _ => {
+                    let id = self.item_def_id();
+                    self.module_data_mut().set_children(id.clone(), Vec::new());
+                    id
+                }
             };
-            self.module_data_mut().set_children(module_id.clone(), Vec::new());
             let Some(parent_id) = self.module_id(&parent) else {
                 continue;
             };
             let already_declared = matches!(
-                self.module_data().resolve_child(&parent_id, &child, Namespace::Type),
+                self.module_data()
+                    .resolve_child(&parent_id, &child, Namespace::Type),
                 fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(_))
             );
             if !already_declared {
@@ -219,7 +238,8 @@ impl<'hir> InPackageResolver<'hir> {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
                 let module_def_id = self.item_def_id();
-                self.module_data_mut().set_children(module_def_id.clone(), Vec::new());
+                self.module_data_mut()
+                    .set_children(module_def_id.clone(), Vec::new());
                 self.declare_module(
                     module,
                     &child.name,
@@ -229,9 +249,6 @@ impl<'hir> InPackageResolver<'hir> {
                         span,
                     },
                 );
-                for nested in &child.items {
-                    self.collect_item(&child_path, nested);
-                }
             }
             ItemKind::DefStruct(def) => {
                 self.declare_definition(module, &def.name, Namespace::Type, span);
@@ -279,16 +296,6 @@ impl<'hir> InPackageResolver<'hir> {
                 }
             }
             _ => {}
-        }
-    }
-
-    pub fn collect_imports(
-        &self,
-        items: &[fp_core::ast::package::PackageItem],
-        worklist: &mut ResolutionWorklist,
-    ) {
-        for item in items {
-            self.collect_import_item(&item.module_path, &item.item, worklist);
         }
     }
 
@@ -427,11 +434,6 @@ impl<'hir> InPackageResolver<'hir> {
                     });
                 }
             }
-        } else if let ItemKind::Module(child) = item.kind() {
-            let child_module = module.with_segment(child.name.name.clone());
-            for nested in &child.items {
-                self.collect_import_item(&child_module, nested, worklist);
-            }
         }
     }
 
@@ -554,8 +556,8 @@ mod tests {
     use super::*;
     use crate::worklist;
     use fp_core::ast::package::provider::EmptyProvider;
-    use fp_core::hir::Symbol;
     use fp_core::hir::resolve::{Binding, DeclarationRules};
+    use fp_core::hir::Symbol;
     use fp_core::span::Span;
     use std::sync::Arc;
 

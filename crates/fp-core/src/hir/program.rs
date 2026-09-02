@@ -199,17 +199,21 @@ impl SharedHirProgram {
             let module = if path.segments.is_empty() {
                 Some(root)
             } else {
-                match package
-                    .module_data
-                    .resolve_module(&root, &path.segments, crate::hir::resolve::Namespace::Type)
-                {
-                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => Some(id),
+                match package.module_data.resolve_module(
+                    &root,
+                    &path.segments,
+                    crate::hir::resolve::Namespace::Type,
+                ) {
+                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => {
+                        Some(id)
+                    }
                     _ => None,
                 }
             }?;
-            package.module_data.children(&module).map(|children| {
-                children.iter().map(|(name, _, _)| name.clone()).collect()
-            })
+            package
+                .module_data
+                .children(&module)
+                .map(|children| children.iter().map(|(name, _, _)| name.clone()).collect())
         })
     }
     pub fn reflection_field_intrinsic(
@@ -396,13 +400,16 @@ impl HirProgram {
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
         let _ = rules;
-        self.package(package_id).map(|package| {
-            let module_id = match self.resolve_module_location(package_id, module) {
-                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => id,
-                _ => crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone()),
-            };
-            package.module_data.resolve_child(&module_id, name, namespace)
-        })
+        self.package(package_id)
+            .map(|package| {
+                let module_id = match self.resolve_module_location(package_id, module) {
+                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => id,
+                    _ => crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone()),
+                };
+                package
+                    .module_data
+                    .resolve_child(&module_id, name, namespace)
+            })
             .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
                 crate::hir::resolve::ResolutionNotFound::Package(package_id.clone()),
             ))
@@ -421,12 +428,25 @@ impl HirProgram {
             .map(|package| {
                 let mut module_id = match self.resolve_module_location(package_id, module) {
                     crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => id,
-                    _ => return crate::hir::resolve::ResolutionResult::NotFound(crate::hir::resolve::ResolutionNotFound::ModuleDefinition(crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone()))),
+                    _ => {
+                        return crate::hir::resolve::ResolutionResult::NotFound(
+                            crate::hir::resolve::ResolutionNotFound::ModuleDefinition(
+                                crate::hir::resolve::ModuleData::virtual_root_for(
+                                    package_id.clone(),
+                                ),
+                            ),
+                        );
+                    }
                 };
                 let mut segments = path.segments.iter();
                 while let Some(segment) = segments.next() {
-                    match package.module_data.resolve_child(&module_id, segment, namespace) {
-                        crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(next)) => module_id = next,
+                    match package
+                        .module_data
+                        .resolve_child(&module_id, segment, namespace)
+                    {
+                        crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(
+                            next,
+                        )) => module_id = next,
                         result if segments.len() == 0 => return result,
                         result => return result,
                     }
@@ -443,9 +463,11 @@ impl HirProgram {
         package_id: &PackageId,
         path: &crate::ast::path::InPackagePath,
     ) -> bool {
-        matches!(self.resolve_module_location(package_id, path), crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)))
+        matches!(
+            self.resolve_module_location(package_id, path),
+            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_))
+        )
     }
-
 
     /// Lookup a nominal struct by its declared name. This is a HIR data query,
     /// not name resolution; source-name resolution remains owned by AST.
