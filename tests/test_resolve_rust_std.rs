@@ -46,7 +46,7 @@ fn resolves_every_named_rust_std_declaration() {
     for package_id in &package_ids {
         let package = program.get_ast_package(package_id);
         let mut known_items = Vec::new();
-        for module in &package.borrow().modules {
+        for module in std::iter::once(&package.borrow().module) {
             let module_path = if module.name.as_str().is_empty() {
                 InPackagePath::new(Vec::new())
             } else {

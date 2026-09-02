@@ -237,14 +237,18 @@ impl PackageProvider for RustPackageProvider {
         let metadata = self.load_package_metadata(id)?.metadata.clone();
         let mut descriptor = PackageDescriptor::empty(id.clone(), id.as_str());
         descriptor.metadata = metadata;
-        let mut source = AstPackage::new(id.clone(), id.as_str(), descriptor, Vec::new());
-        source.modules.push(fp_core::ast::Module {
-            attrs: Vec::new(),
-            name: fp_core::ast::Ident::new(""),
-            items,
-            visibility: fp_core::ast::Visibility::Public,
-            is_external: false,
-        });
+        let source = AstPackage::new(
+            id.clone(),
+            id.as_str(),
+            descriptor,
+            fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(""),
+                items,
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
+            },
+        );
         Ok(source)
     }
 }
@@ -706,14 +710,18 @@ impl RustExternalApiProvider {
             root: VirtualPath::from_path(Path::new(".")),
             metadata,
         };
-        let mut package = AstPackage::new(id.clone(), id.as_str(), descriptor, Vec::new());
-        package.modules.push(fp_core::ast::Module {
-            attrs: Vec::new(),
-            name: fp_core::ast::Ident::new(""),
-            items,
-            visibility: fp_core::ast::Visibility::Public,
-            is_external: false,
-        });
+        let package = AstPackage::new(
+            id.clone(),
+            id.as_str(),
+            descriptor,
+            fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(""),
+                items,
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
+            },
+        );
         Ok(package)
     }
 }
@@ -1363,14 +1371,18 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         metadata,
     };
     let graph = package;
-    let mut krate = AstPackage::new(package_id, crate_name, graph, Vec::new());
-    krate.modules.push(fp_core::ast::Module {
-        attrs: Vec::new(),
-        name: fp_core::ast::Ident::new(""),
-        items,
-        visibility: fp_core::ast::Visibility::Public,
-        is_external: false,
-    });
+    let mut krate = AstPackage::new(
+        package_id,
+        crate_name,
+        graph,
+        fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        },
+    );
     Ok(krate)
 }
 
@@ -1432,13 +1444,13 @@ fn load_embedded_fp_package(
         graph,
         Vec::new(),
     );
-    krate.modules.push(fp_core::ast::Module {
+    krate.module = fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
         items: items.into_iter().map(|item| item.item).collect(),
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
-    });
+    };
     Ok(krate)
 }
 
@@ -1783,10 +1795,7 @@ mod provider_tests {
                 .load_package_source(&PackageId::new(crate_name))
                 .unwrap();
             assert!(
-                source
-                    .modules
-                    .iter()
-                    .any(|module| module.name.name.is_empty()),
+                source.module.name.name.is_empty(),
                 "{crate_name} must publish its crate-root module"
             );
             assert!(

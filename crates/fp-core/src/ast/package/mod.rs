@@ -131,8 +131,9 @@ pub struct AstPackage {
 
     pub prelude_modules: Vec<PackagePath>,
 
-    /// Parsed module roots. Items are flattened on demand by `items()`.
-    pub modules: Vec<Module>,
+    /// The package's single parsed root module. Nested modules remain items
+    /// in this tree and are flattened on demand by `items()`.
+    pub module: Module,
 
     /// For typed compiles (`typecheck_package`): each item's own
     /// qualified path (module path + name, plain `"::"`-free segments) ->
@@ -144,19 +145,45 @@ pub struct AstPackage {
     pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
 }
 
+pub trait IntoRootModule {
+    fn into_root_module(self) -> Module;
+}
+
+impl IntoRootModule for Module {
+    fn into_root_module(self) -> Module {
+        self
+    }
+}
+
+impl IntoRootModule for Vec<Module> {
+    fn into_root_module(mut self) -> Module {
+        if self.len() == 1 {
+            return self.pop().unwrap();
+        }
+        let items = self.into_iter().flat_map(|module| module.items).collect();
+        Module {
+            attrs: Vec::new(),
+            name: Ident::new(""),
+            items,
+            visibility: Visibility::Public,
+            is_external: false,
+        }
+    }
+}
+
 impl AstPackage {
-    pub fn new(
+    pub fn new<M: IntoRootModule>(
         package_id: PackageId,
         name: impl Into<String>,
         package: PackageDescriptor,
-        modules: Vec<Module>,
+        module: M,
     ) -> Self {
         Self {
             package_id,
             name: name.into(),
             package,
             prelude_modules: Vec::new(),
-            modules,
+            module: module.into_root_module(),
             referenced_paths: HashMap::new(),
         }
     }
@@ -171,27 +198,24 @@ impl AstPackage {
             package_id.clone(),
             package_id.as_str(),
             PackageDescriptor::empty(package_id.clone(), package_id.as_str()),
-            vec![Module {
+            Module {
                 attrs: Vec::new(),
                 name: Ident::new(""),
                 items: vec![item],
                 visibility: Visibility::Public,
                 is_external: false,
-            }],
+            },
         )
     }
 
     pub fn items(&self) -> Vec<PackageItem> {
         let mut output = Vec::new();
-        for module in &self.modules {
-            let path = InPackagePath::new(Vec::new());
-            let path = if module.name.as_str().is_empty() {
-                path
-            } else {
-                path.with_segment(module.name.as_str().to_owned())
-            };
-            Self::flatten_module_items_into(&path, &module.items, &mut |_| false, &mut output);
-        }
+        let path = if self.module.name.as_str().is_empty() {
+            InPackagePath::new(Vec::new())
+        } else {
+            InPackagePath::new(vec![self.module.name.as_str().to_owned()])
+        };
+        Self::flatten_module_items_into(&path, &self.module.items, &mut |_| false, &mut output);
         output
     }
 

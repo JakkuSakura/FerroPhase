@@ -187,6 +187,11 @@ impl AstToHirLowerer {
         if parsed.segments.is_empty() {
             return None;
         }
+        let segments: Vec<String> = parsed
+            .segments
+            .iter()
+            .map(|segment| segment.as_str().to_owned())
+            .collect();
         let item_exists = |candidate: &InPackagePath| {
             self.tree_lookup_raw(candidate, scope.namespace()).is_some()
         };
@@ -224,7 +229,7 @@ impl AstToHirLowerer {
                 // committing, so a candidate that doesn't actually resolve
                 // falls through to `None` instead of masking the caller's
                 // real fallback.
-                let literal = InPackagePath::new(parsed.segments.clone());
+                let literal = InPackagePath::new(segments.clone());
                 if item_exists(&literal) || module_exists(&literal) {
                     return Some(literal);
                 }
@@ -234,7 +239,7 @@ impl AstToHirLowerer {
                         continue;
                     }
                     let mut candidate_segments = root_segs[..root_len].to_vec();
-                    candidate_segments.extend(parsed.segments.iter().cloned());
+                    candidate_segments.extend(segments.iter().cloned());
                     let candidate = InPackagePath::new(candidate_segments);
                     if item_exists(&candidate) || module_exists(&candidate) {
                         return Some(candidate);
@@ -242,13 +247,13 @@ impl AstToHirLowerer {
                 }
                 None
             }
-            PathPrefix::SelfMod => Some(self.module_path.join(&parsed.segments)),
+            PathPrefix::SelfMod => Some(self.module_path.join(&segments)),
             PathPrefix::Super(depth) => self
                 .module_path
                 .parent_n(depth)
-                .map(|parent| parent.join(&parsed.segments)),
+                .map(|parent| parent.join(&segments)),
             PathPrefix::Plain => {
-                let first = parsed.segments.first()?;
+                let first = segments.first()?;
                 let base = if self.module_path.head() == Some("bin") {
                     InPackagePath::new(Vec::new())
                 } else {
@@ -270,19 +275,19 @@ impl AstToHirLowerer {
                             return Some(local);
                         }
                     } else {
-                        let local = InPackagePath::new(parsed.segments.clone());
+                        let local = InPackagePath::new(segments.clone());
                         if item_exists(&local) {
                             return Some(local);
                         }
                     }
                     if root_modules.contains(first) {
-                        return Some(InPackagePath::new(parsed.segments.clone()));
+                        return Some(InPackagePath::new(segments.clone()));
                     }
                     return None;
                 }
 
                 if !base.is_empty() {
-                    let local = base.join(&parsed.segments);
+                    let local = base.join(&segments);
                     if item_exists(&local) {
                         return Some(local);
                     }
@@ -291,7 +296,7 @@ impl AstToHirLowerer {
                         return Some(local);
                     }
                 } else {
-                    let local = InPackagePath::new(parsed.segments.clone());
+                    let local = InPackagePath::new(segments.clone());
                     if item_exists(&local) {
                         return Some(local);
                     }
@@ -302,7 +307,7 @@ impl AstToHirLowerer {
                 }
 
                 if root_modules.contains(first) {
-                    return Some(InPackagePath::new(parsed.segments.clone()));
+                    return Some(InPackagePath::new(segments.clone()));
                 }
                 None
             }

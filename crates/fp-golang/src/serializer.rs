@@ -52,10 +52,7 @@ impl GoSerializer {
     /// Serializes a package into one Go source file per module.
     /// Returns `Vec<(relative_path, code)>`.
     pub fn serialize_package(&self, source: &AstPackage) -> Result<Vec<(String, String)>> {
-        source
-            .modules
-            .clone()
-            .into_iter()
+        std::iter::once(source.module.clone())
             .map(|module| {
                 let rel_path = module.relative_path();
                 let file = File {

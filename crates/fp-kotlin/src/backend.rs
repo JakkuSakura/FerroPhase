@@ -916,7 +916,7 @@ impl TargetBackend for KotlinBackend {
                 ))
             })?;
             let mut compiled = compiled.borrow_mut();
-            for module in &mut compiled.modules {
+            for module in std::iter::once(&mut compiled.module) {
                 for item in &mut module.items {
                     *item = materialize_kotlin_item(item.clone())?;
                 }

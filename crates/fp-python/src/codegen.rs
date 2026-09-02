@@ -31,10 +31,7 @@ impl PythonSerializer {
         &self,
         source: &fp_core::ast::package::AstPackage,
     ) -> Result<Vec<(String, String)>> {
-        source
-            .modules
-            .clone()
-            .into_iter()
+        std::iter::once(source.module.clone())
             .map(|module| {
                 let rel_path = module.relative_path();
                 let file = File {

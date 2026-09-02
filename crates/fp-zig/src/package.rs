@@ -107,7 +107,10 @@ impl ZigPackageProvider {
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();
         let mut package = AstPackage::new(package_id, package_name, graph, Vec::new());
-        package.modules = modules;
+        package.module.items = modules
+            .into_iter()
+            .flat_map(|module| module.items)
+            .collect();
         Ok(package)
     }
 }

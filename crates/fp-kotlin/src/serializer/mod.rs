@@ -346,7 +346,7 @@ impl KotlinSerializer {
             enum_variant_payload_fields,
             referenced_paths,
         } = ctx;
-        let modules = source.modules.clone();
+        let modules = vec![source.module.clone()];
 
         let pkg_name = &source.name;
         let mut files = Vec::new();
