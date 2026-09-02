@@ -73,10 +73,6 @@ impl Resolver {
         let mut worklist = worklist::ResolutionWorklist::default();
         resolver.collect_imports(&items, &mut worklist);
         resolver.resolve_worklist(&mut worklist);
-        drop(resolver);
-        self.hir_program
-            .borrow_mut()
-            .add_package(Rc::new(RefCell::new(hir_package.clone())));
         Ok(())
     }
 }

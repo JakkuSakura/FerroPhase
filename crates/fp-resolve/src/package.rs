@@ -27,6 +27,25 @@ pub struct InPackageResolver<'hir> {
 }
 
 impl<'hir> InPackageResolver<'hir> {
+    pub fn new(
+        ast_package_id: PackageId,
+        hir_package: &'hir mut hir::HirPackage,
+        hir_program: Rc<RefCell<HirProgram>>,
+        declaration_rules: DeclarationRules,
+        resolution_rules: ResolutionRules,
+        ast_program: Rc<AstProgram>,
+    ) -> Self {
+        let _ = ast_package_id;
+        Self {
+            hir_package,
+            hir_program,
+            locals: LocalScope::new(),
+            declaration_rules,
+            resolution_rules,
+            ast_program,
+        }
+    }
+
     pub fn resolve_parsed_path(
         &self,
         current_package_id: &PackageId,
@@ -77,7 +96,7 @@ impl<'hir> InPackageResolver<'hir> {
         let result =
             package
                 .module_tree
-                .resolve_path(&root, &absolute, namespace, ResolutionRules::rust());
+                .resolve_path(&root, &absolute, namespace, self.resolution_rules);
         if !result.is_not_found() {
             return result;
         }
@@ -94,27 +113,8 @@ impl<'hir> InPackageResolver<'hir> {
             &root,
             &InPackagePath::new(unqualified_segments),
             namespace,
-            ResolutionRules::rust(),
+            self.resolution_rules,
         )
-    }
-
-    pub fn new(
-        ast_package_id: PackageId,
-        hir_package: &'hir mut hir::HirPackage,
-        hir_program: Rc<RefCell<HirProgram>>,
-        declaration_rules: DeclarationRules,
-        resolution_rules: ResolutionRules,
-        ast_program: Rc<AstProgram>,
-    ) -> Self {
-        let _ = ast_package_id;
-        Self {
-            hir_package,
-            hir_program,
-            locals: LocalScope::new(),
-            declaration_rules,
-            resolution_rules,
-            ast_program,
-        }
     }
 
     fn package_tree(&self) -> &ModuleTree {
