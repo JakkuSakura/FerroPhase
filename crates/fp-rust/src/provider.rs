@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
@@ -582,7 +581,7 @@ fn package_source_from_items(
     source.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        items: items.to_vec(),
+        items: items.iter().map(|item| item.item.clone()).collect(),
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
     });
@@ -1454,7 +1453,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     krate.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        items,
+        items: items.into_iter().map(|item| item.item).collect(),
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
     });
@@ -1522,7 +1521,7 @@ fn load_embedded_fp_package(
     krate.modules.push(fp_core::ast::Module {
         attrs: Vec::new(),
         name: fp_core::ast::Ident::new(""),
-        items,
+        items: items.into_iter().map(|item| item.item).collect(),
         visibility: fp_core::ast::Visibility::Public,
         is_external: false,
     });

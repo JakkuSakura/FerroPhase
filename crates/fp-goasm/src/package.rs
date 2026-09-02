@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
 use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageItem};
 use fp_core::ast::path::InPackagePath;
@@ -148,7 +147,7 @@ impl GoPackageProvider {
         package.modules.push(fp_core::ast::Module {
             attrs: Vec::new(),
             name: fp_core::ast::Ident::new(""),
-            items,
+            items: items.into_iter().map(|item| item.item).collect(),
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
         });

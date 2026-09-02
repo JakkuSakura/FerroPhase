@@ -22,17 +22,12 @@ impl AstToHirLowerer {
                 let package = package.borrow();
                 package
                     .package
-                    .package(&package.package_id)
-                    .map(|descriptor| {
-                        descriptor
-                            .metadata
-                            .dependencies
-                            .iter()
-                            .filter_map(|dependency| dependency.resolved_package_id.as_ref())
-                            .map(|id| hir::PackageId::new(id.as_str()))
-                            .collect()
-                    })
-                    .unwrap_or_default()
+                    .metadata
+                    .dependencies
+                    .iter()
+                    .filter_map(|dependency| dependency.resolved_package_id.as_ref())
+                    .map(|id| hir::PackageId::new(id.as_str()))
+                    .collect()
             })
             .unwrap_or_default();
         // Keep predeclared struct fields available for struct update lowering.
