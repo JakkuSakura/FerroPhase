@@ -324,12 +324,19 @@ impl InPackageResolver {
         let mut made_progress = false;
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
-                let members = match self.resolver.resolve_parsed_path(
-                    &self.hir_package.borrow().id,
-                    &InPackagePath::new(Vec::new()),
-                    &directive.target.to_ast_path(),
-                    Namespace::Type,
-                ) {
+                let resolved = if directive.target.segments.is_empty() {
+                    ResolutionResult::Found(hir::Res::Module(ModuleData::virtual_root_for(
+                        self.hir_package.borrow().id.clone(),
+                    )))
+                } else {
+                    self.resolver.resolve_parsed_path(
+                        &self.hir_package.borrow().id,
+                        &InPackagePath::new(Vec::new()),
+                        &directive.target.to_ast_path(),
+                        Namespace::Type,
+                    )
+                };
+                let members = match resolved {
                     ResolutionResult::Found(hir::Res::Module(module)) => {
                         self.module_data().children(&module).map(|children| {
                             children

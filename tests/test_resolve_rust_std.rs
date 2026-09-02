@@ -115,10 +115,12 @@ fn prepare_std() -> PreparedStd {
     let hir_program = Rc::new(std::cell::RefCell::new(HirProgram::new()));
     let resolver = Resolver::new(Rc::clone(&program), Rc::clone(&hir_program));
     for package_id in &package_ids {
-        let mut hir_package = HirPackage::new(package_id.clone());
+        let hir_package = Rc::new(std::cell::RefCell::new(HirPackage::new(package_id.clone())));
+        hir_program
+            .borrow_mut()
+            .add_package(Rc::clone(&hir_package));
         let mut package_resolver = fp_resolve::package::InPackageResolver::new(
-            package_id.clone(),
-            &mut hir_package,
+            Rc::clone(&hir_package),
             Rc::clone(&hir_program),
             provider.declaration_rules(),
             provider.resolution_rules(),
@@ -127,7 +129,6 @@ fn prepare_std() -> PreparedStd {
         package_resolver
             .resolve_package(package_id)
             .unwrap_or_else(|error| panic!("failed to resolve `{package_id}`: {error}"));
-        hir_program.borrow_mut().publish_package(hir_package);
     }
     PreparedStd {
         program,
@@ -153,10 +154,13 @@ fn register_external_package(prepared: &PreparedStd) -> PackageId {
     prepared
         .program
         .begin_package(package_id.clone(), source, LirDataLayout::x86_64());
-    let mut hir_package = HirPackage::new(package_id.clone());
+    let hir_package = Rc::new(std::cell::RefCell::new(HirPackage::new(package_id.clone())));
+    prepared
+        .hir_program
+        .borrow_mut()
+        .add_package(Rc::clone(&hir_package));
     let mut package_resolver = fp_resolve::package::InPackageResolver::new(
-        package_id.clone(),
-        &mut hir_package,
+        Rc::clone(&hir_package),
         Rc::clone(&prepared.hir_program),
         prepared.program.provider().declaration_rules(),
         prepared.program.provider().resolution_rules(),
@@ -165,10 +169,6 @@ fn register_external_package(prepared: &PreparedStd) -> PackageId {
     package_resolver
         .resolve_package(&package_id)
         .expect("failed to resolve external package");
-    prepared
-        .hir_program
-        .borrow_mut()
-        .publish_package(hir_package);
     package_id
 }
 
