@@ -308,6 +308,21 @@ impl HirProgram {
         self.packages.get(id).cloned()
     }
 
+    /// Resolve a named child from the module identified by `module`.
+    /// The package is selected from the module definition id automatically.
+    pub fn resolve_module_child(
+        &self,
+        module: &DefId,
+        name: &str,
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.package(&module.package_id)
+            .map(|package| package.module_data.resolve_child(module, name, namespace))
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
+                crate::hir::resolve::ResolutionNotFound::Package(module.package_id.clone()),
+            ))
+    }
+
     /// Publishes a completed package snapshot into this program.
     ///
     /// The package is the owner of its `def_map`, source-path metadata, module tree,

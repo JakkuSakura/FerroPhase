@@ -1,3 +1,4 @@
+use super::Resolver;
 use super::worklist::ResolutionWorklist;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::InPackagePath;
@@ -6,7 +7,7 @@ use fp_core::hir;
 use fp_core::hir::HirProgram;
 use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
-    Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleTree, Namespace,
+    Binding, DeclarationOutcome, DeclarationRules, LocalScope, ModuleData, Namespace,
     ResolutionResult, ResolutionRules,
 };
 use fp_core::span::Span;
@@ -15,7 +16,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 pub struct InPackageResolver<'hir> {
     hir_package: &'hir mut hir::HirPackage,
-    _hir_program: Rc<RefCell<HirProgram>>,
+    resolver: Resolver,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
@@ -37,7 +38,7 @@ impl<'hir> InPackageResolver<'hir> {
         let _ = ast_package_id;
         Self {
             hir_package,
-            _hir_program: hir_program,
+            resolver: Resolver::new(Rc::clone(&ast_program), hir_program),
             locals: LocalScope::new(),
             declaration_rules,
             resolution_rules,
@@ -55,11 +56,11 @@ impl<'hir> InPackageResolver<'hir> {
         Ok(())
     }
 
-    fn package_tree(&self) -> &ModuleTree {
+    fn package_tree(&self) -> &ModuleData {
         &self.hir_package.module_tree
     }
 
-    fn package_tree_mut(&mut self) -> &mut ModuleTree {
+    fn package_tree_mut(&mut self) -> &mut ModuleData {
         &mut self.hir_package.module_tree
     }
 
@@ -333,14 +334,26 @@ impl<'hir> InPackageResolver<'hir> {
             // Imports may legally bind a module itself (`use crate::foo as bar`),
             // so do not apply value/type terminal checks here. Those checks are
             // reserved for expression/type references at lowering time.
-            let target = match self.package_tree().resolve_path(
-                &directive.module,
-                &directive.target,
+            let resolved = self.resolver.resolve_parsed_path(
+                &self.hir_package.id,
+                &InPackagePath::new(Vec::new()),
+                &directive.target.to_ast_path(),
                 directive.namespace,
-                self.resolution_rules,
-            ) {
+            );
+            let target = match resolved {
                 fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
-                _ => None,
+                fp_core::hir::resolve::ResolutionResult::Ambiguous => None,
+                fp_core::hir::resolve::ResolutionResult::NotFound(_) => {
+                    match self.package_tree().resolve_path(
+                        &directive.module,
+                        &directive.target,
+                        directive.namespace,
+                        self.resolution_rules,
+                    ) {
+                        fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
+                        _ => None,
+                    }
+                }
             };
             if let Some(target) = target {
                 self.declare_import(

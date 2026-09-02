@@ -73,16 +73,36 @@ impl Resolver {
                 },
             );
         };
-        let Some(package) = hir_program.package(&target_package_id) else {
-            return ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::Package(
-                target_package_id,
-            ));
-        };
-        let root = InPackagePath::new(Vec::new());
-        let rules = self.program.provider().resolution_rules();
-        let result = package
-            .module_tree
-            .resolve_path(&root, &absolute, namespace, rules);
+        let root = fp_core::hir::resolve::ModuleData::virtual_root_for(target_package_id.clone());
+        let mut result =
+            ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
+        let mut module = root.clone();
+        for (index, segment) in absolute.segments.iter().enumerate() {
+            let segment_namespace = if index + 1 == absolute.segments.len() {
+                namespace
+            } else {
+                Namespace::Type
+            };
+            result = hir_program.resolve_module_child(&module, segment, segment_namespace);
+            if index + 1 == absolute.segments.len() {
+                break;
+            }
+            match result {
+                ResolutionResult::Found(hir::Res::Module(ref next)) => {
+                    module = next.clone();
+                }
+                ResolutionResult::Found(found) => {
+                    result = ResolutionResult::NotFound(
+                        fp_core::hir::resolve::ResolutionNotFound::ExpectedModule {
+                            path: absolute.clone(),
+                            found,
+                        },
+                    );
+                    break;
+                }
+                _ => break,
+            }
+        }
         if !result.is_not_found() {
             return result;
         }
@@ -97,9 +117,36 @@ impl Resolver {
             None
         };
         let result = if let Some(path) = &unqualified {
-            package
-                .module_tree
-                .resolve_path(&root, path, namespace, rules)
+            let mut result =
+                ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
+            let mut module = root.clone();
+            for (index, segment) in path.segments.iter().enumerate() {
+                let segment_namespace = if index + 1 == path.segments.len() {
+                    namespace
+                } else {
+                    Namespace::Type
+                };
+                result = hir_program.resolve_module_child(&module, segment, segment_namespace);
+                if index + 1 == path.segments.len() {
+                    break;
+                }
+                match result {
+                    ResolutionResult::Found(hir::Res::Module(ref next)) => {
+                        module = next.clone();
+                    }
+                    ResolutionResult::Found(found) => {
+                        result = ResolutionResult::NotFound(
+                            fp_core::hir::resolve::ResolutionNotFound::ExpectedModule {
+                                path: path.clone(),
+                                found,
+                            },
+                        );
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            result
         } else {
             result
         };
@@ -117,9 +164,24 @@ impl Resolver {
                     .collect(),
             );
             let mut prefix_result =
-                package
-                    .module_tree
-                    .resolve_path(&root, &absolute_prefix, type_namespace, rules);
+                ResolutionResult::NotFound(fp_core::hir::resolve::ResolutionNotFound::EmptyPath);
+            let mut module = root.clone();
+            for (index, segment) in absolute_prefix.segments.iter().enumerate() {
+                let segment_namespace = if index + 1 == absolute_prefix.segments.len() {
+                    type_namespace
+                } else {
+                    Namespace::Type
+                };
+                prefix_result =
+                    hir_program.resolve_module_child(&module, segment, segment_namespace);
+                if index + 1 == absolute_prefix.segments.len() {
+                    break;
+                }
+                let ResolutionResult::Found(hir::Res::Module(ref next)) = prefix_result else {
+                    break;
+                };
+                module = next.clone();
+            }
             if prefix_result.is_not_found() {
                 if let Some(unqualified) = &unqualified {
                     let prefix = InPackagePath::new(
@@ -130,10 +192,27 @@ impl Resolver {
                             .cloned()
                             .collect(),
                     );
-                    prefix_result =
-                        package
-                            .module_tree
-                            .resolve_path(&root, &prefix, type_namespace, rules);
+                    prefix_result = ResolutionResult::NotFound(
+                        fp_core::hir::resolve::ResolutionNotFound::EmptyPath,
+                    );
+                    let mut module = root.clone();
+                    for (index, segment) in prefix.segments.iter().enumerate() {
+                        let segment_namespace = if index + 1 == prefix.segments.len() {
+                            type_namespace
+                        } else {
+                            Namespace::Type
+                        };
+                        prefix_result =
+                            hir_program.resolve_module_child(&module, segment, segment_namespace);
+                        if index + 1 == prefix.segments.len() {
+                            break;
+                        }
+                        let ResolutionResult::Found(hir::Res::Module(ref next)) = prefix_result
+                        else {
+                            break;
+                        };
+                        module = next.clone();
+                    }
                 }
             }
             if let ResolutionResult::Found(hir::Res::Def(type_def_id)) = prefix_result {

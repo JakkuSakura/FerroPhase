@@ -18,6 +18,143 @@ pub enum Namespace {
 /// The shared symbol representation used by all compiler stages.
 pub use crate::hir::Symbol;
 
+/// Identity-based module namespace data. Each module definition owns its
+/// direct named children; no source/module path is required for traversal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleData {
+    children: HashMap<crate::hir::DefId, Vec<(Symbol, Namespace, crate::hir::Res)>>,
+}
+
+impl Default for ModuleData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModuleData {
+    pub fn new() -> Self {
+        let mut data = Self {
+            children: HashMap::new(),
+        };
+        data.children.insert(Self::virtual_root(), Vec::new());
+        data
+    }
+
+    pub fn virtual_root() -> crate::hir::DefId {
+        crate::hir::DefId::local(0)
+    }
+
+    pub fn virtual_root_for(package_id: crate::ast::package::PackageId) -> crate::hir::DefId {
+        crate::hir::DefId::new(package_id, 0)
+    }
+
+    pub fn children(
+        &self,
+        module: &crate::hir::DefId,
+    ) -> Option<&[(Symbol, Namespace, crate::hir::Res)]> {
+        self.children.get(module).map(Vec::as_slice)
+    }
+
+    pub fn set_children(
+        &mut self,
+        module: crate::hir::DefId,
+        children: Vec<(Symbol, Namespace, crate::hir::Res)>,
+    ) {
+        self.children.insert(module, children);
+    }
+
+    pub fn add_child(
+        &mut self,
+        module: crate::hir::DefId,
+        name: impl Into<Symbol>,
+        namespace: Namespace,
+        resolution: crate::hir::Res,
+    ) {
+        self.children
+            .entry(module)
+            .or_default()
+            .push((name.into(), namespace, resolution));
+    }
+
+    pub fn resolve_child(
+        &self,
+        module: &crate::hir::DefId,
+        name: &str,
+        namespace: Namespace,
+    ) -> ResolutionResult {
+        let Some(children) = self.children(module) else {
+            return ResolutionResult::NotFound(ResolutionNotFound::ModuleDefinition(
+                module.clone(),
+            ));
+        };
+        let matches: Vec<_> = children
+            .iter()
+            .filter(|(symbol, child_namespace, _)| {
+                symbol.as_str() == name && *child_namespace == namespace
+            })
+            .map(|(_, _, resolution)| resolution.clone())
+            .collect();
+        match matches.as_slice() {
+            [resolution] => ResolutionResult::Found(resolution.clone()),
+            [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+                module: InPackagePath::new(Vec::new()),
+                symbol: Symbol::from(name),
+                namespace,
+            }),
+            _ => ResolutionResult::Ambiguous,
+        }
+    }
+
+    pub fn resolve_module(
+        &self,
+        root: &crate::hir::DefId,
+        path: &[String],
+        namespace: Namespace,
+    ) -> ResolutionResult {
+        let Some((last, parents)) = path.split_last() else {
+            return ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
+        };
+        let mut module = root.clone();
+        for segment in parents {
+            let Some(next) = self.children(&module).and_then(|children| {
+                children.iter().find_map(|(name, _, resolution)| {
+                    (name.as_str() == segment && matches!(resolution, crate::hir::Res::Module(_)))
+                        .then(|| resolution.clone())
+                })
+            }) else {
+                return ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+                    module: InPackagePath::new(parents.to_vec()),
+                    symbol: Symbol::from(last.as_str()),
+                    namespace,
+                });
+            };
+            let crate::hir::Res::Module(next) = next else {
+                unreachable!();
+            };
+            module = next;
+        }
+        let Some(children) = self.children(&module) else {
+            return ResolutionResult::NotFound(ResolutionNotFound::ModuleDefinition(module));
+        };
+        let matches: Vec<_> = children
+            .iter()
+            .filter(|(name, child_namespace, _)| {
+                name.as_str() == last && *child_namespace == namespace
+            })
+            .map(|(_, _, resolution)| resolution.clone())
+            .collect();
+        match matches.as_slice() {
+            [resolution] => ResolutionResult::Found(resolution.clone()),
+            [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+                module: InPackagePath::new(parents.to_vec()),
+                symbol: Symbol::from(last.as_str()),
+                namespace,
+            }),
+            _ => ResolutionResult::Ambiguous,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Binding {
     Module {
@@ -121,6 +258,12 @@ impl Binding {
     fn same_target(&self, other: &Self) -> bool {
         self == other
     }
+}
+
+#[derive(Debug, Clone)]
+struct LocalNode {
+    parent: Option<LocalScopeId>,
+    symbols: HashMap<Symbol, Vec<Binding>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,259 +387,6 @@ pub enum ResolutionNotFound {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct LocalScopeId(u32);
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModuleTree {
-    pub symbols: HashMap<Symbol, Vec<Binding>>,
-    children: HashMap<Symbol, ModuleTree>,
-}
-
-impl Default for ModuleTree {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ModuleTree {
-    pub fn new() -> Self {
-        Self {
-            symbols: HashMap::new(),
-            children: HashMap::new(),
-        }
-    }
-
-    pub fn ensure_module(&mut self, path: &InPackagePath) -> &mut ModuleTree {
-        let mut current = self;
-        for segment in &path.segments {
-            current = current
-                .children
-                .entry(Symbol::from(segment.as_str()))
-                .or_default();
-        }
-        current
-    }
-
-    pub fn module(&self, path: &InPackagePath) -> Option<&ModuleTree> {
-        let mut current = self;
-        for segment in &path.segments {
-            current = current.children.get(&Symbol::from(segment.as_str()))?;
-        }
-        Some(current)
-    }
-
-    pub fn module_mut(&mut self, path: &InPackagePath) -> Option<&mut ModuleTree> {
-        let mut current = self;
-        for segment in &path.segments {
-            current = current.children.get_mut(&Symbol::from(segment.as_str()))?;
-        }
-        Some(current)
-    }
-
-    /// Find the source path associated with a module definition.  Module
-    /// paths are an implementation detail of traversal; the public
-    /// resolution result carries the module's `DefId`.
-    pub fn path_for_module(&self, def_id: &crate::hir::DefId) -> Option<InPackagePath> {
-        fn visit(tree: &ModuleTree, def_id: &crate::hir::DefId) -> Option<InPackagePath> {
-            for bindings in tree.symbols.values() {
-                for binding in bindings {
-                    if let Binding::Module {
-                        def_id: id, target, ..
-                    } = binding
-                    {
-                        if id == def_id {
-                            return Some(target.clone());
-                        }
-                    }
-                }
-            }
-            for child in tree.children.values() {
-                if let Some(path) = visit(child, def_id) {
-                    return Some(path);
-                }
-            }
-            None
-        }
-        visit(self, def_id)
-    }
-
-    pub fn bindings(
-        &self,
-        module: &InPackagePath,
-    ) -> impl Iterator<Item = (&Symbol, &Vec<Binding>)> {
-        self.module(module)
-            .into_iter()
-            .flat_map(|m| m.symbols.iter())
-    }
-
-    pub fn candidates(&self, module: &InPackagePath, symbol: &str) -> Option<&[Binding]> {
-        self.module(module)?
-            .symbols
-            .get(&Symbol::from(symbol))
-            .map(Vec::as_slice)
-    }
-
-    pub fn declare(
-        &mut self,
-        module: &InPackagePath,
-        symbol: impl Into<Symbol>,
-        binding: Binding,
-        rules: DeclarationRules,
-    ) -> DeclarationOutcome {
-        let symbol = symbol.into();
-        let entries = self
-            .ensure_module(module)
-            .symbols
-            .entry(symbol)
-            .or_default();
-        if rules.allow_identical_imports && entries.iter().any(|old| old.same_target(&binding)) {
-            return DeclarationOutcome::IdenticalImport;
-        }
-        if entries
-            .iter()
-            .any(|old| old.namespace() == binding.namespace())
-        {
-            entries.push(binding);
-            return DeclarationOutcome::Conflict;
-        }
-        if !rules.allow_type_value_overlap
-            && binding.namespace() != Namespace::Macro
-            && entries
-                .iter()
-                .any(|old| old.namespace() != Namespace::Macro)
-        {
-            return DeclarationOutcome::Conflict;
-        }
-        entries.push(binding);
-        DeclarationOutcome::Inserted
-    }
-
-    pub fn resolve(
-        &self,
-        module: &InPackagePath,
-        symbol: &str,
-        namespace: Namespace,
-        rules: ResolutionRules,
-    ) -> ResolutionResult {
-        let mut current = Some(module.clone());
-        while let Some(path) = current {
-            if let Some(entries) = self
-                .module(&path)
-                .and_then(|m| m.symbols.get(&Symbol::from(symbol)))
-            {
-                let matching: Vec<_> = entries
-                    .iter()
-                    .filter(|binding| binding.namespace() == namespace)
-                    .collect();
-                match matching.as_slice() {
-                    [] => {}
-                    [binding] => return ResolutionResult::Found(binding_to_res(binding)),
-                    _ => return ResolutionResult::Ambiguous,
-                }
-            }
-            current = rules
-                .allow_parent_module_lookup
-                .then(|| path.parent_n(1))
-                .flatten();
-        }
-        ResolutionResult::NotFound(ResolutionNotFound::Symbol {
-            module: module.clone(),
-            symbol: Symbol::from(symbol),
-            namespace,
-        })
-    }
-
-    pub fn resolve_path(
-        &self,
-        module: &InPackagePath,
-        path: &InPackagePath,
-        namespace: Namespace,
-        rules: ResolutionRules,
-    ) -> ResolutionResult {
-        let Some((first, rest)) = path.segments.split_first() else {
-            return ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
-        };
-        // Module segments live in the type namespace, regardless of the
-        // namespace requested for the terminal item. Resolve only the final
-        // segment in the caller's namespace (value, type, or macro).
-        let first_namespace = if rest.is_empty() {
-            namespace
-        } else {
-            Namespace::Type
-        };
-        let mut result = self.resolve(module, first, first_namespace, rules);
-        for (index, segment) in rest.iter().enumerate() {
-            let next = match result {
-                ResolutionResult::Found(crate::hir::Res::Module(next)) => next,
-                ResolutionResult::NotFound(reason) => {
-                    return ResolutionResult::NotFound(reason);
-                }
-                ResolutionResult::Ambiguous => return ResolutionResult::Ambiguous,
-                ResolutionResult::Found(found) => {
-                    return ResolutionResult::NotFound(ResolutionNotFound::ExpectedModule {
-                        path: path.clone(),
-                        found,
-                    });
-                }
-            };
-            let Some(next_path) = self.path_for_module(&next) else {
-                return ResolutionResult::NotFound(ResolutionNotFound::ModuleDefinition(next));
-            };
-            let segment_namespace = if index + 1 == rest.len() {
-                namespace
-            } else {
-                Namespace::Type
-            };
-            result = self.resolve(&next_path, segment, segment_namespace, rules);
-        }
-        result
-    }
-
-    /// Resolve a path for a value/type use and require a terminal semantic
-    /// identity. Modules are valid only as intermediate path segments; a
-    /// module (or an unresolved AST item placeholder) at the final position
-    /// is reported as an error instead of leaking an intermediate result to
-    /// lowering.
-    pub fn resolve_path_final(
-        &self,
-        module: &InPackagePath,
-        path: &InPackagePath,
-        namespace: Namespace,
-        rules: ResolutionRules,
-    ) -> ResolutionResult {
-        match self.resolve_path(module, path, namespace, rules) {
-            ResolutionResult::Found(crate::hir::Res::Module(_)) => {
-                ResolutionResult::Found(crate::hir::Res::Error)
-            }
-            result => result,
-        }
-    }
-}
-
-fn binding_to_res(binding: &Binding) -> crate::hir::Res {
-    match binding {
-        Binding::Module { def_id, .. } => crate::hir::Res::Module(def_id.clone()),
-        Binding::Definition { target, .. } | Binding::Alias { target, .. } => {
-            crate::hir::Res::Def(target.clone())
-        }
-        Binding::Import { target, .. } => target.clone(),
-        Binding::EnumVariant { variant, .. } | Binding::AssociatedItem { item: variant, .. } => {
-            crate::hir::Res::Def(variant.clone())
-        }
-        Binding::ExternCrate { package, .. } => crate::hir::Res::BuiltinName(package.clone()),
-        Binding::Builtin { name, .. } => crate::hir::Res::BuiltinName(name.clone()),
-        Binding::Local { id, .. } => crate::hir::Res::Local(id.clone()),
-        Binding::Parameter { id, .. } => crate::hir::Res::Parameter(id.clone()),
-        Binding::Generic { id, .. } => crate::hir::Res::Generic(id.clone()),
-        Binding::Macro { id, .. } => crate::hir::Res::Def(id.clone()),
-        Binding::Error { .. } => crate::hir::Res::Error,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct LocalNode {
-    parent: Option<LocalScopeId>,
-    symbols: HashMap<Symbol, Vec<Binding>>,
-}
-
 #[derive(Debug, Clone)]
 pub struct LocalScope {
     nodes: Vec<LocalNode>,
@@ -605,7 +495,7 @@ mod tests {
 
     #[test]
     fn shared_symbol_map_keeps_namespaces_distinct() {
-        let mut tree = ModuleTree::new();
+        let mut tree = ModuleData::new();
         let root = InPackagePath::new(Vec::new());
         assert_eq!(
             tree.declare(
@@ -637,7 +527,7 @@ mod tests {
 
     #[test]
     fn conflicting_bindings_are_ambiguous() {
-        let mut tree = ModuleTree::new();
+        let mut tree = ModuleData::new();
         let root = InPackagePath::new(Vec::new());
         tree.declare(
             &root,
@@ -662,7 +552,7 @@ mod tests {
 
     #[test]
     fn nested_modules_resolve_qualified_paths() {
-        let mut tree = ModuleTree::new();
+        let mut tree = ModuleData::new();
         let root = InPackagePath::new(Vec::new());
         let nested = InPackagePath::new(vec!["m".into()]);
         tree.ensure_module(&nested);
@@ -728,7 +618,7 @@ mod tests {
 
     #[test]
     fn parent_module_lookup_is_policy_controlled() {
-        let mut tree = ModuleTree::new();
+        let mut tree = ModuleData::new();
         let root = InPackagePath::new(Vec::new());
         let child = InPackagePath::new(vec!["child".into()]);
         tree.declare(
@@ -761,7 +651,7 @@ mod tests {
 
     #[test]
     fn macro_and_value_bindings_use_separate_namespaces() {
-        let mut tree = ModuleTree::new();
+        let mut tree = ModuleData::new();
         let root = InPackagePath::new(Vec::new());
         tree.declare(
             &root,

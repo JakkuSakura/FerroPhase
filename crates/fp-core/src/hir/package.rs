@@ -33,7 +33,7 @@ pub enum ImplBucketKey {
 }
 
 /// One compiled package's HIR content — items, definitions, and (as of the
-/// `ModuleTree` migration) its own module/name-resolution tree. Several of
+/// `ModuleData` migration) its own module/name-resolution tree. Several of
 /// these live inside a `HirProgram`, which owns the whole multi-package
 /// compiled result (see `HirProgram`'s own doc comment).
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,8 @@ pub struct HirPackage {
     /// reserved for the package-root `OwnerId` (see `OwnerId::root`), so a
     /// real item can never mint a `DefId` that collides with it.
     pub next_def_id: u32,
-    pub module_tree: crate::hir::resolve::ModuleTree,
+    /// Identity-based module namespace, keyed by module definition id.
+    pub module_data: crate::hir::resolve::ModuleData,
     /// Prelude modules participating in this package's resolved namespace.
     /// Their identities are assigned in the HIR package's DefId space.
     pub prelude_modules: Vec<DefId>,
@@ -444,7 +445,7 @@ impl HirPackage {
             items: Vec::new(),
             def_map: HashMap::new(),
             next_def_id: 1,
-            module_tree: crate::hir::resolve::ModuleTree::new(),
+            module_data: crate::hir::resolve::ModuleData::new(),
             prelude_modules: Vec::new(),
             source_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),

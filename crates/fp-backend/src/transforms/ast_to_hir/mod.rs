@@ -111,7 +111,7 @@ pub struct AstToHirLowerer {
     synthetic_items: Vec<hir::Item>,
     /// This package's own HIR content — `items`/`def_map`/source paths/
     /// `intrinsic_defs`/`placeholder_defs`,
-    /// plus the AST-owned `module_tree` (see `fp_core::hir::resolve::ModuleTree`'s doc
+    /// plus the AST-owned `module_tree` (see `fp_core::hir::resolve::ModuleData`'s doc
     /// comment). Written into directly throughout lowering — no private
     /// scratch copy, no mirror/extend step at `transform_package`'s return
     /// points (the earlier design this replaced kept separate source-path/
@@ -123,7 +123,7 @@ pub struct AstToHirLowerer {
     /// HashSet<InPackagePath>` (module *existence*, `module_exists`/
     /// `ensure_module`) and `crate_roots: HashMap<String, Vec<String>>`
     /// (a sub-crate root is just a child of the tree's crate-root node,
-    /// not a separate table), and — since `ModuleTree`'s bindings now
+    /// not a separate table), and — since `ModuleData`'s bindings now
     /// carry the AST resolver's binding shape (including source metadata)
     /// — the former `global_type_defs`/
     /// maps too. See `docs/Resolution.md`.
