@@ -121,11 +121,6 @@ impl PackageProvider for MagnetWorkspaceProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
-        let mut module_ids = Vec::new();
-        for (rel, _) in member_root.sources() {
-            let path = module_path_from_relative(&rel);
-            module_ids.push(ModuleId::new(&path.to_key()));
-        }
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
             name: id.as_str().to_string(),
@@ -136,7 +131,6 @@ impl PackageProvider for MagnetWorkspaceProvider {
                 dependencies: vec![crate::provider::std_dependency()],
                 ..Default::default()
             },
-            modules: module_ids,
         }))
     }
 
@@ -172,7 +166,6 @@ impl PackageProvider for MagnetWorkspaceProvider {
                     dependencies: vec![crate::provider::std_dependency()],
                     ..Default::default()
                 },
-                modules: Vec::new(),
             };
             return FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
                 .resolve_package_source(descriptor, QualifiedPath::new(Vec::new()), file.ast);
@@ -244,7 +237,6 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
             requires_features: Vec::new(),
         })
         .collect();
-    let module_ids: Vec<_> = descriptors.iter().map(|d| d.id.clone()).collect();
     let package = PackageDescriptor {
         id: id.clone(),
         name: id.as_str().to_string(),
@@ -252,7 +244,6 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackag
         manifest_path: VirtualPath::from_path(Path::new("Cargo.toml")),
         root: VirtualPath::from_path(Path::new(".")),
         metadata: Default::default(),
-        modules: module_ids,
     };
     let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);

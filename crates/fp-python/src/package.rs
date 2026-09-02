@@ -147,7 +147,6 @@ impl PythonPackageProvider {
             dependencies,
             prelude: None,
         };
-        let module_ids = descriptors.iter().map(|module| module.id.clone()).collect();
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: manifest.name,
@@ -155,7 +154,6 @@ impl PythonPackageProvider {
             manifest_path: VirtualPath::from_path(&self.manifest_path()),
             root: VirtualPath::from_path(&self.root),
             metadata,
-            modules: module_ids,
         };
         let graph = descriptor;
         let package_name = package_id.as_str().to_string();

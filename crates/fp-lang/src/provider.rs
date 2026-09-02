@@ -100,7 +100,6 @@ fn load_embedded_package(
         });
     }
 
-    let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let package = PackageDescriptor {
         id: package_id.clone(),
         name: package_name.to_string(),
@@ -108,7 +107,6 @@ fn load_embedded_package(
         manifest_path: VirtualPath::from_path(&root.join("fp.toml")),
         root: VirtualPath::from_path(&root),
         metadata: Default::default(),
-        modules: module_ids,
     };
     let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
@@ -184,7 +182,6 @@ impl PackageProvider for FerroPhaseProvider {
             manifest_path: VirtualPath::from_path(&root.join("fp.toml")),
             root: VirtualPath::from_path(&root),
             metadata,
-            modules: Vec::new(),
         }))
     }
 
@@ -234,7 +231,6 @@ impl InputPackageProvider {
                 dependencies: vec![std_dependency()],
                 ..Default::default()
             },
-            modules: Vec::new(),
         };
         let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
         let package_source =

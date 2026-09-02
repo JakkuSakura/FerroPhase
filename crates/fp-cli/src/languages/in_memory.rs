@@ -23,7 +23,6 @@ pub fn in_memory_provider(
         manifest_path: VirtualPath::from_path(&source.path),
         root: VirtualPath::from_path(source.path.parent().unwrap_or_else(|| Path::new("."))),
         metadata: Default::default(),
-        modules: Vec::new(),
     };
     let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
     let package_source = resolver

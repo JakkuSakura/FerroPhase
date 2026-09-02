@@ -207,20 +207,6 @@ impl PackageProvider for RustPackageProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
-        // Real module discovery (below, in `load_package_source`) walks
-        // `mod` declarations from the crate root, which this method has no
-        // reason to duplicate — run it once here too and let its result
-        // land in `self.cache`, so `load_package_source`'s own cache check
-        // picks it straight back up instead of re-walking.
-        let items = self.package_items(id, member_root)?;
-        let module_ids: Vec<_> = {
-            use std::collections::HashSet;
-            let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
-            paths
-                .into_iter()
-                .map(|path| ModuleId::new(&path.to_key()))
-                .collect()
-        };
         let mut metadata = PackageMetadata::default();
         metadata.prelude = Some(PackageId::new(STD_PACKAGE_NAME));
         metadata.dependencies.extend(implicit_rust_dependencies());
@@ -237,7 +223,6 @@ impl PackageProvider for RustPackageProvider {
             manifest_path: VirtualPath::from_path(&member_root.manifest_path()),
             root: VirtualPath::from_path(member_root.root_path()),
             metadata,
-            modules: module_ids,
         }))
     }
 
@@ -584,7 +569,6 @@ fn package_source_from_items(
             requires_features: Vec::new(),
         })
         .collect();
-    let module_ids: Vec<_> = descriptors.iter().map(|d| d.id.clone()).collect();
     let package = PackageDescriptor {
         id: id.clone(),
         name: id.as_str().to_string(),
@@ -592,7 +576,6 @@ fn package_source_from_items(
         manifest_path: VirtualPath::from_path(Path::new("Cargo.toml")),
         root: VirtualPath::from_path(Path::new(".")),
         metadata,
-        modules: module_ids,
     };
     let graph = package;
     let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
@@ -792,7 +775,6 @@ impl PackageProvider for RustExternalApiProvider {
             manifest_path: VirtualPath::from_path(Path::new("<rust-external-api>/Cargo.toml")),
             root: VirtualPath::from_path(Path::new("<rust-external-api>")),
             metadata,
-            modules: Vec::new(),
         }))
     }
 
@@ -948,24 +930,6 @@ impl PackageProvider for RustStdProvider {
             manifest_path: VirtualPath::from_path(&root.join("Cargo.toml")),
             root: VirtualPath::from_path(&root),
             metadata,
-            modules: if id.as_str() == LIBC_PACKAGE_NAME {
-                fp_lang::embedded_libc::module_paths()
-                    .iter()
-                    .map(|relative| {
-                        ModuleId::new(
-                            &fp_relative_to_module_segments(LIBC_PACKAGE_NAME, relative).join("::"),
-                        )
-                    })
-                    .collect()
-            } else {
-                let mut modules = Self::module_ids_of(id.as_str());
-                for module in Self::public_facade_module_ids(id.as_str()) {
-                    modules.push(ModuleId::new(format!("{}::{module}", id.as_str())));
-                }
-                modules.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-                modules.dedup();
-                modules
-            },
         }))
     }
 
@@ -1478,7 +1442,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {disk_misses} disk misses, {decode_failures} decode failures, {encode_failures} encode failures, {write_failures} write failures, {skipped} skipped (parse errors)"
     );
 
-    let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let mut metadata = PackageMetadata::default();
     metadata.prelude = match crate_name {
         CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(PackageId::new(crate_name)),
@@ -1505,7 +1468,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
         manifest_path: VirtualPath::from_path(&root.join(crate_name).join("Cargo.toml")),
         root: VirtualPath::from_path(&root.join(crate_name)),
         metadata,
-        modules: module_ids,
     };
     let graph = package;
     let mut krate = AstPackage::new(package_id, crate_name, graph);
@@ -1556,7 +1518,6 @@ fn load_embedded_fp_package(
         });
     }
 
-    let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let package = PackageDescriptor {
         id: package_id.clone(),
         name: package_name.to_string(),
@@ -1564,7 +1525,6 @@ fn load_embedded_fp_package(
         manifest_path: VirtualPath::from_path(&root.join("fp.toml")),
         root: VirtualPath::from_path(&root),
         metadata: Default::default(),
-        modules: module_ids,
     };
     let graph = package;
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
@@ -1681,44 +1641,6 @@ mod provider_tests {
                 .map(|dependency| dependency.resolved_package_id.as_ref().unwrap().as_str())
                 .collect();
             assert_eq!(actual, dependencies);
-        }
-    }
-
-    #[test]
-    fn rust_sysroot_metadata_indexes_ordinary_definition_modules() {
-        let provider = RustStdProvider;
-        for (crate_name, expected_modules) in [
-            (
-                "core",
-                &["core::io", "core::iter", "core::iter::traits"] as &[&str],
-            ),
-            ("alloc", &["alloc::string"] as &[&str]),
-            (
-                "std",
-                &[
-                    "std::io",
-                    "std::path",
-                    "std::process",
-                    "std::option",
-                    "std::result",
-                    "std::iter",
-                    "std::string",
-                    "std::vec",
-                ] as &[&str],
-            ),
-        ] {
-            let metadata = provider
-                .load_package_metadata(&PackageId::new(crate_name))
-                .expect("sysroot metadata");
-            for expected in expected_modules {
-                assert!(
-                    metadata
-                        .modules
-                        .iter()
-                        .any(|module| module.as_str() == *expected),
-                    "{crate_name} metadata must expose ordinary module {expected}"
-                );
-            }
         }
     }
 
@@ -1940,12 +1862,6 @@ mod provider_tests {
                 .map(|dependency| dependency.package.as_str())
                 .collect();
             assert_eq!(actual_dependencies, dependencies);
-            for module in modules {
-                assert!(
-                    descriptor.modules.iter().any(|id| id.as_str() == *module),
-                    "{crate_name} metadata must publish module {module}"
-                );
-            }
         }
     }
 

@@ -49,7 +49,6 @@ fn directory_provider_discovers_go_modules_and_manifest_metadata() {
     assert_eq!(metadata.name, "example.com/demo");
     assert_eq!(metadata.metadata.edition.as_deref(), Some("1.22"));
     assert_eq!(metadata.metadata.dependencies.len(), 1);
-    assert_eq!(metadata.modules.len(), 2);
 }
 
 #[test]

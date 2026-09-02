@@ -135,7 +135,6 @@ impl GoLangPackageProvider {
             dependencies,
             prelude: None,
         };
-        let module_ids = descriptors.iter().map(|module| module.id.clone()).collect();
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: manifest.module,
@@ -143,7 +142,6 @@ impl GoLangPackageProvider {
             manifest_path: VirtualPath::from_path(&self.manifest_path()),
             root: VirtualPath::from_path(&self.root),
             metadata,
-            modules: module_ids,
         };
         let graph = descriptor;
         let mut package = AstPackage::new(package_id, package_name, graph);

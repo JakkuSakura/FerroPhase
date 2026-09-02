@@ -85,7 +85,6 @@ impl PrqlPackageProvider {
                 item,
             }));
         }
-        let module_ids = descriptors.iter().map(|module| module.id.clone()).collect();
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_string(),
@@ -93,7 +92,6 @@ impl PrqlPackageProvider {
             manifest_path: VirtualPath::from_path(&self.root),
             root: VirtualPath::from_path(&self.root),
             metadata: Default::default(),
-            modules: module_ids,
         };
         let graph = descriptor;
         let mut package =

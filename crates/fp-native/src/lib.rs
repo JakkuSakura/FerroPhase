@@ -542,7 +542,6 @@ impl NativeObjectPackageProvider {
             manifest_path: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
             root: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
             metadata: fp_core::ast::package::PackageMetadata::default(),
-            modules: Vec::new(),
         };
         Self {
             package_id,

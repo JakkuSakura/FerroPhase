@@ -37,13 +37,6 @@ fn directory_provider_discovers_nested_goasm_modules() {
     );
 
     let metadata = provider.load_package_metadata(&packages[0]).unwrap();
-    assert_eq!(metadata.modules.len(), 2);
-    assert!(
-        metadata
-            .modules
-            .iter()
-            .any(|module| module.as_str() == "nested::helper")
-    );
 }
 
 #[test]

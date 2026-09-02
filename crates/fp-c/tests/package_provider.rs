@@ -41,14 +41,6 @@ fn directory_provider_discovers_and_loads_c_sources() {
             .any(|item| matches!(item.item.kind(), ItemKind::DeclFunction(_)))
     );
 
-    let metadata = provider.load_package_metadata(&packages[0]).unwrap();
-    assert_eq!(metadata.modules.len(), 2);
-    assert!(
-        metadata
-            .modules
-            .iter()
-            .any(|module| module.as_str() == "include::api")
-    );
 }
 
 #[test]

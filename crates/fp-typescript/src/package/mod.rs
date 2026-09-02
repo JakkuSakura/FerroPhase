@@ -214,10 +214,6 @@ impl PackageProvider for TypeScriptPackageProvider {
         };
 
         let modules = self.collect_modules(&package_id)?;
-        let module_ids: Vec<ModuleId> = modules
-            .iter()
-            .map(|descriptor| descriptor.id.clone())
-            .collect();
 
         let package_descriptor = PackageDescriptor {
             id: package_id.clone(),
@@ -226,7 +222,6 @@ impl PackageProvider for TypeScriptPackageProvider {
             manifest_path: VirtualPath::from_path(&manifest_path),
             root: VirtualPath::from_path(&self.root),
             metadata,
-            modules: module_ids.clone(),
         };
 
         match self.packages.write() {

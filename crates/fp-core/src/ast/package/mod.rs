@@ -75,7 +75,6 @@ pub struct PackageDescriptor {
     pub manifest_path: VirtualPath,
     pub root: VirtualPath,
     pub metadata: PackageMetadata,
-    pub modules: Vec<ModuleId>,
 }
 
 impl PackageDescriptor {
@@ -87,7 +86,6 @@ impl PackageDescriptor {
             manifest_path: VirtualPath::from_path(std::path::Path::new(".")),
             root: VirtualPath::from_path(std::path::Path::new(".")),
             metadata: PackageMetadata::default(),
-            modules: Vec::new(),
         }
     }
 }

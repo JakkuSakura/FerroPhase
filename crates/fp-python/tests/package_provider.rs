@@ -38,7 +38,6 @@ fn directory_provider_discovers_python_sources_and_metadata() {
     let metadata = provider.load_package_metadata(&packages[0]).unwrap();
     assert_eq!(metadata.name, "demo");
     assert_eq!(metadata.version.as_ref().unwrap().to_string(), "1.2.3");
-    assert_eq!(metadata.modules.len(), 2);
     assert_eq!(metadata.metadata.dependencies.len(), 2);
 }
 

@@ -113,7 +113,6 @@ impl FixedPackageProvider {
             manifest_path: VirtualPath::new_relative(Vec::<String>::new()),
             root: VirtualPath::new_relative(Vec::<String>::new()),
             metadata: PackageMetadata::default(),
-            modules: Vec::new(),
         };
         Self::new(descriptor, source)
     }

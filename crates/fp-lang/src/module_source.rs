@@ -79,8 +79,6 @@ impl FerroModuleSourceResolver {
         )?;
 
         modules.sort_by_key(|module| module.module_path.join("::"));
-        let module_ids = modules.iter().map(|module| module.id.clone()).collect();
-        package.modules = module_ids;
 
         let package_id = package.id.clone();
         let package_name = package.name.clone();
@@ -278,7 +276,6 @@ mod tests {
             manifest_path: VirtualPath::from_path("/app/Ferrophase.toml"),
             root: VirtualPath::from_path("/app"),
             metadata: PackageMetadata::default(),
-            modules: Vec::new(),
         }
     }
 

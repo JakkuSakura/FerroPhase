@@ -15,14 +15,6 @@ fn directory_provider_loads_prql_documents() {
     let packages = provider.list_packages().unwrap();
     let package = provider.load_package_source(&packages[0]).unwrap();
     assert!(package.items.is_empty());
-    assert_eq!(
-        provider
-            .load_package_metadata(&packages[0])
-            .unwrap()
-            .modules
-            .len(),
-        1
-    );
 }
 
 #[test]
