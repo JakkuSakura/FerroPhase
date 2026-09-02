@@ -36,6 +36,8 @@ impl<'hir> InPackageResolver<'hir> {
         ast_program: Rc<AstProgram>,
     ) -> Self {
         let _ = ast_package_id;
+        let root = ModuleData::virtual_root_for(hir_package.id.clone());
+        hir_package.module_data.set_children(root, Vec::new());
         Self {
             hir_package,
             resolver: Resolver::new(Rc::clone(&ast_program), hir_program),
@@ -56,12 +58,26 @@ impl<'hir> InPackageResolver<'hir> {
         Ok(())
     }
 
-    fn package_tree(&self) -> &ModuleData {
-        &self.hir_package.module_tree
+    fn module_data(&self) -> &ModuleData {
+        &self.hir_package.module_data
     }
 
-    fn package_tree_mut(&mut self) -> &mut ModuleData {
-        &mut self.hir_package.module_tree
+    fn module_data_mut(&mut self) -> &mut ModuleData {
+        &mut self.hir_package.module_data
+    }
+
+    fn module_id(&self, path: &InPackagePath) -> Option<hir::DefId> {
+        let root = ModuleData::virtual_root_for(self.hir_package.id.clone());
+        if path.segments.is_empty() {
+            return Some(root);
+        }
+        match self
+            .module_data()
+            .resolve_module(&root, &path.segments, Namespace::Type)
+        {
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(id)) => Some(id),
+            _ => None,
+        }
     }
 
     fn item_def_id(&mut self) -> hir::DefId {
@@ -75,8 +91,10 @@ impl<'hir> InPackageResolver<'hir> {
         binding: Binding,
     ) -> DeclarationOutcome {
         let rules = self.declaration_rules;
-        self.package_tree_mut()
-            .declare(module, name, binding, rules)
+        let Some(module_id) = self.module_id(module) else {
+            return DeclarationOutcome::Conflict;
+        };
+        self.module_data_mut().declare(&module_id, name, binding, rules)
     }
 
     pub fn declare_import(
@@ -112,7 +130,7 @@ impl<'hir> InPackageResolver<'hir> {
             .clone();
         for prelude in preludes {
             if let ResolutionResult::Found(hir::Res::Module(def_id)) =
-                self.package_tree().resolve_path(
+                self.module_data().resolve_module(
                     &InPackagePath::new(Vec::new()),
                     &prelude.path,
                     Namespace::Type,
@@ -136,31 +154,40 @@ impl<'hir> InPackageResolver<'hir> {
     }
 
     fn ensure_module_bindings(&mut self, path: &InPackagePath, span: Span) {
+        let root = ModuleData::virtual_root_for(self.hir_package.id.clone());
         for index in 0..path.segments.len() {
             let parent = InPackagePath::new(path.segments[..index].to_vec());
             let child = path.segments[index].clone();
             let child_path = InPackagePath::new(path.segments[..=index].to_vec());
-            self.package_tree_mut().ensure_module(&child_path);
-            let already_declared = self
-                .package_tree()
-                .candidates(&parent, &child)
-                .into_iter()
-                .flatten()
-                .any(|binding| matches!(binding, Binding::Module { target, .. } if target == &child_path));
+            let existing = self.module_data().resolve_module(
+                &root,
+                &child_path.segments,
+                Namespace::Type,
+            );
+            let module_id = match existing {
+                fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(id)) => id,
+                _ => self.item_def_id(),
+            };
+            self.module_data_mut().set_children(module_id.clone(), Vec::new());
+            let Some(parent_id) = self.module_id(&parent) else {
+                continue;
+            };
+            let already_declared = matches!(
+                self.module_data().resolve_child(&parent_id, &child, Namespace::Type),
+                fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(_))
+            );
             if !already_declared {
-                let def_id = self.item_def_id();
                 self.declare_module(
                     &parent,
                     child,
                     Binding::Module {
                         target: child_path,
-                        def_id,
+                        def_id: module_id,
                         span,
                     },
                 );
             }
         }
-        self.package_tree_mut().ensure_module(path);
     }
 
     fn declare_definition(
@@ -192,7 +219,7 @@ impl<'hir> InPackageResolver<'hir> {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
                 let module_def_id = self.item_def_id();
-                self.package_tree_mut().ensure_module(&child_path);
+                self.module_data_mut().set_children(module_def_id.clone(), Vec::new());
                 self.declare_module(
                     module,
                     &child.name,
@@ -270,7 +297,7 @@ impl<'hir> InPackageResolver<'hir> {
         let mut made_progress = false;
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
-                let members = self.package_tree().module(&directive.target).map(|source| {
+                let members = self.module_data().module(&directive.target).map(|source| {
                     source
                         .symbols
                         .keys()
@@ -332,7 +359,7 @@ impl<'hir> InPackageResolver<'hir> {
                 fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
                 fp_core::hir::resolve::ResolutionResult::Ambiguous => None,
                 fp_core::hir::resolve::ResolutionResult::NotFound(_) => {
-                    match self.package_tree().resolve_path(
+                    match self.module_data().resolve_path(
                         &directive.module,
                         &directive.target,
                         directive.namespace,
@@ -421,7 +448,7 @@ impl<'hir> InPackageResolver<'hir> {
                     base = module
                         .head()
                         .filter(|head| {
-                            self.package_tree()
+                            self.module_data()
                                 .module(&InPackagePath::new(vec![(*head).to_owned()]))
                                 .is_some()
                         })

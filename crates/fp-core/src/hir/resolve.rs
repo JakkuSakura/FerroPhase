@@ -275,6 +275,49 @@ impl Binding {
     }
 }
 
+impl ModuleData {
+    pub fn declare(
+        &mut self,
+        module: &crate::hir::DefId,
+        name: impl Into<Symbol>,
+        binding: Binding,
+        _rules: DeclarationRules,
+    ) -> DeclarationOutcome {
+        let name: Symbol = name.into();
+        let namespace = binding.namespace();
+        let resolution = binding_to_res(&binding);
+        let entries = self.children.entry(module.clone()).or_default();
+        if entries
+            .iter()
+            .any(|(symbol, child_namespace, _)| *child_namespace == namespace && *symbol == name)
+        {
+            return DeclarationOutcome::Conflict;
+        }
+        entries.push((name, namespace, resolution));
+        DeclarationOutcome::Inserted
+    }
+}
+
+fn binding_to_res(binding: &Binding) -> crate::hir::Res {
+    match binding {
+        Binding::Module { def_id, .. } => crate::hir::Res::Module(def_id.clone()),
+        Binding::Definition { target, .. } | Binding::Alias { target, .. } => {
+            crate::hir::Res::Def(target.clone())
+        }
+        Binding::Import { target, .. } => target.clone(),
+        Binding::EnumVariant { variant, .. } | Binding::AssociatedItem { item: variant, .. } => {
+            crate::hir::Res::Def(variant.clone())
+        }
+        Binding::ExternCrate { package, .. } => crate::hir::Res::BuiltinName(package.clone()),
+        Binding::Builtin { name, .. } => crate::hir::Res::BuiltinName(name.clone()),
+        Binding::Local { id, .. } => crate::hir::Res::Local(id.clone()),
+        Binding::Parameter { id, .. } => crate::hir::Res::Parameter(id.clone()),
+        Binding::Generic { id, .. } => crate::hir::Res::Generic(id.clone()),
+        Binding::Macro { id, .. } => crate::hir::Res::Def(id.clone()),
+        Binding::Error { .. } => crate::hir::Res::Error,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LocalNode {
     parent: Option<LocalScopeId>,
