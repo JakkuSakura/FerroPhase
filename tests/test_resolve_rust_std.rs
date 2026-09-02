@@ -4,8 +4,9 @@ use std::sync::Arc;
 use fp_core::ast::Path;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::PackageProvider;
-use fp_core::ast::path::PathPrefix;
+use fp_core::ast::path::{InPackagePath, PathPrefix};
 use fp_core::ast::program::AstProgram;
+use fp_core::ast::{Item, ItemKind};
 use fp_core::hir::HirPackage;
 use fp_core::hir::HirProgram;
 use fp_core::hir::resolve::{Namespace, ResolutionResult};
@@ -44,20 +45,31 @@ fn resolves_every_named_rust_std_declaration() {
 
     for package_id in &package_ids {
         let package = program.get_ast_package(package_id);
-        let package_items = package.borrow().items();
+        let mut known_items = Vec::new();
+        for module in &package.borrow().modules {
+            let module_path = if module.name.as_str().is_empty() {
+                InPackagePath::new(Vec::new())
+            } else {
+                InPackagePath::new(vec![module.name.as_str().to_owned()])
+            };
+            collect_known_items(&module.items, &module_path, &mut known_items);
+        }
 
         let mut checked = 0usize;
-        for package_item in package_items {
-            let Some(name) = package_item.item.get_ident() else {
-                continue;
-            };
+        for (path, item) in known_items {
+            let name = item
+                .get_ident()
+                .expect("known item walker must only collect named items");
             let mut resolved = false;
             let mut ambiguous = false;
             for namespace in [Namespace::Type, Namespace::Value, Namespace::Macro] {
                 match resolver.resolve_parsed_path(
                     package_id,
-                    &package_item.module_path,
-                    &Path::new(PathPrefix::Plain, vec![name.as_str().into()]),
+                    &InPackagePath::new(Vec::new()),
+                    &Path::new(
+                        PathPrefix::Root,
+                        path.segments.iter().cloned().map(Into::into).collect(),
+                    ),
                     namespace,
                 ) {
                     ResolutionResult::Found(_) => resolved = true,
@@ -65,14 +77,7 @@ fn resolves_every_named_rust_std_declaration() {
                     ResolutionResult::NotFound(_) => {}
                 }
             }
-            let qualified_name = if package_item.module_path.is_empty() {
-                format!("{package_id}::{name}")
-            } else {
-                format!(
-                    "{package_id}::{}::{name}",
-                    package_item.module_path.segments.join("::")
-                )
-            };
+            let qualified_name = format!("{package_id}::{}", path.segments.join("::"));
             if !resolved && ambiguous {
                 eprintln!("{qualified_name} is ambiguous during resolution");
             } else if !resolved {
@@ -95,4 +100,29 @@ fn resolves_every_named_rust_std_declaration() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+fn collect_known_items(
+    items: &[Item],
+    module_path: &InPackagePath,
+    output: &mut Vec<(InPackagePath, Item)>,
+) {
+    for item in items {
+        match item.kind() {
+            ItemKind::Module(module) => {
+                collect_known_items(
+                    &module.items,
+                    &module_path.with_segment(module.name.as_str().to_owned()),
+                    output,
+                );
+            }
+            ItemKind::Impl(_) => {}
+            _ if item.get_ident().is_some() => {
+                let mut path = module_path.clone();
+                path.push(item.get_ident().unwrap().as_str().to_owned());
+                output.push((path, item.clone()));
+            }
+            _ => {}
+        }
+    }
 }
