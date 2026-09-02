@@ -128,21 +128,9 @@ impl<'hir> InPackageResolver<'hir> {
         // scope, matching the implicit-import behavior expected by callers.
         let prelude_ids = self.hir_package.prelude_modules.clone();
         for def_id in prelude_ids {
-            let Some(path) = self.package_tree().path_for_module(&def_id) else {
-                continue;
-            };
-            let entries: Vec<_> = self
-                .package_tree()
-                .bindings(&path)
-                .flat_map(|(symbol, bindings)| {
-                    bindings
-                        .iter()
-                        .cloned()
-                        .map(move |binding| (symbol.clone(), binding))
-                })
-                .collect();
-            for (name, binding) in entries {
-                self.declare_module(&InPackagePath::new(Vec::new()), name, binding);
+            let modules: Vec<_> = self.hir_package.module_data.module_ids().cloned().collect();
+            for module in modules {
+                self.hir_package.module_data.copy_children(&def_id, &module);
             }
         }
     }

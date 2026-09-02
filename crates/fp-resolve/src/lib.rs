@@ -99,9 +99,9 @@ impl Resolver {
                         found,
                     });
                 }
-                result => return result,
+                _ => break,
             }
         }
-        ResolutionResult::NotFound(ResolutionNotFound::EmptyPath)
+        result
     }
 }

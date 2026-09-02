@@ -323,6 +323,11 @@ impl HirProgram {
             ))
     }
 
+    pub fn prelude_modules(&self, package_id: &PackageId) -> Option<Vec<DefId>> {
+        self.package(package_id)
+            .map(|package| package.prelude_modules.clone())
+    }
+
     pub fn resolve_module_location(
         &self,
         package_id: &PackageId,

@@ -55,6 +55,10 @@ impl ModuleData {
         self.children.get(module).map(Vec::as_slice)
     }
 
+    pub fn module_ids(&self) -> impl Iterator<Item = &crate::hir::DefId> {
+        self.children.keys()
+    }
+
     pub fn set_children(
         &mut self,
         module: crate::hir::DefId,
@@ -74,6 +78,17 @@ impl ModuleData {
             .entry(module)
             .or_default()
             .push((name.into(), namespace, resolution));
+    }
+
+    pub fn copy_children(&mut self, source: &crate::hir::DefId, destination: &crate::hir::DefId) {
+        let entries = self
+            .children(source)
+            .map(|children| children.to_vec())
+            .unwrap_or_default();
+        self.children
+            .entry(destination.clone())
+            .or_default()
+            .extend(entries);
     }
 
     pub fn resolve_child(
