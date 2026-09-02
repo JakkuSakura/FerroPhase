@@ -208,7 +208,37 @@ pub enum DeclarationOutcome {
 pub enum ResolutionResult {
     Found(crate::hir::Res),
     Ambiguous,
-    NotFound,
+    NotFound(ResolutionNotFound),
+}
+
+impl ResolutionResult {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolutionNotFound {
+    EmptyPath,
+    Package(crate::ast::package::PackageId),
+    Symbol {
+        module: InPackagePath,
+        symbol: Symbol,
+        namespace: Namespace,
+    },
+    Local {
+        symbol: Symbol,
+        namespace: Namespace,
+    },
+    ExpectedModule {
+        path: InPackagePath,
+        found: crate::hir::Res,
+    },
+    ModuleDefinition(crate::hir::DefId),
+    InvalidParent {
+        location: InPackagePath,
+        depth: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -367,7 +397,11 @@ impl ModuleTree {
                 .then(|| path.parent_n(1))
                 .flatten();
         }
-        ResolutionResult::NotFound
+        ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+            module: module.clone(),
+            symbol: Symbol::from(symbol),
+            namespace,
+        })
     }
 
     pub fn resolve_path(
@@ -378,18 +412,25 @@ impl ModuleTree {
         rules: ResolutionRules,
     ) -> ResolutionResult {
         let Some((first, rest)) = path.segments.split_first() else {
-            return ResolutionResult::NotFound;
+            return ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
         };
         let mut result = self.resolve(module, first, namespace, rules);
         for segment in rest {
-            let crate::hir::Res::Module(next) = (match result {
-                ResolutionResult::Found(res) => res,
-                _ => return ResolutionResult::NotFound,
-            }) else {
-                return ResolutionResult::NotFound;
+            let next = match result {
+                ResolutionResult::Found(crate::hir::Res::Module(next)) => next,
+                ResolutionResult::NotFound(reason) => {
+                    return ResolutionResult::NotFound(reason);
+                }
+                ResolutionResult::Ambiguous => return ResolutionResult::Ambiguous,
+                ResolutionResult::Found(found) => {
+                    return ResolutionResult::NotFound(ResolutionNotFound::ExpectedModule {
+                        path: path.clone(),
+                        found,
+                    });
+                }
             };
             let Some(next_path) = self.path_for_module(&next) else {
-                return ResolutionResult::NotFound;
+                return ResolutionResult::NotFound(ResolutionNotFound::ModuleDefinition(next));
             };
             result = self.resolve(&next_path, segment, namespace, rules);
         }
@@ -526,7 +567,10 @@ impl LocalScope {
             }
             current = node.parent;
         }
-        ResolutionResult::NotFound
+        ResolutionResult::NotFound(ResolutionNotFound::Local {
+            symbol: Symbol::from(symbol),
+            namespace,
+        })
     }
 }
 
@@ -653,7 +697,11 @@ mod tests {
         };
         assert_eq!(
             tree.resolve(&child, "x", Namespace::Value, no_parent),
-            ResolutionResult::NotFound
+            ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+                module: child.clone(),
+                symbol: Symbol::from("x"),
+                namespace: Namespace::Value,
+            })
         );
         let with_parent = ResolutionRules {
             allow_parent_module_lookup: true,

@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::{InPackagePath, ParsedPath, PathPrefix};
+use fp_core::ast::path::{InPackagePath, PathPrefix};
 
 impl AstToHirLowerer {
     pub(super) fn package_crate_root(&self) -> Vec<String> {
@@ -174,14 +174,14 @@ impl AstToHirLowerer {
             .collect()
     }
 
-    /// Parses a `"a::b::c"`-shaped textual path spec into a `ParsedPath`
+    /// Resolves an AST path at the current lexical scope.
     /// (prefix + segments) — moved here from `fp_core::ast::path` since
     /// this resolver is its only real caller (`resolve_item_path`'s own
     /// associated-type-path handling in `name_to_hir_path_with_scope`);
     /// keeping it as a free-standing "shared kernel" function in `fp-core`
     fn resolve_item_path(
         &self,
-        parsed: &ParsedPath,
+        parsed: &fp_core::ast::Path,
         scope: PathResolutionScope,
     ) -> Option<InPackagePath> {
         if parsed.segments.is_empty() {
@@ -913,10 +913,10 @@ impl AstToHirLowerer {
                 .iter()
                 .map(|seg| seg.name.as_str().to_string())
                 .collect::<Vec<_>>();
-            let parsed = ParsedPath {
-                prefix: path_prefix,
-                segments: segment_names,
-            };
+            let parsed = fp_core::ast::Path::new(
+                path_prefix,
+                segment_names.into_iter().map(Into::into).collect(),
+            );
             if let Some(canonical) = self.resolve_item_path(&parsed, scope) {
                 let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
                 let offset = canonical.segments.len().saturating_sub(segments.len());

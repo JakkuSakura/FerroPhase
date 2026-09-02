@@ -1609,12 +1609,15 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
     assert_eq!(alias.def_id.package_id.as_str(), "test");
     assert!(program.def_map.contains_key(&alias.def_id));
     assert!(
-        program.module_tree.resolve(
-            &InPackagePath::new(Vec::new()),
-            "Alias",
-            fp_core::hir::resolve::Namespace::Type,
-            fp_core::hir::resolve::ResolutionRules::rust(),
-        ) != fp_core::hir::resolve::ResolutionResult::NotFound
+        !program
+            .module_tree
+            .resolve(
+                &InPackagePath::new(Vec::new()),
+                "Alias",
+                fp_core::hir::resolve::Namespace::Type,
+                fp_core::hir::resolve::ResolutionRules::rust(),
+            )
+            .is_not_found()
     );
     Ok(())
 }

@@ -1,5 +1,5 @@
 //! Path-value machinery for a syntactic AST path (`ast::Path`): parsing a
-//! textual path spec (`ParsedPath`), and the fully-resolved absolute form
+//! textual AST paths (`ast::Path`), and the fully-resolved absolute form
 //! used as a lookup key (`InPackagePath`). Actual resolution against a real
 //! module tree (`parse_path`/`resolve_item_path`, as they used to be named
 //! here) lives on `fp-backend`'s `AstToHirLowerer` instead — its only real
@@ -14,10 +14,53 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedPath {
-    pub prefix: PathPrefix,
-    pub segments: Vec<String>,
+use crate::ast::ident::Path;
+
+impl Path {
+    pub fn head(&self) -> Option<&str> {
+        self.segments.first().map(|segment| segment.as_str())
+    }
+
+    pub fn resolve_from(&self, location: &InPackagePath) -> Option<InPackagePath> {
+        if self.is_empty() {
+            return None;
+        }
+        match self.prefix {
+            PathPrefix::Root | PathPrefix::Crate => Some(InPackagePath::new(
+                self.segments
+                    .iter()
+                    .map(|s| s.as_str().to_owned())
+                    .collect(),
+            )),
+            PathPrefix::SelfMod => Some(
+                location.join(
+                    &self
+                        .segments
+                        .iter()
+                        .map(|s| s.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            PathPrefix::Super(depth) => location.parent_n(depth).map(|parent| {
+                parent.join(
+                    &self
+                        .segments
+                        .iter()
+                        .map(|s| s.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                )
+            }),
+            PathPrefix::Plain => Some(
+                location.join(
+                    &self
+                        .segments
+                        .iter()
+                        .map(|s| s.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -112,42 +155,40 @@ pub enum PathError {
 }
 
 pub fn resolve_path(
-    parsed: &ParsedPath,
+    parsed: &Path,
     module_path: &InPackagePath,
     root_modules: &HashSet<String>,
     extern_prelude: &HashSet<String>,
     module_defs: &HashSet<InPackagePath>,
 ) -> Option<InPackagePath> {
-    if parsed.segments.is_empty() {
+    if parsed.is_empty() {
         return None;
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(InPackagePath::new(parsed.segments.clone())),
-        PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
-        PathPrefix::Super(depth) => module_path
-            .parent_n(depth)
-            .map(|parent| parent.join(&parsed.segments)),
+        PathPrefix::Root | PathPrefix::Crate => parsed.resolve_from(module_path),
+        PathPrefix::SelfMod => parsed.resolve_from(module_path),
+        PathPrefix::Super(_) => parsed.resolve_from(module_path),
         PathPrefix::Plain => {
-            let first = parsed.segments.first()?;
+            let first = parsed.head()?;
             let base = if module_path.head() == Some("bin") {
                 InPackagePath::new(Vec::new())
             } else {
                 module_path.clone()
             };
             if !base.is_empty() {
-                let local = base.with_segment(first.clone());
+                let local = base.with_segment(first.to_owned());
                 if module_defs.contains(&local) {
-                    return Some(base.join(&parsed.segments));
+                    return parsed.resolve_from(module_path);
                 }
             } else {
-                let local = InPackagePath::new(vec![first.clone()]);
+                let local = InPackagePath::new(vec![first.to_owned()]);
                 if module_defs.contains(&local) {
-                    return Some(InPackagePath::new(parsed.segments.clone()));
+                    return parsed.resolve_from(module_path);
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(InPackagePath::new(parsed.segments.clone()));
+                return parsed.resolve_from(module_path);
             }
             None
         }
@@ -164,10 +205,7 @@ mod tests {
 
     #[test]
     fn resolve_plain_prefers_local_module() {
-        let parsed = ParsedPath {
-            prefix: PathPrefix::Plain,
-            segments: vec!["meta".to_string(), "TypeBuilder".to_string()],
-        };
+        let parsed = Path::new(PathPrefix::Plain, vec!["meta".into(), "TypeBuilder".into()]);
         let mut module_defs = HashSet::new();
         module_defs.insert(InPackagePath::new(vec![
             "std".to_string(),
@@ -193,10 +231,7 @@ mod tests {
 
     #[test]
     fn resolve_plain_from_bin_uses_crate_root() {
-        let parsed = ParsedPath {
-            prefix: PathPrefix::Plain,
-            segments: vec!["fptest".to_string(), "config".to_string()],
-        };
+        let parsed = Path::new(PathPrefix::Plain, vec!["fptest".into(), "config".into()]);
         let mut module_defs = HashSet::new();
         module_defs.insert(InPackagePath::new(vec!["fptest".to_string()]));
         let resolved = resolve_path(

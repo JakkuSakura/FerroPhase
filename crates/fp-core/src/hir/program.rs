@@ -338,7 +338,9 @@ impl HirProgram {
     ) -> crate::hir::resolve::ResolutionResult {
         self.package(package_id)
             .map(|package| package.module_tree.resolve(module, name, namespace, rules))
-            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
+                crate::hir::resolve::ResolutionNotFound::Package(package_id.clone()),
+            ))
     }
 
     pub fn resolve_module_path_with_rules(
@@ -355,7 +357,9 @@ impl HirProgram {
                     .module_tree
                     .resolve_path(module, path, namespace, rules)
             })
-            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
+            .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
+                crate::hir::resolve::ResolutionNotFound::Package(package_id.clone()),
+            ))
     }
 
     pub fn module_exists(
