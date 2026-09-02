@@ -81,13 +81,15 @@ impl Resolver {
         if count == 0 {
             return ResolutionResult::Found(hir::Res::Module(module));
         }
+        let mut last_result = ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
         for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
             let segment_namespace = if offset + 1 == count {
                 namespace
             } else {
                 Namespace::Type
             };
-            let result = hir_program.resolve_module_child(&module, segment, segment_namespace);
+            let result = hir_program.resolve_module_child(&module, segment.name.as_str(), segment_namespace);
+            last_result = result.clone();
             if offset + 1 == count {
                 return result;
             }
@@ -102,6 +104,6 @@ impl Resolver {
                 _ => break,
             }
         }
-        result
+        last_result
     }
 }

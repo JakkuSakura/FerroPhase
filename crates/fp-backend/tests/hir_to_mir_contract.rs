@@ -42,7 +42,7 @@ fn path_type(name: &str) -> TypeExpr {
                 name: Symbol::new(name),
                 args: None,
             }],
-            res: None,
+            res: Res::Error,
         }),
         span: span(),
     }
@@ -97,7 +97,7 @@ fn local_path(hir_id: u32, name: &str, local_id: hir::HirId) -> Expr {
                 name: Symbol::new(name),
                 args: None,
             }],
-            res: Some(Res::Local(local_id)),
+            res: Res::Local(local_id),
         }),
         span(),
     )
@@ -230,7 +230,7 @@ fn lowers_identity_function_with_parameter() {
             name: hir::Symbol::new("x"),
             args: None,
         }],
-        res: Some(hir::Res::Local(param_pat.hir_id)),
+        res: hir::Res::Local(param_pat.hir_id),
     };
     let body_expr = Expr::new(hid(7), ExprKind::Path(path), span());
     let body = hir::Block {
@@ -300,7 +300,7 @@ fn rejects_unresolved_value_path_in_function_body() {
                 name: Symbol::new("missing_value"),
                 args: None,
             }],
-            res: None,
+            res: Res::Error,
         }),
         span(),
     );
@@ -429,7 +429,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
                         name: Symbol::new("Some"),
                         args: None,
                     }],
-                    res: Some(Res::Def(variant_def_id)),
+                    res: Res::Def(variant_def_id),
                 }),
                 span(),
             )),
@@ -454,7 +454,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
                         name: Symbol::new("MaybeInt"),
                         args: None,
                     }],
-                    res: Some(Res::Def(enum_def_id)),
+                    res: Res::Def(enum_def_id),
                 }),
                 span: span(),
             },
@@ -529,7 +529,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                             name: Symbol::new("Some"),
                             args: None,
                         }],
-                        res: Some(Res::Def(payload_struct_def_id)),
+                        res: Res::Def(payload_struct_def_id),
                     }),
                     span: span(),
                 }),
@@ -548,7 +548,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                     name: Symbol::new("Some"),
                     args: None,
                 }],
-                res: Some(Res::Def(variant_def_id)),
+                res: Res::Def(variant_def_id),
             },
             Vec::new(),
         ),
@@ -571,7 +571,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                         name: Symbol::new("MaybeInt"),
                         args: None,
                     }],
-                    res: Some(Res::Def(enum_def_id)),
+                    res: Res::Def(enum_def_id),
                 }),
                 span: span(),
             },
@@ -729,7 +729,7 @@ fn lowers_function_local_const_before_its_declaration_without_a_global() {
                 name: Symbol::new("VALUE"),
                 args: None,
             }],
-            res: Some(Res::Def(local_const_id)),
+            res: Res::Def(local_const_id),
         }),
         span(),
     );
@@ -831,7 +831,7 @@ fn lowers_index_expression_into_place_projection() {
                 name: Symbol::new("values"),
                 args: None,
             }],
-            res: Some(Res::Local(values_pat.hir_id)),
+            res: Res::Local(values_pat.hir_id),
         }),
         span(),
     );
@@ -842,7 +842,7 @@ fn lowers_index_expression_into_place_projection() {
                 name: Symbol::new("idx"),
                 args: None,
             }],
-            res: Some(Res::Local(idx_pat.hir_id)),
+            res: Res::Local(idx_pat.hir_id),
         }),
         span(),
     );

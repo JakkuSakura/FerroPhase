@@ -394,7 +394,7 @@ impl HirTypeChecker {
                         pending_bounds.push(&op.lhs);
                         pending_bounds.push(&op.rhs);
                     } else if let hir::TypeExprKind::Path(path) = &bound.kind
-                        && let Some(hir::Res::Def(trait_id)) = &path.res
+                        && let hir::Res::Def(trait_id) = &path.res
                     {
                         trait_ids.push(trait_id.clone());
                     }
@@ -421,7 +421,7 @@ impl HirTypeChecker {
                             .extend(assoc_type.bounds.clone());
                     }
                     for supertrait in &trait_def.supertraits {
-                        if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                        if let hir::Res::Def(supertrait_id) = &supertrait.res {
                             trait_ids.push(supertrait_id.clone());
                         }
                     }
@@ -879,7 +879,7 @@ impl HirTypeChecker {
                         name: hir::Symbol::new("Self"),
                         args: None,
                     }],
-                    res: Some(hir::Res::Def(trait_def_id)),
+                    res: hir::Res::Def(trait_def_id),
                 }),
                 span: fp_core::span::Span::new(0, 0, 0),
             });
@@ -1037,7 +1037,7 @@ impl HirTypeChecker {
                 // variant's callable identity, never the enum ADT itself.
                 if let hir::ExprKind::Path(path) = &mut callee.kind {
                     if path.segments.len() > 1 {
-                        if let Some(hir::Res::Def(owner_id)) = path.res.clone() {
+                        if let hir::Res::Def(owner_id) = path.res.clone() {
                             if let Some(item) = self.program_rc().item(owner_id) {
                                 if let hir::ItemKind::Enum(def) = &item.kind {
                                     if let Some(variant) = def.variants.iter().find(|variant| {
@@ -1045,7 +1045,7 @@ impl HirTypeChecker {
                                             .last()
                                             .is_some_and(|segment| variant.name == segment.name)
                                     }) {
-                                        path.res = Some(hir::Res::Def(variant.def_id.clone()));
+                                        path.res = hir::Res::Def(variant.def_id.clone());
                                     }
                                 }
                             }
@@ -2564,7 +2564,7 @@ impl HirTypeChecker {
                 hir::TypeExprKind::Path(path) => self.path_ty(path).await?,
                 hir::TypeExprKind::Projection(projection) => {
                     let owner_ty = self.check_type_expr(&projection.self_ty).await?;
-                    let Some(hir::Res::Def(trait_def_id)) = &projection.trait_path.res else {
+                    let hir::Res::Def(trait_def_id) = &projection.trait_path.res else {
                         return Ok(self.error_ty("qualified projection trait is unresolved"));
                     };
                     let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
@@ -2825,13 +2825,13 @@ impl HirTypeChecker {
         // same arity-blind approximation `BuiltinSelfType` itself already
         // commits to, not a precise reconstruction.
         match &path.res {
-            Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name))) => {
+            hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name)) => {
                 if let Some(primitive) = primitive_path_ty(name) {
                     return Ok(primitive);
                 }
                 return Ok(self.error_ty(format!("unknown primitive type `{name}`")));
             }
-            Some(hir::Res::Builtin(hir::BuiltinSelfType::Function)) => {
+            hir::Res::Builtin(hir::BuiltinSelfType::Function) => {
                 return Ok(Ty {
                     kind: TyKind::FnPtr(ty::PolyFnSig {
                         binder: ty::Binder {
@@ -2849,23 +2849,23 @@ impl HirTypeChecker {
                     }),
                 });
             }
-            Some(hir::Res::Builtin(
+            hir::Res::Builtin(
                 hir::BuiltinSelfType::Unit
                 | hir::BuiltinSelfType::Never
                 | hir::BuiltinSelfType::Tuple,
-            )) => {
+            ) => {
                 return Ok(Ty {
                     kind: TyKind::Tuple(Vec::new()),
                 });
             }
-            Some(hir::Res::Builtin(kind)) => {
+            hir::Res::Builtin(kind) => {
                 return Ok(self.error_ty(format!(
                     "type path resolved to an unsupported builtin shape: {kind:?}"
                 )));
             }
             _ => {}
         }
-        if let Some(hir::Res::Def(ref def_id)) = path.res {
+        if let hir::Res::Def(ref def_id) = path.res {
             // A local `type X = const { .. };` (`ast_to_hir`'s
             // `comptime_type_alias_rhs` lowering) binds `X` to the const
             // block's own `DefId` (scope-local only, not a real `def_map`
@@ -2932,7 +2932,7 @@ impl HirTypeChecker {
                 });
             }
         }
-        if matches!(path.res, Some(hir::Res::SelfTy)) {
+        if matches!(path.res, hir::Res::SelfTy) {
             let Some(self_type) = self.self_type.clone() else {
                 tracing::debug!(?path, "Self is not available in this type context");
                 return Ok(self.error_ty(format!(
@@ -2982,7 +2982,7 @@ impl HirTypeChecker {
             return Ok(self_type);
         }
         let Some(def_id) = (match path.res {
-            Some(hir::Res::Def(ref def_id)) => Some(def_id),
+            hir::Res::Def(ref def_id) => Some(def_id),
             _ => None,
         }) else {
             // A bare primitive type can arrive without the AST->HIR
@@ -3392,7 +3392,7 @@ impl HirTypeChecker {
         // or a default trait method calling a sibling via
         // `Self::helper(self, ..)`) — resolve it the same way `.method()`
         // call syntax already does, via `method_declared_signature_at`.
-        if matches!(path.res, Some(hir::Res::SelfTy)) {
+        if matches!(path.res, hir::Res::SelfTy) {
             if let Some(self_ty) = self.self_type.clone() {
                 match path.segments.len() {
                     // A bare `Self` value path — the callee of a
@@ -3440,7 +3440,7 @@ impl HirTypeChecker {
         // (BuiltinSelfType::Primitive(..))` fallback). The receiver type
         // is simply the primitive itself; resolve the tail the same way
         // `Self::`/struct bases already do.
-        if let Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name))) = &path.res {
+        if let hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name)) = &path.res {
             if let (Some(receiver_ty), Some(tail)) = (primitive_path_ty(name), path.segments.get(1))
             {
                 if path.segments.len() == 2 {
@@ -3500,7 +3500,7 @@ impl HirTypeChecker {
                 }
             }
         }
-        if let Some(hir::Res::Local(ref local)) = path.res {
+        if let hir::Res::Local(ref local) = path.res {
             if let Some(ty) = self.program_rc().pat_type(local.clone()) {
                 return Ok(ty);
             }
@@ -3530,7 +3530,7 @@ impl HirTypeChecker {
         // the defining module was erased by an older HIR producer without
         // scanning or selecting arbitrary package-local definitions.
         let recovered_def_id =
-            if !matches!(path.res, Some(hir::Res::Def(_))) && path.segments.len() >= 2 {
+            if !matches!(path.res, hir::Res::Def(_)) && path.segments.len() >= 2 {
                 let trait_name = &path.segments[path.segments.len() - 2].name;
                 // Use only the namespace-qualified export index. The old
                 // package-wide source-path scan selected an arbitrary same-
@@ -3552,7 +3552,7 @@ impl HirTypeChecker {
                 None
             };
         let def_id = match (&path.res, &recovered_def_id) {
-            (Some(hir::Res::Def(def_id)), _) => def_id.clone(),
+            (hir::Res::Def(def_id), _) => def_id.clone(),
             (_, Some(def_id)) => def_id.clone(),
             _ => {
                 if let Some(sig) = self.collection_constructor_signature(path) {
@@ -4253,7 +4253,7 @@ impl HirTypeChecker {
                 let hir::TypeExprKind::Path(path) = &bound.kind else {
                     continue;
                 };
-                let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                let hir::Res::Def(trait_def_id) = &path.res else {
                     continue;
                 };
                 let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
@@ -4319,7 +4319,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
                 continue;
             };
-            let Some(hir::Res::Def(trait_id)) = &path.res else {
+            let hir::Res::Def(trait_id) = &path.res else {
                 continue;
             };
             trait_ids.push(trait_id.clone());
@@ -4359,7 +4359,7 @@ impl HirTypeChecker {
                     .iter()
                     .find(|bound| {
                         matches!(&bound.kind, hir::TypeExprKind::Path(path) if path.res
-                            == Some(hir::Res::Def(trait_id.clone())))
+                            == hir::Res::Def(trait_id.clone()))
                     })
                     .and_then(|bound| match &bound.kind {
                         hir::TypeExprKind::Path(path) => path
@@ -4396,7 +4396,7 @@ impl HirTypeChecker {
             }
 
             for supertrait in &trait_def.supertraits {
-                if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                if let hir::Res::Def(supertrait_id) = &supertrait.res {
                     trait_ids.push(supertrait_id.clone());
                 }
             }
@@ -4495,7 +4495,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
                 continue;
             };
-            let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+            let hir::Res::Def(trait_def_id) = &path.res else {
                 continue;
             };
             let mut trait_ids = vec![trait_def_id.clone()];
@@ -4564,7 +4564,7 @@ impl HirTypeChecker {
                     }
                 }
                 for supertrait in &trait_def.supertraits {
-                    if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                    if let hir::Res::Def(supertrait_id) = &supertrait.res {
                         trait_ids.push(supertrait_id.clone());
                     }
                 }
@@ -4598,7 +4598,7 @@ impl HirTypeChecker {
             return Some(assoc_type);
         }
         trait_def.supertraits.iter().find_map(|supertrait| {
-            let Some(hir::Res::Def(supertrait_def_id)) = &supertrait.res else {
+            let hir::Res::Def(supertrait_def_id) = &supertrait.res else {
                 return None;
             };
             if !seen.insert(supertrait_def_id.clone()) {
@@ -4994,7 +4994,7 @@ impl HirTypeChecker {
                 let hir::TypeExprKind::Path(path) = &bound.kind else {
                     continue;
                 };
-                let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                let hir::Res::Def(trait_def_id) = &path.res else {
                     continue;
                 };
                 let mut trait_ids = vec![trait_def_id.clone()];
@@ -5037,7 +5037,7 @@ impl HirTypeChecker {
                         return Ok(Some((trait_item.def_id.clone(), args, result)));
                     }
                     for supertrait in &trait_def.supertraits {
-                        if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                        if let hir::Res::Def(supertrait_id) = &supertrait.res {
                             trait_ids.push(supertrait_id.clone());
                         }
                     }
@@ -5219,7 +5219,7 @@ impl HirTypeChecker {
                     let hir::TypeExprKind::Path(path) = &current_trait_ty.kind else {
                         continue;
                     };
-                    let Some(hir::Res::Def(trait_id)) = &path.res else {
+                    let hir::Res::Def(trait_id) = &path.res else {
                         continue;
                     };
                     if !seen_traits.insert(trait_id.clone()) {
@@ -5291,7 +5291,7 @@ impl HirTypeChecker {
         let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
             return None;
         };
-        let hir::Res::Def(def_id) = path.res.clone()? else {
+        let hir::Res::Def(def_id) = path.res.clone() else {
             return None;
         };
         if let Some(cached) = self.program_rc().resolved_trait_def(def_id.clone()) {
@@ -5586,7 +5586,7 @@ impl HirTypeChecker {
         path: &hir::Path,
         scrutinee: &Ty,
     ) -> Result<(Ty, Vec<Ty>)> {
-        let Some(hir::Res::Def(ref variant_id)) = path.res else {
+        let hir::Res::Def(ref variant_id) = path.res else {
             return Ok((self.error_ty("variant pattern is unresolved"), Vec::new()));
         };
         if let Some((item, variant)) = self.enum_variant_by_def_id(variant_id.clone()) {
@@ -5672,7 +5672,7 @@ impl HirTypeChecker {
     }
 
     async fn enum_variant_ty(&mut self, path: &hir::Path) -> Result<Option<Ty>> {
-        let Some(hir::Res::Def(ref variant_id)) = path.res else {
+        let hir::Res::Def(ref variant_id) = path.res else {
             return Ok(None);
         };
         let Some((item, _)) = self.enum_variant_by_def_id(variant_id.clone()) else {
@@ -6034,7 +6034,7 @@ impl HirTypeChecker {
                         }
                         for bound in flattened {
                             if let hir::TypeExprKind::Path(path) = &bound.kind {
-                                if let Some(hir::Res::Def(trait_id)) = &path.res {
+                                if let hir::Res::Def(trait_id) = &path.res {
                                     trait_ids.push(trait_id.clone());
                                 }
                             }
@@ -6054,7 +6054,7 @@ impl HirTypeChecker {
                         if let Some(item) = program.item(trait_id) {
                             if let hir::ItemKind::Trait(trait_def) = &item.kind {
                                 for supertrait in &trait_def.supertraits {
-                                    if let Some(hir::Res::Def(supertrait_id)) = &supertrait.res {
+                                    if let hir::Res::Def(supertrait_id) = &supertrait.res {
                                         trait_ids.push(supertrait_id.clone());
                                     }
                                 }
@@ -6080,13 +6080,13 @@ impl HirTypeChecker {
                         else {
                             continue;
                         };
-                        if trait_path.res != Some(hir::Res::Def(principal.def_id.clone())) {
+                        if trait_path.res != hir::Res::Def(principal.def_id.clone()) {
                             continue;
                         }
                         if matches!(
                             &impl_item.self_ty.kind,
                             hir::TypeExprKind::Path(hir::Path {
-                                res: Some(hir::Res::Def(self_id)),
+                                res: hir::Res::Def(self_id),
                                 ..
                             }) if *self_id == actual_adt.did
                         ) {

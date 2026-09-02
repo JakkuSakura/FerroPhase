@@ -559,7 +559,7 @@ impl AstToHirLowerer {
                 segments.push(self.make_path_segment(struct_name, None));
                 let res = self.resolve_type_symbol(struct_name);
 
-                let path = hir::Path { segments, res };
+                let path = hir::Path { segments, res: res.unwrap_or(hir::Res::Error) };
 
                 let mut fields = Vec::with_capacity(struct_val.structural.fields.len());
                 for field in &struct_val.structural.fields {
@@ -647,7 +647,7 @@ impl AstToHirLowerer {
                         name: hir::Symbol::new("__fp_escaped"),
                         args: None,
                     }],
-                    res: None,
+                    res: hir::Res::Error,
                 };
                 Ok(hir::ExprKind::Path(path))
             }
@@ -804,9 +804,9 @@ impl AstToHirLowerer {
                             self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
                         if matches!(
                             base_path.res,
-                            Some(hir::Res::Def(_))
-                                | Some(hir::Res::Builtin(_))
-                                | Some(hir::Res::SelfTy)
+                            hir::Res::Def(_)
+                                | hir::Res::Builtin(_)
+                                | hir::Res::SelfTy
                         ) {
                             // This is rustc's `QPath::TypeRelative` shape:
                             // the resolver has established the nominal/type
@@ -825,7 +825,7 @@ impl AstToHirLowerer {
                             path.segments
                                 .push(self.make_path_segment(&select.field.name, member_args));
                             if let Some(res) = self.lookup_enum_variant(&path, &select.field.name) {
-                                path.res = Some(res);
+                            path.res = res;
                             }
                             let func_expr = hir::Expr {
                                 hir_id: self.next_id(),
@@ -914,7 +914,7 @@ impl AstToHirLowerer {
                             .map(|segment| segment.name.as_str())
                             .unwrap_or(""),
                     ) {
-                        path.res = Some(res);
+                        path.res = res;
                     }
                 }
                 if path.res.is_none() {
@@ -998,7 +998,7 @@ impl AstToHirLowerer {
         if matches!(select.select, ast::ExprSelectType::Const) {
             let type_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
             let value_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?;
-            let mut path = if matches!(value_path.res, Some(hir::Res::Module(_))) {
+            let mut path = if matches!(value_path.res, hir::Res::Module(_)) {
                 value_path
             } else {
                 type_path
@@ -1014,7 +1014,7 @@ impl AstToHirLowerer {
             let full_path = InPackagePath::new(names);
             path.res = self
                 .lookup_global_res(&full_path, PathResolutionScope::Value)
-                .or(path.res);
+                .unwrap_or(path.res);
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -1049,7 +1049,7 @@ impl AstToHirLowerer {
                                 name: field.name.clone().into(),
                                 args: None,
                             }],
-                            res,
+                        res: res.unwrap_or(hir::Res::Error),
                         }),
                         span: self.create_span(1),
                     }
@@ -1072,7 +1072,7 @@ impl AstToHirLowerer {
         // once and then fills missing fields from it, so later MIR lowering
         // only sees a plain struct literal.
         let struct_fields = match path.res {
-            Some(hir::Res::Def(ref def_id)) => {
+            hir::Res::Def(ref def_id) => {
                 if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
                     fields
                 } else {
@@ -1147,7 +1147,7 @@ impl AstToHirLowerer {
                     name: base_symbol,
                     args: None,
                 }],
-                res: Some(hir::Res::Local(base_pat_id)),
+                res: hir::Res::Local(base_pat_id),
             }),
             span: self.create_span(1),
         };
@@ -1438,7 +1438,7 @@ impl AstToHirLowerer {
         let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
         let (loop_name, loop_res) = match &mut pat.kind {
             hir::PatKind::Binding { name, .. } => {
-                (name.clone(), Some(hir::Res::Local(pat.hir_id.clone())))
+                (name.clone(), hir::Res::Local(pat.hir_id.clone()))
             }
             _ => {
                 return Ok(self.error_placeholder_expr_kind(

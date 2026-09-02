@@ -252,7 +252,7 @@ impl<'a> BodyBuilder<'a> {
         let annotated_enum_def = if ty_is_infer {
             None
         } else if let hir::TypeExprKind::Path(path) = &ty.kind {
-            if let Some(hir::Res::Def(def_id)) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res {
                 if self
                     .lowering
                     .mir_package
@@ -282,7 +282,7 @@ impl<'a> BodyBuilder<'a> {
         };
         if !ty_is_infer {
             if let hir::TypeExprKind::Path(path) = &ty.kind {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res {
                     if self
                         .lowering
                         .mir_package

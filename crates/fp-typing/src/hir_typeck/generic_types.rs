@@ -1380,7 +1380,7 @@ impl HirTypeChecker {
                     .trait_ty
                     .as_ref()
                     .and_then(|trait_ty| match &trait_ty.kind {
-                        hir::TypeExprKind::Path(path) => match path.res.as_ref()? {
+                        hir::TypeExprKind::Path(path) => match &path.res {
                             hir::Res::Def(def_id) => program.item(def_id.clone()),
                             _ => None,
                         },

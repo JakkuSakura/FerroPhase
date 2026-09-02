@@ -1,5 +1,6 @@
 use super::*;
 use fp_core::ast::path::{InPackagePath, PathPrefix};
+use fp_core::hir::Res;
 
 impl AstToHirLowerer {
     pub(super) fn package_crate_root(&self) -> Vec<String> {
@@ -69,7 +70,7 @@ impl AstToHirLowerer {
         if scope == PathResolutionScope::Type && path.segments.len() > 1 && rooted_at_type_param {
             hir::Path {
                 segments: path.segments,
-                res: None,
+                res: Res::Error,
             }
         } else {
             path
@@ -179,7 +180,7 @@ impl AstToHirLowerer {
                     if let Some(local_name) = local_name {
                         if let Some(res) = self.resolve_lexical_type_symbol(local_name) {
                             let mut path: hir::Path = todo!();
-                            path.res = Some(res);
+                            path.res = res;
                             return Ok(path);
                         }
                     }
@@ -206,7 +207,7 @@ impl AstToHirLowerer {
                 // not a type-relative path. Preserve rustc's namespace
                 // fallback for that case after the type-relative lookup.
                 let mut base = match value_base {
-                    Some(value_base) if matches!(value_base.res, Some(hir::Res::Module(_))) => {
+                    Some(value_base) if matches!(value_base.res, hir::Res::Module(_)) => {
                         value_base
                     }
                     _ => type_base,
@@ -218,30 +219,13 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
-                if let Some(member_path) = base.res.clone().and_then(|res| match res {
-                    hir::Res::Module(_) => None,
-                    _ => None,
-                }) {
-                    if let fp_core::hir::resolve::ResolutionResult::Found(res) =
-                        self.hir_program.resolve_module_name(
-                            &self.package_id,
-                            &member_path,
-                            select.field.name.as_str(),
-                            scope.namespace(),
-                        )
-                    {
-                        if let hir::Res::Def(id) = res {
-                            base.res = Some(hir::Res::Def(id));
-                        }
-                    }
-                }
                 if matches!(
                     select.select,
                     ast::ExprSelectType::Const | ast::ExprSelectType::Function
-                ) && !matches!(base.res, Some(hir::Res::Module(_)))
+                ) && !matches!(base.res, hir::Res::Module(_))
                 {
                     if let Some(res) = self.lookup_enum_variant(&base, &select.field.name) {
-                        base.res = Some(res);
+                        base.res = res;
                     }
                 }
 
@@ -295,7 +279,7 @@ impl AstToHirLowerer {
                                                 segments: vec![
                                                     self.make_path_segment("__fp_error", None),
                                                 ],
-                                                res: None,
+                                                res: Res::Error,
                                             }
                                         }
                                     },
@@ -311,7 +295,7 @@ impl AstToHirLowerer {
                                             segments: vec![
                                                 self.make_path_segment("__fp_error", None),
                                             ],
-                                            res: None,
+                                            res: Res::Error,
                                         }
                                     }
                                 },
@@ -325,7 +309,7 @@ impl AstToHirLowerer {
                                     );
                                     hir::Path {
                                         segments: vec![self.make_path_segment("__fp_error", None)],
-                                        res: None,
+                                        res: Res::Error,
                                     }
                                 }
                             },
@@ -339,7 +323,7 @@ impl AstToHirLowerer {
                                 );
                                 hir::Path {
                                     segments: vec![self.make_path_segment("__fp_error", None)],
-                                    res: None,
+                                    res: Res::Error,
                                 }
                             }
                         },
@@ -351,7 +335,7 @@ impl AstToHirLowerer {
                             );
                             hir::Path {
                                 segments: vec![self.make_path_segment("__fp_error", None)],
-                                res: None,
+                                res: Res::Error,
                             }
                         }
                     },
@@ -372,7 +356,7 @@ impl AstToHirLowerer {
                         );
                         hir::Path {
                             segments: vec![self.make_path_segment("__fp_error", None)],
-                            res: None,
+                            res: Res::Error,
                         }
                     }
                 };
@@ -416,21 +400,21 @@ impl AstToHirLowerer {
                     };
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Slice(_)) => {
                     let kind = hir::BuiltinSelfType::Slice;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Array(_)) => {
                     let kind = hir::BuiltinSelfType::Array;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::RawPtr(ptr)) => {
@@ -439,35 +423,35 @@ impl AstToHirLowerer {
                     };
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Nothing(_)) => {
                     let kind = hir::BuiltinSelfType::Never;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Unit(_)) => {
                     let kind = hir::BuiltinSelfType::Unit;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Tuple(_)) => {
                     let kind = hir::BuiltinSelfType::Tuple;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 ast::Value::Type(ast::Ty::Function(_)) => {
                     let kind = hir::BuiltinSelfType::Function;
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment(kind.bucket_key(), None)],
-                        res: Some(hir::Res::Builtin(kind)),
+                        res: hir::Res::Builtin(kind),
                     })
                 }
                 // A multi-bound trait-object/`impl` type used in
@@ -499,7 +483,7 @@ impl AstToHirLowerer {
                     );
                     Ok(hir::Path {
                         segments: vec![self.make_path_segment("__fp_error", None)],
-                        res: None,
+                        res: Res::Error,
                     })
                 }
             },
@@ -514,7 +498,7 @@ impl AstToHirLowerer {
                 );
                 Ok(hir::Path {
                     segments: vec![self.make_path_segment("__fp_error", None)],
-                    res: None,
+                    res: Res::Error,
                 })
             }
         }

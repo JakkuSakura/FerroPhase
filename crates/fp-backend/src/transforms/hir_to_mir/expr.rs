@@ -1963,7 +1963,7 @@ impl HirToMirLowerer {
                     _ => None,
                 } {
                     let mut matches_def = false;
-                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                    if let hir::Res::Def(def_id) = &path.res {
                         if let Some(ref actual_def_id) = actual_def_id {
                             matches_def = *def_id == *actual_def_id
                                 || variant_enum_def == Some(actual_def_id.clone());
@@ -2207,7 +2207,7 @@ impl HirToMirLowerer {
                 if let (Some(path_args), Some(hir::Res::Def(def_id))) =
                     (path_args, path.res.as_ref())
                 {
-                    let enum_def_id = if self.mir_package.borrow().enum_defs.contains_key(def_id) {
+                    let enum_def_id = if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
                         Some(def_id.clone())
                     } else {
                         variant_enum_def
@@ -2293,7 +2293,7 @@ impl HirToMirLowerer {
                     }
                 }
 
-                if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                if let hir::Res::Def(def_id) = &path.res {
                     if let Some(struct_def) = self.struct_def(def_id) {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
@@ -2507,7 +2507,7 @@ impl HirToMirLowerer {
         for variant in &enm.variants {
             let payload_def = variant.payload.as_ref().and_then(|payload| {
                 if let hir::TypeExprKind::Path(path) = &payload.kind {
-                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res {
                         return Some(def_id.clone());
                     }
                 }
@@ -3221,7 +3221,7 @@ impl HirToMirLowerer {
                     }
                 }
 
-                if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                if let hir::Res::Def(def_id) = &path.res {
                     if self.mir_package.borrow().enum_defs.contains_key(def_id) {
                         let args = path
                             .segments
@@ -3403,7 +3403,7 @@ impl HirToMirLowerer {
                 }
             }
             hir::ExprKind::Path(path) => {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res {
                     if let Some(info) = self.ensure_const_info(def_id.clone()) {
                         match &info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value),
@@ -3958,7 +3958,7 @@ impl HirToMirLowerer {
     ) -> Option<MethodContext> {
         if let hir::TypeExprKind::Path(path) = &self_ty.kind {
             let def_id = match &path.res {
-                Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
+                hir::Res::Def(def_id) => Some(def_id.clone()),
                 _ => None,
             };
             let mir_self_ty = self.lower_type_expr(self_ty);
@@ -4513,7 +4513,7 @@ impl HirToMirLowerer {
         substs: &HashMap<String, Ty>,
     ) -> Ty {
         if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-            if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+            if let hir::Res::Def(def_id) = &path.res {
                 if self.mir_package.borrow().struct_defs.contains_key(def_id)
                     || self.mir_package.borrow().enum_defs.contains_key(def_id)
                 {

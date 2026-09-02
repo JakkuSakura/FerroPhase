@@ -63,7 +63,7 @@ fn path_expr(name: &str) -> hir::Expr {
                 name: name.into(),
                 args: None,
             }],
-            res: None,
+            res: fp_core::hir::Res::Error,
         }),
         fp_core::span::Span::default(),
     )
@@ -139,7 +139,7 @@ pub fn discharge(
 /// `omega`'s unit tests.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use fp_core::hir::{BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment};
+    use fp_core::hir::{BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, Res};
     use fp_core::span::Span;
 
     pub fn lit_int(v: i64) -> Expr {
@@ -158,7 +158,7 @@ pub(crate) mod test_support {
                     name: name.into(),
                     args: None,
                 }],
-                res: None,
+                res: Res::Error,
             }),
             Span::default(),
         )

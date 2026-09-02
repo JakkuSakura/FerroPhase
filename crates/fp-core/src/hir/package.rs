@@ -398,11 +398,11 @@ fn classify_type_shape(
         TypeExprKind::FnPtr(_) => ImplShapeClass::Shape("fn(..)".to_string()),
         TypeExprKind::Never => ImplShapeClass::Shape("!".to_string()),
         TypeExprKind::Path(path) => match &path.res {
-            Some(Res::Builtin(builtin)) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
-            Some(Res::Def(did)) if generics.params.iter().any(|param| param.def_id == *did) => {
+            Res::Builtin(builtin) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
+            Res::Def(did) if generics.params.iter().any(|param| param.def_id == *did) => {
                 ImplShapeClass::Blanket
             }
-            Some(Res::Def(did)) => ImplShapeClass::Nominal(did.clone()),
+            Res::Def(did) => ImplShapeClass::Nominal(did.clone()),
             _ if path.segments.len() == 1
                 && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
             {
@@ -923,7 +923,7 @@ mod tests {
                     name: name.into(),
                     args: None,
                 }],
-                res: Some(res),
+                res,
             }),
             Span::null(),
         )

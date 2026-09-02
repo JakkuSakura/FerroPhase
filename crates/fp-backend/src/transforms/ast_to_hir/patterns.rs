@@ -45,7 +45,7 @@ impl AstToHirLowerer {
                                     name: hir::Symbol::new(ident.ident.as_str().to_string()),
                                     args: None,
                                 }],
-                                res: Some(hir::Res::Def(def_id)),
+                                res: hir::Res::Def(def_id),
                             }),
                         };
                         return Ok((hir_pat, None, false));
@@ -213,7 +213,7 @@ impl AstToHirLowerer {
                         kind: hir::PatKind::Struct(
                             hir::Path {
                                 segments: Vec::new(),
-                                res: None,
+                            res: hir::Res::Error,
                             },
                             fields,
                             structural.has_rest,

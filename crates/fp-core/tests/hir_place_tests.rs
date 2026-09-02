@@ -25,7 +25,7 @@ fn path_expr(hir_id: u32, name: &str) -> Expr {
                 name: Symbol::new(name),
                 args: None,
             }],
-            res: None,
+            res: Res::Error,
         }),
         span(),
     )

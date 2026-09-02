@@ -444,7 +444,7 @@ impl HirToMirLowerer {
                 .as_deref()
                 .and_then(|inner| self.eval_type_length(inner)),
             hir::ExprKind::Path(path) => {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res {
                     self.mir_package
                         .borrow()
                         .const_values
@@ -679,7 +679,7 @@ impl HirToMirLowerer {
                     .collect(),
             ),
             hir::TypeExprKind::Path(path) => {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res {
                     if let Some(def) = self.mir_package.borrow().struct_defs.get(def_id).cloned() {
                         return Some(def.fields.clone());
                     }
@@ -979,7 +979,7 @@ impl HirToMirLowerer {
         for variant in &variants {
             let payload_def = variant.payload.as_ref().and_then(|payload| {
                 if let hir::TypeExprKind::Path(path) = &payload.kind {
-                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res {
                         return Some(def_id.clone());
                     }
                 }
@@ -1099,7 +1099,7 @@ impl HirToMirLowerer {
 
     pub(super) fn resolve_path_def_id(&self, path: &hir::Path) -> Option<hir::DefId> {
         match path.res {
-            Some(hir::Res::Def(ref def_id)) => Some(def_id.clone()),
+            hir::Res::Def(ref def_id) => Some(def_id.clone()),
             _ => None,
         }
     }
@@ -1204,7 +1204,8 @@ impl HirToMirLowerer {
             }
         }
 
-        if let Some(res) = &path.res {
+        {
+            let res = &path.res;
             if let hir::Res::Def(def_id) = res {
                 if self.mir_package.borrow().struct_defs.contains_key(def_id) {
                     let args = path

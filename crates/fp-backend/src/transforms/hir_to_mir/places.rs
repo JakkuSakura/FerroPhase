@@ -30,7 +30,7 @@ impl<'a> BodyBuilder<'a> {
             .filter(|_| path.segments.len() == 1)
             .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
         match &path.res {
-            Some(hir::Res::Local(hir_id)) => {
+            hir::Res::Local(hir_id) => {
                 if let Some(local_id) = self.local_map.get(hir_id) {
                     let local_id = *local_id;
                     let ty = self.locals[local_id as usize].ty.clone();
@@ -59,7 +59,7 @@ impl<'a> BodyBuilder<'a> {
             }
             // Constants are operands, never assignable places. Let
             // `lower_operand` resolve them to their constant or global form.
-            Some(hir::Res::Def(_)) => {}
+            hir::Res::Def(_) => {}
             _ => {
                 if let Some(local_id) = fallback_local {
                     let ty = self.locals[local_id as usize].ty.clone();
@@ -1177,7 +1177,7 @@ impl<'a> BodyBuilder<'a> {
                         self.resolve_self_path(&mut resolved_path);
                         let mut const_info = None;
                         let mut const_body_len = None;
-                        if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+                        if let hir::Res::Def(def_id) = &resolved_path.res {
                             if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 const_info = Some(info.clone());
                             } else if let Some(konst) = self
@@ -1972,7 +1972,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let hir::ExprKind::Path(path) = &receiver.kind {
-                        if let Some(hir::Res::Def(def_id)) = &path.res {
+                        if let hir::Res::Def(def_id) = &path.res {
                             if let Some(const_info) =
                                 self.lowering.ensure_const_info(def_id.clone())
                             {

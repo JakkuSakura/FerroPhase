@@ -509,7 +509,7 @@ impl AstToHirLowerer {
                     }),
                     Some(hir::Res::Generic(def_id)) => Ok(ImplSelfKey::Param(def_id.clone())),
                     Some(hir::Res::Builtin(kind)) => Ok(ImplSelfKey::Builtin(kind.clone())),
-                    Some(hir::Res::BuiltinName(name)) => ast::TypePrimitive::from_name(name)
+                    Some(hir::Res::BuiltinName(name)) => ast::TypePrimitive::from_name(name.as_str())
                         .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
                         .ok_or_else(|| fp_core::Error::from("unresolved builtin impl self type")),
                     _ => Err(fp_core::Error::from("unresolved impl self type")),
@@ -1125,7 +1125,7 @@ impl AstToHirLowerer {
                                     name: hir::Symbol::new(name),
                                     args: None,
                                 }],
-                                res: Some(hir::Res::Def(def_id)),
+                                res: hir::Res::Def(def_id),
                             }),
                             span,
                         )
@@ -2634,7 +2634,7 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new(type_name),
                     args: None,
                 }],
-                res: None,
+                res: hir::Res::Error,
             }),
             Span::new(0, 0, 0),
         )
@@ -2660,7 +2660,7 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new("null"),
                     args: None,
                 }],
-                res: None,
+                res: hir::Res::Error,
             }),
             Span::new(self.current_file, 0, 0),
         )
@@ -2885,7 +2885,7 @@ impl AstToHirLowerer {
                 name: hir::Symbol::new(name.clone()),
                 args: None,
             }],
-            res: Some(hir::Res::Def(def_id)),
+            res: hir::Res::Def(def_id),
         };
         Ok(hir::TypeExpr::new(
             self.next_id(),
@@ -2957,7 +2957,7 @@ impl AstToHirLowerer {
                 name: hir::Symbol::new(def.name.clone()),
                 args: None,
             }],
-            res: Some(hir::Res::Def(def.def_id.clone())),
+            res: hir::Res::Def(def.def_id.clone()),
         }
     }
 

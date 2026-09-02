@@ -304,25 +304,24 @@ impl<'hir> InPackageResolver<'hir> {
         let mut made_progress = false;
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
-                let members = self.module_data().module(&directive.target).map(|source| {
-                    source
-                        .symbols
-                        .keys()
-                        .filter_map(|name| {
-                            match source.resolve(
-                                &InPackagePath::new(Vec::new()),
-                                name.as_str(),
-                                directive.namespace,
-                                self.resolution_rules,
-                            ) {
-                                fp_core::hir::resolve::ResolutionResult::Found(res) => {
-                                    Some((name.clone(), res))
-                                }
-                                _ => None,
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                });
+                let members = match self.resolver.resolve_parsed_path(
+                    &self.hir_package.id,
+                    &InPackagePath::new(Vec::new()),
+                    &directive.target.to_ast_path(),
+                    Namespace::Type,
+                ) {
+                    ResolutionResult::Found(hir::Res::Module(module)) => self
+                        .module_data()
+                        .children(&module)
+                        .map(|children| {
+                            children
+                                .iter()
+                                .filter(|(_, ns, _)| *ns == directive.namespace)
+                                .map(|(name, _, res)| (name.clone(), res.clone()))
+                                .collect::<Vec<_>>()
+                        }),
+                    _ => None,
+                };
                 let Some(members) = members else {
                     deferred.push_back(directive);
                     if worklist.queue.is_empty() && !made_progress {
@@ -365,17 +364,7 @@ impl<'hir> InPackageResolver<'hir> {
             let target = match resolved {
                 fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
                 fp_core::hir::resolve::ResolutionResult::Ambiguous => None,
-                fp_core::hir::resolve::ResolutionResult::NotFound(_) => {
-                    match self.module_data().resolve_path(
-                        &directive.module,
-                        &directive.target,
-                        directive.namespace,
-                        self.resolution_rules,
-                    ) {
-                        fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
-                        _ => None,
-                    }
-                }
+                fp_core::hir::resolve::ResolutionResult::NotFound(_) => None,
             };
             if let Some(target) = target {
                 self.declare_import(
@@ -447,15 +436,7 @@ impl<'hir> InPackageResolver<'hir> {
             match segment {
                 fp_core::ast::ItemImportTree::Root => base = InPackagePath::new(Vec::new()),
                 fp_core::ast::ItemImportTree::Crate => {
-                    base = module
-                        .head()
-                        .filter(|head| {
-                            self.module_data()
-                                .module(&InPackagePath::new(vec![(*head).to_owned()]))
-                                .is_some()
-                        })
-                        .map(|head| InPackagePath::new(vec![head.to_owned()]))
-                        .unwrap_or_else(|| InPackagePath::new(Vec::new()));
+                    base = InPackagePath::new(Vec::new());
                 }
                 fp_core::ast::ItemImportTree::SelfMod => base = module.clone(),
                 fp_core::ast::ItemImportTree::SuperMod => {

@@ -175,19 +175,15 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         hir::PackageId::new("test"),
     );
     let user_type = hir::DefId::new(hir::PackageId::new("test"), 7);
-    generator.package.module_tree.declare(
-        &InPackagePath::new(Vec::new()),
+    generator.package.module_data.add_child(
+        fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
         "u8",
-        fp_core::hir::resolve::Binding::Definition {
-            target: user_type.clone(),
-            namespace: fp_core::hir::resolve::Namespace::Type,
-            span: Span::null(),
-        },
-        fp_core::hir::resolve::DeclarationRules::rust(),
+        fp_core::hir::resolve::Namespace::Type,
+        hir::Res::Def(user_type.clone()),
     );
 
     let path: hir::Path = todo!();
-    assert_eq!(path.res, Some(hir::Res::Def(user_type)));
+    assert_eq!(path.res, hir::Res::Def(user_type));
     Ok(())
 }
 
@@ -838,15 +834,11 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     // `Result` is defined in `std::result` and re-exported through the
     // prelude; only the prelude alias entry is needed here for the bare
     // `Result` reference below to resolve.
-    generator.package.module_tree.declare(
-        &InPackagePath::new(Vec::new()),
+    generator.package.module_data.add_child(
+        fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
         "Result",
-        fp_core::hir::resolve::Binding::Definition {
-            target: result_def_id.clone(),
-            namespace: fp_core::hir::resolve::Namespace::Type,
-            span: Span::null(),
-        },
-        fp_core::hir::resolve::DeclarationRules::rust(),
+        fp_core::hir::resolve::Namespace::Type,
+        hir::Res::Def(result_def_id.clone()),
     );
 
     let target = ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("Result")));
@@ -871,7 +863,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     assert_eq!(path.segments.len(), 1);
     let seg = &path.segments[0];
     assert_eq!(seg.name.as_str(), "Result");
-    assert_eq!(path.res, Some(hir::Res::Def(result_def_id)));
+    assert_eq!(path.res, hir::Res::Def(result_def_id));
     let args = seg.args.as_ref().ok_or_else(|| {
         crate::error::optimization_error("expected generic args on Result".to_string())
     })?;
@@ -1056,7 +1048,7 @@ fn transform_generic_function_and_method() -> Result<()> {
     let generic_def_id = identity.sig.generics.params[0].def_id.clone();
     if let hir::TypeExprKind::Path(path) = &identity.sig.output.kind {
         assert!(
-            matches!(&path.res, Some(hir::Res::Def(def_id)) if *def_id == generic_def_id),
+            matches!(&path.res, hir::Res::Def(def_id) if *def_id == generic_def_id),
             "generic return type should resolve to its declared generic definition"
         );
     } else {
@@ -1065,7 +1057,7 @@ fn transform_generic_function_and_method() -> Result<()> {
     let param_ty = &identity.sig.inputs[0].ty;
     if let hir::TypeExprKind::Path(path) = &param_ty.kind {
         assert!(
-            matches!(&path.res, Some(hir::Res::Def(def_id)) if *def_id == generic_def_id),
+            matches!(&path.res, hir::Res::Def(def_id) if *def_id == generic_def_id),
             "generic parameter type should resolve to its declared generic definition"
         );
     } else {
@@ -1225,7 +1217,7 @@ fn transform_trait_associated_type_bounds() -> Result<()> {
     let hir::TypeExprKind::Path(bound) = &assoc_type.bounds[0].kind else {
         panic!("expected trait path bound");
     };
-    assert!(matches!(bound.res, Some(hir::Res::Def(_))));
+    assert!(matches!(bound.res, hir::Res::Def(_)));
     assert_eq!(bound.segments.last().unwrap().name.as_str(), "Borrow");
     Ok(())
 }
@@ -1263,7 +1255,7 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
     assert_eq!(bounds.len(), 3);
     assert!(bounds
         .iter()
-        .all(|bound| matches!(bound.res, Some(hir::Res::Def(_)))));
+        .all(|bound| matches!(bound.res, hir::Res::Def(_))));
     Ok(())
 }
 
@@ -1320,7 +1312,7 @@ fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
         panic!("expected dynamic field type");
     };
     assert_eq!(bounds.len(), 1);
-    let hir::Res::Def(trait_def_id) = bounds[0].res.clone().expect("resolved trait bound") else {
+    let hir::Res::Def(trait_def_id) = bounds[0].res.clone() else {
         panic!("expected trait definition");
     };
     assert!(!program.placeholder_defs.contains(&trait_def_id));
@@ -1382,7 +1374,7 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
     let hir::TypeExprKind::Dynamic(bounds) = &holder.fields[0].ty.kind else {
         panic!("expected dynamic field type");
     };
-    let hir::Res::Def(error_id) = bounds[0].res.clone().expect("resolved foreign trait") else {
+    let hir::Res::Def(error_id) = bounds[0].res.clone() else {
         panic!("expected foreign trait definition");
     };
     assert_eq!(error_id.package_id, hir::PackageId::new("dependency"));
@@ -1482,7 +1474,7 @@ fn enum_constructor_keeps_variant_identity_with_generic_arguments() -> Result<()
     let hir::ExprKind::Path(path) = &callee.kind else {
         panic!("expected path callee");
     };
-    assert_eq!(path.res, Some(hir::Res::Def(variant_id.clone())));
+    assert_eq!(path.res, hir::Res::Def(variant_id.clone()));
     assert_ne!(variant_id, enum_id);
     Ok(())
 }
@@ -1527,7 +1519,7 @@ fn enum_constructor_through_alias_keeps_nominal_variant_identity() -> Result<()>
     let hir::ExprKind::Path(path) = &callee.kind else {
         panic!("expected path callee");
     };
-    assert_eq!(path.res, Some(hir::Res::Def(variant_id)));
+    assert_eq!(path.res, hir::Res::Def(variant_id));
     Ok(())
 }
 
@@ -1574,7 +1566,7 @@ fn self_enum_constructor_preserves_type_relative_identity() -> Result<()> {
     let hir::ExprKind::Path(path) = &callee.kind else {
         panic!("expected type-relative constructor path");
     };
-    assert_eq!(path.res, Some(hir::Res::Def(variant_id)));
+    assert_eq!(path.res, hir::Res::Def(variant_id));
     assert_eq!(
         path.segments.last().map(|segment| segment.name.as_str()),
         Some("Text")
@@ -1604,12 +1596,11 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
     assert_eq!(alias.def_id.package_id.as_str(), "test");
     assert!(program.def_map.contains_key(&alias.def_id));
     assert!(!program
-        .module_tree
-        .resolve(
-            &InPackagePath::new(Vec::new()),
-            "Alias",
+        .module_data
+        .resolve_module(
+            &fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
+            &["Alias".to_string()],
             fp_core::hir::resolve::Namespace::Type,
-            fp_core::hir::resolve::ResolutionRules::rust(),
         )
         .is_not_found());
     Ok(())
@@ -1683,23 +1674,12 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     let mut std = std_lowerer.transform_package(&std_source)?;
     std.hir_exports = std_lowerer.exported_symbols();
     assert_eq!(
-        std.module_tree
-            .bindings(&InPackagePath::new(Vec::new()))
-            .find(|(name, bindings)| {
-                name.as_str() == "Ok"
-                    && bindings.iter().any(|binding| {
-                        binding.namespace() == fp_core::hir::resolve::Namespace::Type
-                    })
-            })
-            .and_then(|(_, bindings)| {
-                bindings.iter().find_map(|binding| match binding {
-                    fp_core::hir::resolve::Binding::Definition { target, .. } => {
-                        Some(hir::Res::Def(target.clone()))
-                    }
-                    _ => None,
-                })
-            }),
-        Some(hir::Res::Def(ok_def_id.clone())),
+        std.module_data.resolve_module(
+            &fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("std")),
+            &["Ok".to_string()],
+            fp_core::hir::resolve::Namespace::Type,
+        ),
+        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(ok_def_id.clone())),
     );
 
     let workspace = std_lowerer.hir_program.clone();
@@ -1725,7 +1705,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     let hir::TypeExprKind::Path(path) = &holder.fields[0].ty.kind else {
         panic!("expected Holder field to be a path");
     };
-    assert_eq!(path.res, Some(hir::Res::Def(ok_def_id)));
+    assert_eq!(path.res, hir::Res::Def(ok_def_id));
     Ok(())
 }
 
@@ -1799,7 +1779,7 @@ fn transform_package_resolves_sysroot_io_result_reexport_chain() -> Result<()> {
     let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
         panic!("expected transparent Result alias to lower as a path");
     };
-    let Some(hir::Res::Def(def_id)) = &path.res else {
+    let hir::Res::Def(def_id) = &path.res else {
         panic!("std::io::Result must resolve through std and alloc re-exports: {path:?}");
     };
     let result = program
@@ -1869,7 +1849,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
     let hir::TypeExprKind::Path(path) = &holder.fields[0].ty.kind else {
         panic!("expected qualified dependency type path");
     };
-    assert_eq!(path.res, Some(hir::Res::Def(public_type_id.clone())));
+    assert_eq!(path.res, hir::Res::Def(public_type_id.clone()));
     assert_eq!(
         path.segments
             .iter()
@@ -1996,7 +1976,7 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
     let hir::TypeExprKind::Path(formatter_path) = &holder.fields[0].ty.kind else {
         panic!("expected Formatter path");
     };
-    assert_eq!(formatter_path.res, Some(hir::Res::Def(formatter_id)));
+    assert_eq!(formatter_path.res, hir::Res::Def(formatter_id));
     assert_eq!(
         formatter_path
             .segments
@@ -2173,7 +2153,7 @@ fn transform_imported_dependency_enum_variant_uses_defining_identity() -> Result
     let hir::TypeExprKind::Path(path) = &function.sig.output.kind else {
         panic!("expected RefNode output path")
     };
-    assert!(matches!(path.res, Some(hir::Res::Def(_))));
+    assert!(matches!(path.res, hir::Res::Def(_)));
     Ok(())
 }
 
@@ -2496,7 +2476,7 @@ fn resolves_local_struct_constructor_inside_impl_method() -> Result<()> {
             let hir::ExprKind::Path(path) = &callee.kind else {
                 return None;
             };
-            (path.res == Some(hir::Res::Def(string_error.clone()))).then_some(local)
+            (path.res == hir::Res::Def(string_error.clone())).then_some(local)
         })
         .expect("local constructor call");
     assert!(local.init.is_some());
@@ -2601,7 +2581,7 @@ fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Resu
         panic!("expected associated function path");
     };
     assert!(
-        matches!(path.res, Some(hir::Res::Def(_))),
+        matches!(path.res, hir::Res::Def(_)),
         "callee resolution: {:?}",
         path.res
     );
@@ -2699,7 +2679,7 @@ fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
     );
     assert_eq!(
         path.res,
-        Some(hir::Res::Def(generic_def_id)),
+        hir::Res::Def(generic_def_id),
         "type-relative associated constants resolve their base type in AST→HIR"
     );
     Ok(())
@@ -2937,7 +2917,7 @@ fn transform_associated_const_uses_type_namespace_for_base() -> Result<()> {
             body_expr.kind
         );
     };
-    assert_eq!(path.res, Some(hir::Res::Def(generic_def_id)));
+    assert_eq!(path.res, hir::Res::Def(generic_def_id));
     Ok(())
 }
 
@@ -2985,7 +2965,7 @@ fn transform_generic_associated_type_path_keeps_qpath_base() -> Result<()> {
                 .collect::<Vec<_>>(),
             expected_segments
         );
-        assert_eq!(path.res, None);
+    assert_eq!(path.res, hir::Res::Error);
     }
     Ok(())
 }
@@ -3032,7 +3012,7 @@ fn transform_module_const_keeps_value_namespace_for_base() -> Result<()> {
         vec!["values", "FLAG"]
     );
     assert!(
-        matches!(path.res, Some(hir::Res::Def(_))),
+        matches!(path.res, hir::Res::Def(_)),
         "module-qualified constants resolve to the module's value definition"
     );
     Ok(())
@@ -3749,7 +3729,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         assert!(
             paths
                 .iter()
-                .all(|path| matches!(path.res, Some(hir::Res::Local(_)))),
+                .all(|path| matches!(path.res, hir::Res::Local(_))),
             "expected {name} to resolve to a local"
         );
     }

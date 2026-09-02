@@ -28,7 +28,7 @@ impl<'a> BodyBuilder<'a> {
             let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
                 return None;
             };
-            if let Some(hir::Res::Def(def_id)) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res {
                 if self
                     .lowering
                     .mir_package
@@ -50,7 +50,7 @@ impl<'a> BodyBuilder<'a> {
         });
         if let Some(ty_expr) = local.ty.as_ref() {
             if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-                if let Some(hir::Res::Def(def_id)) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res {
                     if self
                         .lowering
                         .mir_package

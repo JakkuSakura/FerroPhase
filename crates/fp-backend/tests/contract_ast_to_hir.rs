@@ -321,7 +321,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
                 if let hir::ExprKind::Path(path) = &callee.kind {
                     assert_eq!(path.segments.len(), 1);
                     assert_eq!(path.segments[0].name, "sum");
-                    assert_eq!(path.res, Some(hir::Res::Def(add_def_id)));
+                    assert_eq!(path.res, hir::Res::Def(add_def_id));
                 } else {
                     panic!("expected alias to lower into a path expression");
                 }
@@ -450,7 +450,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
                 assert_eq!(args.len(), 2);
                 if let hir::ExprKind::Path(path) = &callee.kind {
                     assert_eq!(path.segments.last().unwrap().name, "add");
-                    assert_eq!(path.res, Some(hir::Res::Def(add_def_id)));
+                    assert_eq!(path.res, hir::Res::Def(add_def_id));
                 } else {
                     panic!("expected call to lower with a path callee");
                 }

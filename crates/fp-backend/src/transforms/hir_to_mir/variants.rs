@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 impl<'a> BodyBuilder<'a> {
     pub(super) fn enum_variant_info_from_path(&self, path: &hir::Path) -> Option<EnumVariantInfo> {
-        if let Some(hir::Res::Def(def_id)) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res {
             if let Some(info) = self
                 .lowering
                 .mir_package
@@ -31,7 +31,7 @@ impl<'a> BodyBuilder<'a> {
                 return None;
             }
         }
-        if matches!(path.res, Some(hir::Res::Local(_)) | Some(hir::Res::SelfTy)) {
+        if matches!(path.res, hir::Res::Local(_) | hir::Res::SelfTy) {
             return None;
         }
 
@@ -1367,7 +1367,7 @@ impl<'a> BodyBuilder<'a> {
             if let (Some(hir::Res::Def(def_id)), Some(expected_def_id)) =
                 (path.res.as_ref(), expected_def_id)
             {
-                if *def_id != expected_def_id {
+                if def_id != &expected_def_id {
                     let matches_name = path
                         .segments
                         .last()

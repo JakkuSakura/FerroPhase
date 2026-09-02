@@ -364,7 +364,7 @@ impl AstToHirLowerer {
         let hir::TypeExprKind::Path(path) = &ty.kind else {
             return false;
         };
-        let Some(hir::Res::Def(ref def_id)) = path.res else {
+        let hir::Res::Def(ref def_id) = path.res else {
             return false;
         };
         self.unimplemented_type_def_ids.contains(&def_id)
@@ -662,7 +662,7 @@ impl AstToHirLowerer {
                         name: hir::Symbol::new("Self"),
                         args: None,
                     }],
-                    res: Some(hir::Res::SelfTy),
+                    res: hir::Res::SelfTy,
                 }),
                 Span::new(self.current_file, 0, 0),
             );

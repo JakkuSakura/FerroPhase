@@ -589,7 +589,7 @@ fn collect_path_refs(
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
-    if let Some(hir::Res::Def(ref def_id)) = path.res {
+    if let hir::Res::Def(ref def_id) = path.res {
         work.push_back(def_id.clone());
         return;
     }
@@ -654,7 +654,7 @@ mod tests {
                         args: None,
                     })
                     .collect(),
-                res,
+                res: res.unwrap_or(hir::Res::Error),
             }),
             span: Span::null(),
         }

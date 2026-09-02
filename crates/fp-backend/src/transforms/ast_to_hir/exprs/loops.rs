@@ -237,7 +237,7 @@ impl AstToHirLowerer {
                     name: idx_name.clone(),
                     args: None,
                 }],
-                res: Some(hir::Res::Local(idx_pat.hir_id)),
+                res: hir::Res::Local(idx_pat.hir_id),
             }),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -470,7 +470,7 @@ impl AstToHirLowerer {
                     name: base_name,
                     args: None,
                 }],
-                res: Some(hir::Res::Local(base_pat.hir_id)),
+                res: hir::Res::Local(base_pat.hir_id),
             }),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -550,7 +550,7 @@ impl AstToHirLowerer {
                     name: idx_name.clone(),
                     args: None,
                 }],
-                res: Some(hir::Res::Local(idx_pat.hir_id)),
+                res: hir::Res::Local(idx_pat.hir_id),
             }),
             span: Span::new(self.current_file, 0, 0),
         };

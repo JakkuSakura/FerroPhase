@@ -719,7 +719,7 @@ impl<'a> HirToAstLifter<'a> {
             }),
             hir::ExprKind::Path(path) => {
                 let portable_op = match path.res {
-                    Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                    hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                     _ => None,
                 };
                 if let Some(op) = portable_op {
@@ -773,7 +773,7 @@ impl<'a> HirToAstLifter<'a> {
                     .and_then(|def_id| self.portable_op_for_def(def_id))
                     .or_else(|| match &callee.kind {
                         hir::ExprKind::Path(path) => match path.res {
-                            Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                            hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                             _ => None,
                         },
                         _ => None,
@@ -791,7 +791,7 @@ impl<'a> HirToAstLifter<'a> {
                     .and_then(|def_id| self.intrinsic_call_for_def(def_id))
                     .or_else(|| match &callee.kind {
                         hir::ExprKind::Path(path) => match path.res {
-                            Some(hir::Res::Def(ref def_id)) => self.intrinsic_call_for_def(def_id),
+                            hir::Res::Def(ref def_id) => self.intrinsic_call_for_def(def_id),
                             _ => None,
                         },
                         _ => None,
@@ -914,7 +914,7 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::ExprKind::Struct(path, fields) => {
                 let portable_op = match path.res {
-                    Some(hir::Res::Def(ref def_id)) => self.portable_op_for_def(def_id),
+                    hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                     _ => None,
                 };
                 if let Some(op) = portable_op {
@@ -1594,7 +1594,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `fp-kotlin`'s `emit_enum` already expands inline for a struct-
     /// shaped variant) instead of referencing it by a name nothing defines.
     fn inline_synthetic_struct_ty(&self, path: &hir::Path) -> Result<Option<Ty>> {
-        let Some(hir::Res::Def(def_id)) = &path.res else {
+        let hir::Res::Def(def_id) = &path.res else {
             return Ok(None);
         };
         let Some(item) = self.hir_program.item(def_id.clone()) else {
@@ -1964,12 +1964,12 @@ impl<'a> HirToAstLifter<'a> {
     /// through to the plain conversion below, which is simply correct for
     /// those, not a guess.
     fn lift_path(&self, path: &hir::Path) -> Path {
-        if let Some(hir::Res::Local(hir_id)) = &path.res {
+        if let hir::Res::Local(hir_id) = &path.res {
             if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
                 return Path::plain(vec![Ident::new(renamed.clone())]);
             }
         }
-        if let Some(hir::Res::Def(def_id)) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res {
             let enum_name = self
                 .hir_program
                 .member_owner(def_id.clone())
@@ -2052,7 +2052,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::Assign(lhs, rhs) => {
             let assigns_target = matches!(
                 &lhs.kind,
-                hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(ref id)) if *id == target)
+                hir::ExprKind::Path(path) if matches!(path.res, hir::Res::Local(ref id) if *id == target)
             );
             assigns_target
                 || expr_assigns_local(lhs, target.clone())
@@ -2086,7 +2086,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
                 && args.is_empty()
                 && matches!(
                     &recv.kind,
-                    hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(ref id)) if *id == target)
+                    hir::ExprKind::Path(path) if matches!(path.res, hir::Res::Local(ref id) if *id == target)
                 );
             resets_target
                 || expr_assigns_local(recv, target.clone())
@@ -2415,7 +2415,7 @@ mod tests {
                         // This deliberately remains the nominal type DefId:
                         // the selected associated member comes only from
                         // type checking's call-resolution table.
-                        res: Some(hir::Res::Def(receiver_id)),
+                        res: hir::Res::Def(receiver_id),
                     }),
                     span: Span::null(),
                 }),
@@ -2482,7 +2482,7 @@ mod tests {
                             name: "from_utf8_lossy".into(),
                             args: None,
                         }],
-                        res: Some(hir::Res::Def(function_id)),
+                        res: hir::Res::Def(function_id),
                     }),
                     span: Span::null(),
                 }),
@@ -2522,7 +2522,7 @@ mod tests {
                             name: "path".into(),
                             args: None,
                         }],
-                        res: Some(hir::Res::Def(receiver_id)),
+                        res: hir::Res::Def(receiver_id),
                     }),
                     span: Span::null(),
                 }),
@@ -2567,7 +2567,7 @@ mod tests {
                         name: name.into(),
                         args: None,
                     }],
-                    res: Some(hir::Res::Def(def_id)),
+                    res: hir::Res::Def(def_id),
                 }),
                 Span::null(),
             )
@@ -2590,7 +2590,7 @@ mod tests {
                     name: "output".into(),
                     args: None,
                 }],
-                res: Some(hir::Res::Local(hir::HirId::new(owner.clone(), 27))),
+                res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
             }),
             Span::null(),
         );
@@ -2704,7 +2704,7 @@ mod tests {
                     name: "ListAlias".into(),
                     args: None,
                 }],
-                res: Some(hir::Res::Def(vec_def_id.clone())),
+                res: hir::Res::Def(vec_def_id.clone()),
             }),
             Span::null(),
         );
@@ -2715,7 +2715,7 @@ mod tests {
                     name: "FileAlias".into(),
                     args: None,
                 }],
-                res: Some(hir::Res::Def(command_def_id.clone())),
+                res: hir::Res::Def(command_def_id.clone()),
             }),
             Span::null(),
         );

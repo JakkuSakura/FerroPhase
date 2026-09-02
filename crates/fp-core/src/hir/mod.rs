@@ -8,7 +8,6 @@ pub type PackageId = crate::package::PackageId;
 
 pub mod ident;
 pub mod package;
-pub mod path;
 pub mod place;
 pub mod pretty;
 pub mod program;
@@ -18,7 +17,6 @@ pub mod ty;
 
 pub use ident::Symbol;
 pub use package::HirPackage;
-pub use path::HirPath;
 pub use program::{HirProgram, SharedHirProgram};
 pub use refinement::{ParamSlot, RefinementHint};
 pub use ty::{Abi, Ty};
@@ -680,8 +678,8 @@ pub struct FnPtrType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path {
+    pub res: Res,
     pub segments: Vec<PathSegment>,
-    pub res: Option<Res>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -852,6 +850,22 @@ pub enum Res {
     /// lowering stage records semantic impl identity separately; this value
     /// remains the HIR marker for structural dispatch.
     Builtin(BuiltinSelfType),
+}
+
+impl Res {
+    /// Treat `Res::Error` as the required-field equivalent of an absent
+    /// resolution for legacy query code.
+    pub fn as_ref(&self) -> Option<&Self> {
+        (!matches!(self, Self::Error)).then_some(self)
+    }
+
+    pub fn is_some(&self) -> bool {
+        !matches!(self, Self::Error)
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::Error)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

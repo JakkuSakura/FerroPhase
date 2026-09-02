@@ -146,7 +146,7 @@ impl<'a> BodyBuilder<'a> {
                 // `payload_types_from_type_substs` reads for enum payloads)
                 // already holds the concrete substitution for it. AST→HIR
                 // still lowers an unresolved bare identifier like `T` to a
-                // usable `hir::Path` (segment name preserved, `res: None`),
+                // usable `hir::Path` (segment name preserved, `res: Error`),
                 // so check `type_substs` by name before falling through to
                 // the struct-only path below.
                 if let hir::ExprKind::Path(path) = &target_expr.kind {
@@ -950,7 +950,7 @@ impl<'a> BodyBuilder<'a> {
                         name: hir::Symbol::new(call_name),
                         args: None,
                     }],
-                    res: None,
+                    res: hir::Res::Error,
                 };
                 let call_expr = hir::Expr {
                     hir_id: expr.hir_id.clone(),
@@ -1090,7 +1090,7 @@ impl<'a> BodyBuilder<'a> {
                         name: hir::Symbol::new(call_name),
                         args: None,
                     }],
-                    res: None,
+                    res: hir::Res::Error,
                 };
                 let call_expr = hir::Expr {
                     hir_id: expr.hir_id.clone(),
@@ -1482,7 +1482,7 @@ impl<'a> BodyBuilder<'a> {
         let hir::ExprKind::Path(path) = &expr.kind else {
             return None;
         };
-        let Some(hir::Res::Def(def_id)) = &path.res else {
+        let hir::Res::Def(def_id) = &path.res else {
             return None;
         };
         let const_info = self.lowering.ensure_const_info(def_id.clone())?;
@@ -1628,7 +1628,7 @@ impl<'a> BodyBuilder<'a> {
             .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
             .unwrap_or_default();
 
-        if let Some(hir::Res::Def(def_id)) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res {
             let resolved_def_id = def_id.clone();
             self.lowering
                 .try_lazily_register_adt(resolved_def_id.clone(), expr.span);
