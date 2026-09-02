@@ -13,22 +13,19 @@ use fp_core::hir::resolve::{
     ResolutionResult, ResolutionRules,
 };
 use fp_core::span::Span;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 pub struct AstResolver<'hir> {
-    package: Rc<RefCell<fp_core::ast::package::AstPackage>>,
     hir_package: &'hir mut hir::HirPackage,
     pub locals: LocalScope,
     pub declaration_rules: DeclarationRules,
     pub resolution_rules: ResolutionRules,
     resolutions: HashMap<InPackagePath, hir::Res>,
-    /// Workspace registry used for extern-prelude lookup.  Keeping the
-    /// registry (rather than cloned module trees) means imports resolve
-    /// against the live AST packages and avoids a second, stale resolution
-    /// snapshot.
+    /// Authoritative AST package registry used for package-directed lookup.
+    /// The resolver retains the program instead of cloning package/module
+    /// state into a second registry.
     ast_program: Rc<AstProgram>,
 }
 
@@ -40,8 +37,8 @@ impl<'hir> AstResolver<'hir> {
         resolution_rules: ResolutionRules,
         ast_program: Rc<AstProgram>,
     ) -> Self {
+        let _ = ast_program.get_ast_package(&ast_package_id);
         Self {
-            package: ast_program.get_ast_package(&ast_package_id),
             hir_package,
             locals: LocalScope::new(),
             declaration_rules,
@@ -99,7 +96,12 @@ impl<'hir> AstResolver<'hir> {
             self.package_tree_mut().ensure_module(&module);
             self.collect_item(&module, &package_item.item);
         }
-        let preludes = self.package.borrow().prelude_modules.clone();
+        let preludes = self
+            .ast_program
+            .get_ast_package(&self.hir_package.id)
+            .borrow()
+            .prelude_modules
+            .clone();
         for prelude in preludes {
             if let ResolutionResult::Found(hir::Res::Module(def_id)) =
                 self.package_tree().resolve_path(
