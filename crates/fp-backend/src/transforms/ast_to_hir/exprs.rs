@@ -46,7 +46,7 @@ impl AstToHirLowerer {
         };
 
         let item = self
-            .package
+            .package_mut()
             .def_map
             .get(&def_id)
             .cloned()
@@ -468,7 +468,7 @@ impl AstToHirLowerer {
         // Recorded once, unconditionally, right here — not lazily by the
         // type checker each time it happens to encounter this node (see
         // `hir::HirPackage::const_block_defs`'s doc comment).
-        self.package.add_anonymous_const(
+        self.package_mut().add_anonymous_const(
             def_id.clone(),
             hir::Block {
                 hir_id,
@@ -500,7 +500,7 @@ impl AstToHirLowerer {
 
     /// Generate next definition ID
     pub(super) fn next_def_id(&mut self) -> hir::DefId {
-        self.package.next_def_id()
+        self.package_mut().next_def_id()
     }
 
     // transform_function moved to items.rs
@@ -559,7 +559,10 @@ impl AstToHirLowerer {
                 segments.push(self.make_path_segment(struct_name, None));
                 let res = self.resolve_type_symbol(struct_name);
 
-                let path = hir::Path { segments, res: res.unwrap_or(hir::Res::Error) };
+                let path = hir::Path {
+                    segments,
+                    res: res.unwrap_or(hir::Res::Error),
+                };
 
                 let mut fields = Vec::with_capacity(struct_val.structural.fields.len());
                 for field in &struct_val.structural.fields {
@@ -804,9 +807,7 @@ impl AstToHirLowerer {
                             self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
                         if matches!(
                             base_path.res,
-                            hir::Res::Def(_)
-                                | hir::Res::Builtin(_)
-                                | hir::Res::SelfTy
+                            hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy
                         ) {
                             // This is rustc's `QPath::TypeRelative` shape:
                             // the resolver has established the nominal/type
@@ -825,7 +826,7 @@ impl AstToHirLowerer {
                             path.segments
                                 .push(self.make_path_segment(&select.field.name, member_args));
                             if let Some(res) = self.lookup_enum_variant(&path, &select.field.name) {
-                            path.res = res;
+                                path.res = res;
                             }
                             let func_expr = hir::Expr {
                                 hir_id: self.next_id(),
@@ -1049,7 +1050,7 @@ impl AstToHirLowerer {
                                 name: field.name.clone().into(),
                                 args: None,
                             }],
-                        res: res.unwrap_or(hir::Res::Error),
+                            res: res.unwrap_or(hir::Res::Error),
                         }),
                         span: self.create_span(1),
                     }
@@ -2127,7 +2128,7 @@ impl AstToHirLowerer {
             }
         }
 
-        let local = match self.hir_program.resolve_module_path_final(
+        let local = match self.local_resolver.resolve_global_path(
             &self.package_id,
             &self.module_path,
             path,
@@ -2140,7 +2141,7 @@ impl AstToHirLowerer {
         };
         local.or_else(|| {
             if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                match self.hir_program.resolve_module_path_final(
+                match self.local_resolver.resolve_global_path(
                     &self.package_id,
                     &self.module_path,
                     path,

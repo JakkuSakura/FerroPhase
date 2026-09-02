@@ -1,8 +1,8 @@
 use super::*;
 use crate::transforms::HirToAstLifter;
 use fp_core::ast;
-use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::PackageDescriptor;
+use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{AstPackage, PackageId};
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
@@ -175,7 +175,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         hir::PackageId::new("test"),
     );
     let user_type = hir::DefId::new(hir::PackageId::new("test"), 7);
-    generator.package.module_data.add_child(
+    generator.package_mut().module_data.add_child(
         fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
         "u8",
         fp_core::hir::resolve::Namespace::Type,
@@ -447,7 +447,7 @@ fn test_hir_generator_creation() {
         hir::PackageId::new("test"),
     );
     assert_eq!(generator.local_id, 0);
-    assert_eq!(generator.package.next_def_id, 1);
+    assert_eq!(generator.package().next_def_id, 1);
 }
 
 #[test]
@@ -834,7 +834,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     // `Result` is defined in `std::result` and re-exported through the
     // prelude; only the prelude alias entry is needed here for the bare
     // `Result` reference below to resolve.
-    generator.package.module_data.add_child(
+    generator.package_mut().module_data.add_child(
         fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
         "Result",
         fp_core::hir::resolve::Namespace::Type,
@@ -1253,9 +1253,11 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
     };
 
     assert_eq!(bounds.len(), 3);
-    assert!(bounds
-        .iter()
-        .all(|bound| matches!(bound.res, hir::Res::Def(_))));
+    assert!(
+        bounds
+            .iter()
+            .all(|bound| matches!(bound.res, hir::Res::Def(_)))
+    );
     Ok(())
 }
 
@@ -1595,14 +1597,16 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
         .expect("ordinary aliases must be published as HIR items");
     assert_eq!(alias.def_id.package_id.as_str(), "test");
     assert!(program.def_map.contains_key(&alias.def_id));
-    assert!(!program
-        .module_data
-        .resolve_module(
-            &fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
-            &["Alias".to_string()],
-            fp_core::hir::resolve::Namespace::Type,
-        )
-        .is_not_found());
+    assert!(
+        !program
+            .module_data
+            .resolve_module(
+                &fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test")),
+                &["Alias".to_string()],
+                fp_core::hir::resolve::Namespace::Type,
+            )
+            .is_not_found()
+    );
     Ok(())
 }
 
@@ -2322,10 +2326,12 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
             _ => None,
         })
         .expect("lowered Holder");
-    assert!(holder
-        .fields
-        .iter()
-        .all(|field| { !matches!(field.ty.kind, hir::TypeExprKind::Error) }));
+    assert!(
+        holder
+            .fields
+            .iter()
+            .all(|field| { !matches!(field.ty.kind, hir::TypeExprKind::Error) })
+    );
     Ok(())
 }
 
@@ -2965,7 +2971,7 @@ fn transform_generic_associated_type_path_keeps_qpath_base() -> Result<()> {
                 .collect::<Vec<_>>(),
             expected_segments
         );
-    assert_eq!(path.res, hir::Res::Error);
+        assert_eq!(path.res, hir::Res::Error);
     }
     Ok(())
 }
@@ -4167,8 +4173,8 @@ fn transform_package_expands_macro_invocation_before_definition() -> Result<()> 
 /// the wrong one-segment root, for a path that depends on a same-file-level
 /// re-export chain rather than a direct definition.
 #[test]
-fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_subcrate(
-) -> Result<()> {
+fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_subcrate()
+-> Result<()> {
     let location_item = make_struct("Location", vec![("value", int_ty())]);
 
     let panic_self_reexport = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {

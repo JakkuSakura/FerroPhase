@@ -37,7 +37,7 @@ impl AstToHirLowerer {
             _ => return None,
         };
         let item = self
-            .package
+            .package_mut()
             .def_map
             .get(&def_id)
             .cloned()
@@ -207,9 +207,7 @@ impl AstToHirLowerer {
                 // not a type-relative path. Preserve rustc's namespace
                 // fallback for that case after the type-relative lookup.
                 let mut base = match value_base {
-                    Some(value_base) if matches!(value_base.res, hir::Res::Module(_)) => {
-                        value_base
-                    }
+                    Some(value_base) if matches!(value_base.res, hir::Res::Module(_)) => value_base,
                     _ => type_base,
                 };
                 let member_args = if select.generic_args.is_empty() {

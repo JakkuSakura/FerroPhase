@@ -13,20 +13,17 @@ use fp_core::hir::resolve::{Namespace, ResolutionResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+pub mod local;
 pub mod package;
 pub mod worklist;
 
 pub struct Resolver {
-    program: Rc<AstProgram>,
     hir_program: Rc<RefCell<HirProgram>>,
 }
 
 impl Resolver {
-    pub fn new(program: Rc<AstProgram>, hir_program: Rc<RefCell<HirProgram>>) -> Self {
-        Self {
-            program,
-            hir_program,
-        }
+    pub fn new(_program: Rc<AstProgram>, hir_program: Rc<RefCell<HirProgram>>) -> Self {
+        Self { hir_program }
     }
 
     /// Read-only lookup of a parsed source path at its lexical location.
@@ -88,7 +85,8 @@ impl Resolver {
             } else {
                 Namespace::Type
             };
-            let result = hir_program.resolve_module_child(&module, segment.name.as_str(), segment_namespace);
+            let result =
+                hir_program.resolve_module_child(&module, segment.name.as_str(), segment_namespace);
             last_result = result.clone();
             if offset + 1 == count {
                 return result;

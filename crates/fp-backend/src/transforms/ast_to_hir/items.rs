@@ -391,9 +391,7 @@ impl AstToHirLowerer {
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 Some(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(
-                        todo!(),
-                    ),
+                    hir::TypeExprKind::Path(todo!()),
                     Span::new(self.current_file, 0, 0),
                 ))
             } else {
@@ -441,7 +439,7 @@ impl AstToHirLowerer {
                                 fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
                                     .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
                             {
-                                self.package
+                                self.package_mut()
                                     .intrinsic_defs
                                     .insert(method_def_id.clone(), kind);
                             }

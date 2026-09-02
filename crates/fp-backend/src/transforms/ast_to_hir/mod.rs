@@ -9,9 +9,13 @@ use fp_core::query::{
 };
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
+use fp_resolve::local::LocalResolver;
+use fp_resolve::package::InPackageResolver;
 use fp_sql::sql_ast::parse_sql_ast;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 mod closure;
 pub(crate) use closure::strip_doc_attrs_in_items;
@@ -127,7 +131,7 @@ pub struct AstToHirLowerer {
     /// carry the AST resolver's binding shape (including source metadata)
     /// — the former `global_type_defs`/
     /// maps too. See `docs/Resolution.md`.
-    package: hir::HirPackage,
+    package_handle: Rc<RefCell<hir::HirPackage>>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     local_dispatch_items: Vec<hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
@@ -169,13 +173,14 @@ pub struct AstToHirLowerer {
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
-    local_scope: fp_core::hir::resolve::LocalScope,
+    local_resolver: LocalResolver,
     /// The whole workspace's HIR (every already-published dependency
     /// package, plus this package once transformed) — required upfront for
     /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
     /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
     hir_program: fp_core::hir::SharedHirProgram,
+    package_resolver: Option<Rc<RefCell<InPackageResolver>>>,
     diagnostics: DiagnosticManager,
 }
 
@@ -255,11 +260,40 @@ enum LiteralTypeKind {
 }
 
 impl AstToHirLowerer {
+    fn package(&self) -> Ref<'_, hir::HirPackage> {
+        self.package_handle.borrow()
+    }
+
+    fn package_mut(&self) -> RefMut<'_, hir::HirPackage> {
+        self.package_handle.borrow_mut()
+    }
+
+    fn declared_def_id(
+        &self,
+        name: &str,
+        namespace: fp_core::hir::resolve::Namespace,
+    ) -> Option<hir::DefId> {
+        self.package_resolver.as_ref()?.borrow().resolve_declared(
+            &self.module_path,
+            name,
+            namespace,
+        )
+    }
+
+    fn declared_or_next_def_id(
+        &mut self,
+        name: &str,
+        namespace: fp_core::hir::resolve::Namespace,
+    ) -> hir::DefId {
+        self.declared_def_id(name, namespace)
+            .unwrap_or_else(|| self.next_def_id())
+    }
+
     /// Provides the package being lowered to the AST resolver so definition
     /// identities are allocated from the same HIR-owned counter used by the
     /// rest of lowering.
-    pub fn hir_package_mut(&mut self) -> &mut hir::HirPackage {
-        &mut self.package
+    pub fn hir_package_handle(&self) -> Rc<RefCell<hir::HirPackage>> {
+        Rc::clone(&self.package_handle)
     }
 
     fn add_error(&mut self, diag: Diagnostic) {
@@ -307,7 +341,7 @@ impl AstToHirLowerer {
     }
 
     /// Create a new HIR generator for `package_id` — required upfront (not
-    /// filled in later via a builder method) so `self.package`'s own id is
+    /// filled in later via a builder method) so the package's own id is
     /// correct from construction, never a placeholder default that a
     /// caller might forget to override (see `HirPackage::new`'s doc
     /// comment for the bug this class of mistake caused). `hir_program`
@@ -335,7 +369,7 @@ impl AstToHirLowerer {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            package: hir::HirPackage::new(package_id),
+            package_handle: Rc::new(RefCell::new(hir::HirPackage::new(package_id))),
             program_def_map: HashMap::new(),
             local_dispatch_items: Vec::new(),
             suppress_global_registration_depth: 0,
@@ -345,9 +379,15 @@ impl AstToHirLowerer {
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
-            workspace,
-            local_scope: fp_core::hir::resolve::LocalScope::new(),
+            workspace: Rc::clone(&workspace),
+            local_resolver: LocalResolver::new(
+                Rc::clone(&workspace),
+                hir_program.rc(),
+                workspace.provider().declaration_rules(),
+                workspace.provider().resolution_rules(),
+            ),
             hir_program,
+            package_resolver: None,
             diagnostics: DiagnosticManager::new(),
         }
     }
@@ -361,7 +401,7 @@ impl AstToHirLowerer {
     /// are keyed by their canonical HIR def paths; aliases are not expanded
     /// or copied into a separate table.
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
-        self.package
+        self.package_mut()
             .source_paths
             .iter()
             .map(|(def_id, path)| (path.to_key(), hir::Res::Def(def_id.clone())))
@@ -393,7 +433,12 @@ impl AstToHirLowerer {
             .file_id(file_path.as_ref())
             .unwrap_or(0);
         self.current_position = 0;
-        self.local_scope = fp_core::hir::resolve::LocalScope::new();
+        self.local_resolver = LocalResolver::new(
+            Rc::clone(&self.workspace),
+            self.hir_program.rc(),
+            self.workspace.provider().declaration_rules(),
+            self.workspace.provider().resolution_rules(),
+        );
         self.module_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
@@ -401,7 +446,14 @@ impl AstToHirLowerer {
     }
 
     fn register_type_generic(&mut self, name: &str, def_id: hir::DefId) {
-        let _ = (name, def_id);
+        self.local_resolver.declare(
+            name.to_owned(),
+            fp_core::hir::resolve::Binding::Generic {
+                id: def_id,
+                namespace: fp_core::hir::resolve::Namespace::Type,
+                span: Span::null(),
+            },
+        );
     }
 
     fn register_value_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
@@ -410,7 +462,14 @@ impl AstToHirLowerer {
     }
 
     fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
-        let _ = (name, hir_id);
+        self.local_resolver.declare(
+            name.to_owned(),
+            fp_core::hir::resolve::Binding::Local {
+                id: hir_id,
+                namespace: fp_core::hir::resolve::Namespace::Value,
+                span: Span::null(),
+            },
+        );
     }
 
     fn record_module_def(&mut self, name: &str) {
@@ -432,7 +491,7 @@ impl AstToHirLowerer {
             return;
         };
         let path = self.qualify_path(&name);
-        self.package
+        self.package_mut()
             .source_paths
             .insert(def_id.clone(), path.clone());
         program.source_paths.insert(def_id.clone(), path);
@@ -509,9 +568,13 @@ impl AstToHirLowerer {
                     }),
                     Some(hir::Res::Generic(def_id)) => Ok(ImplSelfKey::Param(def_id.clone())),
                     Some(hir::Res::Builtin(kind)) => Ok(ImplSelfKey::Builtin(kind.clone())),
-                    Some(hir::Res::BuiltinName(name)) => ast::TypePrimitive::from_name(name.as_str())
-                        .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
-                        .ok_or_else(|| fp_core::Error::from("unresolved builtin impl self type")),
+                    Some(hir::Res::BuiltinName(name)) => {
+                        ast::TypePrimitive::from_name(name.as_str())
+                            .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
+                            .ok_or_else(|| {
+                                fp_core::Error::from("unresolved builtin impl self type")
+                            })
+                    }
                     _ => Err(fp_core::Error::from("unresolved impl self type")),
                 }
             }
@@ -573,11 +636,11 @@ impl AstToHirLowerer {
         self.module_path.push(name.to_string());
         let child_visibility = self.compute_child_visibility(visibility);
         let _ = child_visibility;
-        self.local_scope.enter();
+        self.local_resolver.enter_scope();
     }
 
     fn pop_module_scope(&mut self) {
-        self.local_scope.leave();
+        self.local_resolver.leave_scope();
         self.module_path.pop();
     }
 
@@ -603,12 +666,10 @@ impl AstToHirLowerer {
         path: &fp_core::ast::path::InPackagePath,
         ns: fp_core::hir::resolve::Namespace,
     ) -> Option<hir::Res> {
-        match self.hir_program.resolve_module_path_final(
-            &self.package_id,
-            &self.module_path,
-            &path,
-            ns,
-        ) {
+        match self
+            .local_resolver
+            .resolve_global_path(&self.package_id, &self.module_path, path, ns)
+        {
             fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
             _ => None,
         }
@@ -622,11 +683,10 @@ impl AstToHirLowerer {
     /// resolution that came from one of the other tiers (a real path that
     /// canonicalization should expand).
     fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.local_scope.resolve(
-            name,
-            fp_core::hir::resolve::Namespace::Type,
-            self.workspace.provider().resolution_rules(),
-        ) {
+        match self
+            .local_resolver
+            .resolve_local(name, fp_core::hir::resolve::Namespace::Type)
+        {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
@@ -635,11 +695,10 @@ impl AstToHirLowerer {
     }
 
     fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.local_scope.resolve(
-            name,
-            fp_core::hir::resolve::Namespace::Value,
-            self.workspace.provider().resolution_rules(),
-        ) {
+        match self
+            .local_resolver
+            .resolve_local(name, fp_core::hir::resolve::Namespace::Value)
+        {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
                 Some(hir::Res::Def(id))
             }
@@ -655,10 +714,11 @@ impl AstToHirLowerer {
     /// local/function-scoped shadow the way a bare reference correctly
     /// does.
     fn resolve_global_type_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.hir_program.resolve_module_name(
+        let path = fp_core::ast::path::InPackagePath::new(vec![name.to_owned()]);
+        match self.local_resolver.resolve_global_path(
             &self.package_id,
             &self.module_path,
-            name,
+            &path,
             fp_core::hir::resolve::Namespace::Type,
         ) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
@@ -677,7 +737,7 @@ impl AstToHirLowerer {
     /// select a trait declaration rather than a nominal type with the same
     /// name. Keep this context-sensitive choice in AST->HIR resolution.
     fn is_trait_definition(&self, def_id: &hir::DefId) -> bool {
-        self.package
+        self.package()
             .def_map
             .get(def_id)
             .cloned()
@@ -743,10 +803,11 @@ impl AstToHirLowerer {
     /// same syntax — the same ambiguity real Rust resolves via name
     /// resolution, not parser syntax.
     fn resolve_global_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        match self.hir_program.resolve_module_name(
+        let path = fp_core::ast::path::InPackagePath::new(vec![name.to_owned()]);
+        match self.local_resolver.resolve_global_path(
             &self.package_id,
             &self.module_path,
-            name,
+            &path,
             fp_core::hir::resolve::Namespace::Value,
         ) {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
@@ -758,6 +819,7 @@ impl AstToHirLowerer {
 
     fn push_value_scope(&mut self) {
         self.const_list_length_scopes.push(HashMap::new());
+        self.local_resolver.enter_scope();
     }
 
     fn pop_value_scope(&mut self) {
@@ -765,14 +827,15 @@ impl AstToHirLowerer {
         if self.const_list_length_scopes.is_empty() {
             self.const_list_length_scopes.push(HashMap::new());
         }
+        self.local_resolver.leave_scope();
     }
 
     fn push_type_scope(&mut self) {
-        self.local_scope.enter();
+        self.local_resolver.enter_scope();
     }
 
     fn pop_type_scope(&mut self) {
-        self.local_scope.leave();
+        self.local_resolver.leave_scope();
     }
 
     /// Create a span for the current position
@@ -930,20 +993,15 @@ impl AstToHirLowerer {
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
-        // The module tree otherwise only ever gains a node via an explicit
-        // `mod X { .. }` AST node (`record_module_def`, common for
-        // `.fp`-dialect source) or another package's own tree
-        // own module tree when a provider represents it implicitly, one
-        // module per source file with no literal `Module` wrapper item at
-        // all (e.g. `fp-rust`'s real-std provider). Without this, a bare
-        // `use crate::sibling_module;`-style import can never resolve as
-        // a module alias for such a package, no matter how its target
-        // path is computed. This also seeds every real "extern prelude"
-        // entry `name_to_hir_path_with_scope`'s plain-multi-segment branch
-        // relies on (a sub-crate root, e.g. `"core"`/`"std"` under the
-        // vendored real Rust `std` package, is just a child of the
-        // package-root node — no separate table needed).
-
+        let resolver = Rc::new(RefCell::new(InPackageResolver::new(
+            self.hir_package_handle(),
+            self.hir_program.rc(),
+            self.workspace.provider().declaration_rules(),
+            self.workspace.provider().resolution_rules(),
+            Rc::clone(&self.workspace),
+        )));
+        resolver.borrow_mut().resolve_package(&self.package_id)?;
+        self.package_resolver = Some(Rc::clone(&resolver));
         // Unlike `transform_file` (the single-file path), `transform_package`
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
         // closure literal into an ordinary struct+function pair before HIR
@@ -952,8 +1010,10 @@ impl AstToHirLowerer {
         // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
         // any one source module, so they're scoped to the package root.
         let original_package_items = package.items();
-        let mut lowered_items: Vec<ast::Item> =
-            original_package_items.iter().map(|pi| pi.item.clone()).collect();
+        let mut lowered_items: Vec<ast::Item> = original_package_items
+            .iter()
+            .map(|pi| pi.item.clone())
+            .collect();
         expand_quote_splices(&mut lowered_items)?;
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
@@ -985,7 +1045,9 @@ impl AstToHirLowerer {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    original_package_items[i - generated_count].module_path.clone()
+                    original_package_items[i - generated_count]
+                        .module_path
+                        .clone()
                 };
                 fp_core::ast::package::PackageItem {
                     module_path: path,
@@ -1014,7 +1076,7 @@ impl AstToHirLowerer {
         // The package resolver has already populated this package's module
         // data and declaration identities. Keep that authoritative state
         // while lowering instead of replacing it with a fresh package.
-        let mut program = self.package.clone();
+        let mut program = self.package().clone();
 
         // 1: definitions. Import resolution has already populated the AST
         // module tree, so impl headers are processed in this single pass.
@@ -1068,20 +1130,20 @@ impl AstToHirLowerer {
         program
             .items
             .extend(std::mem::take(&mut self.local_dispatch_items));
-        program.next_def_id = self.package.next_def_id;
+        program.next_def_id = self.package().next_def_id;
         program.def_map = self.program_def_map.clone();
-        for (def_id, block) in self.package.anonymous_consts() {
+        for (def_id, block) in self.package().anonymous_consts() {
             program.add_anonymous_const(def_id, block);
         }
-        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.placeholder_defs = self.package().placeholder_defs.clone();
         program
             .intrinsic_defs
-            .extend(self.package.intrinsic_defs.clone());
+            .extend(self.package().intrinsic_defs.clone());
         // Crate metadata must travel with the published HIR snapshot. The
         // consumer lowerer uses this edge set to select the implicit prelude;
         // deriving it again from a transient package workspace makes the
         // result depend on recursive-scope lifetime.
-        program.dependencies = self.package.dependencies.clone();
+        program.dependencies = self.package().dependencies.clone();
         // Every item above was appended straight to `program.items`, not
         // through `add_item`, so the derived impl-candidate indices
         // (`impls_by_self_did`/`impls_by_shape`/`blanket_impls`) are
@@ -1223,15 +1285,15 @@ impl AstToHirLowerer {
             span,
         };
 
-        let mut program = hir::HirPackage::new(self.package.id.clone());
+        let mut program = hir::HirPackage::new(self.package().id.clone());
         program.def_map.insert(item.def_id.clone(), item.clone());
         self.program_def_map
             .insert(item.def_id.clone(), item.clone());
         program.items.push(item);
-        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.placeholder_defs = self.package().placeholder_defs.clone();
         program
             .intrinsic_defs
-            .extend(self.package.intrinsic_defs.clone());
+            .extend(self.package().intrinsic_defs.clone());
         Ok(program)
     }
 
@@ -1245,7 +1307,7 @@ impl AstToHirLowerer {
         self.prepare_lowering_state();
 
         self.module_path = module_path.clone();
-        let mut program = hir::HirPackage::new(self.package.id.clone());
+        let mut program = hir::HirPackage::new(self.package().id.clone());
         self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
@@ -1279,10 +1341,10 @@ impl AstToHirLowerer {
         // Keep them in the program index even though they are not top-level
         // program items.
         program.def_map = self.program_def_map.clone();
-        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.placeholder_defs = self.package().placeholder_defs.clone();
         program
             .intrinsic_defs
-            .extend(self.package.intrinsic_defs.clone());
+            .extend(self.package().intrinsic_defs.clone());
 
         program.index_derived_lookups();
         Ok(program)
@@ -1834,7 +1896,9 @@ impl AstToHirLowerer {
                     if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
                         .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
                     {
-                        self.package.intrinsic_defs.insert(def_id.clone(), kind);
+                        self.package_mut()
+                            .intrinsic_defs
+                            .insert(def_id.clone(), kind);
                     }
                 }
                 let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
@@ -1939,7 +2003,7 @@ impl AstToHirLowerer {
                 // somewhere to find a trait's default-method signatures
                 // and associated-type declarations — see that function's
                 // doc comment.
-                self.package.placeholder_defs.insert(def_id.clone());
+                self.package_mut().placeholder_defs.insert(def_id.clone());
                 let hir_trait = self.transform_trait(def_trait)?;
                 (
                     hir::ItemKind::Trait(hir_trait),
@@ -2403,7 +2467,7 @@ impl AstToHirLowerer {
                 let hir_id = self.next_id();
                 // Recorded once, unconditionally, right here — see
                 // `hir::HirPackage::const_block_defs`'s doc comment.
-                self.package.add_anonymous_const(
+                self.package_mut().add_anonymous_const(
                     def_id.clone(),
                     hir::Block {
                         hir_id: hir_id.clone(),
@@ -2503,7 +2567,7 @@ impl AstToHirLowerer {
                         let body = Box::new(self.transform_expr_to_hir(expr)?);
                         let def_id = self.next_def_id();
                         let hir_id = self.next_id();
-                        self.package.add_anonymous_const(
+                        self.package_mut().add_anonymous_const(
                             def_id.clone(),
                             hir::Block {
                                 hir_id: hir_id.clone(),

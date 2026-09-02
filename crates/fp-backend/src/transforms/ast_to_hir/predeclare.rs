@@ -2,7 +2,12 @@ use super::*;
 
 impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
-        self.local_scope = fp_core::hir::resolve::LocalScope::new();
+        self.local_resolver = fp_resolve::local::LocalResolver::new(
+            std::rc::Rc::clone(&self.workspace),
+            self.hir_program.rc(),
+            self.workspace.provider().declaration_rules(),
+            self.workspace.provider().resolution_rules(),
+        );
         self.module_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         self.current_owner = None;
         self.local_id = 0;
@@ -13,7 +18,7 @@ impl AstToHirLowerer {
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
-        self.package.dependencies = self
+        self.package_mut().dependencies = self
             .workspace
             .crates()
             .iter()
@@ -46,26 +51,41 @@ impl AstToHirLowerer {
             }
             match item.kind() {
                 ItemKind::Module(module) => {
-                    self.next_def_id();
+                    let _ = self.declared_or_next_def_id(
+                        &module.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.record_module_def(module.name.as_str());
                     self.push_module_scope(&module.name.name, &module.visibility);
                     self.predeclare_items(&module.items, tolerant)?;
                     self.pop_module_scope();
                 }
                 ItemKind::DefConst(def_const) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_const.name.name,
+                        fp_core::hir::resolve::Namespace::Value,
+                    );
                     self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
                 }
                 ItemKind::DefStatic(def_static) if attrs_has_name(&def_static.attrs, "host") => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_static.name.name,
+                        fp_core::hir::resolve::Namespace::Value,
+                    );
                     self.register_value_def(&def_static.name.name, def_id, &def_static.visibility);
                 }
                 ItemKind::DeclStatic(decl) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &decl.name.name,
+                        fp_core::hir::resolve::Namespace::Value,
+                    );
                     self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
                 }
                 ItemKind::DefStruct(def_struct) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_struct.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &def_struct.name.name,
                         def_id.clone(),
@@ -83,7 +103,10 @@ impl AstToHirLowerer {
                         .insert(def_id, def_struct.value.fields.clone());
                 }
                 ItemKind::DefStructural(def_structural) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_structural.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &def_structural.name.name,
                         def_id.clone(),
@@ -101,7 +124,10 @@ impl AstToHirLowerer {
                         .insert(def_id, def_structural.value.fields.clone());
                 }
                 ItemKind::OpaqueType(opaque_def) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &opaque_def.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &opaque_def.name.name,
                         def_id.clone(),
@@ -110,7 +136,10 @@ impl AstToHirLowerer {
                     self.struct_field_defs.insert(def_id, Vec::new());
                 }
                 ItemKind::DefEnum(def_enum) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_enum.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &def_enum.name.name,
                         def_id.clone(),
@@ -121,7 +150,10 @@ impl AstToHirLowerer {
                     }
 
                     for variant in &def_enum.value.variants {
-                        let variant_def_id = self.next_def_id();
+                        let variant_def_id = self.declared_or_next_def_id(
+                            &variant.name.name,
+                            fp_core::hir::resolve::Namespace::Value,
+                        );
                         let variant_path = fp_core::ast::path::InPackagePath::new(vec![
                             def_enum.name.name.clone(),
                             variant.name.name.clone(),
@@ -142,7 +174,10 @@ impl AstToHirLowerer {
                     }
                 }
                 ItemKind::DefFunction(def_fn) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_fn.name.name,
+                        fp_core::hir::resolve::Namespace::Value,
+                    );
                     self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
                 }
                 ItemKind::DeclFunction(decl_fn) => {
@@ -153,11 +188,17 @@ impl AstToHirLowerer {
                     // re-exports like `pub use macos::*;`) can already see
                     // them when it enumerates the module tree's value
                     // bindings.
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &decl_fn.name.name,
+                        fp_core::hir::resolve::Namespace::Value,
+                    );
                     self.register_value_def(&decl_fn.name.name, def_id, &ast::Visibility::Public);
                 }
                 ItemKind::DefTrait(def_trait) => {
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_trait.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &def_trait.name.name,
                         def_id.clone(),
