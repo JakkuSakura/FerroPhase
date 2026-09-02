@@ -414,8 +414,16 @@ impl ModuleTree {
         let Some((first, rest)) = path.segments.split_first() else {
             return ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
         };
-        let mut result = self.resolve(module, first, namespace, rules);
-        for segment in rest {
+        // Module segments live in the type namespace, regardless of the
+        // namespace requested for the terminal item. Resolve only the final
+        // segment in the caller's namespace (value, type, or macro).
+        let first_namespace = if rest.is_empty() {
+            namespace
+        } else {
+            Namespace::Type
+        };
+        let mut result = self.resolve(module, first, first_namespace, rules);
+        for (index, segment) in rest.iter().enumerate() {
             let next = match result {
                 ResolutionResult::Found(crate::hir::Res::Module(next)) => next,
                 ResolutionResult::NotFound(reason) => {
@@ -432,7 +440,12 @@ impl ModuleTree {
             let Some(next_path) = self.path_for_module(&next) else {
                 return ResolutionResult::NotFound(ResolutionNotFound::ModuleDefinition(next));
             };
-            result = self.resolve(&next_path, segment, namespace, rules);
+            let segment_namespace = if index + 1 == rest.len() {
+                namespace
+            } else {
+                Namespace::Type
+            };
+            result = self.resolve(&next_path, segment, segment_namespace, rules);
         }
         result
     }
@@ -677,6 +690,39 @@ mod tests {
                 ResolutionRules::rust(),
             ),
             ResolutionResult::Found(crate::hir::Res::Def(id)) if id == crate::hir::DefId::local(42)
+        ));
+        tree.declare(
+            &nested,
+            "value",
+            def(43, Namespace::Value),
+            DeclarationRules::rust(),
+        );
+        assert!(matches!(
+            tree.resolve_path(
+                &root,
+                &InPackagePath::new(vec!["m".into(), "value".into()]),
+                Namespace::Value,
+                ResolutionRules::rust(),
+            ),
+            ResolutionResult::Found(crate::hir::Res::Def(id)) if id == crate::hir::DefId::local(43)
+        ));
+        tree.declare(
+            &nested,
+            "make_value",
+            Binding::Macro {
+                id: crate::hir::DefId::local(44),
+                span: span(),
+            },
+            DeclarationRules::rust(),
+        );
+        assert!(matches!(
+            tree.resolve_path(
+                &root,
+                &InPackagePath::new(vec!["m".into(), "make_value".into()]),
+                Namespace::Macro,
+                ResolutionRules::rust(),
+            ),
+            ResolutionResult::Found(crate::hir::Res::Def(id)) if id == crate::hir::DefId::local(44)
         ));
     }
 

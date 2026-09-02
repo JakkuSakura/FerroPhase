@@ -218,7 +218,7 @@ impl<'hir> InPackageResolver<'hir> {
     pub fn collect_package_items(&mut self, items: &[fp_core::ast::package::PackageItem]) {
         for package_item in items {
             let module = package_item.module_path.clone();
-            self.package_tree_mut().ensure_module(&module);
+            self.ensure_module_bindings(&module, package_item.item.span());
             self.collect_item(&module, &package_item.item);
         }
         let preludes = self
@@ -262,6 +262,34 @@ impl<'hir> InPackageResolver<'hir> {
                 self.declare_module(&InPackagePath::new(Vec::new()), name, binding);
             }
         }
+    }
+
+    fn ensure_module_bindings(&mut self, path: &InPackagePath, span: Span) {
+        for index in 0..path.segments.len() {
+            let parent = InPackagePath::new(path.segments[..index].to_vec());
+            let child = path.segments[index].clone();
+            let child_path = InPackagePath::new(path.segments[..=index].to_vec());
+            self.package_tree_mut().ensure_module(&child_path);
+            let already_declared = self
+                .package_tree()
+                .candidates(&parent, &child)
+                .into_iter()
+                .flatten()
+                .any(|binding| matches!(binding, Binding::Module { target, .. } if target == &child_path));
+            if !already_declared {
+                let def_id = self.item_def_id();
+                self.declare_module(
+                    &parent,
+                    child,
+                    Binding::Module {
+                        target: child_path,
+                        def_id,
+                        span,
+                    },
+                );
+            }
+        }
+        self.package_tree_mut().ensure_module(path);
     }
 
     fn declare_definition(
