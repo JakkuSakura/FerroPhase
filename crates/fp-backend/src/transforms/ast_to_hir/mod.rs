@@ -1011,7 +1011,10 @@ impl AstToHirLowerer {
         // retaining each item's owning module path. Those paths are real
         // modules even when no separate provider descriptor exists, such as
         // `alloc::collections::btree::node::marker`.
-        let mut program = hir::HirPackage::new(self.package.id.clone());
+        // The package resolver has already populated this package's module
+        // data and declaration identities. Keep that authoritative state
+        // while lowering instead of replacing it with a fresh package.
+        let mut program = self.package.clone();
 
         // 1: definitions. Import resolution has already populated the AST
         // module tree, so impl headers are processed in this single pass.
@@ -1065,6 +1068,7 @@ impl AstToHirLowerer {
         program
             .items
             .extend(std::mem::take(&mut self.local_dispatch_items));
+        program.next_def_id = self.package.next_def_id;
         program.def_map = self.program_def_map.clone();
         for (def_id, block) in self.package.anonymous_consts() {
             program.add_anonymous_const(def_id, block);
@@ -2119,10 +2123,7 @@ impl AstToHirLowerer {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
-                let path = self.name_to_hir_path_with_scope(
-                    &Name::Ident(struct_ty.name.clone()),
-                    PathResolutionScope::Type,
-                )?;
+                let path = todo!();
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
@@ -2258,10 +2259,7 @@ impl AstToHirLowerer {
                 // such as `impl<T> Trait for Vec<T>` indistinguishable from
                 // an unresolved path to the HIR impl index, so it cannot be
                 // placed in rustc's ADT dispatch bucket.
-                let mut path = self.name_to_hir_path_with_scope(
-                    &Name::Ident(ast::Ident::new("Vec")),
-                    PathResolutionScope::Type,
-                )?;
+                let mut path: hir::Path = todo!();
                 if let Some(last) = path.segments.last_mut() {
                     last.args = Some(args);
                 }
@@ -2989,10 +2987,7 @@ impl AstToHirLowerer {
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Infer, span)
             }
             ast::Value::Struct(struct_val) => {
-                let path = self.name_to_hir_path_with_scope(
-                    &Name::Ident(struct_val.ty.name.clone()),
-                    PathResolutionScope::Type,
-                )?;
+                let path = todo!();
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
             }
             ast::Value::Structural(structural) => {

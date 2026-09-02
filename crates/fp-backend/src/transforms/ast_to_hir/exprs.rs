@@ -688,7 +688,7 @@ impl AstToHirLowerer {
                     ast::Ident::new("__fp_error".to_string())
                 });
                 let name = Name::Ident(name);
-                let path = self.name_to_hir_path_with_scope(&name, PathResolutionScope::Value)?;
+                let path = todo!();
                 Ok(hir::ExprKind::Path(path))
             }
             _ => Ok(self.error_placeholder_expr_kind(
@@ -896,8 +896,7 @@ impl AstToHirLowerer {
                     }
                 }
 
-                let mut path =
-                    self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+                let mut path: hir::Path = todo!();
                 // A function-position qualified enum constructor must carry
                 // the variant's constructor identity into HIR.  The value
                 // resolver may intentionally retain the type head for a
@@ -933,9 +932,7 @@ impl AstToHirLowerer {
                         _ => None,
                     };
                     if let Some(base_name) = base_name {
-                        path.res = self
-                            .name_to_hir_path_with_scope(&base_name, PathResolutionScope::Type)?
-                            .res;
+                        path.res = todo!();
                     }
                 }
 
@@ -1227,13 +1224,7 @@ impl AstToHirLowerer {
                 return Err(eyre::eyre!("inclusive range requires an end bound").into());
             }
         };
-        let path = self.name_to_hir_path_with_scope(
-            &ast::Name::path(ast::Path {
-                prefix: PathPrefix::Crate,
-                segments: vec![ast::Ident::new("ops"), ast::Ident::new(name)],
-            }),
-            PathResolutionScope::Value,
-        )?;
+        let path = todo!();
         let fields = fields
             .into_iter()
             .map(|(name, expr)| hir::StructExprField {
@@ -1918,10 +1909,7 @@ impl AstToHirLowerer {
                     continue;
                 }
 
-                let path = self.name_to_hir_path_with_scope(
-                    &Name::Ident(ast::Ident::new(name.as_str())),
-                    PathResolutionScope::Value,
-                )?;
+                let path = todo!();
                 let value = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),

@@ -195,7 +195,7 @@ impl AstToHirLowerer {
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
-                self.name_to_hir_path_with_scope(&base_name, PathResolutionScope::Value)?,
+                todo!(),
             ),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -219,10 +219,7 @@ impl AstToHirLowerer {
             pat: idx_pat.clone(),
             ty: Some(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
-                    &ast::Name::Ident(ast::Ident::new("usize")),
-                    PathResolutionScope::Type,
-                )?),
+                hir::TypeExprKind::Path(todo!()),
                 Span::new(self.current_file, 0, 0),
             )),
             init: Some(idx_init),
@@ -398,7 +395,7 @@ impl AstToHirLowerer {
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
-                self.name_to_hir_path_with_scope(&base_name, PathResolutionScope::Value)?,
+                todo!(),
             ),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -535,10 +532,7 @@ impl AstToHirLowerer {
             pat: idx_pat.clone(),
             ty: Some(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Path(self.name_to_hir_path_with_scope(
-                    &ast::Name::Ident(ast::Ident::new("usize")),
-                    PathResolutionScope::Type,
-                )?),
+                hir::TypeExprKind::Path(todo!()),
                 Span::new(self.current_file, 0, 0),
             )),
             init: Some(idx_init),

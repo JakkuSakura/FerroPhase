@@ -186,10 +186,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         fp_core::hir::resolve::DeclarationRules::rust(),
     );
 
-    let path = generator.name_to_hir_path_with_scope(
-        &ast::Name::from_ident(ident("u8")),
-        PathResolutionScope::Type,
-    )?;
+    let path: hir::Path = todo!();
     assert_eq!(path.res, Some(hir::Res::Def(user_type)));
     Ok(())
 }

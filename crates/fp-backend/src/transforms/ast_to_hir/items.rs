@@ -392,7 +392,7 @@ impl AstToHirLowerer {
                 Some(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(
-                        self.name_to_hir_path_with_scope(trait_name, PathResolutionScope::Type)?,
+                        todo!(),
                     ),
                     Span::new(self.current_file, 0, 0),
                 ))
@@ -558,10 +558,7 @@ impl AstToHirLowerer {
                     for (index, param) in trait_def.generics_params.iter().enumerate() {
                         let res = match trait_generic_args.get(index) {
                             Some(ast::Ty::Expr(expr)) => match expr.kind() {
-                                ast::ExprKind::Name(name) => self
-                                    .name_to_hir_path_with_scope(name, PathResolutionScope::Type)
-                                    .ok()
-                                    .and_then(|path| path.res),
+                                ast::ExprKind::Name(_name) => todo!(),
                                 _ => None,
                             },
                             _ => None,

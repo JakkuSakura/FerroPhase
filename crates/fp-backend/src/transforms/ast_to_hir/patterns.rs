@@ -127,8 +127,7 @@ impl AstToHirLowerer {
                 ))
             }
             PatternKind::TupleStruct(tuple_struct) => {
-                let path = self
-                    .name_to_hir_path_with_scope(&tuple_struct.name, PathResolutionScope::Value)?;
+                let path = todo!();
                 let parts = tuple_struct
                     .patterns
                     .iter()
@@ -153,10 +152,7 @@ impl AstToHirLowerer {
                 Ok((inner, ty, mutable))
             }
             PatternKind::Struct(struct_pat) => {
-                let path = self.name_to_hir_path_with_scope(
-                    &Name::Ident(struct_pat.name.clone()),
-                    PathResolutionScope::Value,
-                )?;
+                let path = todo!();
                 let fields = struct_pat
                     .fields
                     .iter()
