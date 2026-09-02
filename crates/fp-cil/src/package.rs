@@ -24,20 +24,26 @@ pub fn provider_for_path(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let bytes = std::fs::read(root).ok()?;
     let is_pe = bytes.starts_with(b"MZ");
     let package_id = PackageId::new(package_name_for(root));
-    let mut source = AstPackage::single_item(
-        package_id.clone(),
-        fp_core::ast::Item::precompiled_artifact(bytes.clone()),
-    );
+    let mut items = vec![fp_core::ast::Item::precompiled_artifact(bytes.clone())];
     if !is_pe {
         if let Ok(text) = String::from_utf8(bytes) {
             if let Ok(lir) = crate::parse_cil_program(&text) {
-                source.items.push(fp_core::ast::package::PackageItem {
-                    module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
-                    item: fp_core::ast::Item::precompiled_lir(lir),
-                });
+                items.push(fp_core::ast::Item::precompiled_lir(lir));
             }
         }
     }
+    let source = AstPackage::new(
+        package_id.clone(),
+        package_id.as_str(),
+        fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), package_id.as_str()),
+        vec![fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: fp_core::ast::Ident::new(""),
+            items,
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        }],
+    );
     Some(Arc::new(
         fp_core::ast::package::provider::FixedPackageProvider::for_source(package_id, source),
     ) as Arc<dyn PackageProvider>)

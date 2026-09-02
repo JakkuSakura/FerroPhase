@@ -193,7 +193,7 @@ enum ImplSelfKey {
         args: Vec<ImplGenericArgKey>,
     },
     Builtin(hir::BuiltinSelfType),
-    Primitive(ast::TypePrimitive),
+    Primitive(String),
     Param(hir::DefId),
     Reference {
         mutable: bool,
@@ -444,7 +444,9 @@ impl AstToHirLowerer {
 
     fn impl_self_key(&self, self_ty: &hir::TypeExpr) -> Result<ImplSelfKey> {
         match &self_ty.kind {
-            hir::TypeExprKind::Primitive(primitive) => Ok(ImplSelfKey::Primitive(*primitive)),
+            hir::TypeExprKind::Primitive(primitive) => {
+                Ok(ImplSelfKey::Primitive(format!("{primitive:?}")))
+            }
             hir::TypeExprKind::Path(path) => {
                 let args = path
                     .segments
@@ -454,9 +456,9 @@ impl AstToHirLowerer {
                         args.args
                             .iter()
                             .map(|arg| match arg {
-                                hir::GenericArg::Type(ty) => {
-                                    self.impl_self_key(ty).map(ImplGenericArgKey::Type)
-                                }
+                                hir::GenericArg::Type(ty) => self
+                                    .impl_self_key(ty)
+                                    .map(|key| ImplGenericArgKey::Type(Box::new(key))),
                                 hir::GenericArg::Const(expr) => {
                                     Ok(ImplGenericArgKey::Const(expr.hir_id.clone()))
                                 }
@@ -473,7 +475,7 @@ impl AstToHirLowerer {
                     Some(hir::Res::Generic(def_id)) => Ok(ImplSelfKey::Param(def_id.clone())),
                     Some(hir::Res::Builtin(kind)) => Ok(ImplSelfKey::Builtin(kind.clone())),
                     Some(hir::Res::BuiltinName(name)) => ast::TypePrimitive::from_name(name)
-                        .map(ImplSelfKey::Primitive)
+                        .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
                         .ok_or_else(|| fp_core::Error::from("unresolved builtin impl self type")),
                     _ => Err(fp_core::Error::from("unresolved impl self type")),
                 }
@@ -863,7 +865,7 @@ impl AstToHirLowerer {
         let mut result = HashMap::new();
         let workspace = &self.workspace;
         for package in workspace.crates().values() {
-            for package_item in &package.borrow().items {
+            for package_item in &package.borrow().items() {
                 if let ItemKind::DefStruct(def) = package_item.item.kind() {
                     let fields = def
                         .value
@@ -906,7 +908,7 @@ impl AstToHirLowerer {
         // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
         // any one source module, so they're scoped to the package root.
         let mut lowered_items: Vec<ast::Item> =
-            package.items.iter().map(|pi| pi.item.clone()).collect();
+            package.items().iter().map(|pi| pi.item.clone()).collect();
         expand_quote_splices(&mut lowered_items)?;
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
@@ -938,7 +940,7 @@ impl AstToHirLowerer {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    package.items[i - generated_count].module_path.clone()
+                    package.items()[i - generated_count].module_path.clone()
                 };
                 fp_core::ast::package::PackageItem {
                     module_path: path,

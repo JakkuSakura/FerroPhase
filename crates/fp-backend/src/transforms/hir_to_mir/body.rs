@@ -3115,12 +3115,13 @@ impl<'a> BodyBuilder<'a> {
             hir::Res::Module(def_id) => self.lowering.hir_program.module_path(def_id),
             _ => None,
         }) {
+            let module_len = module_path.len();
             let mut requested = module_path.segments;
             requested.extend(
                 resolved_path
                     .segments
                     .iter()
-                    .skip(module_path.len())
+                    .skip(module_len)
                     .map(|segment| segment.name.as_str().to_string()),
             );
             let def_id = self.lowering.hir_program.with(|program| {

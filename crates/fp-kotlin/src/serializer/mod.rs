@@ -288,13 +288,13 @@ impl KotlinWorkspaceContext {
     /// pass. `sources` must be cheaply cloneable (e.g. `sources.iter()` on a
     /// slice) since each fact is collected via its own full traversal.
     pub fn collect<'a>(sources: impl Iterator<Item = &'a AstPackage> + Clone) -> Self {
-        let items = || sources.clone().flat_map(|src| src.items.iter());
-        let mutated_fields = collect_mutated_field_names(items());
-        let list_fields = collect_list_field_names(items());
-        let string_fields = collect_string_field_names(items());
-        let enum_fields = collect_enum_field_names(items());
-        let enum_variant_names = collect_enum_variant_names(items());
-        let enum_variant_payload_fields = collect_enum_variant_payload_fields(items());
+        let all_items: Vec<_> = sources.clone().flat_map(|src| src.items()).collect();
+        let mutated_fields = collect_mutated_field_names(all_items.iter());
+        let list_fields = collect_list_field_names(all_items.iter());
+        let string_fields = collect_string_field_names(all_items.iter());
+        let enum_fields = collect_enum_field_names(all_items.iter());
+        let enum_variant_names = collect_enum_variant_names(all_items.iter());
+        let enum_variant_payload_fields = collect_enum_variant_payload_fields(all_items.iter());
         let referenced_paths = sources
             .flat_map(|src| src.referenced_paths.iter())
             .map(|(path, refs)| (path.clone(), refs.clone()))
@@ -352,20 +352,14 @@ impl KotlinSerializer {
         let mut files = Vec::new();
 
         // Collect cross-package dependencies from imports
-        let deps = collect_workspace_deps(&source.items, pkg_name, workspace_packages);
+        let source_items = source.items();
+        let deps = collect_workspace_deps(&source_items, pkg_name, workspace_packages);
 
         // Sibling modules share this crate's generated Kotlin package, so no
         // import is needed for them.
         let local_modules: HashSet<String> = modules
             .iter()
-            .map(|module| {
-                module
-                    .path
-                    .segments
-                    .last()
-                    .cloned()
-                    .unwrap_or_else(|| module.relative_path())
-            })
+            .map(|module| module.relative_path())
             .collect();
 
         // Gradle manifest

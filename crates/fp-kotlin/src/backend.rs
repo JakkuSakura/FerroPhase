@@ -916,8 +916,10 @@ impl TargetBackend for KotlinBackend {
                 ))
             })?;
             let mut compiled = compiled.borrow_mut();
-            for pkg_item in &mut compiled.items {
-                pkg_item.item = materialize_kotlin_item(pkg_item.item.clone())?;
+            for module in &mut compiled.modules {
+                for item in &mut module.items {
+                    *item = materialize_kotlin_item(item.clone())?;
+                }
             }
         }
         let package = workspace.package_source(package_id)?;

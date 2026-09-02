@@ -41,8 +41,8 @@ impl fp_core::backend::TargetBackend for JvmBackend {
         // extension asks) instead of going through MIR — those raw bytes
         // aren't derivable from a lift-then-relower round trip.
         if let Ok(source) = workspace.package_source(package_id) {
-            let artifact = source
-                .items
+            let source_items = source.items();
+            let artifact = source_items
                 .iter()
                 .find_map(|pkg_item| match pkg_item.item.kind() {
                     fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),

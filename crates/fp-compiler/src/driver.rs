@@ -482,7 +482,7 @@ impl CompilerDriver {
                 // arm for an already-compiled item and would just record a
                 // spurious "unimplemented" diagnostic for it).
                 let precompiled_lir_blobs: Vec<fp_core::lir::LirBlob> = source
-                    .items
+                    .items()
                     .iter()
                     .filter_map(|pkg_item| match pkg_item.item.kind() {
                         fp_core::ast::ItemKind::PrecompiledLir(lir) => Some(lir.clone()),
@@ -846,42 +846,8 @@ impl CompilerDriver {
             // Splice typed/normalized content back onto the original
             // untyped source items by qualified-path identity — the
             // single, canonical reconciliation point.
-            for pkg_item in &mut pkg.items {
-                if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
-                    let mut base_path = pkg_item.module_path.segments.clone();
-                    let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
-                        continue;
-                    };
-                    base_path.push(self_ty_name.to_string());
-                    for method_item in imp.items.iter_mut() {
-                        let ItemKind::DefFunction(function) = method_item.kind() else {
-                            continue;
-                        };
-                        let mut path = base_path.clone();
-                        path.push(function.name.name.clone());
-                        let key = fp_core::hir::DefPath::new(
-                            path.into_iter().map(fp_core::hir::Symbol::new).collect(),
-                        );
-                        if let Some(typed) = lifted_items_by_path.get(&key) {
-                            *method_item = typed.clone();
-                        }
-                    }
-                    continue;
-                }
-                let Some(name) = item_own_name(&pkg_item.item) else {
-                    continue;
-                };
-                let mut path = pkg_item.module_path.segments.clone();
-                path.push(name.to_string());
-                let key = fp_core::hir::DefPath::new(
-                    path.into_iter().map(fp_core::hir::Symbol::new).collect(),
-                );
-                if let Some(typed) = lifted_items_by_path.get(&key) {
-                    let mut typed = typed.clone();
-                    preserve_source_declaration_metadata(&pkg_item.item, &mut typed);
-                    pkg_item.item = typed;
-                }
-            }
+            // Module-owned AST items are the source of truth; reconciliation is
+            // performed during lowering from the module tree.
             pkg.referenced_paths = referenced_paths_by_path
                 .into_iter()
                 .map(|(key, values)| {

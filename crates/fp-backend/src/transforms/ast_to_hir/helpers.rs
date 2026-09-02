@@ -166,7 +166,7 @@ impl AstToHirLowerer {
     /// `module_tree.root()`, with no need to scan every item's qualified
     /// path (as the old flat-map-based version did) or cache the result.
     fn cached_root_modules(&self) -> HashSet<String> {
-        self.workspace
+        self.hir_program
             .module_member_names(&self.package_id, &InPackagePath::new(Vec::new()))
             .into_iter()
             .flatten()
@@ -895,7 +895,7 @@ impl AstToHirLowerer {
                     }
                     if canonical_res.is_none()
                         && self
-                            .workspace
+                            .hir_program
                             .module_exists(&self.package_id, &canonical_path)
                     {
                         canonical_res = self.lookup_global_res(&canonical_path, scope);

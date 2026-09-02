@@ -88,33 +88,32 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
             // `PrecompiledArtifact`) always uses an empty path on every
             // item — `items.len() > 1` alone isn't a safe signal, since
             // those two-item CIL/JVM packages aren't archives at all.
-            let is_archive = source
-                .items
+            let source_items = source.items();
+            let is_archive = source_items
                 .iter()
                 .any(|pkg_item| !pkg_item.module_path.is_empty());
             if is_archive {
-                let members: Vec<(fp_core::ast::path::InPackagePath, PrecompiledMember)> = source
-                    .items
-                    .iter()
-                    .filter_map(|pkg_item| match pkg_item.item.kind() {
-                        fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some((
-                            pkg_item.module_path.clone(),
-                            PrecompiledMember::Asm(asm.clone()),
-                        )),
-                        fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some((
-                            pkg_item.module_path.clone(),
-                            PrecompiledMember::Bytes(bytes.clone()),
-                        )),
-                        _ => None,
-                    })
-                    .collect();
+                let members: Vec<(fp_core::ast::path::InPackagePath, PrecompiledMember)> =
+                    source_items
+                        .iter()
+                        .filter_map(|pkg_item| match pkg_item.item.kind() {
+                            fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some((
+                                pkg_item.module_path.clone(),
+                                PrecompiledMember::Asm(asm.clone()),
+                            )),
+                            fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some((
+                                pkg_item.module_path.clone(),
+                                PrecompiledMember::Bytes(bytes.clone()),
+                            )),
+                            _ => None,
+                        })
+                        .collect();
                 if !members.is_empty() {
                     self.emit_precompiled_archive(members)?;
                     return Ok(());
                 }
             }
-            let asm = source
-                .items
+            let asm = source_items
                 .iter()
                 .find_map(|pkg_item| match pkg_item.item.kind() {
                     fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some(asm.clone()),
@@ -473,11 +472,10 @@ impl NativeObjectPackageProvider {
     /// archive (see `from_archive`, whose members are each tagged with
     /// their own non-empty path).
     pub fn from_asm(package_id: fp_core::ast::package::PackageId, asm: AsmProgram) -> Self {
-        let mut source = Self::empty_source(&package_id);
-        source.items.push(fp_core::ast::package::PackageItem {
-            module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
-            item: fp_core::ast::Item::precompiled_asm(asm),
-        });
+        let source = fp_core::ast::package::AstPackage::single_item(
+            package_id.clone(),
+            fp_core::ast::Item::precompiled_asm(asm),
+        );
         Self::from_source(package_id, source)
     }
 
@@ -497,7 +495,7 @@ impl NativeObjectPackageProvider {
         let members = crate::archive::read_archive_members(bytes)
             .map_err(|err| Error::from(format!("Failed to parse archive input: {err}")))?;
         let object_reader = crate::container::ObjectContainerReader::new();
-        let mut source = Self::empty_source(&package_id);
+        let mut modules = Vec::new();
         for member in members {
             let item = if !member.data.is_empty() && object_reader.can_read(&member.data) {
                 let asm = crate::binary::lift_object_to_asmir(&member.data).map_err(|err| {
@@ -510,11 +508,23 @@ impl NativeObjectPackageProvider {
             } else {
                 fp_core::ast::Item::precompiled_artifact(member.data)
             };
-            source.items.push(fp_core::ast::package::PackageItem {
-                module_path: fp_core::ast::path::InPackagePath::new(vec![member.name]),
-                item,
+            modules.push(fp_core::ast::Module {
+                attrs: Vec::new(),
+                name: fp_core::ast::Ident::new(member.name),
+                items: vec![item],
+                visibility: fp_core::ast::Visibility::Public,
+                is_external: false,
             });
         }
+        let source = fp_core::ast::package::AstPackage::new(
+            package_id.clone(),
+            package_id.as_str(),
+            fp_core::ast::package::PackageDescriptor::empty(
+                package_id.clone(),
+                package_id.as_str(),
+            ),
+            modules,
+        );
         Ok(Self::from_source(package_id, source))
     }
 
@@ -528,6 +538,7 @@ impl NativeObjectPackageProvider {
                 package_id.clone(),
                 package_id.as_str(),
             ),
+            Vec::new(),
         )
     }
 

@@ -40,8 +40,8 @@ impl fp_core::backend::TargetBackend for CilBackend {
         // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
         // writes/assembles itself back out instead of going through MIR.
         if let Ok(source) = workspace.package_source(package_id) {
-            let artifact = source
-                .items
+            let source_items = source.items();
+            let artifact = source_items
                 .iter()
                 .find_map(|pkg_item| match pkg_item.item.kind() {
                     fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),

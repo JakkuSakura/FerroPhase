@@ -97,13 +97,45 @@ impl SharedHirProgram {
         module: &crate::ast::path::InPackagePath,
         name: &str,
         namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.resolve_module_name_with_rules(
+            package_id,
+            module,
+            name,
+            namespace,
+            crate::hir::resolve::ResolutionRules::default(),
+        )
+    }
+
+    pub fn resolve_module_name_with_rules(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::InPackagePath,
+        name: &str,
+        namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
         self.0
             .borrow()
-            .resolve_module_name(package_id, module, name, namespace, rules)
+            .resolve_module_name_with_rules(package_id, module, name, namespace, rules)
     }
     pub fn resolve_module_path(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.resolve_module_path_with_rules(
+            package_id,
+            module,
+            path,
+            namespace,
+            crate::hir::resolve::ResolutionRules::default(),
+        )
+    }
+
+    pub fn resolve_module_path_with_rules(
         &self,
         package_id: &PackageId,
         module: &crate::ast::path::InPackagePath,
@@ -113,7 +145,7 @@ impl SharedHirProgram {
     ) -> crate::hir::resolve::ResolutionResult {
         self.0
             .borrow()
-            .resolve_module_path(package_id, module, path, namespace, rules)
+            .resolve_module_path_with_rules(package_id, module, path, namespace, rules)
     }
     pub fn module_exists(
         &self,
@@ -131,9 +163,24 @@ impl SharedHirProgram {
         module: &crate::ast::path::InPackagePath,
         path: &crate::ast::path::InPackagePath,
         namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.resolve_module_path_final_with_rules(
+            package_id,
+            module,
+            path,
+            namespace,
+            crate::hir::resolve::ResolutionRules::default(),
+        )
+    }
+    pub fn resolve_module_path_final_with_rules(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
+        namespace: crate::hir::resolve::Namespace,
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
-        match self.resolve_module_path(package_id, module, path, namespace, rules) {
+        match self.resolve_module_path_with_rules(package_id, module, path, namespace, rules) {
             crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
                 crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error)
             }
@@ -282,7 +329,7 @@ impl HirProgram {
         self.packages.insert(package_id, package);
     }
 
-    pub fn resolve_module_name(
+    pub fn resolve_module_name_with_rules(
         &self,
         package_id: &PackageId,
         module: &crate::ast::path::InPackagePath,
@@ -295,7 +342,7 @@ impl HirProgram {
             .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound)
     }
 
-    pub fn resolve_module_path(
+    pub fn resolve_module_path_with_rules(
         &self,
         package_id: &PackageId,
         module: &crate::ast::path::InPackagePath,

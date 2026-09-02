@@ -335,7 +335,6 @@ fn ensure_std_module(user_file: &mut fp_core::ast::File) {
             Item::from(ItemKind::Module(Module {
                 attrs: Vec::new(),
                 name: Ident::new("std"),
-                collected_items: Vec::new(),
                 items: Vec::new(),
                 visibility: Visibility::Public,
                 is_external: false,
@@ -458,7 +457,6 @@ fn ensure_nested_module<'a>(
                 current.items.push(Item::from(ItemKind::Module(Module {
                     attrs: Vec::new(),
                     name: Ident::new(*segment),
-                    collected_items: Vec::new(),
                     items: Vec::new(),
                     visibility: Visibility::Public,
                     is_external: false,

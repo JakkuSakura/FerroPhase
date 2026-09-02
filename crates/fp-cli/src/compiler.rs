@@ -70,7 +70,7 @@ fn operation_registry_for(
     let mut found = false;
     for package_id in provider.list_packages().ok()? {
         let package = provider.load_package_source(&package_id).ok()?;
-        for package_item in package.items {
+        for package_item in package.items() {
             registry.extend(fp_core::lang::collect_lang_items_from_item(
                 &package_item.item,
             ));
