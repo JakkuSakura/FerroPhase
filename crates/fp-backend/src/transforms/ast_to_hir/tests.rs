@@ -1,8 +1,8 @@
 use super::*;
 use crate::transforms::HirToAstLifter;
 use fp_core::ast;
-use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
+use fp_core::ast::package::PackageDescriptor;
 use fp_core::ast::package::{AstPackage, PackageId};
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
@@ -1264,11 +1264,9 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
     };
 
     assert_eq!(bounds.len(), 3);
-    assert!(
-        bounds
-            .iter()
-            .all(|bound| matches!(bound.res, Some(hir::Res::Def(_))))
-    );
+    assert!(bounds
+        .iter()
+        .all(|bound| matches!(bound.res, Some(hir::Res::Def(_)))));
     Ok(())
 }
 
@@ -1608,17 +1606,15 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
         .expect("ordinary aliases must be published as HIR items");
     assert_eq!(alias.def_id.package_id.as_str(), "test");
     assert!(program.def_map.contains_key(&alias.def_id));
-    assert!(
-        !program
-            .module_tree
-            .resolve(
-                &InPackagePath::new(Vec::new()),
-                "Alias",
-                fp_core::hir::resolve::Namespace::Type,
-                fp_core::hir::resolve::ResolutionRules::rust(),
-            )
-            .is_not_found()
-    );
+    assert!(!program
+        .module_tree
+        .resolve(
+            &InPackagePath::new(Vec::new()),
+            "Alias",
+            fp_core::hir::resolve::Namespace::Type,
+            fp_core::hir::resolve::ResolutionRules::rust(),
+        )
+        .is_not_found());
     Ok(())
 }
 
@@ -2349,12 +2345,10 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
             _ => None,
         })
         .expect("lowered Holder");
-    assert!(
-        holder
-            .fields
-            .iter()
-            .all(|field| { !matches!(field.ty.kind, hir::TypeExprKind::Error) })
-    );
+    assert!(holder
+        .fields
+        .iter()
+        .all(|field| { !matches!(field.ty.kind, hir::TypeExprKind::Error) }));
     Ok(())
 }
 
@@ -2762,10 +2756,11 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
     let items = parser
         .parse_items_ast("trait Layout { const ABSTRACT: bool; const DEFAULTED: bool = true; }")?;
     let package = package_from_items(items)?;
-    let package_items = package.items();
-    let ast_trait = package_items
+    let ast_trait = package
+        .module
+        .items
         .iter()
-        .find_map(|item| match item.item.kind() {
+        .find_map(|item| match item.kind() {
             ast::ItemKind::DefTrait(trait_def) => Some(trait_def),
             _ => None,
         })
@@ -4195,8 +4190,8 @@ fn transform_package_expands_macro_invocation_before_definition() -> Result<()> 
 /// the wrong one-segment root, for a path that depends on a same-file-level
 /// re-export chain rather than a direct definition.
 #[test]
-fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_subcrate()
--> Result<()> {
+fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_subcrate(
+) -> Result<()> {
     let location_item = make_struct("Location", vec![("value", int_ty())]);
 
     let panic_self_reexport = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {

@@ -900,17 +900,26 @@ impl AstToHirLowerer {
         let mut result = HashMap::new();
         let workspace = &self.workspace;
         for package in workspace.crates().values() {
-            for package_item in &package.borrow().items() {
-                if let ItemKind::DefStruct(def) = package_item.item.kind() {
-                    let fields = def
-                        .value
-                        .fields
-                        .iter()
-                        .map(|field| (field.name.as_str().to_string(), field.value.clone()))
-                        .collect();
-                    result.insert(def.name.as_str().to_string(), fields);
+            fn collect_structs(
+                items: &[ast::Item],
+                result: &mut HashMap<String, Vec<(String, ast::Ty)>>,
+            ) {
+                for item in items {
+                    if let ItemKind::DefStruct(def) = item.kind() {
+                        let fields = def
+                            .value
+                            .fields
+                            .iter()
+                            .map(|field| (field.name.as_str().to_string(), field.value.clone()))
+                            .collect();
+                        result.insert(def.name.as_str().to_string(), fields);
+                    }
+                    if let ItemKind::Module(module) = item.kind() {
+                        collect_structs(&module.items, result);
+                    }
                 }
             }
+            collect_structs(&package.borrow().module.items, &mut result);
         }
         result
     }
@@ -942,8 +951,9 @@ impl AstToHirLowerer {
         // Run it here, once, on a local mutable copy; its generated
         // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
         // any one source module, so they're scoped to the package root.
+        let original_package_items = package.items();
         let mut lowered_items: Vec<ast::Item> =
-            package.items().iter().map(|pi| pi.item.clone()).collect();
+            original_package_items.iter().map(|pi| pi.item.clone()).collect();
         expand_quote_splices(&mut lowered_items)?;
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
@@ -975,7 +985,7 @@ impl AstToHirLowerer {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    package.items()[i - generated_count].module_path.clone()
+                    original_package_items[i - generated_count].module_path.clone()
                 };
                 fp_core::ast::package::PackageItem {
                     module_path: path,
