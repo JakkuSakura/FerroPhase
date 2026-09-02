@@ -260,14 +260,6 @@ impl AstToHirLowerer {
                 };
                 hir::ExprKind::Block(block)
             }
-            ExprKind::SplicePending(_pending) => {
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
-            }
             ExprKind::Try(expr_try) => {
                 let body = Box::new(self.transform_expr_to_hir(expr_try.expr.as_ref())?);
                 let mut catches = Vec::with_capacity(expr_try.catches.len());

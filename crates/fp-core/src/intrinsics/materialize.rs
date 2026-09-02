@@ -211,13 +211,8 @@ pub fn materialize_block(
     for stmt in block.stmts {
         stmts.push(materialize_stmt(stmt, strategy)?);
     }
-    let mut collected_items = Vec::with_capacity(block.collected_items.len());
-    for item in block.collected_items {
-        collected_items.push(materialize_item(item, strategy)?);
-    }
     Ok(ast::ExprBlock {
         stmts,
-        collected_items,
         ..block
     })
 }
@@ -680,11 +675,6 @@ pub fn materialize_expr(
         }
         ast::ExprKind::ConstBlock(mut const_block) => {
             const_block.expr = Box::new(materialize_expr(*const_block.expr, strategy)?);
-            let mut collected_items = Vec::with_capacity(const_block.collected_items.len());
-            for item in const_block.collected_items {
-                collected_items.push(materialize_item(item, strategy)?);
-            }
-            const_block.collected_items = collected_items;
             ast::Expr::new(ast::ExprKind::ConstBlock(const_block))
         }
         ast::ExprKind::Quote(mut quote) => {
@@ -694,10 +684,6 @@ pub fn materialize_expr(
         ast::ExprKind::Splice(mut splice) => {
             splice.token = Box::new(materialize_expr(*splice.token, strategy)?);
             ast::Expr::new(ast::ExprKind::Splice(splice))
-        }
-        ast::ExprKind::SplicePending(mut pending) => {
-            pending.token = Box::new(materialize_expr(*pending.token, strategy)?);
-            ast::Expr::new(ast::ExprKind::SplicePending(pending))
         }
         ast::ExprKind::Await(mut expr_await) => {
             expr_await.base = Box::new(materialize_expr(*expr_await.base, strategy)?);

@@ -1556,7 +1556,6 @@ fn materialize_expr_types(expr: &mut Expr) {
             }
         }
         ExprKind::Splice(splice) => materialize_expr_types(&mut splice.token),
-        ExprKind::SplicePending(pending) => materialize_expr_types(&mut pending.token),
         ExprKind::Name(_)
         | ExprKind::Value(_)
         | ExprKind::Continue(_)

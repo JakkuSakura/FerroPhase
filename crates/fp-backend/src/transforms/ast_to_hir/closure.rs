@@ -784,9 +784,6 @@ impl ClosureLowering {
             ast::ExprKind::Splice(s) => {
                 self.rewrite_in_expr(s.token.as_mut())?;
             }
-            ast::ExprKind::SplicePending(p) => {
-                self.rewrite_in_expr(p.token.as_mut())?;
-            }
             ast::ExprKind::Invoke(invoke) => {
                 // A closure literal passed as a call argument (as opposed
                 // to a function's own tail expression, whose declared
@@ -1093,9 +1090,6 @@ impl CaptureCollector {
             }
             ast::ExprKind::Splice(s) => {
                 self.visit(s.token.as_ref());
-            }
-            ast::ExprKind::SplicePending(p) => {
-                self.visit(p.token.as_ref());
             }
             ast::ExprKind::Closure(_) | ast::ExprKind::Closured(_) => {}
             ast::ExprKind::IntrinsicContainer(collection) => {
@@ -1591,9 +1585,6 @@ impl CaptureReplacer {
             }
             ast::ExprKind::Splice(s) => {
                 self.visit(s.token.as_mut());
-            }
-            ast::ExprKind::SplicePending(p) => {
-                self.visit(p.token.as_mut());
             }
             ast::ExprKind::IntrinsicContainer(container) => {
                 let mut new_expr = container.take_into_const_expr();

@@ -58,9 +58,6 @@ common_enum! {
         Quote(ExprQuote),
         /// splice keyword – insert previously quoted code
         Splice(ExprSplice),
-        /// Splice eval pending — placeholder inserted by AstPreProcessor;
-        /// resolved at comptime via scheduler. request_id maps to splice_results.
-        SplicePending(ExprSplicePending),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),
         Await(ExprAwait),
@@ -202,7 +199,6 @@ impl ExprKind {
             ExprKind::IntrinsicCall(call) => call.span(),
             ExprKind::Quote(quote) => quote.span(),
             ExprKind::Splice(splice) => splice.span(),
-            ExprKind::SplicePending(pending) => pending.span(),
             ExprKind::Closured(closured) => closured.span(),
             ExprKind::Await(await_expr) => await_expr.span(),
             ExprKind::Paren(paren) => paren.expr.span(),
