@@ -323,8 +323,8 @@ impl<'a> HirToAstLifter<'a> {
 
     /// Best-effort variant of [`lift_program`](Self::lift_program) for
     /// splicing typed content back onto an existing source AST
-    /// (`fp-cli::compiler::typecheck_package`), keyed by each item's own
-    /// qualified name (`HirProgram::def_path`) rather than list position.
+    /// (`fp-cli::compiler::typecheck_package`), keyed by each item's
+    /// semantic `DefId` rather than list position.
     ///
     /// Unlike `lift_program`, a single item that fails to lift (e.g. a
     /// nested `hir::ExprKind::Query`, or any other not-yet-supported
@@ -367,11 +367,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `Ok(...)`/`Some(...)` calls inside impl methods never reached
     /// `KotlinMaterializer` — the typed HIR was real, but nothing ever
     /// spliced it back in). This method fills that gap:
-    /// each `Method` inside every `impl` block, keyed by its own
-    /// `DefId`'s qualified path (the predeclare pass allocates stable IDs for
-    /// every impl method; a splice consumer can reconstruct the same path
-    /// shape from the untyped source: the self-type's own module + name +
-    /// method name).
+    /// each `Method` inside every `impl` block, keyed by its own `DefId`.
     ///
     /// Per-method visibility isn't tracked on `hir::ImplItem` today (only
     /// the enclosing `hir::Item`/impl block carries a `Visibility`, and
@@ -432,6 +428,20 @@ impl<'a> HirToAstLifter<'a> {
             result.insert(item.def_id.clone(), referenced);
         }
         result
+    }
+
+    pub fn referenced_source_paths(&self) -> HashMap<Vec<String>, Vec<Vec<String>>> {
+        self.referenced_defs_by_def_id()
+            .into_iter()
+            .filter_map(|(def_id, refs)| {
+                let key = self.source_path_for(&def_id)?.segments;
+                let values = refs
+                    .into_iter()
+                    .filter_map(|ref_id| self.source_path_for(&ref_id).map(|path| path.segments))
+                    .collect();
+                Some((key, values))
+            })
+            .collect()
     }
 
     fn lift_item(&self, item: &hir::Item) -> Result<Item> {

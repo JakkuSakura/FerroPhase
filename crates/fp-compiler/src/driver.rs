@@ -1,9 +1,9 @@
 use fp_backend::transformations::{
     AstToHirLowerer, HirLoweringConfig, HirToMirLowerer, MirToLirLowerer,
 };
+use fp_core::ast::Value;
 use fp_core::ast::package::{DependencyDescriptor, PackageId};
 use fp_core::ast::path::InPackagePath;
-use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_core::hir;
 use fp_core::mir;
@@ -798,9 +798,9 @@ impl CompilerDriver {
         current_package_id: PackageId,
         hir_package_id: hir::PackageId,
     ) -> Result<(), CompilerDriverError> {
-        // Scoped narrowly — DefId-indexed HIR-to-AST lifting/references
-        // return owned data, so nothing here needs to outlive this block.
-        let (lifted_items_by_def_id, referenced_defs_by_def_id) = {
+        // Scoped narrowly — HIR-to-AST reference facts are owned data, so
+        // nothing here needs to outlive this block.
+        let referenced_paths = {
             let state = self.state.borrow();
             let hir = state.hir(hir_package_id.clone())?;
             let hir_program = state.hir_program();
@@ -827,14 +827,7 @@ impl CompilerDriver {
             } else {
                 lifter
             };
-            // The DefId-indexed lifter treats an `impl` block as an opaque
-            // placeholder — merge in each impl *method*'s own lifted
-            // body too (keyed by its own qualified path, disjoint from
-            // any top-level item's), or typed/normalized impl method
-            // bodies never get spliced back in at all.
-            let mut lifted_items_by_def_id = lifter.lift_items_by_def_id();
-            lifted_items_by_def_id.extend(lifter.lift_impl_methods_by_def_id());
-            (lifted_items_by_def_id, lifter.referenced_defs_by_def_id())
+            lifter.referenced_source_paths()
         };
         if let Some(pkg) = self
             .state
@@ -843,13 +836,7 @@ impl CompilerDriver {
             .compiled_package(&current_package_id)
         {
             let mut pkg = pkg.borrow_mut();
-            // Splice typed/normalized content back onto the original
-            // untyped source items by qualified-path identity — the
-            // single, canonical reconciliation point.
-            // Module-owned AST items are the source of truth; reconciliation is
-            // performed during lowering from the module tree.
-            let _ = referenced_defs_by_def_id;
-            pkg.referenced_paths.clear();
+            pkg.referenced_paths = referenced_paths;
         }
         return Ok(());
     }
@@ -1195,102 +1182,5 @@ impl CompilerDriver {
             value = interpreter.read_typed_const_value(value, &ty)?;
         }
         Ok(value)
-    }
-}
-
-/// The name an `ast::Item` is registered under during AST→HIR lowering
-/// (`AstToHirLowerer::predeclare_items`'s `register_type_def`/
-/// `register_value_def` calls) — `None` for item kinds with no name of
-/// their own (`Impl`, `Import`, bare `Expr`, ...), which therefore can
-/// never be looked up in a qualified-path-keyed map.
-fn item_own_name(item: &Item) -> Option<&str> {
-    match item.kind() {
-        ItemKind::Module(module) => Some(module.name.name.as_str()),
-        ItemKind::DefStruct(def) => Some(def.name.name.as_str()),
-        ItemKind::DefStructural(def) => Some(def.name.name.as_str()),
-        ItemKind::DefEnum(def) => Some(def.name.name.as_str()),
-        ItemKind::DefType(def) => Some(def.name.name.as_str()),
-        ItemKind::OpaqueType(def) => Some(def.name.name.as_str()),
-        ItemKind::DefConst(def) => Some(def.name.name.as_str()),
-        ItemKind::DefStatic(def) => Some(def.name.name.as_str()),
-        ItemKind::DefFunction(def) => Some(def.name.name.as_str()),
-        ItemKind::DefTrait(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclType(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclConst(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclStatic(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclFunction(def) => Some(def.name.name.as_str()),
-        ItemKind::Macro(item_macro) => item_macro
-            .declared_name
-            .as_ref()
-            .map(|ident| ident.name.as_str()),
-        ItemKind::Impl(_)
-        | ItemKind::Import(_)
-        | ItemKind::Expr(_)
-        | ItemKind::ConstBlock(_)
-        | ItemKind::PrecompiledAsm(_)
-        | ItemKind::PrecompiledLir(_)
-        | ItemKind::PrecompiledArtifact(_) => None,
-    }
-}
-
-/// HIR owns checked declaration shape and bodies, while some Rust source
-/// attributes are backend-facing metadata with no HIR representation (for
-/// example `#[derive(thiserror::Error)]`). Preserve that metadata when the
-/// typed splice replaces a source declaration. This is structural, never
-/// keyed on declaration names or target-language behavior.
-fn preserve_source_declaration_metadata(source: &Item, typed: &mut Item) {
-    match (source.kind(), typed.kind_mut()) {
-        (ItemKind::DefStruct(source), ItemKind::DefStruct(typed)) => {
-            typed.attrs = source.attrs.clone();
-        }
-        (ItemKind::DefStructural(source), ItemKind::DefStructural(typed)) => {
-            typed.attrs = source.attrs.clone();
-        }
-        (ItemKind::DefEnum(source), ItemKind::DefEnum(typed)) => {
-            typed.attrs = source.attrs.clone();
-            for (source_variant, typed_variant) in source
-                .value
-                .variants
-                .iter()
-                .zip(typed.value.variants.iter_mut())
-            {
-                typed_variant.attrs = source_variant.attrs.clone();
-            }
-        }
-        (ItemKind::DefType(source), ItemKind::DefType(typed)) => {
-            typed.attrs = source.attrs.clone();
-        }
-        (ItemKind::DefConst(source), ItemKind::DefConst(typed)) => {
-            typed.attrs = source.attrs.clone();
-        }
-        (ItemKind::DefStatic(source), ItemKind::DefStatic(typed)) => {
-            typed.attrs = source.attrs.clone();
-        }
-        _ => {}
-    }
-}
-
-/// An `impl` block's own qualified name is its self-type's name (mirrors
-/// `ast_to_hir::self_type_first_segment_name`, which resolves the same
-/// question at HIR-lowering time) — used to reconstruct the same
-/// DefId shape `HirToAstLifter::lift_impl_methods_by_def_id` records
-/// each method's typed body under, from the untyped source alone. Only
-/// handles the common bare-ident/simple-path shape (`impl Foo { .. }`/
-/// `impl foo::Bar { .. }`) — a self-type written as something
-/// structurally different (`&T`, `[T]`, a generic instantiation, ...)
-/// returns `None`, and that impl's methods simply keep their original,
-/// untyped source form, the same fallback every other unmatched case
-/// already gets.
-fn impl_self_type_name(self_ty: &Expr) -> Option<&str> {
-    let ExprKind::Name(name) = self_ty.kind() else {
-        return None;
-    };
-    match name {
-        fp_core::ast::Name::Ident(ident) => Some(ident.name.as_str()),
-        fp_core::ast::Name::Path(path) => path.segments.last().map(|seg| seg.name.as_str()),
-        fp_core::ast::Name::ParameterPath(param_path) => param_path
-            .segments
-            .last()
-            .map(|seg| seg.ident.name.as_str()),
     }
 }
