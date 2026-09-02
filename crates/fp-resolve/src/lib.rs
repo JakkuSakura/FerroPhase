@@ -517,10 +517,7 @@ impl Resolver {
         let mut worklist = ResolutionWorklist::default();
         resolver.collect_imports(&items, &mut worklist);
         resolver.resolve_worklist(&mut worklist);
-        let resolutions = resolver.resolution_table().clone();
         drop(resolver);
-        let mut package = package.borrow_mut();
-        package.resolutions = resolutions;
         Ok(())
     }
 }

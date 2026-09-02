@@ -134,8 +134,6 @@ pub struct AstPackage {
     pub package: PackageDescriptor,
 
     pub prelude_modules: Vec<PackagePath>,
-    /// AST node resolutions produced before lowering.
-    pub resolutions: HashMap<QualifiedPath, crate::hir::Res>,
 
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
@@ -155,7 +153,6 @@ pub struct AstPackage {
     pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
     pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
     pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
-    pub trait_defs: HashSet<QualifiedPath>,
 
     /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
     /// by `SelfType`'s own fully-qualified path -- deliberately not a field
@@ -175,13 +172,11 @@ impl AstPackage {
             name: name.into(),
             package,
             prelude_modules: Vec::new(),
-            resolutions: HashMap::new(),
             items: Vec::new(),
             referenced_paths: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             function_sigs: HashMap::new(),
-            trait_defs: HashSet::new(),
             method_sigs: HashMap::new(),
         }
     }
