@@ -108,17 +108,46 @@ fn package_from_items_with_paths_as(
     package_id: PackageId,
     items: Vec<(Vec<String>, ast::Item)>,
 ) -> Result<fp_core::ast::package::AstPackage> {
+    fn insert_item(module: &mut ast::Module, path: &[String], item: ast::Item) {
+        let Some((head, tail)) = path.split_first() else {
+            module.items.push(item);
+            return;
+        };
+        let child = module.items.iter_mut().find_map(|existing| {
+            let ast::ItemKind::Module(child) = existing.kind_mut() else {
+                return None;
+            };
+            (child.name.as_str() == head).then_some(child)
+        });
+        if let Some(child) = child {
+            insert_item(child, tail, item);
+            return;
+        }
+        let mut child = ast::Module {
+            attrs: Vec::new(),
+            name: ast::Ident::new(head),
+            items: Vec::new(),
+            visibility: ast::Visibility::Public,
+            is_external: false,
+        };
+        insert_item(&mut child, tail, item);
+        module.items.push(ast::Item::from(ast::ItemKind::Module(child)));
+    }
+    let mut root = ast::Module {
+        attrs: Vec::new(),
+        name: ast::Ident::new(""),
+        items: Vec::new(),
+        visibility: ast::Visibility::Public,
+        is_external: false,
+    };
+    for (path, item) in items {
+        insert_item(&mut root, &path, item);
+    }
     let source = AstPackage::new(
         package_id.clone(),
         "test",
         fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"),
-        vec![ast::Module {
-            attrs: Vec::new(),
-            name: ast::Ident::new(""),
-            items: items.into_iter().map(|(_, item)| item).collect(),
-            visibility: ast::Visibility::Public,
-            is_external: false,
-        }],
+        vec![root],
     );
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
