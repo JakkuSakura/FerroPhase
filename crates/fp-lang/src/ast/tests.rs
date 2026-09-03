@@ -1559,7 +1559,7 @@ fn parse_expr_ast_bare_self_is_a_plain_identifier() {
     let expr = parser.parse_expr_ast("self").unwrap();
     let ExprKind::Name(Name { path, .. }) = expr.kind() else {
         panic!(
-            "expected bare `self` to parse as Name::Ident, got {:?}",
+            "expected bare `self` to parse as a one-segment path, got {:?}",
             expr.kind()
         );
     };

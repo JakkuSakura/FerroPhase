@@ -54,12 +54,7 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(ty);
     };
     let name = match expr.kind() {
-        // A single-segment path (e.g. plain `I`) collapses to `Name::
-        // Ident` at construction time (see `Name::path`'s own doc
-        // comment) rather than staying a one-element `Name::Path` — the
-        // common case for a disambiguated type in a qualified path
-        // (`<I as Iterator>::Item`), so this needs its own arm rather
-        // than falling through to the catch-all below.
+        // Preserve all path segments when extending a qualified type path.
         ExprKind::Name(Name { path, .. }) => Name::path(Path::new(
             path.prefix,
             path.segments
@@ -582,10 +577,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     }
     if name.as_ident().is_some() {
         // `Name::path()` canonicalizes any single-segment plain path (a
-        // bare `Foo`) into `Name::Ident`, not `Name::Path` — so the
-        // trailing-`?` handling above (reachable only via `bare_path`,
-        // i.e. `Name::Path`) never sees it. Mirror that same handling here
-        // for the case `Name::path()` actually produces.
+        // bare `Foo`) through the same path-based handling used above.
         let mut ty = Ty::name(name.clone());
         if skip_symbol(input, "?").is_ok() {
             ty = Ty::TypeBinaryOp(

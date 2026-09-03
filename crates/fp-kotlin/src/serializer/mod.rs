@@ -638,7 +638,7 @@ impl KotlinEmitter {
 /// path segment (`std::fmt::Display` and a bare `Display` both match).
 /// `trait_name` comes from `name_to_string`, which renders a qualified
 /// `Name::Path` with `.` separators, not `::` — split on both, since a
-/// `Name::ParameterPath` (or a manually-built `Name`) could still use `::`.
+/// manually-built names could still use `::`.
 fn is_known_std_trait(trait_name: &str) -> bool {
     let last = trait_name.rsplit(['.', ':']).next().unwrap_or(trait_name);
     matches!(

@@ -104,9 +104,9 @@ fn bare_structural_literal_missing_colon_errors() {
 #[test]
 fn parses_bare_ident_optional_type_sugar() {
     // `Foo?` where `Foo` is a bare single-segment name: `Name::path()`
-    // canonicalizes such a name into `Name::Ident`, not `Name::Path`, so
+    // represents such a name as a plain one-segment path, so
     // this exercises a different parser branch than a multi-segment or
-    // otherwise-`Name::Path` type (see `examples/14_type_arithmetic.fp`'s
+    // path-based type (see `examples/14_type_arithmetic.fp`'s
     // `type FooMaybe = Foo?;`).
     let def = parse_single_type_alias("type FooMaybe = Foo?;");
     match def.value {
