@@ -147,7 +147,6 @@ impl PythonPackageProvider {
             registry: None,
             features: Default::default(),
             dependencies,
-            prelude: None,
         };
         let descriptor = PackageDescriptor {
             id: package_id.clone(),

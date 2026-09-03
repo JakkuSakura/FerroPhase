@@ -136,6 +136,12 @@ impl AstToHirLowerer {
                         return Ok(path);
                     }
                     fp_core::hir::resolve::ResolutionResult::NotFound(reason) => {
+                        if std::env::var_os("FP_TRACE_PATHS").is_some() {
+                            eprintln!(
+                                "ast_to_hir path miss: package={} module={:?} owner={:?} scope={scope:?} path={parsed} reason={reason:?}",
+                                self.package_id, self.module_path, self.current_owner,
+                            );
+                        }
                         self.add_error(
                             fp_core::diagnostics::Diagnostic::error(format!(
                                 "unresolved {scope:?} path `{parsed}`: {reason:?}"
@@ -145,6 +151,12 @@ impl AstToHirLowerer {
                         hir::Res::Error
                     }
                     fp_core::hir::resolve::ResolutionResult::Ambiguous => {
+                        if std::env::var_os("FP_TRACE_PATHS").is_some() {
+                            eprintln!(
+                                "ast_to_hir path ambiguous: package={} module={:?} owner={:?} scope={scope:?} path={parsed}",
+                                self.package_id, self.module_path, self.current_owner,
+                            );
+                        }
                         self.add_error(
                             fp_core::diagnostics::Diagnostic::error(format!(
                                 "ambiguous {scope:?} path `{parsed}`"

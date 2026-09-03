@@ -24,6 +24,7 @@ pub struct InPackageResolver {
     /// The resolver retains the program instead of cloning package/module
     /// state into a second registry.
     ast_program: Rc<AstProgram>,
+    hir_program: Rc<RefCell<HirProgram>>,
     cfg_filter: CfgFilter,
 }
 
@@ -37,10 +38,11 @@ impl InPackageResolver {
     ) -> Self {
         Self {
             hir_package,
-            resolver: Resolver::new(Rc::clone(&ast_program), hir_program),
+            resolver: Resolver::new(Rc::clone(&ast_program), Rc::clone(&hir_program)),
             declaration_rules,
             resolution_rules,
             ast_program,
+            hir_program,
             cfg_filter: CfgFilter::host(),
         }
     }
@@ -60,7 +62,6 @@ impl InPackageResolver {
         let root = InPackagePath::new(Vec::new());
         let mut worklist = ResolutionWorklist::default();
         self.collect_module(&root, &module.items, &mut worklist);
-        self.collect_preludes();
         self.resolve_worklist(&mut worklist);
         Ok(())
     }
@@ -94,6 +95,7 @@ impl InPackageResolver {
         items: &[fp_core::ast::Item],
         worklist: &mut ResolutionWorklist,
     ) {
+        self.enqueue_prelude_imports(module, worklist);
         for item in items {
             if !self.cfg_filter.allows(item) {
                 continue;
@@ -110,35 +112,31 @@ impl InPackageResolver {
         }
     }
 
-    fn collect_preludes(&mut self) {
+    fn enqueue_prelude_imports(
+        &mut self,
+        module: &InPackagePath,
+        worklist: &mut ResolutionWorklist,
+    ) {
+        let package_id = self.hir_package.borrow().id.clone();
         let preludes = self
             .ast_program
-            .get_ast_package(&self.hir_package.borrow().id)
+            .get_ast_package(&package_id)
             .borrow()
             .prelude_modules
             .clone();
         for prelude in preludes {
-            if let ResolutionResult::Found(path) = self.module_data().resolve_module(
-                &ModuleData::virtual_root_for(self.hir_package.borrow().id.clone()),
-                &prelude.path.segments,
-                Namespace::Type,
-            ) {
-                let hir::Res::Module(def_id) = path.res else {
-                    continue;
-                };
-                if !self.hir_package.borrow().prelude_modules.contains(&def_id) {
-                    self.hir_package.borrow_mut().prelude_modules.push(def_id);
-                }
-            }
-        }
-        let prelude_ids = self.hir_package.borrow().prelude_modules.clone();
-        for def_id in prelude_ids {
-            let modules: Vec<_> = self.module_data().module_ids().cloned().collect();
-            for module in modules {
-                self.hir_package
-                    .borrow_mut()
-                    .module_data
-                    .copy_children(&def_id, &module);
+            let mut target = InPackagePath::new(vec![prelude.package_id.as_str().to_owned()]);
+            target.segments.extend(prelude.path.segments);
+            for namespace in [Namespace::Type, Namespace::Value, Namespace::Macro] {
+                worklist.push(ImportDirective {
+                    module: module.clone(),
+                    name: Symbol::from(""),
+                    target: target.clone(),
+                    namespace,
+                    kind: ImportKind::Glob,
+                    visibility: fp_core::ast::Visibility::Public,
+                    span: Span::null(),
+                });
             }
         }
     }
@@ -367,13 +365,18 @@ impl InPackageResolver {
                     ResolutionResult::Found(path)
                         if let hir::Res::Module(module) = path.res.clone() =>
                     {
-                        self.module_data().children(&module).map(|children| {
-                            children
-                                .iter()
-                                .filter(|(_, ns, _)| *ns == directive.namespace)
-                                .map(|(name, _, res)| (name.clone(), res.clone()))
-                                .collect::<Vec<_>>()
-                        })
+                        self.hir_program
+                            .borrow()
+                            .package(&module.package_id)
+                            .and_then(|package| {
+                                package.module_data.children(&module).map(|children| {
+                                    children
+                                        .iter()
+                                        .filter(|(_, ns, _)| *ns == directive.namespace)
+                                        .map(|(name, _, res)| (name.clone(), res.clone()))
+                                        .collect::<Vec<_>>()
+                                })
+                            })
                     }
                     _ => None,
                 };
@@ -722,7 +725,7 @@ mod tests {
         let source = InPackagePath::new(vec!["source".into()]);
         let target = hir::DefId::local(11);
         let (mut resolver, package) = resolver();
-        let source_id = hir::DefId::local(12);
+        let source_id = hir::DefId::new(package.borrow().id.clone(), 12);
         package.borrow_mut().module_data.set_children(
             source_id.clone(),
             vec![(

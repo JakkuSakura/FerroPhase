@@ -345,22 +345,42 @@ impl AstToHirLowerer {
                         // generation for the whole package — the same
                         // "tolerate what's broken, keep what isn't" policy
                         // already applied at the file level (parse errors).
+                        // Impl generics occupy both namespaces. Keep the
+                        // lexical scope setup symmetric so const parameters
+                        // are visible while lowering the self type as well.
                         self.push_type_scope();
+                        self.push_value_scope();
                         for (index, param) in impl_block.generics_params.iter().enumerate() {
+                            let namespace = match param.kind {
+                                ast::GenericParamKind::Type => {
+                                    fp_core::hir::resolve::Namespace::Type
+                                }
+                                ast::GenericParamKind::Const { .. } => {
+                                    fp_core::hir::resolve::Namespace::Value
+                                }
+                            };
                             let def_id = self.package_mut().member_def_id(
                                 &impl_def_id,
                                 param.name.name.clone(),
-                                fp_core::hir::resolve::Namespace::Type,
+                                namespace,
                             );
                             self.impl_generic_param_ids
                                 .insert((impl_def_id.clone(), index), def_id.clone());
-                            self.register_type_generic(&param.name.name, def_id);
+                            match param.kind {
+                                ast::GenericParamKind::Type => {
+                                    self.register_type_generic(&param.name.name, def_id)
+                                }
+                                ast::GenericParamKind::Const { .. } => {
+                                    self.register_value_generic(&param.name.name, def_id)
+                                }
+                            }
                         }
                         let self_ty = match self
                             .transform_type_to_hir(&ast::Ty::expr(impl_block.self_ty.clone()))
                         {
                             Ok(self_ty) => self_ty,
                             Err(error) => {
+                                self.pop_value_scope();
                                 self.pop_type_scope();
                                 tracing::debug!(
                                     module = %self.module_path.to_key(),
@@ -371,9 +391,11 @@ impl AstToHirLowerer {
                             }
                         };
                         let Some(impl_key) = self.impl_self_key(&self_ty).ok() else {
+                            self.pop_value_scope();
                             self.pop_type_scope();
                             continue;
                         };
+                        self.pop_value_scope();
                         self.pop_type_scope();
                         for impl_item in &impl_block.items {
                             match impl_item.kind() {

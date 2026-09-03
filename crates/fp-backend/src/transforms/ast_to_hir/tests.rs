@@ -145,12 +145,31 @@ fn package_from_items_with_paths_as(
     for (path, item) in items {
         insert_item(&mut root, &path, item);
     }
-    let source = AstPackage::new(
+    let mut source = AstPackage::new(
         package_id.clone(),
         "test",
         fp_core::ast::package::PackageDescriptor::empty(package_id.clone(), "test"),
         vec![root],
     );
+    fn has_module_path(module: &ast::Module, path: &[&str]) -> bool {
+        let Some((head, tail)) = path.split_first() else {
+            return true;
+        };
+        module.items.iter().any(|item| {
+            let ast::ItemKind::Module(child) = item.kind() else {
+                return false;
+            };
+            child.name.as_str() == *head && has_module_path(child, tail)
+        })
+    }
+    if has_module_path(&source.module, &["prelude", "v1"]) {
+        source
+            .prelude_modules
+            .push(fp_core::ast::package::PackagePath::new(
+                package_id.clone(),
+                fp_core::ast::path::InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+            ));
+    }
     let provider = FixedPackageProvider::for_source(package_id.clone(), source);
     let loaded = provider
         .load_package_source(&package_id)
@@ -1091,6 +1110,7 @@ fn transform_generic_function_and_method() -> Result<()> {
     identity.sig.generics_params = vec![ast::GenericParam {
         name: ident("T"),
         bounds: ast::TypeBounds::any(),
+        kind: ast::GenericParamKind::Type,
         projection_bounds: Vec::new(),
     }];
     identity.sig.params = vec![ast::FunctionParam::new(ident("x"), ty_ident("T"))];
@@ -3853,6 +3873,329 @@ fn expect_lowering_diagnostic<T: std::fmt::Debug>(
             .any(|d| d.level == DiagnosticLevel::Error && d.message.to_string().contains(expected)),
         "expected an error diagnostic containing `{expected}`, got {diagnostics:?}"
     );
+}
+
+/// Function-body path tests stay separate from package/module-resolution
+/// tests.  They exercise the lexical scope that the lowerer installs while
+/// transforming a function, so an unresolved body path cannot be mistaken
+/// for a missing module binding.
+mod function_body_resolution {
+    use super::*;
+
+    fn lower(source: &str) -> (hir::HirPackage, Vec<Diagnostic>) {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast(source)
+            .expect("function-body fixture should parse");
+        let package = package_from_items(items).expect("function-body fixture package");
+        let mut lowerer = AstToHirLowerer::new(
+            std::rc::Rc::new(AstProgram::new(std::sync::Arc::new(
+                fp_core::ast::package::provider::EmptyProvider,
+            ))),
+            hir::SharedHirProgram::new(hir::HirProgram::new()),
+            PackageId::new("test"),
+        );
+        let lowered = lowerer
+            .transform_package(&package)
+            .expect("function-body fixture should lower");
+        (lowered, lowerer.take_diagnostics().get_diagnostics())
+    }
+
+    fn function<'a>(package: &'a hir::HirPackage, name: &str) -> &'a hir::Function {
+        package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Function(function) if function.sig.name.as_str() == name => {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("function `{name}` should be present"))
+    }
+
+    fn body_expr(function: &hir::Function) -> &hir::Expr {
+        function
+            .body
+            .as_ref()
+            .and_then(|body| body.expr.as_deref())
+            .expect("fixture function should have a final expression")
+    }
+
+    fn type_path(ty: &hir::TypeExpr) -> &hir::Path {
+        match &ty.kind {
+            hir::TypeExprKind::Path(path) => path,
+            hir::TypeExprKind::Ref(inner) => type_path(inner),
+            other => panic!("expected a path-like type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_function_parameter_in_body() {
+        let (package, diagnostics) = lower("fn identity(value: i64) -> i64 { value }");
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "identity")).kind else {
+            panic!("expected parameter body to lower to a path");
+        };
+        assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `value`")),
+            "parameter resolution emitted diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_local_binding_in_body() {
+        let (package, diagnostics) = lower("fn local() -> i64 { let value = 1; value }");
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "local")).kind else {
+            panic!("expected local body to lower to a path");
+        };
+        assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `value`")),
+            "local resolution emitted diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_generic_type_parameter_in_body_signature() {
+        let (package, diagnostics) = lower("fn identity<T>(value: T) -> T { value }");
+        let function = function(&package, "identity");
+        assert!(matches!(
+            function.sig.inputs[0].ty.kind,
+            hir::TypeExprKind::Path(_)
+        ));
+        assert!(matches!(
+            function.sig.output.kind,
+            hir::TypeExprKind::Path(_)
+        ));
+        let hir::ExprKind::Path(path) = &body_expr(function).kind else {
+            panic!("expected generic function body to lower to a path");
+        };
+        assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved Type path `T`")),
+            "generic type resolution emitted diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_const_generic_parameter_in_body() {
+        let (package, diagnostics) = lower("fn constant<const N: usize>() -> usize { N }");
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "constant")).kind else {
+            panic!("expected const-generic body to lower to a path");
+        };
+        assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `N`")),
+            "const-generic resolution emitted diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_nested_function_body_scopes() {
+        let (package, diagnostics) = lower(
+            "fn nested(input: i64) -> i64 { let outer = input; { let inner = outer; inner } }",
+        );
+        let function = function(&package, "nested");
+        let body = function.body.as_ref().expect("nested function body");
+        let hir::StmtKind::Local(local) = &body.stmts[0].kind else {
+            panic!("expected outer local declaration");
+        };
+        let hir::ExprKind::Path(outer_path) = &local.init.as_ref().expect("outer initializer").kind
+        else {
+            panic!("expected outer initializer path");
+        };
+        assert!(
+            matches!(outer_path.res, hir::Res::Local(_)),
+            "path: {outer_path:?}"
+        );
+        let hir::ExprKind::Block(inner) = &body_expr(function).kind else {
+            panic!("expected nested block body");
+        };
+        let Some(hir::Stmt {
+            kind: hir::StmtKind::Local(inner_local),
+            ..
+        }) = inner.stmts.first()
+        else {
+            panic!("expected inner local declaration");
+        };
+        let hir::ExprKind::Path(inner_path) =
+            &inner_local.init.as_ref().expect("inner initializer").kind
+        else {
+            panic!("expected inner initializer path");
+        };
+        assert!(
+            matches!(inner_path.res, hir::Res::Local(_)),
+            "path: {inner_path:?}"
+        );
+        let hir::ExprKind::Path(result_path) = &inner.expr.as_deref().expect("inner result").kind
+        else {
+            panic!("expected inner result path");
+        };
+        assert!(
+            matches!(result_path.res, hir::Res::Local(_)),
+            "path: {result_path:?}"
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path")),
+            "nested-scope resolution emitted diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_closure_body_parameter_and_capture() {
+        let (package, diagnostics) = lower(
+            "fn apply(input: i64) -> i64 { let closure = |value: i64| input + value; closure(1) }",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                let message = diagnostic.message.to_string();
+                !message.contains("unresolved value path `input`")
+                    && !message.contains("unresolved value path `value`")
+            }),
+            "closure resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let closure_function = package.items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function)
+                if function.sig.inputs.len() == 2
+                    && function
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.expr.as_deref())
+                        .is_some_and(|expr| matches!(expr.kind, hir::ExprKind::Binary(..))) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        });
+        let closure_function =
+            closure_function.expect("closure lowering should publish its environment function");
+        let body = closure_function
+            .body
+            .as_ref()
+            .expect("closure function body");
+        let hir::ExprKind::Binary(_, capture, parameter) =
+            &body.expr.as_deref().expect("closure function result").kind
+        else {
+            panic!("expected closure body to add capture and parameter: {body:?}");
+        };
+        let hir::ExprKind::Path(capture_path) = &capture.kind else {
+            panic!("expected captured input path: {capture:?}");
+        };
+        assert_eq!(
+            capture_path
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["__env", "input"]
+        );
+        let hir::ExprKind::Path(parameter_path) = &parameter.kind else {
+            panic!("expected closure parameter path: {parameter:?}");
+        };
+        assert!(
+            matches!(
+                parameter_path.res,
+                hir::Res::Local(_) | hir::Res::Parameter(_)
+            ),
+            "closure parameter should resolve to its local binding: {parameter_path:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_generic_callable_parameter_in_body() {
+        let (package, diagnostics) =
+            lower("fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { f(value) }");
+        assert!(
+            diagnostics.is_empty(),
+            "generic callable parameter resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Call(callee, _) = &body_expr(function(&package, "apply")).kind else {
+            panic!("expected generic callable body to lower to a call");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected generic callable callee to lower to a path");
+        };
+        assert!(
+            matches!(path.res, hir::Res::Local(_) | hir::Res::Parameter(_)),
+            "generic callable should resolve to its parameter: {path:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_trait_generic_in_synthesized_default_method() {
+        let (package, diagnostics) = lower(
+            "trait Pair<A, B = Self> { fn compare(&self, a: &A, b: &B) {} } struct Foo; struct Bar; struct Value; impl Pair<Foo, Bar> for Value {}",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "trait default generic resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let def_id = |package: &hir::HirPackage, name: &str| {
+            package
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    hir::ItemKind::Struct(def) if def.name.as_str() == name => {
+                        Some(item.def_id.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing struct `{name}`"))
+        };
+        let assert_method = |package: &hir::HirPackage, expected_b: hir::Res| {
+            let foo = def_id(package, "Foo");
+            let impl_item = package
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                    _ => None,
+                })
+                .expect("missing trait impl");
+            let method = impl_item
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    hir::ImplItemKind::Method(method) if item.name.as_str() == "compare" => {
+                        Some(method)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing synthesized trait method"));
+            assert_eq!(
+                type_path(&method.sig.inputs[1].ty).res,
+                hir::Res::Def(foo.clone())
+            );
+            assert_eq!(type_path(&method.sig.inputs[2].ty).res, expected_b);
+        };
+        let bar = def_id(&package, "Bar");
+        assert_method(&package, hir::Res::Def(bar));
+
+        let (default_package, default_diagnostics) = lower(
+            "trait Pair<A, B = Self> { fn compare(&self, a: &A, b: &B) {} } struct Foo; struct Other; impl Pair<Foo> for Other {}",
+        );
+        assert!(
+            default_diagnostics.is_empty(),
+            "defaulted trait generic resolution emitted diagnostics: {default_diagnostics:?}"
+        );
+        assert_method(&default_package, hir::Res::SelfTy);
+    }
 }
 
 #[test]

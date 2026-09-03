@@ -94,11 +94,16 @@ fn load_embedded_package(
     };
     let graph = package;
     let mut result = AstPackage::new(PackageId::new(package_name), package_name, graph, modules);
-    if package_name == STD_PACKAGE_NAME {
-        result.prelude_modules.push(PackagePath {
-            package_id: result.package_id.clone(),
-            path: InPackagePath::new(vec!["prelude".into(), "v1".into()]),
-        });
+    let prelude_package = match package_name {
+        CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(PackageId::new(package_name)),
+        ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
+        _ => None,
+    };
+    if let Some(package_id) = prelude_package {
+        result.prelude_modules.push(PackagePath::new(
+            package_id,
+            InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+        ));
     }
     Ok(result)
 }
@@ -141,12 +146,6 @@ impl PackageProvider for FerroPhaseProvider {
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
-        metadata.prelude = match id.as_str() {
-            CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(id.clone()),
-            ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
-            LIBC_PACKAGE_NAME => None,
-            _ => None,
-        };
         for dependency in match id.as_str() {
             CORE_PACKAGE_NAME => &[][..],
             ALLOC_PACKAGE_NAME => &[CORE_PACKAGE_NAME, LIBC_PACKAGE_NAME][..],
@@ -216,14 +215,17 @@ impl InputPackageProvider {
             manifest_path: VirtualPath::from_path(&source.path),
             root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
             metadata: PackageMetadata {
-                prelude: Some(PackageId::new(STD_PACKAGE_NAME)),
                 dependencies: vec![std_dependency()],
                 ..Default::default()
             },
         };
         let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
-        let package_source =
+        let mut package_source =
             resolver.resolve_package_source(descriptor.clone(), module_path, source)?;
+        package_source.prelude_modules.push(PackagePath::new(
+            PackageId::new(STD_PACKAGE_NAME),
+            InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+        ));
         Ok(Self {
             package_id,
             descriptor: Arc::new(descriptor),

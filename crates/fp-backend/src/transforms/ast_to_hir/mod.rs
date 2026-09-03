@@ -461,6 +461,17 @@ impl AstToHirLowerer {
         );
     }
 
+    fn register_value_generic(&mut self, name: &str, def_id: hir::DefId) {
+        self.local_resolver.declare(
+            name.to_owned(),
+            fp_core::hir::resolve::Binding::Generic {
+                id: def_id,
+                namespace: fp_core::hir::resolve::Namespace::Value,
+                span: Span::null(),
+            },
+        );
+    }
+
     fn register_value_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
         let res = hir::Res::Def(def_id);
         self.record_value_symbol(name, res, visibility);
@@ -1800,7 +1811,7 @@ impl AstToHirLowerer {
                     &struct_def.visibility,
                 );
                 self.push_type_scope();
-                let generics = self.transform_generics(&struct_def.value.generics_params);
+                let generics = self.transform_generics(&struct_def.value.generics_params)?;
                 let name = hir::Symbol::new(struct_def.name.name.clone());
                 let fields = struct_def
                     .value
@@ -1883,7 +1894,7 @@ impl AstToHirLowerer {
             ItemKind::DefEnum(enum_def) => {
                 self.register_type_def(&enum_def.name.name, def_id.clone(), &enum_def.visibility);
                 self.push_type_scope();
-                let generics = self.transform_generics(&enum_def.value.generics_params);
+                let generics = self.transform_generics(&enum_def.value.generics_params)?;
                 let qualified_enum_name = hir::Symbol::new(enum_def.name.name.clone());
 
                 let variants = enum_def
@@ -3289,7 +3300,7 @@ impl AstToHirLowerer {
             Some(MaterializedTypeAlias::Struct(struct_ty)) => {
                 self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                 self.push_type_scope();
-                let generics = self.transform_generics(&struct_ty.generics_params);
+                let generics = self.transform_generics(&struct_ty.generics_params)?;
                 let name = hir::Symbol::new(def_type.name.name.clone());
 
                 // Merge fields from source struct for TypeBuilder::from(Type)
@@ -3389,7 +3400,7 @@ impl AstToHirLowerer {
             Some(MaterializedTypeAlias::Enum(enum_ty)) => {
                 self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                 self.push_type_scope();
-                let generics = self.transform_generics(&enum_ty.generics_params);
+                let generics = self.transform_generics(&enum_ty.generics_params)?;
                 let qualified_enum_name = hir::Symbol::new(def_type.name.name.clone());
 
                 let variants = enum_ty

@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{AstPackage, PackageDescriptor, PackageId, PackageMetadata};
+use fp_core::ast::package::{
+    AstPackage, PackageDescriptor, PackageId, PackageMetadata, PackagePath,
+};
 use fp_core::ast::path::InPackagePath;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
@@ -163,8 +165,13 @@ impl PackageProvider for MagnetWorkspaceProvider {
                     ..Default::default()
                 },
             };
-            return FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
-                .resolve_package_source(descriptor, InPackagePath::new(Vec::new()), file.ast);
+            let mut package = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")))
+                .resolve_package_source(descriptor, InPackagePath::new(Vec::new()), file.ast)?;
+            package.prelude_modules.push(PackagePath::new(
+                PackageId::new("std"),
+                InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+            ));
+            return Ok(package);
         }
         let frontend = FerroFrontend::new();
         let mut modules = Vec::new();
@@ -232,5 +239,10 @@ fn package_source_from_modules(id: &PackageId, modules: &[fp_core::ast::Module])
         metadata: Default::default(),
     };
     let graph = package;
-    AstPackage::new(id.clone(), id.as_str(), graph, modules.to_vec())
+    let mut package = AstPackage::new(id.clone(), id.as_str(), graph, modules.to_vec());
+    package.prelude_modules.push(PackagePath::new(
+        PackageId::new("std"),
+        InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+    ));
+    package
 }

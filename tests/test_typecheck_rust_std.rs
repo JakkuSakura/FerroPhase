@@ -54,8 +54,27 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             "lowering `{package_id}` produced {} diagnostic(s)",
             lowering_diagnostics.len()
         );
-        for diagnostic in lowering_diagnostics.iter().take(20) {
-            eprintln!("  {:?}: {}", diagnostic.level, diagnostic.message);
+        let lowering_diagnostic_limit = if std::env::var_os("FP_STD_ALL_DIAGNOSTICS").is_some() {
+            usize::MAX
+        } else {
+            20
+        };
+        for diagnostic in lowering_diagnostics.iter().take(lowering_diagnostic_limit) {
+            let location = diagnostic
+                .span
+                .and_then(|span| {
+                    fp_core::source_map::source_map()
+                        .file(span.file)
+                        .map(|file| {
+                            let (line, column) = file.line_col(span.lo);
+                            format!("{}:{line}:{column}", file.path.display())
+                        })
+                })
+                .unwrap_or_else(|| "<unknown>".to_owned());
+            eprintln!(
+                "  {:?}: {} at {location}",
+                diagnostic.level, diagnostic.message
+            );
         }
         let package = Rc::new(RefCell::new(lowered));
         hir_program.borrow_mut().add_package(Rc::clone(&package));

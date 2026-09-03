@@ -34,7 +34,7 @@ impl AstToHirLowerer {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
-            let generics = self.transform_generics(&func.sig.generics_params);
+            let generics = self.transform_generics(&func.sig.generics_params)?;
 
             let mut params = self.transform_params(&func.sig.params)?;
             if let Some(receiver) = &func.sig.receiver {
@@ -109,7 +109,7 @@ impl AstToHirLowerer {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
-            let generics = self.transform_generics(&func.sig.generics_params);
+            let generics = self.transform_generics(&func.sig.generics_params)?;
 
             let mut params = self.transform_params(&func.sig.params)?;
             if let Some(receiver) = &func.sig.receiver {
@@ -180,9 +180,16 @@ impl AstToHirLowerer {
             .collect()
     }
 
-    pub(super) fn transform_generics(&mut self, params: &[ast::GenericParam]) -> hir::Generics {
+    pub(super) fn transform_generics(
+        &mut self,
+        params: &[ast::GenericParam],
+    ) -> Result<hir::Generics> {
         let mut hir_params = Vec::new();
         for (index, param) in params.iter().enumerate() {
+            let namespace = match param.kind {
+                ast::GenericParamKind::Type => fp_core::hir::resolve::Namespace::Type,
+                ast::GenericParamKind::Const { .. } => fp_core::hir::resolve::Namespace::Value,
+            };
             let hir_id = self.next_id();
             let def_id = self
                 .current_owner
@@ -194,15 +201,19 @@ impl AstToHirLowerer {
                 })
                 .or_else(|| {
                     self.current_owner.as_ref().map(|owner| {
-                        self.package_mut().member_def_id(
-                            owner,
-                            param.name.name.clone(),
-                            fp_core::hir::resolve::Namespace::Type,
-                        )
+                        self.package_mut()
+                            .member_def_id(owner, param.name.name.clone(), namespace)
                     })
                 })
                 .unwrap_or_else(|| self.next_def_id());
-            self.register_type_generic(&param.name.name, def_id.clone());
+            match &param.kind {
+                ast::GenericParamKind::Type => {
+                    self.register_type_generic(&param.name.name, def_id.clone());
+                }
+                ast::GenericParamKind::Const { .. } => {
+                    self.register_value_generic(&param.name.name, def_id.clone());
+                }
+            }
             // A generic parameter's own trait bounds (`F: FnOnce() -> R`,
             // `I: Iterator<Item = T>`, ...) so `path_ty` can resolve a
             // still-generic `F::Output`/`I::Item`-style associated-type
@@ -319,21 +330,27 @@ impl AstToHirLowerer {
                     (projection.name.clone().into(), bounds)
                 })
                 .collect();
+            let kind = match &param.kind {
+                ast::GenericParamKind::Type => hir::GenericParamKind::Type { default: None },
+                ast::GenericParamKind::Const { ty } => hir::GenericParamKind::Const {
+                    ty: Box::new(self.transform_type_to_hir(ty)?),
+                },
+            };
             hir_params.push(hir::GenericParam {
                 hir_id,
                 def_id: def_id.clone(),
                 name: param.name.clone().into(),
-                kind: hir::GenericParamKind::Type { default: None },
+                kind,
                 bounds,
                 explicit_bindings,
                 projection_bounds,
             });
         }
 
-        hir::Generics {
+        Ok(hir::Generics {
             params: hir_params,
             where_clause: None,
-        }
+        })
     }
 
     pub(super) fn wrap_ref_type(&mut self, ty: hir::TypeExpr) -> hir::TypeExpr {
@@ -397,7 +414,7 @@ impl AstToHirLowerer {
         self.push_value_scope();
         let result = (|| {
             // Register impl generics in the current type scope.
-            let generics = self.transform_generics(&impl_block.generics_params);
+            let generics = self.transform_generics(&impl_block.generics_params)?;
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let lowered_self_ty = self.transform_type_to_hir(&self_ty_ast)?;
             let self_ty = lowered_self_ty;
@@ -566,21 +583,35 @@ impl AstToHirLowerer {
                     // which `ast::GenericParam` has nowhere to carry
                     // through from the parser (see `parse_optional_generic_params`,
                     // which parses and discards a default value's tokens).
+                    // These are imports deliberately: the copied method is
+                    // an instantiated impl method, not a new generic
+                    // declaration. A `Binding::Generic` here would leave
+                    // the trait parameter abstract in the impl signature
+                    // and lose the concrete substitution represented by the
+                    // impl's trait arguments.
                     self.push_type_scope();
                     for (index, param) in trait_def.generics_params.iter().enumerate() {
-                        let res = match trait_generic_args.get(index) {
-                            Some(ast::Ty::Expr(expr)) => match expr.kind() {
-                                ast::ExprKind::Name(name) => {
-                                    let path =
-                                        self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
-                                    Some(path.res)
-                                }
-                                _ => None,
+                        let target = match trait_generic_args.get(index) {
+                            Some(ast::Ty::Expr(expr))
+                                if matches!(expr.kind(), ast::ExprKind::Name(_)) =>
+                            {
+                                self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)
+                                    .map(|path| path.res)?
+                            }
+                            // Trait type arguments are parsed as type
+                            // expressions.  Keep the default `Self` target
+                            // for an omitted argument, matching Rust's
+                            // defaulted trait parameter semantics.
+                            _ => hir::Res::SelfTy,
+                        };
+                        self.local_resolver.declare(
+                            param.name.name.clone(),
+                            fp_core::hir::resolve::Binding::Import {
+                                target,
+                                namespace: fp_core::hir::resolve::Namespace::Type,
+                                span: Span::null(),
                             },
-                            _ => None,
-                        }
-                        .unwrap_or(hir::Res::SelfTy);
-                        let _ = (param, res);
+                        );
                     }
                     // Synthesize default trait methods into the impl if they
                     // are missing — resolving names as if still in the
@@ -673,7 +704,7 @@ impl AstToHirLowerer {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
-            let generics = self.transform_generics(&def_trait.generics_params);
+            let generics = self.transform_generics(&def_trait.generics_params)?;
             let self_ty = hir::TypeExpr::new(
                 self.next_id(),
                 hir::TypeExprKind::Path(hir::Path {

@@ -856,11 +856,32 @@ impl FunctionParam {
     }
 }
 
-// TODO: make it enum to support lifetimes, type bounds and const
+common_enum! {
+    /// The namespace and declaration shape of a generic parameter.
+    ///
+    /// Keeping const parameters distinct is required during body lowering:
+    /// `N` in `fn f<const N: usize>() { N }` is a value binding, not a type
+    /// binding.  The parser currently represents lifetime parameters by
+    /// omitting them from this list, so only type and const parameters are
+    /// represented here.
+    pub enum GenericParamKind {
+        Type,
+        Const { ty: Box<Ty> },
+    }
+}
+
+impl Default for GenericParamKind {
+    fn default() -> Self {
+        Self::Type
+    }
+}
+
 common_struct! {
     pub struct GenericParam {
         pub name: Ident,
         pub bounds: TypeBounds,
+        #[serde(default)]
+        pub kind: GenericParamKind,
         /// Bounds on an associated type projection rooted at this parameter,
         /// such as `T::Item: Clone` from a `where` clause.
         #[serde(default)]

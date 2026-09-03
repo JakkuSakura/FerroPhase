@@ -6,7 +6,8 @@ use std::sync::{Arc, RwLock};
 use fp_core::ast::module::{ModuleDescriptor, ModuleLanguage};
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
-    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
+    AstPackage, DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId,
+    PackageMetadata, PackagePath,
 };
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
@@ -206,7 +207,6 @@ impl PackageProvider for RustPackageProvider {
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
         let mut metadata = PackageMetadata::default();
-        metadata.prelude = Some(PackageId::new(STD_PACKAGE_NAME));
         metadata.dependencies.extend(implicit_rust_dependencies());
         if let MemberRoot::Dir(dir) = member_root {
             metadata
@@ -237,7 +237,7 @@ impl PackageProvider for RustPackageProvider {
         let metadata = self.load_package_metadata(id)?.metadata.clone();
         let mut descriptor = PackageDescriptor::empty(id.clone(), id.as_str());
         descriptor.metadata = metadata;
-        let source = AstPackage::new(
+        let mut source = AstPackage::new(
             id.clone(),
             id.as_str(),
             descriptor,
@@ -249,6 +249,10 @@ impl PackageProvider for RustPackageProvider {
                 is_external: false,
             },
         );
+        source.prelude_modules.push(PackagePath::new(
+            PackageId::new(STD_PACKAGE_NAME),
+            InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+        ));
         Ok(source)
     }
 }
@@ -692,7 +696,6 @@ impl RustExternalApiProvider {
         // Cargo crate. Leaving this unset makes AST→HIR report false
         // unresolved paths inside the facade itself and poisons every
         // downstream signature that references it.
-        metadata.prelude = Some(PackageId::new("std"));
         metadata.dependencies.push(DependencyDescriptor {
             package: "std".to_owned(),
             resolved_package_id: Some(PackageId::new("std")),
@@ -710,7 +713,7 @@ impl RustExternalApiProvider {
             root: VirtualPath::from_path(Path::new(".")),
             metadata,
         };
-        let package = AstPackage::new(
+        let mut package = AstPackage::new(
             id.clone(),
             id.as_str(),
             descriptor,
@@ -722,6 +725,10 @@ impl RustExternalApiProvider {
                 is_external: false,
             },
         );
+        package.prelude_modules.push(PackagePath::new(
+            PackageId::new("std"),
+            InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+        ));
         Ok(package)
     }
 }
@@ -741,7 +748,6 @@ impl PackageProvider for RustExternalApiProvider {
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         Self::source_for(id)?;
         let mut metadata = PackageMetadata::default();
-        metadata.prelude = Some(PackageId::new("std"));
         metadata.dependencies.push(DependencyDescriptor {
             package: "std".to_owned(),
             resolved_package_id: Some(PackageId::new("std")),
@@ -837,13 +843,6 @@ impl PackageProvider for RustStdProvider {
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
-        metadata.prelude = match id.as_str() {
-            CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(id.clone()),
-            ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
-            TEST_PACKAGE_NAME => Some(PackageId::new(STD_PACKAGE_NAME)),
-            LIBC_PACKAGE_NAME => None,
-            _ => None,
-        };
         for dependency in Self::dependencies_of(id.as_str()) {
             metadata.dependencies.push(DependencyDescriptor {
                 package: dependency.to_string(),
@@ -1344,13 +1343,6 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     );
 
     let mut metadata = PackageMetadata::default();
-    metadata.prelude = match crate_name {
-        CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(PackageId::new(crate_name)),
-        ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
-        TEST_PACKAGE_NAME => Some(PackageId::new(STD_PACKAGE_NAME)),
-        LIBC_PACKAGE_NAME => None,
-        _ => None,
-    };
     for dependency in RustStdProvider::dependencies_of(crate_name) {
         metadata.dependencies.push(DependencyDescriptor {
             package: dependency.to_string(),
@@ -1383,6 +1375,18 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             is_external: false,
         },
     );
+    let prelude_package = match crate_name {
+        CORE_PACKAGE_NAME | STD_PACKAGE_NAME => Some(PackageId::new(crate_name)),
+        ALLOC_PACKAGE_NAME => Some(PackageId::new(CORE_PACKAGE_NAME)),
+        TEST_PACKAGE_NAME => Some(PackageId::new(STD_PACKAGE_NAME)),
+        _ => None,
+    };
+    if let Some(package_id) = prelude_package {
+        krate.prelude_modules.push(PackagePath::new(
+            package_id,
+            InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+        ));
+    }
     Ok(krate)
 }
 
@@ -1750,7 +1754,7 @@ mod provider_tests {
         let cases = [
             (
                 "core",
-                None,
+                Some("core"),
                 &[][..],
                 &["core::cell", "core::option", "core::result"][..],
             ),
@@ -1768,13 +1772,19 @@ mod provider_tests {
             ),
         ];
 
-        for (crate_name, prelude, dependencies, modules) in cases {
+        for (crate_name, prelude, dependencies, _modules) in cases {
             let descriptor = provider
                 .load_package_metadata(&PackageId::new(crate_name))
                 .expect("sysroot metadata");
+            let source = provider
+                .load_package_source(&PackageId::new(crate_name))
+                .expect("sysroot source");
+            let actual_prelude = source
+                .prelude_modules
+                .first()
+                .map(|path| path.package_id.as_str());
             assert_eq!(
-                descriptor.metadata.prelude.as_ref().map(PackageId::as_str),
-                prelude,
+                actual_prelude, prelude,
                 "unexpected prelude for {crate_name}"
             );
             let actual_dependencies: Vec<_> = descriptor
@@ -2011,17 +2021,20 @@ mod provider_tests {
             let metadata = provider
                 .load_package_metadata(&PackageId::new(package))
                 .expect("supported registry API metadata");
-            assert_eq!(
-                metadata.metadata.prelude,
-                Some(PackageId::new("std")),
-                "{package} must use the Rust std prelude"
-            );
             assert!(metadata.metadata.dependencies.iter().any(|dependency| {
                 dependency.resolved_package_id == Some(PackageId::new("std"))
             }));
             let source = provider
                 .load_package_source(&PackageId::new(package))
                 .expect("supported registry API package");
+            assert_eq!(
+                source
+                    .prelude_modules
+                    .first()
+                    .map(|path| path.package_id.as_str()),
+                Some("std"),
+                "{package} must use the Rust std prelude"
+            );
             assert!(
                 !source.items().is_empty(),
                 "{package} must expose typed portability declarations"

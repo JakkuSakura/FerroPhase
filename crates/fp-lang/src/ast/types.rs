@@ -1192,10 +1192,11 @@ pub(crate) fn parse_optional_generic_params(
             }
             let is_const = skip_keyword(&mut probe, Keyword::Const).is_ok();
             let name = ident_like(&mut probe)?;
+            let mut const_ty = None;
             let bounds = if skip_symbol(&mut probe, ":").is_ok() && !is_const {
                 parse_type_bounds(&mut probe)?
             } else if is_const {
-                let _ = parse_type_expr(&mut probe)?;
+                const_ty = Some(parse_type_expr(&mut probe)?);
                 fp_core::ast::TypeBounds::any()
             } else {
                 fp_core::ast::TypeBounds::any()
@@ -1220,6 +1221,11 @@ pub(crate) fn parse_optional_generic_params(
             params.push(fp_core::ast::GenericParam {
                 name,
                 bounds,
+                kind: if let Some(ty) = const_ty {
+                    fp_core::ast::GenericParamKind::Const { ty: Box::new(ty) }
+                } else {
+                    fp_core::ast::GenericParamKind::Type
+                },
                 projection_bounds: Vec::new(),
             });
             if skip_symbol(&mut probe, ",").is_err() {
