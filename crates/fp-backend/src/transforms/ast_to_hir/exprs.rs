@@ -932,16 +932,17 @@ impl AstToHirLowerer {
                     self.transform_expr_to_hir(value)?
                 } else {
                     // Shorthand - reference local with same name.
-                    let res = self.resolve_value_symbol(&field.name.name);
+                    let name_expr =
+                        ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(field.name.clone())));
+                    let path = self
+                        .ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)
+                        .unwrap_or_else(|_| hir::Path {
+                            res: hir::Res::Error,
+                            segments: vec![self.make_path_segment(&field.name.name, None)],
+                        });
                     hir::Expr {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::Path(hir::Path {
-                            segments: vec![hir::PathSegment {
-                                name: field.name.clone().into(),
-                                args: None,
-                            }],
-                            res: res.unwrap_or(hir::Res::Error),
-                        }),
+                        kind: hir::ExprKind::Path(path),
                         span: self.create_span(1),
                     }
                 };

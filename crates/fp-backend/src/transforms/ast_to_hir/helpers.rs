@@ -2,30 +2,6 @@ use super::*;
 use fp_core::hir::Res;
 
 impl AstToHirLowerer {
-    /// Preserve the HIR shape used for rustc's `QPath::TypeRelative` when a
-    /// projection is rooted at a lexical type parameter. This HIR has no
-    /// separate `QPath` node, so the parameter remains in the first segment,
-    /// all projection segments remain in order, and `res` stays unresolved for
-    /// type checking to resolve structurally from the parameter's bounds.
-    fn preserve_lexical_projection_path(
-        &self,
-        path: hir::Path,
-        scope: PathResolutionScope,
-    ) -> hir::Path {
-        let rooted_at_type_param = path.segments.first().is_some_and(|segment| {
-            self.resolve_lexical_type_symbol(segment.name.as_str())
-                .is_some()
-        });
-        if scope == PathResolutionScope::Type && path.segments.len() > 1 && rooted_at_type_param {
-            hir::Path {
-                segments: path.segments,
-                res: Res::Error,
-            }
-        } else {
-            path
-        }
-    }
-
     /// Resolve the expression node that owns a type reference before
     /// inspecting any expression wrapper around it.  Type syntax can be
     /// represented as `Ty::Expr(Value::Expr(..))`; the frontend's resolver
@@ -208,7 +184,7 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
-                Ok(self.preserve_lexical_projection_path(base, scope))
+                Ok(base)
             }
             ast::ExprKind::Invoke(invoke) => {
                 let mut base = match &invoke.target {

@@ -6,6 +6,7 @@ use fp_core::ast::path::PathPrefix;
 use fp_core::ast::program::AstProgram;
 use fp_core::hir::HirPackage;
 use fp_core::hir::HirProgram;
+use fp_core::hir::Res;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, Namespace, ResolutionResult,
     ResolutionRules,
@@ -87,12 +88,26 @@ impl LocalResolver {
         path: &Path,
         namespace: Namespace,
     ) -> ResolutionResult {
-        if matches!(path.prefix, fp_core::ast::path::PathPrefix::Plain) && path.segments.len() == 1
+        if matches!(path.prefix, fp_core::ast::path::PathPrefix::Plain) && !path.segments.is_empty()
         {
-            if let ResolutionResult::Found(path) =
+            if let ResolutionResult::Found(mut resolved) =
                 self.resolve_local(path.segments[0].as_str(), namespace)
             {
-                return ResolutionResult::Found(path);
+                // A lexical binding can be the base of a type-relative path
+                // (`T::Assoc`). Preserve the unresolved projection tail for
+                // type checking instead of asking the package resolver to
+                // look up `T` as a module.
+                if !matches!(resolved.res, Res::Module(_)) {
+                    resolved
+                        .segments
+                        .extend(path.segments.iter().skip(1).map(|segment| {
+                            fp_core::hir::PathSegment {
+                                name: segment.as_str().into(),
+                                args: None,
+                            }
+                        }));
+                    return ResolutionResult::Found(resolved);
+                }
             }
         }
         self.resolver
