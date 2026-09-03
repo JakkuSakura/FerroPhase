@@ -75,6 +75,18 @@ mod tests {
                 Namespace::Type,
                 hir::Res::Def(alloc.clone()),
             );
+        program
+            .borrow()
+            .package_rc(&std_id)
+            .unwrap()
+            .borrow_mut()
+            .module_data
+            .add_child(
+                std_root.clone(),
+                "alloc_alias",
+                Namespace::Type,
+                hir::Res::Def(alloc.clone()),
+            );
         let path = Path::new(PathPrefix::Root, vec!["std".into(), "alloc".into()]);
         assert_eq!(
             resolver.resolve_parsed_path(
@@ -97,6 +109,19 @@ mod tests {
                 Namespace::Type
             ),
             ResolutionResult::Found(_)
+        ));
+        let alias = Path::new(PathPrefix::Root, vec!["std".into(), "alloc_alias".into()]);
+        assert!(matches!(
+            resolver.resolve_parsed_path(
+                &app,
+                &InPackagePath::new(Vec::new()),
+                &alias,
+                Namespace::Type
+            ),
+            ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(_),
+                segments: _
+            })
         ));
         let _ = app_root;
     }
@@ -195,6 +220,7 @@ mod tests {
         let module = hir::DefId::new(app.clone(), 20);
         let value = hir::DefId::new(app.clone(), 21);
         let ty = hir::DefId::new(app.clone(), 22);
+        let mac = hir::DefId::new(app.clone(), 23);
         let package = program.borrow().package_rc(&app).unwrap();
         package.borrow_mut().module_data.set_children(
             module.clone(),
@@ -205,6 +231,7 @@ mod tests {
                     hir::Res::Def(value.clone()),
                 ),
                 ("Thing".into(), Namespace::Type, hir::Res::Def(ty.clone())),
+                ("Thing".into(), Namespace::Macro, hir::Res::Def(mac.clone())),
             ],
         );
         package.borrow_mut().module_data.add_child(
@@ -226,6 +253,13 @@ mod tests {
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Type),
             ResolutionResult::Found(hir::Path {
                 res: hir::Res::Def(ty),
+                segments: Vec::new()
+            })
+        );
+        assert_eq!(
+            resolver.resolve_parsed_path(&app, &location, &path, Namespace::Macro),
+            ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(mac),
                 segments: Vec::new()
             })
         );
