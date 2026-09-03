@@ -2,37 +2,6 @@ use super::*;
 use fp_core::hir::Res;
 
 impl AstToHirLowerer {
-    pub(super) fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
-        let def_id = match base.res.as_ref()? {
-            hir::Res::Def(def_id) => def_id.clone(),
-            hir::Res::SelfTy => {
-                let self_ty = self.current_impl_self_ty.as_ref()?;
-                let hir::TypeExprKind::Path(path) = &self_ty.kind else {
-                    return None;
-                };
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-                def_id.clone()
-            }
-            _ => return None,
-        };
-        let local_item = {
-            self.package().def_map.get(&def_id).cloned()
-        };
-        let item = local_item
-            .or_else(|| self.program_def_map.get(&def_id).cloned())
-            .or_else(|| self.hir_program.item(def_id.clone()))?;
-        let hir::ItemKind::Enum(enum_def) = &item.kind else {
-            return None;
-        };
-        enum_def
-            .variants
-            .iter()
-            .find(|variant| variant.name.as_str() == name)
-            .map(|variant| hir::Res::Def(variant.def_id.clone()))
-    }
-
     /// Preserve the HIR shape used for rustc's `QPath::TypeRelative` when a
     /// projection is rooted at a lexical type parameter. This HIR has no
     /// separate `QPath` node, so the parameter remains in the first segment,
@@ -241,16 +210,6 @@ impl AstToHirLowerer {
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args);
                 base.segments.push(seg);
-                if matches!(
-                    select.select,
-                    ast::ExprSelectType::Const | ast::ExprSelectType::Function
-                ) && !matches!(base.res, hir::Res::Module(_))
-                {
-                    if let Some(res) = self.lookup_enum_variant(&base, &select.field.name) {
-                        base.res = res;
-                    }
-                }
-
                 Ok(self.preserve_lexical_projection_path(base, scope))
             }
             ast::ExprKind::Invoke(invoke) => {

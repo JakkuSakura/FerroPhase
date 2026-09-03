@@ -9,55 +9,6 @@ mod literal_values;
 use literal_values::*;
 
 impl AstToHirLowerer {
-    /// Resolve an enum variant from a previously resolved type path.
-    ///
-    /// Variant lookup is performed from the resolved nominal enum identity;
-    /// no source spelling or declaration category is consulted.
-    pub(super) fn enum_variant_for_type_path(
-        &self,
-        type_path: &fp_core::ast::path::InPackagePath,
-        variant_name: &str,
-    ) -> Option<hir::Res> {
-        // A bare nominal prefix is resolved relative to the current module
-        // by the ordinary type-name resolver. `lookup_global_res` consumes a
-        // fully qualified path, so asking it about `DiffRange` alone would
-        // skip that lexical/module-relative tier and lose `DiffRange::Commit`.
-        // Resolve the prefix through the same namespace-aware path first,
-        // then use the published item identity to inspect its variants.
-        let type_res = if type_path.segments.len() == 1 {
-            self.resolve_type_symbol(type_path.segments[0].as_str())
-                .or_else(|| self.lookup_global_res(type_path, PathResolutionScope::Type))
-        } else {
-            self.lookup_global_res(type_path, PathResolutionScope::Type)
-        }?;
-        let def_id = match type_res {
-            hir::Res::Def(def_id) => def_id,
-            hir::Res::SelfTy => {
-                let self_ty = self.current_impl_self_ty.as_ref()?;
-                let hir::TypeExprKind::Path(path) = &self_ty.kind else {
-                    return None;
-                };
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-                def_id.clone()
-            }
-            _ => return None,
-        };
-
-        let local_item = { self.package().def_map.get(&def_id).cloned() };
-        let item = local_item.or_else(|| self.hir_program.item(def_id.clone()))?;
-        match &item.kind {
-            hir::ItemKind::Enum(enum_def) => enum_def
-                .variants
-                .iter()
-                .find(|variant| variant.name.as_str() == variant_name)
-                .map(|variant| hir::Res::Def(variant.def_id.clone())),
-            hir::ItemKind::Struct(_) => None,
-            _ => None,
-        }
-    }
-
     /// Records a diagnostic for an AST construct that can't be lowered to
     /// HIR (an unhandled shape, an unnormalized macro, etc.) and returns an
     /// empty-block placeholder in its place — lets HIR generation for the
@@ -822,9 +773,6 @@ impl AstToHirLowerer {
                             };
                             path.segments
                                 .push(self.make_path_segment(&select.field.name, member_args));
-                            if let Some(res) = self.lookup_enum_variant(&path, &select.field.name) {
-                                path.res = res;
-                            }
                             let func_expr = hir::Expr {
                                 hir_id: self.next_id(),
                                 kind: hir::ExprKind::Path(path),
@@ -896,26 +844,6 @@ impl AstToHirLowerer {
 
                 let name_expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
                 let mut path = self.ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)?;
-                // A function-position qualified enum constructor must carry
-                // the variant's constructor identity into HIR.  The value
-                // resolver may intentionally retain the type head for a
-                // type-relative path; resolve the final segment in the enum
-                // variant namespace before type checking sees the callee.
-                if path.res.is_some() && path.segments.len() > 1 {
-                    let prefix = hir::Path {
-                        segments: path.segments[..path.segments.len() - 1].to_vec(),
-                        res: path.res.clone(),
-                    };
-                    if let Some(res) = self.lookup_enum_variant(
-                        &prefix,
-                        path.segments
-                            .last()
-                            .map(|segment| segment.name.as_str())
-                            .unwrap_or(""),
-                    ) {
-                        path.res = res;
-                    }
-                }
                 // A call's callee is only ever a compiler intrinsic/portable
                 // op because its *own resolved declaration* was tagged
                 // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
@@ -985,16 +913,6 @@ impl AstToHirLowerer {
             };
             let seg = self.make_path_segment(&select.field.name, None);
             path.segments.push(seg);
-            // Resolve the completed path after appending the selected item.
-            let names: Vec<String> = path
-                .segments
-                .iter()
-                .map(|segment| segment.name.as_str().to_owned())
-                .collect();
-            let full_path = InPackagePath::new(names);
-            path.res = self
-                .lookup_global_res(&full_path, PathResolutionScope::Value)
-                .unwrap_or(path.res);
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -2088,23 +2006,6 @@ impl AstToHirLowerer {
         if path.segments.is_empty() {
             return None;
         }
-        // Try enum-variant lookup before ordinary value lookup. A path's
-        // prefix is resolved to a nominal enum identity, then its variants
-        // are searched by that identity.
-        if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-            let prefix = InPackagePath::new(
-                path.segments[..path.segments.len() - 1]
-                    .iter()
-                    .cloned()
-                    .collect(),
-            );
-            if let Some(res) =
-                self.enum_variant_for_type_path(&prefix, path.segments.last()?.as_str())
-            {
-                return Some(res);
-            }
-        }
-
         let local = match self.local_resolver.resolve_global_path(
             &self.package_id,
             &self.module_path,
