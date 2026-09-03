@@ -202,7 +202,12 @@ fn assert_resolved_items(
                 &InPackagePath::new(Vec::new()),
                 &Path::new(
                     PathPrefix::Root,
-                    segments.iter().cloned().map(Into::into).collect(),
+                    segments
+                        .iter()
+                        .cloned()
+                        .map(fp_core::ast::Ident::new)
+                        .map(Into::into)
+                        .collect(),
                 ),
                 namespace,
             ) {

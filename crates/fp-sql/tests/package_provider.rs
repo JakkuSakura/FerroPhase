@@ -10,7 +10,7 @@ fn directory_provider_loads_sql_documents() {
     let provider = fp_sql::package::SqlPackageProvider::discover(directory.path()).unwrap();
     let packages = provider.list_packages().unwrap();
     let package = provider.load_package_source(&packages[0]).unwrap();
-    assert_eq!(package.items.len(), 0);
+    assert_eq!(package.items().len(), 0);
 }
 
 #[test]

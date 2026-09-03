@@ -386,7 +386,7 @@ mod tests {
         let package_id = packages[0].clone();
 
         let source = provider.load_package_source(&package_id)?;
-        assert!(source.items.len() >= 2);
+        assert!(source.items().len() >= 2);
         Ok(())
     }
 

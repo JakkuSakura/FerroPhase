@@ -26,10 +26,6 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name { path: path, .. } => (
-                    path.segments.iter().map(|seg| seg.ident.clone()).collect(),
-                    path.prefix,
-                ),
                 ast::Name { path, .. } => (
                     path.segments.iter().map(|s| s.ident.clone()).collect(),
                     path.prefix,
@@ -138,10 +134,6 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name { path: path, .. } => (
-                    path.segments.iter().map(|seg| seg.ident.clone()).collect(),
-                    path.prefix,
-                ),
                 ast::Name { path, .. } => (
                     path.segments.iter().map(|s| s.ident.clone()).collect(),
                     path.prefix,

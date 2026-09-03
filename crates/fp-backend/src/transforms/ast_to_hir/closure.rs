@@ -214,7 +214,7 @@ impl ClosureLowering {
     /// The `index`-th generic type argument of a parameterized type
     /// reference (`Option<T>`'s `T` is index 0, `Result<T, E>`'s `E` is
     /// index 1) — generic types parse as `Ty::Expr` wrapping a
-    /// `Name::Path` whose segment carries the type args
+    /// path-based Name whose segment carries the type args
     /// directly (see `fp-lang/src/ast/types.rs`'s `parse_simple_type`).
     fn generic_type_arg_at(ty: &ast::Ty, index: usize) -> Option<ast::Ty> {
         let ast::Ty::Expr(expr) = ty else {

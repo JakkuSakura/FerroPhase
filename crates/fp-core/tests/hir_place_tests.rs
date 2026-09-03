@@ -1,6 +1,6 @@
 use fp_core::hir::place::{HirAssignTargetProjection, project_hir_assign_target};
 use fp_core::hir::{
-    CallArg, Expr, ExprKind, IntrinsicCallExpr, Path, PathSegment, SliceExpr, Symbol,
+    CallArg, Expr, ExprKind, IntrinsicCallExpr, Path, PathSegment, Res, SliceExpr, Symbol,
 };
 use fp_core::intrinsics::{CallKind, IntrinsicKind};
 use fp_core::span::Span;

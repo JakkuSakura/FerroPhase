@@ -257,6 +257,12 @@ impl From<&str> for PathSegment {
     }
 }
 
+impl From<String> for PathSegment {
+    fn from(name: String) -> Self {
+        Self::from_ident(Ident::new(name))
+    }
+}
+
 impl Eq for PathSegment {}
 impl Eq for Path {}
 

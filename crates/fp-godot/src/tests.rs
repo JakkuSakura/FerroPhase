@@ -91,11 +91,11 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
 
     let point_path = Name::path(Path::new(
         PathPrefix::Plain,
-        vec![Ident::new("Shape"), Ident::new("Point")],
+        vec![Ident::new("Shape").into(), Ident::new("Point").into()],
     ));
     let rectangle_path = Name::path(Path::new(
         PathPrefix::Plain,
-        vec![Ident::new("Shape"), Ident::new("Rectangle")],
+        vec![Ident::new("Shape").into(), Ident::new("Rectangle").into()],
     ));
 
     let describe_match = Expr::new(ExprKind::Match(ExprMatch {
@@ -140,7 +140,7 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
         span: fp_core::span::Span::null(),
         name: Expr::new(ExprKind::Name(Name::path(Path::new(
             PathPrefix::Plain,
-            vec![Ident::new("Shape"), Ident::new("Rectangle")],
+            vec![Ident::new("Shape").into(), Ident::new("Rectangle").into()],
         ))))
         .into(),
         fields: vec![
@@ -220,7 +220,10 @@ fn match_arm_with_unused_binding_errors_instead_of_silently_returning_null() {
     // serializer doesn't yet introduce, so it must be a real error rather
     // than silently rendering `null`.
     let pat = Pattern::new(PatternKind::TupleStruct(fp_core::ast::PatternTupleStruct {
-        name: Name::path(Path::new(PathPrefix::Plain, vec![Ident::new("Wrapper")])),
+        name: Name::path(Path::new(
+            PathPrefix::Plain,
+            vec![Ident::new("Wrapper").into()],
+        )),
         patterns: vec![Pattern::new(PatternKind::Ident(
             fp_core::ast::PatternIdent::new(Ident::new("x")),
         ))],

@@ -242,7 +242,7 @@ impl AstToHirLowerer {
             // Explicit associated-type bindings on one of this
             // parameter's own trait bounds (`I: Iterator<Item = U>`) —
             // extracted straight from the original AST bound expression
-            // (a `Name::Path`, per-segment `args: Vec<Ty>`,
+            // (a path-based Name, per-segment `args: Vec<Ty>`,
             // fp-lang's own `parse_type_arg` already turning `Item = U`
             // into a `Ty::Expr(Assign { target: Item, value: U })` entry
             // there) rather than re-derived from the just-lowered `Path`
@@ -529,12 +529,11 @@ impl AstToHirLowerer {
 
             if let Some(trait_name) = &impl_block.trait_ty {
                 let trait_generic_args: &[ast::Ty] = match trait_name {
-                    ast::Name { path: path, .. } => path
+                    ast::Name { path, .. } => path
                         .segments
                         .last()
                         .map(|seg| seg.args.as_slice())
                         .unwrap_or_default(),
-                    _ => &[],
                 };
                 let trait_name = match trait_name {
                     ast::Name { path, .. } => path

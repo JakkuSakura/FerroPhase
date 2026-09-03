@@ -1480,9 +1480,6 @@ impl AstToHirLowerer {
     fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
         match expr.kind() {
             ast::ExprKind::Name(name) => match name {
-                ast::Name { path: path, .. } => {
-                    Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
-                }
                 ast::Name { path, .. } => {
                     Some(path.segments.iter().map(|s| s.ident.clone()).collect())
                 }
@@ -1495,9 +1492,6 @@ impl AstToHirLowerer {
                 }
                 match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => match name {
-                        ast::Name { path: path, .. } => {
-                            Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
-                        }
                         ast::Name { path, .. } => {
                             Some(path.segments.iter().map(|s| s.ident.clone()).collect())
                         }

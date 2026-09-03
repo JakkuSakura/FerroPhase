@@ -201,8 +201,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
 
 pub(super) fn is_std_io_error(name: &Name) -> bool {
     let segments: Vec<&str> = match name {
-        Name { path: path, .. } => path.segments.iter().map(|s| s.ident.as_str()).collect(),
-        _ => return false,
+        Name { path, .. } => path.segments.iter().map(|s| s.ident.as_str()).collect(),
     };
     segments.ends_with(&["std", "io", "Error"])
 }

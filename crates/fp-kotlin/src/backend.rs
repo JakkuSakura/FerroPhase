@@ -601,10 +601,10 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected ByteArray expression type");
         };
-        let ExprKind::Name(Name::ident(name)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected ByteArray name");
         };
-        assert_eq!(name.as_str(), "ByteArray");
+        assert_eq!(path.last().as_str(), "ByteArray");
     }
 
     #[test]
@@ -625,10 +625,10 @@ mod tests {
             let Ty::Expr(expr) = ty else {
                 panic!("expected ByteArray expression type");
             };
-            let ExprKind::Name(Name::ident(name)) = expr.kind() else {
+            let ExprKind::Name(Name { path, .. }) = expr.kind() else {
                 panic!("expected ByteArray name");
             };
-            assert_eq!(name.as_str(), "ByteArray");
+            assert_eq!(path.last().as_str(), "ByteArray");
         }
     }
 
@@ -656,10 +656,10 @@ mod tests {
         let [Ty::Expr(element)] = segment.args.as_slice() else {
             panic!("expected one element type");
         };
-        let ExprKind::Name(Name::ident(element)) = element.kind() else {
+        let ExprKind::Name(Name { path, .. }) = element.kind() else {
             panic!("expected Entry element type");
         };
-        assert_eq!(element.as_str(), "Entry");
+        assert_eq!(path.last().as_str(), "Entry");
     }
 
     #[test]
@@ -677,10 +677,10 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected ByteArray expression type");
         };
-        let ExprKind::Name(Name::ident(name)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected ByteArray name");
         };
-        assert_eq!(name.as_str(), "ByteArray");
+        assert_eq!(path.last().as_str(), "ByteArray");
     }
 
     #[test]
@@ -700,10 +700,7 @@ mod tests {
             let ExprKind::Name(name) = expr.kind() else {
                 panic!("expected target name for {source}");
             };
-            let actual = match name {
-                Name { path: _, .. } => ident.as_str(),
-                Name { path: path, .. } => path.last().as_str(),
-            };
+            let actual = name.path.last().as_str();
             assert_eq!(actual, expected);
         }
     }
@@ -1666,13 +1663,9 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
 /// desugared standard-library calls remain valid Kotlin/JVM declarations.
 #[cfg(test)]
 fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
-    let (last, args) = match name {
-        Name { path: _, .. } => (ident.as_str(), Vec::new()),
-        Name { path: path, .. } => {
-            let segment = path.last();
-            (segment.ident.as_str(), segment.args.clone())
-        }
-    };
+    let segment = name.path.last();
+    let last = segment.ident.as_str();
+    let args = segment.args.clone();
 
     match last {
         "str" => Some(Ty::ident(Ident::new("String"))),
@@ -1742,14 +1735,12 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
 
 #[cfg(test)]
 fn is_std_io_error(name: &Name) -> bool {
-    let segments: Vec<&str> = match name {
-        Name { path: path, .. } => path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.as_str())
-            .collect(),
-        Name::ident(_) => return false,
-    };
+    let segments: Vec<&str> = name
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.as_str())
+        .collect();
     segments.len() >= 3
         && segments[segments.len() - 3] == "std"
         && segments[segments.len() - 2] == "io"
@@ -1758,10 +1749,7 @@ fn is_std_io_error(name: &Name) -> bool {
 
 #[cfg(test)]
 fn kotlin_type_name(name: &Name) -> Option<&str> {
-    match name {
-        Name { path: _, .. } => Some(ident.as_str()),
-        Name { path: path, .. } => Some(path.last().as_str()),
-    }
+    Some(name.path.last().as_str())
 }
 
 #[cfg(test)]
@@ -1799,10 +1787,7 @@ fn is_u8_type(ty: &Ty) -> bool {
 
 #[cfg(test)]
 fn materialize_process_type(name: &mut Name) {
-    let last = match name {
-        Name { path: _, .. } => ident.as_str(),
-        Name { path: path, .. } => path.last().as_str(),
-    };
+    let last = name.path.last().as_str();
     let runtime_type = match last {
         "Command" => "Command",
         "Child" => "Child",
@@ -1824,16 +1809,14 @@ fn materialize_process_type(name: &mut Name) {
 /// continue to lower through their registered intrinsic identities.
 #[cfg(test)]
 fn materialize_external_type(name: &mut Name) {
-    let is_json_value = match name {
-        Name { path: path, .. } => {
-            let mut segments = path.segments.iter();
-            matches!(
-                (segments.next(), segments.next(), segments.next()),
-                (Some(package), Some(value), None)
-                    if package.ident.as_str() == "serde_json" && value.ident.as_str() == "Value"
-            )
-        }
-        Name::ident(_) => false,
+    let is_json_value = {
+        let path = &name.path;
+        let mut segments = path.segments.iter();
+        matches!(
+            (segments.next(), segments.next(), segments.next()),
+            (Some(package), Some(value), None)
+                if package.ident.as_str() == "serde_json" && value.ident.as_str() == "Value"
+        )
     };
     if is_json_value {
         *name = Name::path(Path::plain(vec![
@@ -1851,10 +1834,7 @@ fn materialize_external_type(name: &mut Name) {
 /// their portable operation identities.
 #[cfg(test)]
 fn materialize_jvm_path_type(name: &mut Name) {
-    let last = match name {
-        Name { path: _, .. } => ident.as_str(),
-        Name { path: path, .. } => path.last().as_str(),
-    };
+    let last = name.path.last().as_str();
     let target = match last {
         "Path" | "PathBuf" => ["java", "nio", "file", "Path"].as_slice(),
         "OsStr" | "OsString" => ["String"].as_slice(),
