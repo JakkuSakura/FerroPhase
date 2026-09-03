@@ -682,10 +682,29 @@ pub struct Path {
     pub segments: Vec<PathSegment>,
 }
 
+impl Path {
+    pub fn new(res: Res, segments: Vec<PathSegment>) -> Self {
+        Self { res, segments }
+    }
+
+    pub fn base(res: Res) -> Self {
+        Self::new(res, Vec::new())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSegment {
     pub name: Symbol,
     pub args: Option<GenericArgs>,
+}
+
+impl PathSegment {
+    pub fn new(name: impl Into<Symbol>, args: Option<GenericArgs>) -> Self {
+        Self {
+            name: name.into(),
+            args,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

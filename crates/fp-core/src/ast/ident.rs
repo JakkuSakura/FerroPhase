@@ -94,6 +94,15 @@ impl Path {
         Self::new(PathPrefix::Plain, vec![ident])
     }
 
+    /// Build a generic path while retaining per-segment arguments.
+    ///
+    /// Generic arguments live on `ParameterPathSegment`, mirroring rustc's
+    /// per-segment `GenericArgs`; this constructor keeps ordinary `Path`
+    /// values lightweight for paths without arguments.
+    pub fn parameterized(prefix: PathPrefix, segments: Vec<ParameterPathSegment>) -> ParameterPath {
+        ParameterPath::new(prefix, segments)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
@@ -254,6 +263,13 @@ impl ParameterPath {
                 .map(ParameterPathSegment::from_ident)
                 .collect(),
         }
+    }
+
+    /// Return the argument-bearing path segments without losing their
+    /// generic arguments. This is the AST counterpart of HIR's
+    /// `PathSegment.args` projection.
+    pub fn segments_with_args(&self) -> &[ParameterPathSegment] {
+        &self.segments
     }
 
     pub fn is_empty(&self) -> bool {
