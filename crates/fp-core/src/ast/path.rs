@@ -185,7 +185,11 @@ pub fn resolve_path(
                 let local = InPackagePath::new(vec![first.to_owned()]);
                 if module_defs.contains(&local) {
                     return Some(InPackagePath::new(
-                        parsed.segments.iter().map(|s| s.as_str().to_owned()).collect(),
+                        parsed
+                            .segments
+                            .iter()
+                            .map(|s| s.as_str().to_owned())
+                            .collect(),
                     ));
                 }
             }

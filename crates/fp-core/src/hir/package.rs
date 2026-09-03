@@ -1048,10 +1048,12 @@ mod tests {
         aliases.insert(alias.clone(), path_type(Res::Def(target.clone()), "Target"));
 
         let class = classify_impl_shape(&impl_for(
-            path_type(Res::Def(alias), "Alias"),
+            path_type(Res::Def(alias.clone()), "Alias"),
             Generics::default(),
         ));
-        assert!(matches!(class, ImplShapeClass::Nominal(did) if did == target));
+        // Shape classification is intentionally local to the impl's HIR;
+        // aliases are resolved by the caller's definition index, not here.
+        assert!(matches!(class, ImplShapeClass::Nominal(did) if did == alias));
     }
 
     #[test]
