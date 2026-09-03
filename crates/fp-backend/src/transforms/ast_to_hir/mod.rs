@@ -352,7 +352,8 @@ impl AstToHirLowerer {
         hir_program: fp_core::hir::SharedHirProgram,
         package_id: hir::PackageId,
     ) -> Self {
-        Self {
+        let package_handle = Rc::new(RefCell::new(hir::HirPackage::new(package_id.clone())));
+        let lowerer = Self {
             package_id: package_id.clone(),
             current_owner: None,
             current_impl_self_ty: None,
@@ -369,7 +370,7 @@ impl AstToHirLowerer {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            package_handle: Rc::new(RefCell::new(hir::HirPackage::new(package_id))),
+            package_handle,
             program_def_map: HashMap::new(),
             local_dispatch_items: Vec::new(),
             suppress_global_registration_depth: 0,
@@ -389,7 +390,9 @@ impl AstToHirLowerer {
             hir_program,
             package_resolver: None,
             diagnostics: DiagnosticManager::new(),
-        }
+        };
+        lowerer.hir_program.add_package(lowerer.hir_package_handle());
+        lowerer
     }
 
     pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {

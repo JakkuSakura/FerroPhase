@@ -257,7 +257,7 @@ impl AstToHirLowerer {
                 let mut base = match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => {
                         let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                        self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?
+                        self.ast_expr_to_hir_path(&expr, scope)?
                     }
                     ast::ExprInvokeTarget::Expr(expr) => {
                         self.ast_expr_to_hir_path(expr.as_ref(), scope)?
