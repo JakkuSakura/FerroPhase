@@ -188,6 +188,87 @@ mod tests {
             ResolutionResult::NotFound(_)
         ));
     }
+
+    #[test]
+    fn continues_through_modules_and_keeps_namespaces_distinct() {
+        let (resolver, program, app, root) = setup();
+        let module = hir::DefId::new(app.clone(), 20);
+        let value = hir::DefId::new(app.clone(), 21);
+        let ty = hir::DefId::new(app.clone(), 22);
+        let package = program.borrow().package_rc(&app).unwrap();
+        package.borrow_mut().module_data.set_children(
+            module.clone(),
+            vec![
+                (
+                    "Thing".into(),
+                    Namespace::Value,
+                    hir::Res::Def(value.clone()),
+                ),
+                ("Thing".into(), Namespace::Type, hir::Res::Def(ty.clone())),
+            ],
+        );
+        package.borrow_mut().module_data.add_child(
+            root,
+            "nested",
+            Namespace::Type,
+            hir::Res::Module(module),
+        );
+        let location = InPackagePath::new(Vec::new());
+        let path = Path::new(PathPrefix::Plain, vec!["nested".into(), "Thing".into()]);
+        assert_eq!(
+            resolver.resolve_parsed_path(&app, &location, &path, Namespace::Value),
+            ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(value),
+                segments: Vec::new()
+            })
+        );
+        assert_eq!(
+            resolver.resolve_parsed_path(&app, &location, &path, Namespace::Type),
+            ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(ty),
+                segments: Vec::new()
+            })
+        );
+    }
+
+    #[test]
+    fn reports_ambiguity_and_read_only_lookup_does_not_mutate_modules() {
+        let (resolver, program, app, root) = setup();
+        let package = program.borrow().package_rc(&app).unwrap();
+        package.borrow_mut().module_data.add_child(
+            root.clone(),
+            "dup",
+            Namespace::Value,
+            hir::Res::Def(hir::DefId::new(app.clone(), 30)),
+        );
+        package.borrow_mut().module_data.add_child(
+            root.clone(),
+            "dup",
+            Namespace::Value,
+            hir::Res::Def(hir::DefId::new(app.clone(), 31)),
+        );
+        let path = Path::new(PathPrefix::Plain, vec!["dup".into()]);
+        assert_eq!(
+            resolver.resolve_parsed_path(
+                &app,
+                &InPackagePath::new(Vec::new()),
+                &path,
+                Namespace::Value
+            ),
+            ResolutionResult::Ambiguous
+        );
+        assert_eq!(
+            package
+                .borrow()
+                .module_data
+                .resolve_child(&root, "new_name", Namespace::Value),
+            ResolutionResult::NotFound(ResolutionNotFound::Symbol {
+                module: InPackagePath::new(Vec::new()),
+                symbol: "new_name".into(),
+                namespace: Namespace::Value
+            })
+        );
+    }
 }
 
 impl Resolver {
