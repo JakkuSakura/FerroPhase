@@ -4349,6 +4349,28 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn resolves_nested_enum_variant_path_in_body() {
+        let (package, diagnostics) = lower(
+            "mod values { enum Choice { Yes, No } } fn pick() -> values::Choice { values::Choice::Yes }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "nested enum variant body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "pick")).kind else {
+            panic!("expected nested enum variant path");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Yes"]
+        );
+    }
+
+    #[test]
     fn resolves_self_in_impl_method_signature() {
         let (package, diagnostics) =
             lower("struct Value; impl Value { fn identity(&self) -> Self { self } }");
@@ -4455,6 +4477,203 @@ mod function_body_resolution {
             "defaulted trait generic resolution emitted diagnostics: {default_diagnostics:?}"
         );
         assert_method(&default_package, hir::Res::SelfTy);
+    }
+
+    #[test]
+    fn resolves_paths_in_if_branches() {
+        let (package, diagnostics) = lower(
+            "fn choose(flag: bool, left: i64, right: i64) -> i64 { if flag { left } else { right } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "if branch resolution diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::If(condition, then_branch, Some(else_branch)) =
+            &body_expr(function(&package, "choose")).kind
+        else {
+            panic!("expected if expression");
+        };
+        fn branch_path(expression: &hir::Expr) -> &hir::Path {
+            let expression = match &expression.kind {
+                hir::ExprKind::Block(block) => {
+                    block.expr.as_deref().expect("branch block expression")
+                }
+                _ => expression,
+            };
+            let hir::ExprKind::Path(path) = &expression.kind else {
+                panic!("expected branch path: {expression:?}");
+            };
+            path
+        }
+        for expression in [
+            condition.as_ref(),
+            then_branch.as_ref(),
+            else_branch.as_ref(),
+        ] {
+            let path = branch_path(expression);
+            assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        }
+    }
+
+    #[test]
+    fn resolves_match_binding_in_guard_and_body() {
+        let (package, diagnostics) = lower(
+            "fn classify(value: i64) -> i64 { match value { candidate if candidate > 0 => candidate, _ => 0 } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "match binding resolution diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Match(_, arms) = &body_expr(function(&package, "classify")).kind else {
+            panic!("expected match expression");
+        };
+        let first = &arms[0];
+        let hir::ExprKind::Binary(_, guard_lhs, _) =
+            &first.guard.as_ref().expect("match guard").kind
+        else {
+            panic!("expected match guard comparison: {first:?}");
+        };
+        let hir::ExprKind::Path(guard_path) = &guard_lhs.kind else {
+            panic!("expected guard binding path: {guard_lhs:?}");
+        };
+        assert!(
+            matches!(guard_path.res, hir::Res::Local(_)),
+            "path: {guard_path:?}"
+        );
+        let hir::ExprKind::Path(body_path) = &first.body.kind else {
+            panic!("expected match body binding path: {:?}", first.body);
+        };
+        assert!(
+            matches!(body_path.res, hir::Res::Local(_)),
+            "path: {body_path:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_for_loop_binding_and_capture() {
+        let (package, diagnostics) = lower(
+            "fn sum(limit: i64) -> i64 { let mut total = 0; for index in 0..limit { total = total + index; } total }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "for-loop resolution diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "sum");
+        let body = function.body.as_ref().expect("sum body");
+        let loop_block = body
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.kind {
+                hir::StmtKind::Expr(hir::Expr {
+                    kind: hir::ExprKind::Block(block),
+                    ..
+                }) => Some(block),
+                _ => None,
+            })
+            .expect("desugared for-loop block");
+        let index_local = loop_block
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.kind {
+                hir::StmtKind::Local(local)
+                    if matches!(
+                        local.pat.kind,
+                        hir::PatKind::Binding { ref name, .. } if name.as_str() == "index"
+                    ) =>
+                {
+                    Some(local)
+                }
+                _ => None,
+            })
+            .expect("for-loop binding declaration");
+        assert!(matches!(index_local.pat.kind, hir::PatKind::Binding { .. }));
+        let loop_body = loop_block
+            .stmts
+            .iter()
+            .find_map(|stmt| match &stmt.kind {
+                hir::StmtKind::Expr(hir::Expr {
+                    kind: hir::ExprKind::While(_, body),
+                    ..
+                }) => Some(body),
+                _ => None,
+            })
+            .expect("desugared for-loop body");
+        let hir::StmtKind::Semi(assignment) = &loop_body.stmts[0].kind else {
+            panic!("expected loop assignment: {loop_body:?}");
+        };
+        let hir::ExprKind::Assign(lhs, rhs) = &assignment.kind else {
+            panic!("expected loop assignment expression: {assignment:?}");
+        };
+        let hir::ExprKind::Path(total_lhs) = &lhs.kind else {
+            panic!("expected total assignment target: {lhs:?}");
+        };
+        assert!(matches!(total_lhs.res, hir::Res::Local(_)));
+        let hir::ExprKind::Binary(_, total_rhs, index_rhs) = &rhs.kind else {
+            panic!("expected total plus index expression: {rhs:?}");
+        };
+        for expression in [total_rhs.as_ref(), index_rhs.as_ref()] {
+            let hir::ExprKind::Path(path) = &expression.kind else {
+                panic!("expected local path in loop body: {expression:?}");
+            };
+            assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        }
+        let hir::ExprKind::Path(path) = &body_expr(function).kind else {
+            panic!("expected final total path");
+        };
+        assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_self_field_access_in_impl_body() {
+        let (package, diagnostics) =
+            lower("struct Value { field: i64 } impl Value { fn get(&self) -> i64 { self.field } }");
+        assert!(
+            diagnostics.is_empty(),
+            "impl body resolution diagnostics: {diagnostics:?}"
+        );
+        let impl_block = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl item");
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "get" => Some(method),
+                _ => None,
+            })
+            .expect("get method");
+        let hir::ExprKind::Path(path) = &body_expr(method).kind else {
+            panic!("expected self field path: {:?}", body_expr(method));
+        };
+        assert!(matches!(path.res, hir::Res::Local(_)), "path: {path:?}");
+        assert_eq!(path.segments[0].name.as_str(), "field");
+    }
+
+    #[test]
+    fn resolves_imported_module_function_in_body() {
+        let (package, diagnostics) = lower(
+            "mod helpers { fn identity(value: i64) -> i64 { value } } mod nested { use crate::helpers; fn call(value: i64) -> i64 { helpers::identity(value) } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "imported module call resolution diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Call(callee, _) = &body_expr(function(&package, "call")).kind else {
+            panic!("expected imported module call");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected imported module callee path: {callee:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert!(
+            path.segments.is_empty(),
+            "fully resolved import path: {path:?}"
+        );
     }
 }
 
