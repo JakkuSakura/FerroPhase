@@ -763,7 +763,7 @@ impl AstToHirLowerer {
         is_trait(self.resolve_lexical_type_symbol(name))
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
-                let resolved = match self.hir_program.resolve_module_path_final(
+                let resolved = match self.local_resolver.resolve_global_path(
                     &self.package_id,
                     &self.module_path,
                     &qualified,
@@ -778,7 +778,7 @@ impl AstToHirLowerer {
             })
             .or_else(|| {
                 let path = fp_core::ast::path::InPackagePath::new(vec![name.to_owned()]);
-                let resolved = match self.hir_program.resolve_module_path_final(
+                let resolved = match self.local_resolver.resolve_global_path(
                     &self.package_id,
                     &self.module_path,
                     &path,

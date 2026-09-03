@@ -2006,34 +2006,15 @@ impl AstToHirLowerer {
         if path.segments.is_empty() {
             return None;
         }
-        let local = match self.local_resolver.resolve_global_path(
+        match self.local_resolver.resolve_global_path(
             &self.package_id,
             &self.module_path,
             path,
             scope.namespace(),
         ) {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
-                Some(hir::Res::Def(id))
-            }
+            fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
             _ => None,
-        };
-        local.or_else(|| {
-            if scope == PathResolutionScope::Value && path.segments.len() > 1 {
-                match self.local_resolver.resolve_global_path(
-                    &self.package_id,
-                    &self.module_path,
-                    path,
-                    fp_core::hir::resolve::Namespace::Type,
-                ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
-                        Some(hir::Res::Def(id))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        })
+        }
     }
 
     // make_path_segment moved to helpers.rs
