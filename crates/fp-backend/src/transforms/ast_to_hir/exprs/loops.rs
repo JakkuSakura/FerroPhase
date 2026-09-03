@@ -192,10 +192,11 @@ impl AstToHirLowerer {
 
         let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
         let base_name = ast::Name::path(base_path);
+        let base_ast = ast::Expr::new(ast::ExprKind::Name(base_name));
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
-                todo!(),
+                self.ast_expr_to_hir_path(&base_ast, PathResolutionScope::Value)?,
             ),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -219,7 +220,7 @@ impl AstToHirLowerer {
             pat: idx_pat.clone(),
             ty: Some(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Path(todo!()),
+                hir::TypeExprKind::Infer,
                 Span::new(self.current_file, 0, 0),
             )),
             init: Some(idx_init),
@@ -392,10 +393,11 @@ impl AstToHirLowerer {
     ) -> Result<hir::ExprKind> {
         let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
         let base_name = ast::Name::path(base_path);
+        let base_ast = ast::Expr::new(ast::ExprKind::Name(base_name));
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
-                todo!(),
+                self.ast_expr_to_hir_path(&base_ast, PathResolutionScope::Value)?,
             ),
             span: Span::new(self.current_file, 0, 0),
         };
@@ -532,7 +534,7 @@ impl AstToHirLowerer {
             pat: idx_pat.clone(),
             ty: Some(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Path(todo!()),
+                hir::TypeExprKind::Infer,
                 Span::new(self.current_file, 0, 0),
             )),
             init: Some(idx_init),

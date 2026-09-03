@@ -2199,7 +2199,10 @@ impl AstToHirLowerer {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
-                let path = todo!();
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                    struct_ty.name.clone(),
+                )));
+                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
@@ -2335,7 +2338,10 @@ impl AstToHirLowerer {
                 // such as `impl<T> Trait for Vec<T>` indistinguishable from
                 // an unresolved path to the HIR impl index, so it cannot be
                 // placed in rustc's ADT dispatch bucket.
-                let mut path: hir::Path = todo!();
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                    ast::Ident::new("Vec"),
+                )));
+                let mut path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
                 if let Some(last) = path.segments.last_mut() {
                     last.args = Some(args);
                 }
@@ -3063,7 +3069,10 @@ impl AstToHirLowerer {
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Infer, span)
             }
             ast::Value::Struct(struct_val) => {
-                let path = todo!();
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                    struct_val.ty.name.clone(),
+                )));
+                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
             }
             ast::Value::Structural(structural) => {

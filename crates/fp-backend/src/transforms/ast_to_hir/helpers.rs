@@ -2,24 +2,6 @@ use super::*;
 use fp_core::hir::Res;
 
 impl AstToHirLowerer {
-    pub(super) fn package_crate_root(&self) -> Vec<String> {
-        if let Some(current_root) = self.module_path.segments.first()
-            && matches!(current_root.as_str(), "core" | "alloc" | "std")
-            && self.hir_program.module_exists(
-                &self.package_id,
-                &fp_core::ast::path::InPackagePath::new(vec![current_root.clone()]),
-            )
-        {
-            return vec![current_root.clone()];
-        }
-        let root = hir::HirProgram::external_crate_name(&self.package_id);
-        let candidate = fp_core::ast::path::InPackagePath::new(vec![root]);
-        if self.hir_program.module_exists(&self.package_id, &candidate) {
-            return candidate.segments;
-        }
-        Vec::new()
-    }
-
     pub(super) fn lookup_enum_variant(&self, base: &hir::Path, name: &str) -> Option<hir::Res> {
         let def_id = match base.res.as_ref()? {
             hir::Res::Def(def_id) => def_id.clone(),
@@ -35,11 +17,10 @@ impl AstToHirLowerer {
             }
             _ => return None,
         };
-        let item = self
-            .package_mut()
-            .def_map
-            .get(&def_id)
-            .cloned()
+        let local_item = {
+            self.package().def_map.get(&def_id).cloned()
+        };
+        let item = local_item
             .or_else(|| self.program_def_map.get(&def_id).cloned())
             .or_else(|| self.hir_program.item(def_id.clone()))?;
         let hir::ItemKind::Enum(enum_def) = &item.kind else {
@@ -275,7 +256,8 @@ impl AstToHirLowerer {
             ast::ExprKind::Invoke(invoke) => {
                 let mut base = match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => {
-                        todo!()
+                        let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
+                        self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?
                     }
                     ast::ExprInvokeTarget::Expr(expr) => {
                         self.ast_expr_to_hir_path(expr.as_ref(), scope)?
@@ -298,16 +280,33 @@ impl AstToHirLowerer {
                         // invoke. Resolve that head directly so lowering its
                         // generic arguments cannot re-enter this same
                         // `ExprInvokeTarget::Type` through `transform_type_to_hir`.
-                        ast::Ty::Struct(_struct_ty) => todo!(),
+                        ast::Ty::Struct(struct_ty) => {
+                            let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                                struct_ty.name.clone(),
+                            )));
+                            self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
+                        }
                         ast::Ty::Expr(type_expr) => match type_expr.kind() {
                             ast::ExprKind::Name(name) => {
-                                todo!()
+                                self.ast_expr_to_hir_path(type_expr, PathResolutionScope::Type)?
                             }
                             ast::ExprKind::Value(value) => match value.as_ref() {
                                 ast::Value::Type(inner) => match inner {
-                                    ast::Ty::Struct(_struct_ty) => todo!(),
+                                    ast::Ty::Struct(struct_ty) => {
+                                        let expr = ast::Expr::new(ast::ExprKind::Name(
+                                            ast::Name::Ident(struct_ty.name.clone()),
+                                        ));
+                                        self.ast_expr_to_hir_path(
+                                            &expr,
+                                            PathResolutionScope::Type,
+                                        )?
+                                    }
                                     ast::Ty::Expr(inner_expr) => match inner_expr.kind() {
-                                        ast::ExprKind::Name(_name) => todo!(),
+                                        ast::ExprKind::Name(name) => self
+                                            .ast_expr_to_hir_path(
+                                                inner_expr,
+                                                PathResolutionScope::Type,
+                                            )?,
                                         _ => {
                                             self.add_error(
                                                 Diagnostic::error(

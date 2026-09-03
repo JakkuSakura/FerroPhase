@@ -182,7 +182,11 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         hir::Res::Def(user_type.clone()),
     );
 
-    let path: hir::Path = todo!();
+    generator
+        .hir_program
+        .add_package(generator.hir_package_handle());
+    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ident("u8"))));
+    let path = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
     assert_eq!(path.res, hir::Res::Def(user_type));
     Ok(())
 }

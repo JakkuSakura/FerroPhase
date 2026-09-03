@@ -45,12 +45,8 @@ impl AstToHirLowerer {
             _ => return None,
         };
 
-        let item = self
-            .package_mut()
-            .def_map
-            .get(&def_id)
-            .cloned()
-            .or_else(|| self.hir_program.item(def_id.clone()))?;
+        let local_item = { self.package().def_map.get(&def_id).cloned() };
+        let item = local_item.or_else(|| self.hir_program.item(def_id.clone()))?;
         match &item.kind {
             hir::ItemKind::Enum(enum_def) => enum_def
                 .variants
@@ -691,7 +687,8 @@ impl AstToHirLowerer {
                     ast::Ident::new("__fp_error".to_string())
                 });
                 let name = Name::Ident(name);
-                let path = todo!();
+                let expr = ast::Expr::new(ast::ExprKind::Name(name));
+                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
             }
             _ => Ok(self.error_placeholder_expr_kind(
@@ -897,7 +894,8 @@ impl AstToHirLowerer {
                     }
                 }
 
-                let mut path: hir::Path = todo!();
+                let name_expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
+                let mut path = self.ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)?;
                 // A function-position qualified enum constructor must carry
                 // the variant's constructor identity into HIR.  The value
                 // resolver may intentionally retain the type head for a
@@ -918,25 +916,6 @@ impl AstToHirLowerer {
                         path.res = res;
                     }
                 }
-                if path.res.is_none() {
-                    let base_name = match name {
-                        ast::Name::Path(source) if source.segments.len() > 1 => {
-                            let mut base = source.clone();
-                            base.segments.pop();
-                            Some(ast::Name::Path(base))
-                        }
-                        ast::Name::ParameterPath(source) if source.segments.len() > 1 => {
-                            let mut base = source.clone();
-                            base.segments.pop();
-                            Some(ast::Name::ParameterPath(base))
-                        }
-                        _ => None,
-                    };
-                    if let Some(base_name) = base_name {
-                        path.res = todo!();
-                    }
-                }
-
                 // A call's callee is only ever a compiler intrinsic/portable
                 // op because its *own resolved declaration* was tagged
                 // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
@@ -1225,7 +1204,10 @@ impl AstToHirLowerer {
                 return Err(eyre::eyre!("inclusive range requires an end bound").into());
             }
         };
-        let path = todo!();
+        let path_expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+            ast::Ident::new(name),
+        )));
+        let path = self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Type)?;
         let fields = fields
             .into_iter()
             .map(|(name, expr)| hir::StructExprField {
@@ -1910,7 +1892,10 @@ impl AstToHirLowerer {
                     continue;
                 }
 
-                let path = todo!();
+                let captured = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                    ast::Ident::new(name.clone()),
+                )));
+                let path = self.ast_expr_to_hir_path(&captured, PathResolutionScope::Value)?;
                 let value = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),
@@ -2094,14 +2079,6 @@ impl AstToHirLowerer {
             _ => None,
         }
     }
-
-    // name_to_hir_path_with_scope moved to helpers.rs
-
-    // ast_expr_to_hir_path moved to helpers.rs
-
-    // convert_generic_args moved to helpers.rs
-
-    // canonicalize_segments moved to helpers.rs
 
     pub(super) fn lookup_global_res(
         &self,

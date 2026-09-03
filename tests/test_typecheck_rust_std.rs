@@ -11,6 +11,7 @@ use fp_core::hir::{HirPackage, HirProgram};
 use fp_core::lir::LirDataLayout;
 use fp_rust::RustStdProvider;
 use fp_typing::HirTypeChecker;
+use fp_typing::ComptimeResolver;
 
 #[test]
 fn type_checks_rust_std_packages_without_stopping_at_first_error() {
@@ -67,10 +68,12 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .expect("lowered package was not published");
         let dependency_program = Rc::new(hir_program.borrow().clone());
         let executor = CompilerExecutor::new();
+        let comptime_resolver: ComptimeResolver =
+            Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
         let checker = HirTypeChecker::new(
             package.borrow().clone(),
             Some(dependency_program),
-            None,
+            Some(comptime_resolver),
             executor.handle(),
         );
         let item_ids = checker

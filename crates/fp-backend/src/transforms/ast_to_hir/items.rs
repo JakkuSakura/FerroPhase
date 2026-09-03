@@ -389,9 +389,12 @@ impl AstToHirLowerer {
             self.current_impl_self_ty = Some(self_ty.clone());
             let impl_key = self.impl_self_key(&self_ty).ok();
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
+                let trait_expr = ast::Expr::new(ast::ExprKind::Name(trait_name.clone()));
+                let trait_path =
+                    self.ast_expr_to_hir_path(&trait_expr, PathResolutionScope::Trait)?;
                 Some(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(todo!()),
+                    hir::TypeExprKind::Path(trait_path),
                     Span::new(self.current_file, 0, 0),
                 ))
             } else {
@@ -556,7 +559,13 @@ impl AstToHirLowerer {
                     for (index, param) in trait_def.generics_params.iter().enumerate() {
                         let res = match trait_generic_args.get(index) {
                             Some(ast::Ty::Expr(expr)) => match expr.kind() {
-                                ast::ExprKind::Name(_name) => todo!(),
+                                ast::ExprKind::Name(name) => {
+                                    let path = self.ast_expr_to_hir_path(
+                                        expr,
+                                        PathResolutionScope::Type,
+                                    )?;
+                                    Some(path.res)
+                                }
                                 _ => None,
                             },
                             _ => None,
