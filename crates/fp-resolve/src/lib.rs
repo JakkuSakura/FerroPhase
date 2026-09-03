@@ -158,6 +158,12 @@ mod tests {
             resolver.resolve_parsed_path(&app, &location, &super_path, Namespace::Value),
             ResolutionResult::Found(_)
         ));
+        let nested_location = InPackagePath::new(vec!["m".into(), "n".into()]);
+        let super_two = Path::new(PathPrefix::Super(2), vec!["m".into(), "Item".into()]);
+        assert!(matches!(
+            resolver.resolve_parsed_path(&app, &nested_location, &super_two, Namespace::Value),
+            ResolutionResult::Found(_)
+        ));
     }
 
     #[test]
