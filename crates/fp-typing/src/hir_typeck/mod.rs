@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE};
 use fp_core::hir::GenericCallResolution;
@@ -160,6 +161,9 @@ pub struct HirTypeChecker {
     /// identity set so one source failure is recorded once even when the
     /// same definition is revisited through several resolution paths.
     emitted_diagnostic_ids: Rc<RefCell<HashSet<String>>>,
+    /// Number of top-level items whose type-check completed without returning
+    /// an item-level failure. Shared by every item-local checker clone.
+    successfully_typed_items: Rc<AtomicUsize>,
 }
 
 impl HirTypeChecker {
@@ -218,6 +222,7 @@ impl HirTypeChecker {
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
             emitted_diagnostic_ids: Rc::new(RefCell::new(HashSet::new())),
+            successfully_typed_items: Rc::new(AtomicUsize::new(0)),
         }))
     }
 
@@ -252,7 +257,14 @@ impl HirTypeChecker {
             current_item_path: None,
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
             emitted_diagnostic_ids: shared.emitted_diagnostic_ids.clone(),
+            successfully_typed_items: shared.successfully_typed_items.clone(),
         }
+    }
+
+    /// Returns the number of top-level items that completed type checking
+    /// successfully in this package.
+    pub fn successfully_typed_items(&self) -> usize {
+        self.successfully_typed_items.load(Ordering::Relaxed)
     }
 
     pub(super) fn resolve_infer(&self, ty: &Ty) -> Ty {
@@ -634,7 +646,13 @@ impl HirTypeChecker {
             return Ok(());
         };
         let mut item_checker = Self::for_item(checker);
-        item_checker.check_item(&item).await
+        let result = item_checker.check_item(&item).await;
+        if result.is_ok() {
+            item_checker
+                .successfully_typed_items
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        result
     }
 
     /// Get-or-spawn the task that type-checks `def_id`, keyed so any number
@@ -656,8 +674,13 @@ impl HirTypeChecker {
                     return;
                 };
                 let mut item_checker = Self::for_item(&checker);
-                if let Err(error) = item_checker.check_item(&item).await {
-                    item_checker.record_item_check_failure(format!("{error}"));
+                match item_checker.check_item(&item).await {
+                    Ok(()) => {
+                        item_checker
+                            .successfully_typed_items
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error) => item_checker.record_item_check_failure(format!("{error}")),
                 }
             }) as Pin<Box<dyn Future<Output = ()>>>
         })

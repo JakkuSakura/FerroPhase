@@ -287,6 +287,12 @@ impl SharedHirProgram {
     }
 }
 
+impl From<Rc<RefCell<HirProgram>>> for SharedHirProgram {
+    fn from(program: Rc<RefCell<HirProgram>>) -> Self {
+        Self(program)
+    }
+}
+
 /// The whole compiled result — every package involved, keyed by
 /// `PackageId`. `AstToHirLowerer` owns one of these and works package-by-package
 /// against it (see `docs/Resolution.md`); resolution across an

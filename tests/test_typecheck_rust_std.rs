@@ -7,19 +7,16 @@ use fp_compiler::CompilerExecutor;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::program::AstProgram;
-use fp_core::hir::{HirPackage, HirProgram};
+use fp_core::hir::HirProgram;
 use fp_core::lir::LirDataLayout;
 use fp_rust::RustStdProvider;
-use fp_typing::HirTypeChecker;
 use fp_typing::ComptimeResolver;
+use fp_typing::HirTypeChecker;
 
 #[test]
 fn type_checks_rust_std_packages_without_stopping_at_first_error() {
     let provider = Arc::new(RustStdProvider);
-    let package_ids = ["core", "alloc", "libc", "std"]
-        .into_iter()
-        .map(PackageId::new)
-        .collect::<Vec<_>>();
+    let package_ids = dependency_closure(&provider, &[PackageId::new("std")]);
     let ast_program = Rc::new(AstProgram::new(provider.clone()));
     for package_id in &package_ids {
         let source = provider
@@ -29,12 +26,9 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
     }
 
     let hir_program = Rc::new(RefCell::new(HirProgram::new()));
-    let shared_hir_program = fp_core::hir::SharedHirProgram::new(HirProgram::new());
+    let shared_hir_program = fp_core::hir::SharedHirProgram::from(Rc::clone(&hir_program));
     let mut lowering_failures = Vec::new();
     for package_id in &package_ids {
-        let package = Rc::new(RefCell::new(HirPackage::new(package_id.clone())));
-        hir_program.borrow_mut().add_package(Rc::clone(&package));
-        shared_hir_program.add_package(Rc::clone(&package));
         let source = ast_program.get_ast_package(package_id).borrow().clone();
         let mut lowerer = fp_backend::transformations::AstToHirLowerer::new(
             Rc::clone(&ast_program),
@@ -58,7 +52,9 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
                     continue;
                 }
             };
-        *package.borrow_mut() = lowered;
+        let package = Rc::new(RefCell::new(lowered));
+        hir_program.borrow_mut().add_package(Rc::clone(&package));
+        shared_hir_program.add_package(package);
     }
 
     for package_id in package_ids {
@@ -83,6 +79,7 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .iter()
             .map(|item| item.def_id.clone())
             .collect::<Vec<_>>();
+        let item_count = item_ids.len();
         let handles = item_ids
             .into_iter()
             .map(|def_id| HirTypeChecker::spawn_item_task(&checker, def_id))
@@ -99,9 +96,11 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .borrow()
             .diagnostics
             .get_diagnostics();
+        let successfully_typed_items = checker.borrow().successfully_typed_items();
         eprintln!(
-            "typecheck `{package_id}`: {} diagnostic(s)",
-            diagnostics.len()
+            "typecheck `{package_id}`: {successfully_typed_items}/{} item(s) typed successfully, {} diagnostic(s)",
+            item_count,
+            diagnostics.len(),
         );
         for diagnostic in diagnostics.iter().take(20) {
             eprintln!("  {:?}: {}", diagnostic.level, diagnostic.message);
@@ -114,4 +113,27 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             lowering_failures.join("\n")
         );
     }
+}
+
+fn dependency_closure(provider: &RustStdProvider, roots: &[PackageId]) -> Vec<PackageId> {
+    let mut ordered = Vec::new();
+    let mut pending = roots.to_vec();
+    while let Some(package_id) = pending.pop() {
+        if ordered.contains(&package_id) {
+            continue;
+        }
+        let metadata = provider
+            .load_package_metadata(&package_id)
+            .unwrap_or_else(|error| panic!("failed to load metadata for `{package_id}`: {error}"));
+        let dependencies = metadata
+            .metadata
+            .dependencies
+            .iter()
+            .filter_map(|dependency| dependency.resolved_package_id.clone())
+            .collect::<Vec<_>>();
+        pending.extend(dependencies);
+        ordered.push(package_id);
+    }
+    ordered.reverse();
+    ordered
 }

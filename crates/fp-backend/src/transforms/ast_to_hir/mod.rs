@@ -1008,15 +1008,6 @@ impl AstToHirLowerer {
         // performed while its module bindings are collected can traverse the
         // package through the shared HIR program as well.
         self.hir_program.add_package(self.hir_package_handle());
-        let resolver = Rc::new(RefCell::new(InPackageResolver::new(
-            self.hir_package_handle(),
-            self.hir_program.rc(),
-            self.workspace.provider().declaration_rules(),
-            self.workspace.provider().resolution_rules(),
-            Rc::clone(&self.workspace),
-        )));
-        resolver.borrow_mut().resolve_package(&self.package_id)?;
-        self.package_resolver = Some(Rc::clone(&resolver));
         // Unlike `transform_file` (the single-file path), `transform_package`
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
         // closure literal into an ordinary struct+function pair before HIR
@@ -1052,6 +1043,30 @@ impl AstToHirLowerer {
             )?;
         }
         let generated_count = lowered_items.len() - original_len;
+        // Closure lowering prepends synthetic declarations at the package
+        // root. Publish those declarations to the AST workspace before the
+        // global resolver pass so generated closure paths receive ordinary
+        // module bindings and DefIds just like source declarations.
+        if generated_count != 0 {
+            let mut resolver_source = package.clone();
+            resolver_source
+                .module
+                .items
+                .splice(0..0, lowered_items[..generated_count].iter().cloned());
+            self.workspace.import_package(
+                self.package_id.clone(),
+                Rc::new(RefCell::new(resolver_source)),
+            );
+        }
+        let resolver = Rc::new(RefCell::new(InPackageResolver::new(
+            self.hir_package_handle(),
+            self.hir_program.rc(),
+            self.workspace.provider().declaration_rules(),
+            self.workspace.provider().resolution_rules(),
+            Rc::clone(&self.workspace),
+        )));
+        resolver.borrow_mut().resolve_package(&self.package_id)?;
+        self.package_resolver = Some(Rc::clone(&resolver));
         let root_path = fp_core::ast::path::InPackagePath::new(Vec::new());
         let package_items: Vec<fp_core::ast::package::PackageItem> = lowered_items
             .into_iter()
