@@ -796,43 +796,40 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
         ExprInvokeTarget::Function(name) => name,
         _ => return None,
     };
-    match name {
-        Name::Ident(ident) => {
-            let fn_name = ident.name.as_str();
-            intrinsic_macro_kind(fn_name)
-        }
+    if let Some(ident) = name.as_ident() {
+        let fn_name = ident.name.as_str();
+        intrinsic_macro_kind(fn_name)
+    } else {
         // Path-qualified builtins — FerroPhase's own std module layout
         // (`std::time::now`, `std::task::spawn`, etc.), so the segment
         // table lives here rather than in generic/shared call-resolution
         // code. Segment-matched (not string-matched) so a leading `::`
         // absolute-path prefix doesn't need special-casing.
-        Name::Path(path) => {
-            let segments: Vec<&str> = path.segments.iter().map(|seg| seg.ident.as_str()).collect();
-            match segments.as_slice() {
-                ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
-                ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
-                ["std", "len"] | ["std", "builtins", "len"] | ["len"] => Some(CallKind::Len),
-                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => Some(CallKind::TypeOf),
-                ["std", "time", "now"] => Some(CallKind::TimeNow),
-                ["std", "task", "spawn"] => Some(CallKind::Spawn),
-                ["std", "task", "join"] => Some(CallKind::Join),
-                ["std", "task", "select"] => Some(CallKind::Select),
-                ["proc_macro", "token_stream_from_str"]
-                | ["std", "proc_macro", "token_stream_from_str"]
-                | ["proc_macro", "TokenStream", "from_str"]
-                | ["std", "proc_macro", "TokenStream", "from_str"] => {
-                    Some(CallKind::ProcMacroTokenStreamFromStr)
-                }
-                ["proc_macro", "token_stream_to_string"]
-                | ["std", "proc_macro", "token_stream_to_string"]
-                | ["proc_macro", "TokenStream", "to_string"]
-                | ["std", "proc_macro", "TokenStream", "to_string"] => {
-                    Some(CallKind::ProcMacroTokenStreamToString)
-                }
-                _ => None,
+        let path = &name.path;
+        let segments: Vec<&str> = path.segments.iter().map(|seg| seg.ident.as_str()).collect();
+        match segments.as_slice() {
+            ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
+            ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
+            ["std", "len"] | ["std", "builtins", "len"] | ["len"] => Some(CallKind::Len),
+            ["type"] | ["std", "type"] | ["std", "builtins", "type"] => Some(CallKind::TypeOf),
+            ["std", "time", "now"] => Some(CallKind::TimeNow),
+            ["std", "task", "spawn"] => Some(CallKind::Spawn),
+            ["std", "task", "join"] => Some(CallKind::Join),
+            ["std", "task", "select"] => Some(CallKind::Select),
+            ["proc_macro", "token_stream_from_str"]
+            | ["std", "proc_macro", "token_stream_from_str"]
+            | ["proc_macro", "TokenStream", "from_str"]
+            | ["std", "proc_macro", "TokenStream", "from_str"] => {
+                Some(CallKind::ProcMacroTokenStreamFromStr)
             }
+            ["proc_macro", "token_stream_to_string"]
+            | ["std", "proc_macro", "token_stream_to_string"]
+            | ["proc_macro", "TokenStream", "to_string"]
+            | ["std", "proc_macro", "TokenStream", "to_string"] => {
+                Some(CallKind::ProcMacroTokenStreamToString)
+            }
+            _ => None,
         }
-        _ => None,
     }
 }
 

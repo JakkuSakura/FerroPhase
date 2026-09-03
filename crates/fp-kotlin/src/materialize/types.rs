@@ -7,8 +7,7 @@ use super::*;
 pub(super) fn materialize_rust_alias(ty: Ty) -> Ty {
     let name = match &ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::Ident(name)) => Some(name.as_str()),
-            ExprKind::Name(Name::Path(path)) => Some(path.last().as_str()),
+            ExprKind::Name(Name { path, .. }) => Some(path.last().as_str()),
             _ => None,
         },
         _ => None,
@@ -62,7 +61,7 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
             }) else {
                 return ty;
             };
-            if let Name::Ident(id) = name {
+            if let Some(id) = name.as_ident() {
                 if let Some(inner) = id
                     .as_str()
                     .strip_prefix("to_vec_in<")
@@ -76,12 +75,12 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                     return parameterized("MutableList", element);
                 }
             }
-            let (last, args) = match name {
-                Name::Ident(id) => (id.as_str().to_owned(), Vec::new()),
-                Name::Path(path) => (
+            let (last, args) = {
+                let path = &name.path;
+                (
                     path.last().ident.as_str().to_owned(),
                     path.last().args.clone(),
-                ),
+                )
             };
             let replacement = match last.as_str() {
                 // `Option` and `Result` already use their Kotlin target names
@@ -99,6 +98,7 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                         parameterized("MutableList", element)
                     })
                 }
+                "Split" => Some(parameterized("List", Ty::Primitive(TypePrimitive::String))),
                 _ => None,
             };
             if let Some(replacement) = replacement {
@@ -165,9 +165,7 @@ pub(super) fn materialize_jvm_type(mut ty: Ty) -> Ty {
 
 pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
     let last = match &mut name {
-        Name::Ident(ident) => ident.as_str().to_owned(),
-        Name::Path(path) => path.last().as_str().to_owned(),
-        Name::Path(path) => {
+        Name { path, .. } => {
             let last = path.last().as_str().to_owned();
             for segment in &mut path.segments {
                 for arg in &mut segment.args {
@@ -203,8 +201,8 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
 
 pub(super) fn is_std_io_error(name: &Name) -> bool {
     let segments: Vec<&str> = match name {
-        Name::Path(path) => path.segments.iter().map(|s| s.ident.as_str()).collect(),
-        Name::Ident(_) => return false,
+        Name { path: path, .. } => path.segments.iter().map(|s| s.ident.as_str()).collect(),
+        _ => return false,
     };
     segments.ends_with(&["std", "io", "Error"])
 }

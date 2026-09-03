@@ -2183,7 +2183,7 @@ fn is_result_unwrap_expr(expr: &Expr) -> bool {
     select.field.as_str() == "resultUnwrap"
         || matches!(
             select.obj.kind(),
-            ExprKind::Name(Name::Path(path))
+            ExprKind::Name(Name { path, .. })
                 if path.segments.last().is_some_and(|segment| segment.as_str() == "RustKotlinRuntime")
         ) && select.field.as_str() == "resultUnwrap"
 }
@@ -2502,7 +2502,7 @@ impl KotlinEmitter {
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
             Ty::Expr(expr) => {
                 let name = expr_to_name(expr);
-                if let ExprKind::Name(Name::Path(path)) = expr.kind() {
+                if let ExprKind::Name(Name { path, .. }) = expr.kind() {
                     {
                         let segment = path.last();
                         if segment.ident.as_str() == "Nullable" {
@@ -2516,6 +2516,18 @@ impl KotlinEmitter {
                 }
                 let name = name.replace("::", ".");
                 let bare = name.rsplit('.').next().unwrap_or(&name);
+                if let ExprKind::Name(Name { path, .. }) = expr.kind() {
+                    let segment = path.last();
+                    if !segment.args.is_empty() {
+                        let args = segment
+                            .args
+                            .iter()
+                            .map(|arg| self.kotlin_type_from_ty(arg))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return format!("{bare}<{args}>");
+                    }
+                }
                 bare.to_string()
             }
             Ty::Unit(_) => "Unit".into(),
@@ -2965,9 +2977,7 @@ mod tests {
     fn internal_vec_helper_type_is_never_emitted_as_kotlin_type() {
         use fp_core::intrinsics::IntrinsicMaterializer;
         let emitter = KotlinEmitter::new();
-        let ty = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
-            "to_vec_in<str>",
-        ))));
+        let ty = crate::backend::kotlin_parameterized_ty("to_vec_in", Ty::ident(Ident::new("str")));
         let mapped = crate::materialize::KotlinMaterializer
             .materialize_type_mapping(&ty)
             .expect("materialize helper type");
@@ -2975,9 +2985,7 @@ mod tests {
             panic!("expected helper type replacement");
         };
         assert_eq!(emitter.kotlin_type_from_ty(&mapped), "MutableList<String>");
-        let split = Ty::Expr(Box::new(fp_core::ast::Expr::ident(Ident::new(
-            "Split<str>",
-        ))));
+        let split = crate::backend::kotlin_parameterized_ty("Split", Ty::ident(Ident::new("str")));
         let mapped = crate::materialize::KotlinMaterializer
             .materialize_type_mapping(&split)
             .expect("materialize split type");

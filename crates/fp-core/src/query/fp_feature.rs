@@ -131,7 +131,10 @@ fn lower_root_invoke(name: &Name, invoke: &ExprInvoke, pipeline: &mut QueryPipel
     // segment) made any unrelated qualified call ending in `from`, e.g.
     // `PathBuf::from(value)`, get misdetected as a query root and silently
     // reinterpreted as `SELECT * FROM value`.
-    if !matches!(name, Name::Ident(ident) if ident.as_str() == "from") {
+    if !name
+        .as_ident()
+        .is_some_and(|ident| ident.as_str() == "from")
+    {
         return None;
     }
     if !invoke.kwargs.is_empty() || invoke.args.len() != 1 {
@@ -592,10 +595,7 @@ fn sql_ident_from_ident(ident: crate::ast::Ident) -> Ident {
 }
 
 fn name_tail(name: &Name) -> &str {
-    match name {
-        Name::Ident(ident) => ident.as_str(),
-        Name::Path(path) => path.last().as_str(),
-    }
+    name.path.last().as_str()
 }
 
 fn query_name(path: Option<&Path>) -> Option<String> {

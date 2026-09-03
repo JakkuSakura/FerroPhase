@@ -39,7 +39,12 @@ fn direct_parser_accepts_emit_macro_source() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let src = "fn main() { emit! { let generated = 42; generated } }\n";
-    let items = parser.parse_items_ast(src).unwrap();
+    let items = parser.parse_items_ast(src);
+    eprintln!(
+        "parse result: {items:?}, diagnostics: {:?}",
+        parser.diagnostics()
+    );
+    let items = items.unwrap();
     assert!(!items.is_empty());
 }
 
@@ -99,7 +104,7 @@ fn parse_expr_ast_strips_prefix_from_parameter_path_segments() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("super::super::Foo<Bar>").unwrap();
     match expr.kind() {
-        ExprKind::Name(Name::Path(path)) => {
+        ExprKind::Name(Name { path: path, .. }) => {
             assert_eq!(path.prefix, PathPrefix::Super(2));
             assert_eq!(path.segments.len(), 1);
             assert_eq!(path.segments[0].ident.as_str(), "Foo");
@@ -122,7 +127,7 @@ fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
     let Ty::Expr(expr) = &def.value else {
         panic!("expected parameterized name, got {:?}", def.value);
     };
-    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+    let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.prefix, PathPrefix::Crate);
@@ -151,7 +156,7 @@ fn parse_type_args_accept_trailing_comma_before_close_angle() {
     let Ty::Expr(expr) = &def.value else {
         panic!("expected parameterized name, got {:?}", def.value);
     };
-    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+    let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.segments.last().unwrap().args.len(), 2);
@@ -800,7 +805,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let Ty::Expr(expr) = &def.value.fields[0].value else {
         panic!("expected path type");
     };
-    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+    let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(box_arg) = path.segments[0].args.first() else {
@@ -809,7 +814,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let Ty::Expr(box_expr) = box_arg else {
         panic!("expected Box path type");
     };
-    let ExprKind::Name(Name::Path(box_path)) = box_expr.kind() else {
+    let ExprKind::Name(Name { path: box_path, .. }) = box_expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(Ty::TypeBounds(bounds)) = box_path.segments[0].args.first() else {
@@ -833,7 +838,7 @@ fn parse_items_ast_supports_dyn_trait_object_with_multiple_bounds() {
     let Ty::Expr(expr) = &def.value.fields[0].value else {
         panic!("expected path type");
     };
-    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+    let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(Ty::TypeBounds(bounds)) = path.segments[0].args.first() else {
@@ -1552,13 +1557,13 @@ fn parse_expr_ast_bare_self_is_a_plain_identifier() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("self").unwrap();
-    let ExprKind::Name(Name::Ident(ident)) = expr.kind() else {
+    let ExprKind::Name(Name { path, .. }) = expr.kind() else {
         panic!(
             "expected bare `self` to parse as Name::Ident, got {:?}",
             expr.kind()
         );
     };
-    assert_eq!(ident.as_str(), "self");
+    assert_eq!(path.last().as_str(), "self");
 }
 
 #[test]
@@ -1569,13 +1574,13 @@ fn parse_expr_ast_self_field_access_targets_self_ident() {
     let ExprKind::FieldAccess(select) = expr.kind() else {
         panic!("expected field access, got {:?}", expr.kind());
     };
-    let ExprKind::Name(Name::Ident(ident)) = select.obj.kind() else {
+    let ExprKind::Name(Name { path, .. }) = select.obj.kind() else {
         panic!(
-            "expected receiver to be Name::Ident(\"self\"), got {:?}",
+            "expected receiver to be Name::ident(\"self\"), got {:?}",
             select.obj.kind()
         );
     };
-    assert_eq!(ident.as_str(), "self");
+    assert_eq!(path.last().as_str(), "self");
 }
 
 #[test]

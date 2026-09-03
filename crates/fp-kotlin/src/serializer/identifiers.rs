@@ -11,14 +11,10 @@ pub(super) fn expr_to_name(expr: &Expr) -> String {
 }
 
 pub(super) fn name_to_string(name: &fp_core::ast::Name) -> String {
-    use fp_core::ast::Name::*;
-    match name {
-        Ident(id) => id.name.clone(),
-        Path(p) => p
-            .segments
-            .iter()
-            .map(|s| s.ident.as_str())
-            .collect::<Vec<_>>()
-            .join("."),
-    }
+    name.path
+        .segments
+        .iter()
+        .map(|s| s.ident.as_str())
+        .collect::<Vec<_>>()
+        .join(".")
 }

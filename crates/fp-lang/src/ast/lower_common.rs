@@ -44,7 +44,7 @@ pub(crate) fn split_path_prefix(
     }
 }
 
-pub(crate) fn split_parameter_path_prefix(
+pub(crate) fn split_path_prefix_segments(
     mut segments: Vec<PathSegment>,
     saw_root: bool,
 ) -> (PathPrefix, Vec<PathSegment>) {

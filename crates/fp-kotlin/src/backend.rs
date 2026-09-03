@@ -283,9 +283,8 @@ mod tests {
 
     use fp_core::ast::path::PathPrefix;
     use fp_core::ast::{
-        Expr, ExprBlock, ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name,
-        ParameterPath, ParameterPathSegment, Path, StmtLet, Ty, TypeArray, TypeInt, TypePrimitive,
-        TypeSlice, TypeVec,
+        Expr, ExprBlock, ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, Path,
+        PathSegment, StmtLet, Ty, TypeArray, TypeInt, TypePrimitive, TypeSlice, TypeVec,
     };
 
     use super::{
@@ -424,9 +423,9 @@ mod tests {
 
     #[test]
     fn backend_materializes_rust_result_type_before_serialization() {
-        let result_ty = Ty::name(Name::parameter_path(ParameterPath::new(
+        let result_ty = Ty::name(Name::path(Path::new(
             PathPrefix::Plain,
-            vec![ParameterPathSegment::new(
+            vec![PathSegment::new(
                 Ident::new("Result"),
                 vec![
                     Ty::ident(Ident::new("String")),
@@ -446,7 +445,7 @@ mod tests {
         let Ty::Expr(expr) = function.sig.ret_ty.as_ref().expect("return type") else {
             panic!("expected expression type");
         };
-        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected parameterized Result type");
         };
         assert_eq!(path.segments.last().expect("Result segment").args.len(), 1);
@@ -460,7 +459,7 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected expression type");
         };
-        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected runtime-qualified type");
         };
         assert_eq!(path.join("."), "RustKotlinRuntime.Command");
@@ -565,7 +564,7 @@ mod tests {
         let ExprKind::Invoke(runtime_call) = argument.kind() else {
             panic!("expected ioError runtime invocation");
         };
-        let fp_core::ast::ExprInvokeTarget::Function(Name::Path(path)) = &runtime_call.target
+        let fp_core::ast::ExprInvokeTarget::Function(Name { path, .. }) = &runtime_call.target
         else {
             panic!("expected runtime function path");
         };
@@ -585,7 +584,7 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected JsonNode expression type");
         };
-        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected qualified JsonNode name");
         };
         assert_eq!(path.join("."), "com.fasterxml.jackson.databind.JsonNode");
@@ -602,7 +601,7 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected ByteArray expression type");
         };
-        let ExprKind::Name(Name::Ident(name)) = expr.kind() else {
+        let ExprKind::Name(Name::ident(name)) = expr.kind() else {
             panic!("expected ByteArray name");
         };
         assert_eq!(name.as_str(), "ByteArray");
@@ -626,7 +625,7 @@ mod tests {
             let Ty::Expr(expr) = ty else {
                 panic!("expected ByteArray expression type");
             };
-            let ExprKind::Name(Name::Ident(name)) = expr.kind() else {
+            let ExprKind::Name(Name::ident(name)) = expr.kind() else {
                 panic!("expected ByteArray name");
             };
             assert_eq!(name.as_str(), "ByteArray");
@@ -635,12 +634,12 @@ mod tests {
 
     #[test]
     fn backend_materializes_nominal_vec_types_to_kotlin_collections() {
-        let mut ty = Ty::name(Name::parameter_path(ParameterPath::new(
+        let mut ty = Ty::name(Name::path(Path::new(
             PathPrefix::Plain,
             vec![
-                ParameterPathSegment::from_ident(Ident::new("alloc")),
-                ParameterPathSegment::from_ident(Ident::new("vec")),
-                ParameterPathSegment::new(Ident::new("Vec"), vec![Ty::ident(Ident::new("Entry"))]),
+                PathSegment::from_ident(Ident::new("alloc")),
+                PathSegment::from_ident(Ident::new("vec")),
+                PathSegment::new(Ident::new("Vec"), vec![Ty::ident(Ident::new("Entry"))]),
             ],
         )));
 
@@ -649,15 +648,15 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected Kotlin collection type");
         };
-        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected parameterized MutableList type");
         };
-        let segment = path.last().expect("MutableList segment");
+        let segment = path.last();
         assert_eq!(segment.ident.as_str(), "MutableList");
         let [Ty::Expr(element)] = segment.args.as_slice() else {
             panic!("expected one element type");
         };
-        let ExprKind::Name(Name::Ident(element)) = element.kind() else {
+        let ExprKind::Name(Name::ident(element)) = element.kind() else {
             panic!("expected Entry element type");
         };
         assert_eq!(element.as_str(), "Entry");
@@ -665,9 +664,9 @@ mod tests {
 
     #[test]
     fn backend_materializes_nominal_byte_vec_types_to_byte_arrays() {
-        let mut ty = Ty::name(Name::parameter_path(ParameterPath::new(
+        let mut ty = Ty::name(Name::path(Path::new(
             PathPrefix::Plain,
-            vec![ParameterPathSegment::new(
+            vec![PathSegment::new(
                 Ident::new("Vec"),
                 vec![Ty::Primitive(TypePrimitive::Int(TypeInt::U8))],
             )],
@@ -678,7 +677,7 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected ByteArray expression type");
         };
-        let ExprKind::Name(Name::Ident(name)) = expr.kind() else {
+        let ExprKind::Name(Name::ident(name)) = expr.kind() else {
             panic!("expected ByteArray name");
         };
         assert_eq!(name.as_str(), "ByteArray");
@@ -702,9 +701,8 @@ mod tests {
                 panic!("expected target name for {source}");
             };
             let actual = match name {
-                Name::Ident(ident) => ident.as_str(),
-                Name::Path(path) => path.last().as_str(),
-                Name::Path(path) => path.last().ident.as_str(),
+                Name { path: _, .. } => ident.as_str(),
+                Name { path: path, .. } => path.last().as_str(),
             };
             assert_eq!(actual, expected);
         }
@@ -712,9 +710,9 @@ mod tests {
 
     #[test]
     fn backend_materializes_typed_local_vec_annotations() {
-        let vec_ty = Ty::name(Name::parameter_path(ParameterPath::new(
+        let vec_ty = Ty::name(Name::path(Path::new(
             PathPrefix::Plain,
-            vec![ParameterPathSegment::new(
+            vec![PathSegment::new(
                 Ident::new("Vec"),
                 vec![Ty::ident(Ident::new("Entry"))],
             )],
@@ -748,13 +746,10 @@ mod tests {
         let Ty::Expr(expr) = &pattern.ty else {
             panic!("expected Kotlin collection type");
         };
-        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
+        let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected parameterized MutableList type");
         };
-        assert_eq!(
-            path.last().expect("collection segment").ident.as_str(),
-            "MutableList"
-        );
+        assert_eq!(path.last().ident.as_str(), "MutableList");
     }
 
     #[test]
@@ -820,9 +815,9 @@ mod tests {
     #[test]
     fn backend_materializes_rust_aliases_to_kotlin_jvm_types() {
         let named_ty = |name, args| {
-            Ty::name(Name::parameter_path(ParameterPath::new(
+            Ty::name(Name::path(Path::new(
                 PathPrefix::Plain,
-                vec![ParameterPathSegment::new(Ident::new(name), args)],
+                vec![PathSegment::new(Ident::new(name), args)],
             )))
         };
         let mut function =
@@ -1307,7 +1302,7 @@ fn materialize_pattern(pattern: &mut fp_core::ast::Pattern) {
     use fp_core::ast::PatternKind;
 
     match pattern.kind_mut() {
-        PatternKind::Ident(_) | PatternKind::Wildcard(_) => {}
+        PatternKind::Ident(_) | PatternKind::Wildcard(_) | PatternKind::Name(_) => {}
         PatternKind::Bind(bind) => materialize_pattern(&mut bind.pattern),
         PatternKind::Tuple(tuple) => {
             for pattern in &mut tuple.patterns {
@@ -1563,7 +1558,7 @@ fn materialize_expr_types(expr: &mut Expr) {
 /// `java.io.IOException` field type.
 #[cfg(test)]
 fn materialize_io_error_constructor(invoke: &mut fp_core::ast::ExprInvoke) {
-    let fp_core::ast::ExprInvokeTarget::Function(Name::Path(path)) = &invoke.target else {
+    let fp_core::ast::ExprInvokeTarget::Function(Name { path, .. }) = &invoke.target else {
         return;
     };
     if path.last().as_str() != "Io" || invoke.args.len() != 1 {
@@ -1654,7 +1649,7 @@ fn materialize_kotlin_ty(ty: &mut Ty) {
 
 #[cfg(test)]
 fn materialize_kotlin_type_arguments(name: &mut Name) {
-    let Name::Path(path) = name else {
+    let Name { path, .. } = name else {
         return;
     };
     for segment in &mut path.segments {
@@ -1672,10 +1667,9 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
 #[cfg(test)]
 fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     let (last, args) = match name {
-        Name::Ident(ident) => (ident.as_str(), Vec::new()),
-        Name::Path(path) => (path.last().as_str(), Vec::new()),
-        Name::Path(path) => {
-            let segment = path.last()?;
+        Name { path: _, .. } => (ident.as_str(), Vec::new()),
+        Name { path: path, .. } => {
+            let segment = path.last();
             (segment.ident.as_str(), segment.args.clone())
         }
     };
@@ -1749,13 +1743,12 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
 #[cfg(test)]
 fn is_std_io_error(name: &Name) -> bool {
     let segments: Vec<&str> = match name {
-        Name::Path(path) => path.segments.iter().map(Ident::as_str).collect(),
-        Name::Path(path) => path
+        Name { path: path, .. } => path
             .segments
             .iter()
             .map(|segment| segment.ident.as_str())
             .collect(),
-        Name::Ident(_) => return false,
+        Name::ident(_) => return false,
     };
     segments.len() >= 3
         && segments[segments.len() - 3] == "std"
@@ -1766,23 +1759,17 @@ fn is_std_io_error(name: &Name) -> bool {
 #[cfg(test)]
 fn kotlin_type_name(name: &Name) -> Option<&str> {
     match name {
-        Name::Ident(ident) => Some(ident.as_str()),
-        Name::Path(path) => Some(path.last().as_str()),
-        Name::Path(path) => Some(path.last().ident.as_str()),
+        Name { path: _, .. } => Some(ident.as_str()),
+        Name { path: path, .. } => Some(path.last().as_str()),
     }
 }
 
 #[cfg(test)]
-fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
-    Ty::Expr(Box::new(Expr::name(Name::parameter_path(
-        fp_core::ast::ParameterPath::new(
-            fp_core::ast::path::PathPrefix::Plain,
-            vec![fp_core::ast::ParameterPathSegment::new(
-                Ident::new(name),
-                vec![arg],
-            )],
-        ),
-    ))))
+pub(crate) fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
+    Ty::Expr(Box::new(Expr::name(Name::path(fp_core::ast::Path::new(
+        fp_core::ast::path::PathPrefix::Plain,
+        vec![fp_core::ast::PathSegment::new(Ident::new(name), vec![arg])],
+    )))))
 }
 
 /// Rust vectors reach the target AST in two equivalent forms: the structural
@@ -1793,15 +1780,13 @@ fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
     if is_u8_type(element_ty) {
         return Ty::Expr(Box::new(Expr::name(Name::ident("ByteArray"))));
     }
-    Ty::Expr(Box::new(Expr::name(Name::parameter_path(
-        fp_core::ast::ParameterPath::new(
-            fp_core::ast::path::PathPrefix::Plain,
-            vec![fp_core::ast::ParameterPathSegment::new(
-                Ident::new("MutableList"),
-                vec![element_ty.clone()],
-            )],
-        ),
-    ))))
+    Ty::Expr(Box::new(Expr::name(Name::path(fp_core::ast::Path::new(
+        fp_core::ast::path::PathPrefix::Plain,
+        vec![fp_core::ast::PathSegment::new(
+            Ident::new("MutableList"),
+            vec![element_ty.clone()],
+        )],
+    )))))
 }
 
 #[cfg(test)]
@@ -1815,12 +1800,8 @@ fn is_u8_type(ty: &Ty) -> bool {
 #[cfg(test)]
 fn materialize_process_type(name: &mut Name) {
     let last = match name {
-        Name::Ident(ident) => ident.as_str(),
-        Name::Path(path) => path.last().as_str(),
-        Name::Path(path) => match Some(path.last()) {
-            Some(segment) => segment.ident.as_str(),
-            None => return,
-        },
+        Name { path: _, .. } => ident.as_str(),
+        Name { path: path, .. } => path.last().as_str(),
     };
     let runtime_type = match last {
         "Command" => "Command",
@@ -1844,7 +1825,7 @@ fn materialize_process_type(name: &mut Name) {
 #[cfg(test)]
 fn materialize_external_type(name: &mut Name) {
     let is_json_value = match name {
-        Name::Path(path) => {
+        Name { path: path, .. } => {
             let mut segments = path.segments.iter();
             matches!(
                 (segments.next(), segments.next(), segments.next()),
@@ -1852,11 +1833,7 @@ fn materialize_external_type(name: &mut Name) {
                     if package.ident.as_str() == "serde_json" && value.ident.as_str() == "Value"
             )
         }
-        Name::Path(path) => {
-            let segments = &path.segments;
-            segments.len() == 2 && segments[0].name == "serde_json" && segments[1].name == "Value"
-        }
-        Name::Ident(_) => false,
+        Name::ident(_) => false,
     };
     if is_json_value {
         *name = Name::path(Path::plain(vec![
@@ -1875,12 +1852,8 @@ fn materialize_external_type(name: &mut Name) {
 #[cfg(test)]
 fn materialize_jvm_path_type(name: &mut Name) {
     let last = match name {
-        Name::Ident(ident) => ident.as_str(),
-        Name::Path(path) => path.last().as_str(),
-        Name::Path(path) => match Some(path.last()) {
-            Some(segment) => segment.ident.as_str(),
-            None => return,
-        },
+        Name { path: _, .. } => ident.as_str(),
+        Name { path: path, .. } => path.last().as_str(),
     };
     let target = match last {
         "Path" | "PathBuf" => ["java", "nio", "file", "Path"].as_slice(),

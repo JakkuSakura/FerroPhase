@@ -56,7 +56,7 @@ impl PortableOpAstConverter {
         } else {
             let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                 span: call.span,
-                target: ast::ExprInvokeTarget::Function(Name::path(path)),
+                target: ast::ExprInvokeTarget::Function(Name { qself: None, path }),
                 args: call.args,
                 kwargs: call.kwargs,
             }));
@@ -2368,7 +2368,7 @@ mod tests {
         let Ty::Expr(expr) = lifted else {
             panic!("expected a path-shaped AST type");
         };
-        let ast::ExprKind::Name(ast::Name::Path(path)) = &expr.kind else {
+        let ast::ExprKind::Name(ast::Name { path: path, .. }) = &expr.kind else {
             panic!("expected a path-shaped AST expression");
         };
         assert_eq!(path.segments[0].ident.name, "dependency");
@@ -2453,7 +2453,7 @@ mod tests {
 
         let lifted = lifter.lift_expr(&call).expect("lift associated call");
         assert!(
-            matches!(lifted.kind, ast::ExprKind::Invoke(ast::ExprInvoke { target: ast::ExprInvokeTarget::Function(ast::Name::Path(ref path)), .. }) if path.to_string() == "kotlin::String::fromUtf8Lossy")
+            matches!(lifted.kind, ast::ExprKind::Invoke(ast::ExprInvoke { target: ast::ExprInvokeTarget::Function(ast::Name { path, .. }), .. }) if path.to_string() == "kotlin::String::fromUtf8Lossy")
         );
     }
 
@@ -2660,10 +2660,10 @@ mod tests {
             (&is_dir_call, "file_type_is_dir"),
         ] {
             let lifted = lifter.lift_expr(expr).expect("lift process receiver call");
-            let ast::ExprKind::Name(ast::Name::Ident(name)) = lifted.kind else {
+            let ast::ExprKind::Name(ast::Name { path, .. }) = lifted.kind else {
                 panic!("resolved process receiver must not fall back to a source method");
             };
-            assert_eq!(name.name, operation);
+            assert_eq!(path.last().ident.name, operation);
         }
 
         // Struct fields do not currently have DefIds in HIR. Their typed
@@ -2800,7 +2800,7 @@ mod tests {
                 BlockStmt::Let(stmt) => match stmt.pat.kind() {
                     PatternKind::Type(typed) => match &typed.ty {
                         Ty::Expr(expr) => match expr.kind() {
-                            ast::ExprKind::Name(Name::Path(path)) => path.join("."),
+                            ast::ExprKind::Name(Name { path: path, .. }) => path.join("."),
                             other => panic!("expected source path type name, got {other:?}"),
                         },
                         other => panic!("expected nominal type, got {other:?}"),
@@ -2852,7 +2852,7 @@ mod tests {
                 BlockStmt::Let(stmt) => match stmt.pat.kind() {
                     PatternKind::Type(typed) => match &typed.ty {
                         Ty::Expr(expr) => match expr.kind() {
-                            ast::ExprKind::Name(Name::Path(path)) => Some(path.join(".")),
+                            ast::ExprKind::Name(Name { path: path, .. }) => Some(path.join(".")),
                             _ => None,
                         },
                         _ => None,
@@ -2929,10 +2929,10 @@ mod tests {
             .with_materializer(Arc::new(TestMaterializer));
 
         let lifted = lifter.lift_expr(&try_expr).expect("lift typed Result try");
-        let ast::ExprKind::Name(ast::Name::Ident(name)) = lifted.kind else {
+        let ast::ExprKind::Name(ast::Name { path, .. }) = lifted.kind else {
             panic!("typed Result try must not remain a generic Try expression");
         };
-        assert_eq!(name.name, "result_propagate");
+        assert_eq!(path.last().ident.name, "result_propagate");
     }
 
     #[test]
@@ -3023,13 +3023,12 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
     match expr.kind_mut() {
         ast::ExprKind::Struct(st) => {
             let struct_name = match st.name.kind() {
-                ast::ExprKind::Name(Name::Path(p)) => p
+                ast::ExprKind::Name(Name { path: p, .. }) => p
                     .segments
                     .iter()
                     .map(|s| s.ident.as_str())
                     .collect::<Vec<_>>()
                     .join("::"),
-                ast::ExprKind::Name(Name::Ident(id)) => id.name.clone(),
                 _ => {
                     return;
                 }

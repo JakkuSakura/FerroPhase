@@ -248,14 +248,12 @@ pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
 
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     let registry = try_get_threadlocal_lang_items()?;
-    let name_segments: Vec<&str> = match name {
-        Name::Ident(ident) => vec![ident.name.as_str()],
-        Name::Path(path) => path
-            .segments
-            .iter()
-            .map(|seg| seg.ident.name.as_str())
-            .collect(),
-    };
+    let name_segments: Vec<&str> = name
+        .path
+        .segments
+        .iter()
+        .map(|seg| seg.ident.name.as_str())
+        .collect();
 
     for (name, path) in registry.items {
         let path_segments: Vec<&str> = path

@@ -2293,7 +2293,7 @@ impl AstToHirLowerer {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
-                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_ty.name.clone(),
                 )));
                 let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
@@ -2432,7 +2432,7 @@ impl AstToHirLowerer {
                 // such as `impl<T> Trait for Vec<T>` indistinguishable from
                 // an unresolved path to the HIR impl index, so it cannot be
                 // placed in rustc's ADT dispatch bucket.
-                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ast::Ident::new(
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ast::Ident::new(
                     "Vec",
                 ))));
                 let mut path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
@@ -2627,7 +2627,7 @@ impl AstToHirLowerer {
                 }
                 // `_` in type position (`Vec<_>`, a turbofish arg, ...) —
                 // real inference-placeholder syntax, not a real path to
-                // resolve. Reaches here as a bare `Name::Ident("_")`
+                // resolve. Reaches here as a bare `Name::ident("_")`
                 // expression (fp-lang parses it as an ordinary identifier,
                 // not a dedicated `ast::Ty::Wildcard` node, in every
                 // position this crate's own `parse_type_arg` builds a
@@ -2638,7 +2638,7 @@ impl AstToHirLowerer {
                 // silently infer.
                 if matches!(
                     expr.kind(),
-                    ast::ExprKind::Name(fp_core::ast::Name::Ident(ident)) if ident.name.as_str() == "_"
+                    ast::ExprKind::Name(fp_core::ast::Name { path, .. }) if path.last().ident.name.as_str() == "_"
                 ) {
                     return Ok(hir::TypeExpr::new(
                         self.next_id(),
@@ -3163,7 +3163,7 @@ impl AstToHirLowerer {
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Infer, span)
             }
             ast::Value::Struct(struct_val) => {
-                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_val.ty.name.clone(),
                 )));
                 let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;

@@ -174,7 +174,7 @@ fn materializes_result_unit_success_as_kotlin_unit() {
         panic!("expected Result success adapter invocation");
     };
     assert!(
-        matches!(invoke.args[0].kind(), ExprKind::Name(Name::Ident(ident)) if ident.as_str() == "Unit")
+        matches!(invoke.args[0].kind(), ExprKind::Name(Name { path: _ , .. }) if ident.as_str() == "Unit")
     );
 }
 
@@ -340,7 +340,7 @@ fn materializes_result_error_mapping_through_the_runtime() {
         panic!("map_err callback parameter must use a Kotlin Throwable type");
     };
     assert!(
-        matches!(throwable.kind(), ExprKind::Name(Name::Ident(name)) if name.as_str() == "Throwable")
+        matches!(throwable.kind(), ExprKind::Name(Name { path: _ , .. }) if name.as_str() == "Throwable")
     );
     assert_eq!(
         render_invoke_name(&mapping.body),
@@ -514,15 +514,13 @@ fn materializes_owned_values_without_rust_copy_methods() {
 #[test]
 fn materializes_collection_defaults_without_rust_default_calls() {
     let registry = test_registry();
-    let bytes_ty = Some(Ty::name(Name::parameter_path(
-        fp_core::ast::ParameterPath::new(
-            fp_core::ast::path::PathPrefix::Plain,
-            vec![fp_core::ast::ParameterPathSegment::new(
-                Ident::new("Vec"),
-                vec![Ty::ident(Ident::new("u8"))],
-            )],
-        ),
-    )));
+    let bytes_ty = Some(Ty::name(Name::path(fp_core::ast::Path::new(
+        fp_core::ast::path::PathPrefix::Plain,
+        vec![fp_core::ast::PathSegment::new(
+            Ident::new("Vec"),
+            vec![Ty::ident(Ident::new("u8"))],
+        )],
+    ))));
     let lists_ty = Some(Ty::Vec(fp_core::ast::TypeVec {
         ty: Box::new(Ty::ident(Ident::new("Entry"))),
     }));
@@ -882,7 +880,7 @@ fn materializes_child_and_duration_operations_without_rust_members() {
         let mut call = PortableOpCall {
             span: Default::default(),
             op: registry.resolve(op).expect("registered portable operation"),
-            args: vec![Expr::name(Name::ident(receiver))],
+            args: vec![Expr::name(Name { path: _, .. })],
             kwargs: Vec::new(),
         };
         let materialized = materializer
@@ -890,7 +888,7 @@ fn materializes_child_and_duration_operations_without_rust_members() {
             .expect("materialize portable operation")
             .expect("portable operation replacement");
         if op == "option_take" {
-            let ExprKind::Name(Name::Ident(name)) = materialized.kind() else {
+            let ExprKind::Name(Name { path: _, .. }) = materialized.kind() else {
                 panic!("expected Kotlin nullable value");
             };
             assert_eq!(name.name, expected);
@@ -899,13 +897,13 @@ fn materializes_child_and_duration_operations_without_rust_members() {
                 panic!("expected Kotlin operation invocation");
             };
             match &invoke.target {
-                ExprInvokeTarget::Function(Name::Ident(name)) => {
+                ExprInvokeTarget::Function(Name { path: _, .. }) => {
                     assert_eq!(name.name, expected)
                 }
                 ExprInvokeTarget::Method(select) => {
                     let receiver = match select.obj.kind() {
-                        ExprKind::Name(Name::Ident(name)) => name.name.clone(),
-                        ExprKind::Name(Name::Path(path)) => path.join("."),
+                        ExprKind::Name(Name { path: _, .. }) => name.name.clone(),
+                        ExprKind::Name(Name { path: path, .. }) => path.join("."),
                         _ => panic!("expected static Kotlin receiver"),
                     };
                     assert_eq!(format!("{receiver}.{}", select.field.name), expected);
@@ -1041,7 +1039,7 @@ fn materializes_filesystem_and_stream_operations_through_jvm_runtime_apis() {
         .expect("materialize Path::to_path_buf")
         .expect("Path::to_path_buf replacement");
     assert!(
-        matches!(materialized.kind(), ExprKind::Name(Name::Ident(name)) if name.name == "path")
+        matches!(materialized.kind(), ExprKind::Name(Name { path: _ , .. }) if name.name == "path")
     );
 }
 
@@ -1050,11 +1048,11 @@ fn render_invoke_name(expr: &Expr) -> String {
         panic!("expected invocation");
     };
     match &invoke.target {
-        ExprInvokeTarget::Function(Name::Ident(name)) => return name.name.clone(),
+        ExprInvokeTarget::Function(Name { path: _, .. }) => return name.name.clone(),
         ExprInvokeTarget::Method(select) => {
             let receiver = match select.obj.kind() {
-                ExprKind::Name(Name::Ident(receiver)) => receiver.name.clone(),
-                ExprKind::Name(Name::Path(path)) => path.join("."),
+                ExprKind::Name(Name { path: _, .. }) => receiver.name.clone(),
+                ExprKind::Name(Name { path: path, .. }) => path.join("."),
                 _ => panic!("expected static receiver"),
             };
             format!("{receiver}.{}", select.field.name)

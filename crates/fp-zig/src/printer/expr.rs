@@ -26,7 +26,7 @@ impl ZigEmitter {
 
     fn render_name(&self, name: &Name) -> String {
         match name {
-            Name::Ident(ident) => ident.name.clone(),
+            Name { path, .. } if path.segments.len() == 1 => path.last().ident.name.clone(),
             _ => format!("{}", name).replace("::", "."),
         }
     }

@@ -314,10 +314,7 @@ pub(super) fn ast_value_ty_to_hir_ty(ty: &fp_core::ast::Ty) -> Option<Ty> {
         // primitive spelling here before declaring the generated field type
         // invalid.
         fp_core::ast::Ty::Expr(expr) => match expr.kind() {
-            fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(ident)) => {
-                primitive_path_ty(ident.name.as_str())
-            }
-            fp_core::ast::ExprKind::Name(fp_core::ast::Name::Path(path)) => path
+            fp_core::ast::ExprKind::Name(fp_core::ast::Name { path, .. }) => path
                 .segments
                 .last()
                 .and_then(|segment| primitive_path_ty(segment.ident.as_str())),

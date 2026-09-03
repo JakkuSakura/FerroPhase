@@ -308,14 +308,15 @@ mod tests {
         let ast::ExprKind::Assign(assign) = assign_stmt.expr.kind() else {
             panic!("expected an assignment, got {:?}", assign_stmt.expr.kind());
         };
-        let ast::ExprKind::Name(Name::Ident(assign_target)) = assign.target.kind() else {
+        let ast::ExprKind::Name(Name { path, .. }) = assign.target.kind() else {
             panic!(
                 "expected a bare name target, got {:?}",
                 assign.target.kind()
             );
         };
         assert_eq!(
-            assign_target.name, shadow_name,
+            path.last().ident.name,
+            shadow_name,
             "the reassignment must target the renamed shadow, not the (unassignable) parameter"
         );
 
@@ -341,14 +342,13 @@ mod tests {
             panic!("expected a trailing expression statement, got {stmt:?}");
         };
         match expr_stmt.expr.kind() {
-            ast::ExprKind::Name(Name::Path(path)) => path
+            ast::ExprKind::Name(Name { path: path, .. }) => path
                 .segments
                 .last()
                 .expect("non-empty path")
                 .ident
                 .name
                 .clone(),
-            ast::ExprKind::Name(Name::Ident(ident)) => ident.name.clone(),
             other => panic!("expected a name/path expression, got {other:?}"),
         }
     }

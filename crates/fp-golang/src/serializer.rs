@@ -394,11 +394,7 @@ impl GoEmitter {
 
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<Option<String>> {
         let target = match &invoke.target {
-            ExprInvokeTarget::Function(name) => match name {
-                fp_core::ast::Name::Ident(ident) => ident.name.clone(),
-                fp_core::ast::Name::Path(path) => path.join("."),
-                _ => return Ok(None),
-            },
+            ExprInvokeTarget::Function(name) => name.path.join("."),
             _ => return Ok(None),
         };
         let args = self.render_call_args(&invoke.args)?;

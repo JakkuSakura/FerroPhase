@@ -1357,7 +1357,7 @@ fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
 
 fn name_namespace_and_name(name: &Name) -> Option<(String, String)> {
     match name {
-        Name::Path(path) => {
+        Name { path, .. } => {
             if path.segments.is_empty() {
                 return None;
             }
@@ -1541,11 +1541,8 @@ fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<St
 }
 
 fn name_to_ident(name: &Name) -> Option<&Ident> {
-    match name {
-        Name::Ident(ident) => Some(ident),
-        Name::Path(path) => path.segments.last().map(|segment| &segment.ident),
-        _ => None,
-    }
+    name.as_ident()
+        .or_else(|| name.path.segments.last().map(|segment| &segment.ident))
 }
 
 fn name_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
@@ -1665,11 +1662,10 @@ fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
 }
 
 fn name_to_wit_type(name: &Name, self_name: Option<&str>) -> Option<String> {
-    match name {
-        Name::Ident(ident) if ident.as_str() == "Self" => {
+    if let Some(ident) = name.as_ident() {
+        if ident.as_str() == "Self" {
             self_name.map(|name| sanitize_identifier(name))
-        }
-        Name::Ident(ident) => {
+        } else {
             if matches!(ident.as_str(), "Error" | "Span") {
                 return Some("string".to_string());
             }
@@ -1677,38 +1673,37 @@ fn name_to_wit_type(name: &Name, self_name: Option<&str>) -> Option<String> {
                 ident.as_str(),
             )))
         }
-        Name::Path(path) => {
-            if let Some(first) = path.segments.first() {
-                if matches!(first.as_str(), "std" | "core" | "alloc") {
-                    if path
-                        .segments
-                        .last()
-                        .map(|ident| ident.as_str())
-                        .map(|name| name == "Error")
-                        .unwrap_or(false)
-                    {
-                        return Some("string".to_string());
-                    }
-                }
-            }
-            let segments: Vec<String> = path
-                .segments
-                .iter()
-                .map(|seg| sanitize_identifier(seg.as_str()))
-                .collect();
-            if matches!(segments.first().map(String::as_str), Some("clap-complete")) {
-                return Some("string".to_string());
-            }
-            if segments.len() >= 2 && segments[0] == "fp-core" {
-                if matches!(segments[1].as_str(), "error" | "ast" | "span") {
+    } else {
+        let path = &name.path;
+        if let Some(first) = path.segments.first() {
+            if matches!(first.as_str(), "std" | "core" | "alloc") {
+                if path
+                    .segments
+                    .last()
+                    .map(|ident| ident.as_str())
+                    .map(|name| name == "Error")
+                    .unwrap_or(false)
+                {
                     return Some("string".to_string());
                 }
             }
-            path.segments
-                .last()
-                .map(|ident| normalize_type_name(sanitize_type_identifier(ident.as_str())))
         }
-        _ => None,
+        let segments: Vec<String> = path
+            .segments
+            .iter()
+            .map(|seg| sanitize_identifier(seg.as_str()))
+            .collect();
+        if matches!(segments.first().map(String::as_str), Some("clap-complete")) {
+            return Some("string".to_string());
+        }
+        if segments.len() >= 2 && segments[0] == "fp-core" {
+            if matches!(segments[1].as_str(), "error" | "ast" | "span") {
+                return Some("string".to_string());
+            }
+        }
+        path.segments
+            .last()
+            .map(|ident| normalize_type_name(sanitize_type_identifier(ident.as_str())))
     }
 }
 

@@ -218,8 +218,8 @@ use winnow::error::{ContextError, ErrMode};
 use winnow::{ModalResult, Parser};
 
 use crate::ast::lower_common::{
-    decode_bytes_literal, decode_single_char_literal, decode_string_literal,
-    split_parameter_path_prefix, split_path_prefix,
+    decode_bytes_literal, decode_single_char_literal, decode_string_literal, split_path_prefix,
+    split_path_prefix_segments,
 };
 use crate::lexer::tokenizer::{Keyword, Token, TokenKind, strip_number_suffix};
 
@@ -458,7 +458,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         *input = probe;
         segments.push(PathSegment::new(next, args));
     }
-    let (prefix, segments) = split_parameter_path_prefix(segments, saw_root);
+    let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
     Ok(Name::path(Path::new(prefix, segments)))
 }
 

@@ -60,7 +60,7 @@ fn is_byte_vector_ty(ty: &Ty) -> bool {
     match ty {
         Ty::Vec(vector) => is_u8_type(&vector.ty),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::Path(path)) => {
+            ExprKind::Name(Name { path: path, .. }) => {
                 path.last().ident.as_str() == "Vec"
                     && path.last().args.len() == 1
                     && is_u8_type(&path.last().args[0])
@@ -75,7 +75,7 @@ fn is_collection_ty(ty: &Ty) -> bool {
     match ty {
         Ty::Vec(_) | Ty::Slice(_) => true,
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::Path(path)) => {
+            ExprKind::Name(Name { path: path, .. }) => {
                 matches!(
                     path.last().ident.as_str(),
                     "Vec"
@@ -95,7 +95,7 @@ fn is_collection_ty(ty: &Ty) -> bool {
 
 fn is_u8_type(ty: &Ty) -> bool {
     matches!(ty, Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
-        || matches!(ty, Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Name(Name::Ident(name)) if name.as_str() == "u8"))
+        || matches!(ty, Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Name(Name { path, .. }) if path.last().as_str() == "u8"))
 }
 
 fn kotlin_default_value(ty: &TySlot) -> Option<Expr> {
@@ -118,12 +118,7 @@ fn kotlin_default_value(ty: &TySlot) -> Option<Expr> {
         Ty::Primitive(TypePrimitive::Int(_)) => Some(Expr::value(Value::int(0))),
         Ty::Primitive(TypePrimitive::Decimal(_)) => Some(Expr::value(Value::decimal(0.0))),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::Ident(name)) => Some(invoke_static_method(
-                &[name.as_str()],
-                "default",
-                Vec::new(),
-            )),
-            ExprKind::Name(Name::Path(path)) => {
+            ExprKind::Name(Name { path, .. }) => {
                 let names = path
                     .segments
                     .iter()

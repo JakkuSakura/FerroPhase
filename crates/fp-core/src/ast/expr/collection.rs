@@ -247,10 +247,7 @@ fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
 }
 
 fn name_segments(name: &Name) -> Vec<&str> {
-    match name {
-        Name::Ident(ident) => vec![ident.as_str()],
-        Name::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
-    }
+    name.path.segments.iter().map(|seg| seg.as_str()).collect()
 }
 
 fn ends_with<'a>(segments: &[&'a str], suffix: &[&'a str]) -> bool {

@@ -64,13 +64,7 @@ impl KotlinEmitter {
                 // `enum_variant_names` registry `render_match_pat` already
                 // uses for the pattern case.
                 if let Some(enum_name) = enum_name_from_ty(None) {
-                    let variant_name = match name {
-                        fp_core::ast::Name::Path(p) => {
-                            p.segments.last().map(|s| s.ident.name.clone())
-                        }
-                        fp_core::ast::Name::Ident(id) => Some(id.name.clone()),
-                        _ => None,
-                    };
+                    let variant_name = Some(name.path.last().ident.name.clone());
                     if let Some(kotlin_variant) = variant_name.as_deref().and_then(|v| {
                         self.enum_variant_names
                             .get(&enum_name)
@@ -1067,10 +1061,9 @@ pub(super) fn enum_name_from_ty(ty: Option<&Ty>) -> Option<String> {
     match ty? {
         Ty::Enum(en) => Some(en.name.name.clone()),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(fp_core::ast::Name::Path(p)) => {
+            ExprKind::Name(fp_core::ast::Name { path: p, .. }) => {
                 p.segments.last().map(|s| s.ident.name.clone())
             }
-            ExprKind::Name(fp_core::ast::Name::Ident(id)) => Some(id.name.clone()),
             _ => None,
         },
         _ => None,
@@ -1086,25 +1079,21 @@ pub(super) fn qualified_name_with_self(
     name: &fp_core::ast::Name,
     self_name: Option<&str>,
 ) -> String {
-    match name {
-        fp_core::ast::Name::Ident(id) => {
-            if id.name == "Self" {
-                self_name.unwrap_or(id.name.as_str()).to_string()
-            } else {
-                id.name.clone()
+    if let Some(id) = name.as_ident() {
+        if id.name == "Self" {
+            self_name.unwrap_or(id.name.as_str()).to_string()
+        } else {
+            id.name.clone()
+        }
+    } else {
+        let p = &name.path;
+        let mut segments: Vec<String> = p.segments.iter().map(|s| s.ident.name.clone()).collect();
+        if let (Some(first), Some(sn)) = (segments.first_mut(), self_name) {
+            if first == "Self" {
+                *first = sn.to_string();
             }
         }
-        fp_core::ast::Name::Path(p) => {
-            let mut segments: Vec<String> =
-                p.segments.iter().map(|s| s.ident.name.clone()).collect();
-            if let (Some(first), Some(sn)) = (segments.first_mut(), self_name) {
-                if first == "Self" {
-                    *first = sn.to_string();
-                }
-            }
-            segments.join(".")
-        }
-        _ => name_to_string(name),
+        segments.join(".")
     }
 }
 

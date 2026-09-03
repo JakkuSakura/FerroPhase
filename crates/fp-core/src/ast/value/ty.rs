@@ -206,7 +206,8 @@ impl Ty {
                 .primitive_type_value_name()
                 .map(|inner| format!("&{inner}")),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Name(Name::Ident(ident)) => {
+                ExprKind::Name(name) => {
+                    let ident = name.as_ident()?;
                     TypePrimitive::from_name(&ident.name).map(|primitive| {
                         primitive
                             .canonical_name()

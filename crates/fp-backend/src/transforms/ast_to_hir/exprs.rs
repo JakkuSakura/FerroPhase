@@ -636,7 +636,7 @@ impl AstToHirLowerer {
                     );
                     ast::Ident::new("__fp_error".to_string())
                 });
-                let name = Name::Ident(name);
+                let name = Name::ident(name);
                 let expr = ast::Expr::new(ast::ExprKind::Name(name));
                 let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
@@ -746,7 +746,7 @@ impl AstToHirLowerer {
                         // Lower the original expression instead of rebuilding
                         // a name from `path_segments_from_expr`. The latter is
                         // intentionally only a shape probe and cannot retain
-                        // generic arguments on `ParameterPath` segments. Rustc
+                        // generic arguments on `Path` segments. Rustc
                         // keeps those arguments on the resolved QPath head,
                         // and type-directed associated-item lookup needs them
                         // for `Vec::<T>::from`, `Arc::<T>::new`, and the like.
@@ -933,7 +933,7 @@ impl AstToHirLowerer {
                 } else {
                     // Shorthand - reference local with same name.
                     let name_expr =
-                        ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(field.name.clone())));
+                        ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(field.name.clone())));
                     let path = self
                         .ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)
                         .unwrap_or_else(|_| hir::Path {
@@ -1097,7 +1097,7 @@ impl AstToHirLowerer {
             }
         };
         let path_expr =
-            ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ast::Ident::new(name))));
+            ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ast::Ident::new(name))));
         let path = self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Type)?;
         let fields = fields
             .into_iter()
@@ -1480,10 +1480,12 @@ impl AstToHirLowerer {
     fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
         match expr.kind() {
             ast::ExprKind::Name(name) => match name {
-                ast::Name::Path(path) => {
+                ast::Name { path: path, .. } => {
                     Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                 }
-                ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                ast::Name { path, .. } => {
+                    Some(path.segments.iter().map(|s| s.ident.clone()).collect())
+                }
             },
             ast::ExprKind::Invoke(invoke) => {
                 // Permit no-arg method chains like `xs.iter().enumerate()` to be treated as a path.
@@ -1493,10 +1495,12 @@ impl AstToHirLowerer {
                 }
                 match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => match name {
-                        ast::Name::Path(path) => {
+                        ast::Name { path: path, .. } => {
                             Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                         }
-                        ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                        ast::Name { path, .. } => {
+                            Some(path.segments.iter().map(|s| s.ident.clone()).collect())
+                        }
                     },
                     ast::ExprInvokeTarget::Method(select) => {
                         let mut base = self.path_segments_from_expr(&select.obj)?;
@@ -1781,7 +1785,7 @@ impl AstToHirLowerer {
                     continue;
                 }
 
-                let captured = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                let captured = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     ast::Ident::new(name.clone()),
                 )));
                 let path = self.ast_expr_to_hir_path(&captured, PathResolutionScope::Value)?;

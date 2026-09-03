@@ -1640,7 +1640,7 @@ mod provider_tests {
                     let ItemKind::Impl(impl_block) = item.kind() else {
                         return false;
                     };
-                    let fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(receiver)) =
+                    let fp_core::ast::ExprKind::Name(fp_core::ast::Name { path: _, .. }) =
                         impl_block.self_ty.kind()
                     else {
                         return false;
@@ -1709,7 +1709,7 @@ mod provider_tests {
                         return false;
                     };
                     let receiver = match impl_block.self_ty.kind() {
-                        fp_core::ast::ExprKind::Name(fp_core::ast::Name::Ident(receiver)) => {
+                        fp_core::ast::ExprKind::Name(fp_core::ast::Name { path: _, .. }) => {
                             receiver.as_str()
                         }
                         _ => return false,

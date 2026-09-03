@@ -60,13 +60,7 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         // common case for a disambiguated type in a qualified path
         // (`<I as Iterator>::Item`), so this needs its own arm rather
         // than falling through to the catch-all below.
-        ExprKind::Name(Name::Ident(ident)) => Name::path(Path::new(
-            PathPrefix::Plain,
-            std::iter::once(PathSegment::from_ident(ident.clone()))
-                .chain(extra_segments)
-                .collect(),
-        )),
-        ExprKind::Name(Name::Path(path)) => Name::path(Path::new(
+        ExprKind::Name(Name { path, .. }) => Name::path(Path::new(
             path.prefix,
             path.segments
                 .iter()
@@ -401,7 +395,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
-    if let Name::Path(parameter_path) = &name {
+    {
+        let parameter_path = &name.path;
         if parameter_path.prefix == PathPrefix::Plain
             && parameter_path.segments.len() == 1
             && parameter_path.segments[0].ident.as_str() == "quote"
@@ -476,8 +471,17 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             }));
         }
     }
+    // Bare quote fragment keywords inside generic arguments remain ordinary
+    // name expressions; only their parameterized forms (`quote<...>`) are
+    // lowered to quote types below.
+    if name
+        .as_ident()
+        .is_some_and(|ident| matches!(ident.as_str(), "item" | "expr" | "stmt"))
+    {
+        return Ok(Ty::Expr(Box::new(Expr::name(name))));
+    }
     let bare_path = match &name {
-        Name::Path(p) => Some(p),
+        Name { path: p, .. } => Some(p),
         _ => None,
     };
     // Handle `type` keyword — both bare and with type args like `type<_>`, `type<i64>`
@@ -485,7 +489,12 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         Some(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
             path.segments[0].as_str().to_string()
         }
-        _ if matches!(&name, Name::Ident(ident) if ident.as_str() == "type") => "type".to_string(),
+        _ if name
+            .as_ident()
+            .is_some_and(|ident| ident.as_str() == "type") =>
+        {
+            "type".to_string()
+        }
         _ => String::new(),
     };
     if type_name == "type" {
@@ -568,10 +577,10 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         }
         return Ok(ty);
     }
-    if matches!(&name, Name::Ident(ident) if ident.as_str() == "any") {
+    if name.as_ident().is_some_and(|ident| ident.as_str() == "any") {
         return Ok(Ty::any());
     }
-    if let Name::Ident(_) = &name {
+    if name.as_ident().is_some() {
         // `Name::path()` canonicalizes any single-segment plain path (a
         // bare `Foo`) into `Name::Ident`, not `Name::Path` — so the
         // trailing-`?` handling above (reachable only via `bare_path`,
@@ -1241,7 +1250,7 @@ pub(crate) fn parse_optional_generic_params(
 fn is_path_ident(ty: &Ty, name: &str) -> bool {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::Path(path)) => {
+            ExprKind::Name(Name { path: path, .. }) => {
                 path.prefix == PathPrefix::Plain
                     && path.segments.len() == 1
                     && path.segments[0].as_str() == name

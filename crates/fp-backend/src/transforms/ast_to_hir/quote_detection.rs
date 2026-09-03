@@ -69,10 +69,7 @@ pub(super) fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> 
     let ast::ExprKind::Name(name) = self_ty.kind() else {
         return None;
     };
-    match name {
-        Name::Ident(ident) => Some(ident.name.as_str()),
-        Name::Path(path) => path.segments.first().map(|seg| seg.ident.name.as_str()),
-    }
+    Some(name.path.segments.first()?.ident.name.as_str())
 }
 
 pub(super) fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
@@ -137,8 +134,8 @@ pub(super) fn ty_contains_quote(ty: &ast::Ty) -> bool {
             // sees the fragment keyword as a user type name.
             if matches!(
                 expr.kind(),
-                ast::ExprKind::Name(ast::Name::Ident(ident))
-                    if matches!(ident.name.as_str(), "expr" | "stmt" | "item" | "type")
+                ast::ExprKind::Name(ast::Name { path, .. })
+                    if matches!(path.last().ident.name.as_str(), "expr" | "stmt" | "item" | "type")
             ) {
                 true
             } else {

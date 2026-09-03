@@ -242,7 +242,7 @@ impl AstToHirLowerer {
             // Explicit associated-type bindings on one of this
             // parameter's own trait bounds (`I: Iterator<Item = U>`) —
             // extracted straight from the original AST bound expression
-            // (a `Name::ParameterPath`, per-segment `args: Vec<Ty>`,
+            // (a `Name::Path`, per-segment `args: Vec<Ty>`,
             // fp-lang's own `parse_type_arg` already turning `Item = U`
             // into a `Ty::Expr(Assign { target: Item, value: U })` entry
             // there) rather than re-derived from the just-lowered `Path`
@@ -254,8 +254,10 @@ impl AstToHirLowerer {
                 .bounds
                 .iter()
                 .flat_map(|bound| {
-                    let ast::ExprKind::Name(fp_core::ast::Name::Path(parameter_path)) =
-                        bound.kind()
+                    let ast::ExprKind::Name(fp_core::ast::Name {
+                        path: parameter_path,
+                        ..
+                    }) = bound.kind()
                     else {
                         return Vec::new();
                     };
@@ -272,9 +274,13 @@ impl AstToHirLowerer {
                             let ast::ExprKind::Assign(assign) = arg_expr.kind() else {
                                 return None;
                             };
-                            let ast::ExprKind::Name(fp_core::ast::Name::Ident(binding_name)) =
-                                assign.target.kind()
+                            let ast::ExprKind::Name(fp_core::ast::Name {
+                                path: binding_path, ..
+                            }) = assign.target.kind()
                             else {
+                                return None;
+                            };
+                            let Some(binding_name) = binding_path.clone().try_into_ident() else {
                                 return None;
                             };
                             let value_path = self
@@ -523,7 +529,7 @@ impl AstToHirLowerer {
 
             if let Some(trait_name) = &impl_block.trait_ty {
                 let trait_generic_args: &[ast::Ty] = match trait_name {
-                    ast::Name::Path(path) => path
+                    ast::Name { path: path, .. } => path
                         .segments
                         .last()
                         .map(|seg| seg.args.as_slice())
@@ -531,8 +537,7 @@ impl AstToHirLowerer {
                     _ => &[],
                 };
                 let trait_name = match trait_name {
-                    ast::Name::Ident(ident) => ident.name.clone(),
-                    ast::Name::Path(path) => path
+                    ast::Name { path, .. } => path
                         .segments
                         .last()
                         .map(|seg| seg.ident.name.clone())

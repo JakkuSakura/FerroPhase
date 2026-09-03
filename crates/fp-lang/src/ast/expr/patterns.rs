@@ -358,11 +358,8 @@ pub(super) fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> 
         })));
     }
 
-    let is_plain_ident_pattern = match &name {
-        Name::Ident(_) => true,
-        Name::Path(path) => path.prefix == PathPrefix::Plain && path.segments.len() == 1,
-        _ => false,
-    };
+    let is_plain_ident_pattern =
+        name.path.prefix == PathPrefix::Plain && name.path.segments.len() == 1;
     if !is_plain_ident_pattern {
         return Ok(Pattern::new(PatternKind::Name(name)));
     }

@@ -216,7 +216,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
     generator
         .hir_program
         .add_package(generator.hir_package_handle());
-    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ident("u8"))));
+    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("u8"))));
     let path = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
     assert_eq!(path.res, hir::Res::Def(user_type));
     Ok(())
@@ -247,7 +247,7 @@ fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> 
         fp_core::ast::path::PathPrefix::Plain,
         vec![ident("missing").into(), ident("Item").into()],
     );
-    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Path(path)));
+    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::path(path)));
     let lowered = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
     assert_eq!(lowered.res, hir::Res::Error);
     Ok(())
@@ -916,7 +916,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
         hir::Res::Def(result_def_id.clone()),
     );
 
-    let target = ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("Result")));
+    let target = ast::ExprInvokeTarget::Function(ast::Name::ident(ident("Result")));
     let arg = ast::Expr::path(ast::Path::plain(vec![ident("hir"), ident("GenericArgs")]));
     let invoke = ast::ExprInvoke {
         span: Span::null(),
@@ -3866,7 +3866,7 @@ fn transform_expr_rejects_dynamic_import() {
     );
     let expr = ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
         span: Span::null(),
-        target: ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("import"))),
+        target: ast::ExprInvokeTarget::Function(ast::Name::ident(ident("import"))),
         args: Vec::new(),
         kwargs: Vec::new(),
     }));
@@ -4479,7 +4479,7 @@ fn transform_package_resolves_module_self_plus_named_item_group_import() -> Resu
         Vec::new(),
         ast::Ty::path(ast::Path::plain(vec![ident("intrinsics"), ident("Helper")])),
         ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
-            target: ast::ExprInvokeTarget::Function(ast::Name::Path(ast::Path::new(
+            target: ast::ExprInvokeTarget::Function(ast::Name::path(ast::Path::new(
                 fp_core::ast::path::PathPrefix::Plain,
                 vec![ident("intrinsics").into(), ident("make_value").into()],
             ))),

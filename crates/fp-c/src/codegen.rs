@@ -586,7 +586,7 @@ impl CEmitter {
             PatternKind::Variant(variant) => {
                 // `Enum::Variant` name expr — take the path's first segment.
                 match variant.name.kind() {
-                    ExprKind::Name(Name::Path(path)) => {
+                    ExprKind::Name(Name { path: path, .. }) => {
                         path.segments.first().map(|i| i.ident.name.clone())
                     }
                     _ => None,
@@ -600,7 +600,7 @@ impl CEmitter {
         let pat = case.pat.as_deref()?;
         match pat.kind() {
             PatternKind::Variant(variant) => match variant.name.kind() {
-                ExprKind::Name(Name::Path(path)) => {
+                ExprKind::Name(Name { path: path, .. }) => {
                     path.segments.last().map(|i| i.ident.name.clone())
                 }
                 _ => None,
@@ -660,9 +660,7 @@ impl CEmitter {
                 // field-access expression (`Enum.Variant` isn't valid C).
                 if let ExprKind::Name(name) = select.obj.kind() {
                     let base = match name {
-                        Name::Ident(ident) => Some(ident.name.clone()),
-                        Name::Path(path) => path.segments.last().map(|i| i.ident.name.clone()),
-                        _ => None,
+                        Name { path, .. } => path.segments.last().map(|i| i.ident.name.clone()),
                     };
                     if let Some(base) = base {
                         if self.plain_enums.contains(&base) || self.tagged_enums.contains(&base) {
@@ -692,8 +690,7 @@ impl CEmitter {
                 let literal = render_format_template_literal(template);
                 Ok(Some(format!("\"{}\"", escape_string(&literal))))
             }
-            ExprKind::Name(Name::Ident(ident)) => Ok(Some(ident.name.clone())),
-            ExprKind::Name(Name::Path(path)) => {
+            ExprKind::Name(Name { path, .. }) => {
                 // `Enum::Variant` referenced as a plain path (e.g. a call
                 // argument) needs the tag-constant lowering too — C has no
                 // namespaced enum constants to fall back on.
@@ -734,13 +731,11 @@ impl CEmitter {
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<Option<String>> {
         let target = match &invoke.target {
             ExprInvokeTarget::Function(name) => match name {
-                Name::Ident(ident) => ident.name.clone(),
-                Name::Path(path) => path
+                Name { path, .. } => path
                     .segments
                     .last()
                     .map(|i| i.ident.name.clone())
                     .unwrap_or_default(),
-                _ => return Ok(None),
             },
             _ => return Ok(None),
         };
@@ -761,8 +756,7 @@ impl CEmitter {
 
     fn render_struct_literal(&mut self, struct_expr: &ExprStruct) -> String {
         let name = match struct_expr.name.kind() {
-            ExprKind::Name(Name::Ident(ident)) => ident.name.clone(),
-            ExprKind::Name(Name::Path(path)) => path
+            ExprKind::Name(Name { path, .. }) => path
                 .segments
                 .last()
                 .map(|i| i.ident.name.clone())
@@ -974,8 +968,7 @@ impl CEmitter {
 
 fn type_name_from_expr(expr: &Expr) -> Option<String> {
     match expr.kind() {
-        ExprKind::Name(Name::Ident(ident)) => Some(ident.name.clone()),
-        ExprKind::Name(Name::Path(path)) => path.segments.last().map(|i| i.ident.name.clone()),
+        ExprKind::Name(Name { path, .. }) => path.segments.last().map(|i| i.ident.name.clone()),
         _ => None,
     }
 }

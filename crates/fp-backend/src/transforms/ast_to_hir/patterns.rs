@@ -122,7 +122,7 @@ impl AstToHirLowerer {
                 Ok((inner, ty, mutable))
             }
             PatternKind::Struct(struct_pat) => {
-                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_pat.name.clone(),
                 )));
                 let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;

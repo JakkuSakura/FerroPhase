@@ -479,8 +479,7 @@ impl AstSerializer for CSerializer {
                 self.serialize_type(&pointer.ty)?
             )),
             Ty::Expr(expr) => match &expr.kind {
-                ExprKind::Name(Name::Ident(ident)) => Ok(ident.to_string()),
-                ExprKind::Name(Name::Path(path)) => Ok(path.join("::")),
+                ExprKind::Name(Name { path, .. }) => Ok(path.join("::")),
                 _ => Err(fp_core::Error::from("unsupported C type expression")),
             },
             _ => Err(fp_core::Error::from("unsupported C type")),

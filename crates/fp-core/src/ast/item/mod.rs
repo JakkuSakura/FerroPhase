@@ -302,7 +302,10 @@ impl ItemChunkExt for ItemChunk {
         self.iter()
             .filter_map(|item| match item.kind() {
                 ItemKind::Impl(impl_) if impl_.trait_ty.is_none() => {
-                    if let ExprKind::Name(Name::Ident(ident)) = impl_.self_ty.kind() {
+                    if let ExprKind::Name(name) = impl_.self_ty.kind() {
+                        let Some(ident) = name.as_ident() else {
+                            return None;
+                        };
                         if ident.as_str() == self_ty {
                             Some(impl_)
                         } else {

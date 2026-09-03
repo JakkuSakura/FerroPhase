@@ -17,8 +17,7 @@ impl AstToHirLowerer {
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
         match name {
-            Name::Ident(_) => Ok(vec![None]),
-            Name::Path(path) => path
+            Name { path, .. } => path
                 .segments
                 .iter()
                 .map(|segment| {
@@ -38,7 +37,7 @@ impl AstToHirLowerer {
             // An explicit associated-type binding (`Iterator<Item = U>` —
             // fp-lang's `parse_type_arg` turns `Item = U` into a
             // `Ty::Expr(Assign { target: Item, value: U })` entry among a
-            // `ParameterPath` segment's own `args`, per this same crate's
+            // `Path` segment's own `args`, per this same crate's
             // `items.rs`' `explicit_bindings` extraction, which already
             // handles this shape on its own dedicated path) is not an
             // ordinary positional type argument — passing it through to
@@ -95,10 +94,7 @@ impl AstToHirLowerer {
                     PathResolutionScope::Value => fp_core::hir::resolve::Namespace::Value,
                     PathResolutionScope::Trait => fp_core::hir::resolve::Namespace::Type,
                 };
-                let parsed = match name {
-                    Name::Ident(ident) => ast::Path::from_ident(ident.clone()),
-                    Name::Path(path) => path.clone(),
-                };
+                let parsed = name.path.clone();
                 let resolution_namespace = namespace;
                 let resolved = match self.local_resolver.resolve_parsed_path(
                     &self.package_id,
@@ -121,14 +117,12 @@ impl AstToHirLowerer {
                     | fp_core::hir::resolve::ResolutionResult::Ambiguous => hir::Res::Error,
                 };
                 let segment_args = self.name_segment_args(name)?;
-                let names: Vec<&str> = match name {
-                    Name::Ident(ident) => vec![ident.as_str()],
-                    Name::Path(path) => path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.as_str())
-                        .collect(),
-                };
+                let names: Vec<&str> = name
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.as_str())
+                    .collect();
                 Ok(hir::Path {
                     res: resolved,
                     segments: names
@@ -186,7 +180,7 @@ impl AstToHirLowerer {
                         // generic arguments cannot re-enter this same
                         // `ExprInvokeTarget::Type` through `transform_type_to_hir`.
                         ast::Ty::Struct(struct_ty) => {
-                            let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
+                            let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                                 struct_ty.name.clone(),
                             )));
                             self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
@@ -199,7 +193,7 @@ impl AstToHirLowerer {
                                 ast::Value::Type(inner) => match inner {
                                     ast::Ty::Struct(struct_ty) => {
                                         let expr = ast::Expr::new(ast::ExprKind::Name(
-                                            ast::Name::Ident(struct_ty.name.clone()),
+                                            ast::Name::ident(struct_ty.name.clone()),
                                         ));
                                         self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
                                     }

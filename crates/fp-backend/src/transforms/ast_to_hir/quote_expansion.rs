@@ -205,10 +205,10 @@ fn quote_value_name(expr: &ast::Expr) -> Option<&str> {
 }
 
 fn quote_name(expr: &ast::Expr) -> Option<&str> {
-    let ast::ExprKind::Name(ast::Name::Ident(ident)) = expr.kind() else {
+    let ast::ExprKind::Name(ast::Name { path, .. }) = expr.kind() else {
         return None;
     };
-    Some(ident.name.as_str())
+    Some(path.last().ident.as_str())
 }
 
 fn quote_kind(quote: &ast::ExprQuote) -> ast::QuoteFragmentKind {

@@ -260,86 +260,51 @@ impl From<&str> for PathSegment {
 impl Eq for PathSegment {}
 impl Eq for Path {}
 
-/// A qualified path use, matching rustc's separation of QSelf from Path.
+/// A name use carries an optional qualified self type and its path.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
-pub struct QPath {
+pub struct Name {
     pub qself: Option<QSelf>,
     pub path: Path,
 }
 
-impl QPath {
-    pub fn new(qself: Option<QSelf>, path: Path) -> Self {
-        Self { qself, path }
-    }
-
-    pub fn plain(path: Path) -> Self {
-        Self::new(None, path)
-    }
-
-    pub fn is_qualified(&self) -> bool {
-        self.qself.is_some()
-    }
-}
-
-/// A name can be an identifier or a path. Generic arguments are stored on
-/// path segments; qualified paths use [`QPath`] at their expression/type site.
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
-pub enum Name {
-    Ident(Ident),
-    Path(Path),
-}
-
 impl Name {
     pub fn ident(name: impl Into<String>) -> Self {
-        Name::Ident(Ident::new(name))
+        Self {
+            qself: None,
+            path: Path::from_ident(Ident::new(name)),
+        }
     }
 
     pub fn path(path: Path) -> Self {
-        if path.prefix == PathPrefix::Plain
-            && path.segments.len() == 1
-            && path.segments[0].args.is_empty()
-        {
-            return Name::Ident(path.segments[0].ident.clone());
-        }
-        Name::Path(path)
+        Self { qself: None, path }
     }
 
     pub fn from_ident(ident: Ident) -> Self {
-        Name::Ident(ident)
+        Self {
+            qself: None,
+            path: Path::from_ident(ident),
+        }
     }
 
     pub fn to_path(&self) -> Path {
-        match self {
-            Name::Ident(ident) => Path::from_ident(ident.clone()),
-            Name::Path(path) => path.clone(),
-        }
-    }
-
-    pub fn to_qpath(&self) -> QPath {
-        QPath::plain(self.to_path())
+        self.path.clone()
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {
-        match self {
-            Name::Ident(ident) => Some(ident),
-            Name::Path(_) => None,
-        }
+        (self.path.prefix == PathPrefix::Plain
+            && self.path.segments.len() == 1
+            && self.path.segments[0].args.is_empty())
+        .then_some(&self.path.segments[0].ident)
     }
 
     pub fn span(&self) -> Span {
-        match self {
-            Name::Ident(ident) => ident.span(),
-            Name::Path(path) => path.span(),
-        }
+        self.path.span()
     }
 }
 
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Name::Ident(ident) => write!(f, "{}", ident),
-            Name::Path(path) => write!(f, "{}", path),
-        }
+        write!(f, "{}", self.path)
     }
 }
 
@@ -370,15 +335,14 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::from("Trait"), PathSegment::from("Item")],
         );
-        let qualified = QPath::new(
-            Some(QSelf {
+        let qualified = Name {
+            qself: Some(QSelf {
                 ty: Box::new(ty),
                 path_span: Span::null(),
                 position: 0,
             }),
             path,
-        );
-        assert!(qualified.is_qualified());
+        };
         assert_eq!(qualified.path.join("::"), "Trait::Item");
         assert_eq!(qualified.qself.as_ref().unwrap().position, 0);
     }

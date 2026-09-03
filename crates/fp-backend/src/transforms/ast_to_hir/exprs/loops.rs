@@ -26,11 +26,14 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name::Path(path) => (
+                ast::Name { path: path, .. } => (
                     path.segments.iter().map(|seg| seg.ident.clone()).collect(),
                     path.prefix,
                 ),
-                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
+                ast::Name { path, .. } => (
+                    path.segments.iter().map(|s| s.ident.clone()).collect(),
+                    path.prefix,
+                ),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
@@ -135,11 +138,14 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name::Path(path) => (
+                ast::Name { path: path, .. } => (
                     path.segments.iter().map(|seg| seg.ident.clone()).collect(),
                     path.prefix,
                 ),
-                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
+                ast::Name { path, .. } => (
+                    path.segments.iter().map(|s| s.ident.clone()).collect(),
+                    path.prefix,
+                ),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
