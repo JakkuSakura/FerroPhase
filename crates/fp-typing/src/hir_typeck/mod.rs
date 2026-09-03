@@ -164,6 +164,9 @@ pub struct HirTypeChecker {
     /// Number of top-level items whose type-check completed without returning
     /// an item-level failure. Shared by every item-local checker clone.
     successfully_typed_items: Rc<AtomicUsize>,
+    /// Number of top-level items whose type-check returned an item-level
+    /// failure. Shared by every item-local checker clone.
+    failed_typed_items: Rc<AtomicUsize>,
 }
 
 impl HirTypeChecker {
@@ -223,6 +226,7 @@ impl HirTypeChecker {
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
             emitted_diagnostic_ids: Rc::new(RefCell::new(HashSet::new())),
             successfully_typed_items: Rc::new(AtomicUsize::new(0)),
+            failed_typed_items: Rc::new(AtomicUsize::new(0)),
         }))
     }
 
@@ -258,6 +262,7 @@ impl HirTypeChecker {
             infer_vars: Rc::new(RefCell::new(HashMap::new())),
             emitted_diagnostic_ids: shared.emitted_diagnostic_ids.clone(),
             successfully_typed_items: shared.successfully_typed_items.clone(),
+            failed_typed_items: shared.failed_typed_items.clone(),
         }
     }
 
@@ -265,6 +270,12 @@ impl HirTypeChecker {
     /// successfully in this package.
     pub fn successfully_typed_items(&self) -> usize {
         self.successfully_typed_items.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of top-level items whose type-check returned an
+    /// item-level failure.
+    pub fn failed_typed_items(&self) -> usize {
+        self.failed_typed_items.load(Ordering::Relaxed)
     }
 
     pub(super) fn resolve_infer(&self, ty: &Ty) -> Ty {
@@ -651,6 +662,10 @@ impl HirTypeChecker {
             item_checker
                 .successfully_typed_items
                 .fetch_add(1, Ordering::Relaxed);
+        } else {
+            item_checker
+                .failed_typed_items
+                .fetch_add(1, Ordering::Relaxed);
         }
         result
     }
@@ -680,7 +695,12 @@ impl HirTypeChecker {
                             .successfully_typed_items
                             .fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(error) => item_checker.record_item_check_failure(format!("{error}")),
+                    Err(error) => {
+                        item_checker
+                            .failed_typed_items
+                            .fetch_add(1, Ordering::Relaxed);
+                        item_checker.record_item_check_failure(format!("{error}"));
+                    }
                 }
             }) as Pin<Box<dyn Future<Output = ()>>>
         })

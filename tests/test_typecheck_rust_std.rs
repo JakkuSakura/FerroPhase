@@ -79,7 +79,6 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .iter()
             .map(|item| item.def_id.clone())
             .collect::<Vec<_>>();
-        let item_count = item_ids.len();
         let handles = item_ids
             .into_iter()
             .map(|def_id| HirTypeChecker::spawn_item_task(&checker, def_id))
@@ -97,9 +96,10 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .diagnostics
             .get_diagnostics();
         let successfully_typed_items = checker.borrow().successfully_typed_items();
+        let failed_typed_items = checker.borrow().failed_typed_items();
         eprintln!(
-            "typecheck `{package_id}`: {successfully_typed_items}/{} item(s) typed successfully, {} diagnostic(s)",
-            item_count,
+            "typecheck `{package_id}`: {successfully_typed_items} successful + {failed_typed_items} failed = {} item(s) checked, {} diagnostic(s)",
+            successfully_typed_items + failed_typed_items,
             diagnostics.len(),
         );
         for diagnostic in diagnostics.iter().take(20) {
