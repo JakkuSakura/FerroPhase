@@ -35,7 +35,8 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             Rc::clone(&ast_program),
             shared_hir_program.clone(),
             package_id.clone(),
-        );
+        )
+        .with_intrinsic_normalizer(fp_rust::RustIntrinsicNormalizer::new());
         let lowered =
             match std::panic::catch_unwind(AssertUnwindSafe(|| lowerer.transform_package(&source)))
             {

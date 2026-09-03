@@ -310,7 +310,6 @@ impl AstToHirLowerer {
                                 def_id.clone(),
                                 &def_type.visibility,
                             );
-                            let _ = self.transform_type_to_hir(&def_type.value)?;
                         }
                     }
                 }

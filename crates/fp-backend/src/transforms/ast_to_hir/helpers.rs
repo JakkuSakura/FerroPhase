@@ -136,6 +136,36 @@ impl AstToHirLowerer {
                         return Ok(path);
                     }
                     fp_core::hir::resolve::ResolutionResult::NotFound(reason) => {
+                        // Primitive names are language items rather than
+                        // module-data declarations. Resolve them only after
+                        // ordinary lookup so a user declaration named `u8`
+                        // still shadows the builtin, matching Rust's name
+                        // resolution behavior.
+                        if parsed.prefix == fp_core::ast::path::PathPrefix::Plain
+                            && parsed
+                                .segments
+                                .first()
+                                .is_some_and(|segment| is_primitive_type_name(segment.as_str()))
+                        {
+                            // The primitive is the resolved base. Any
+                            // trailing segments (for example `f128::MAX`)
+                            // remain for type checking as associated items.
+                            let primitive = parsed.segments[0].as_str().to_owned();
+                            let args = self.name_segment_args(name)?;
+                            let segments = parsed
+                                .segments
+                                .iter()
+                                .skip(1)
+                                .zip(args.into_iter().skip(1))
+                                .map(|(segment, args)| {
+                                    self.make_path_segment(segment.as_str(), args)
+                                })
+                                .collect();
+                            return Ok(hir::Path {
+                                res: Res::Builtin(hir::BuiltinSelfType::Primitive(primitive)),
+                                segments,
+                            });
+                        }
                         if std::env::var_os("FP_TRACE_PATHS").is_some() {
                             eprintln!(
                                 "ast_to_hir path miss: package={} module={:?} owner={:?} scope={scope:?} path={parsed} reason={reason:?}",

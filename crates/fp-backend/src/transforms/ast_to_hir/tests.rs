@@ -242,6 +242,36 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
 }
 
 #[test]
+fn unresolved_primitive_name_resolves_to_builtin() -> Result<()> {
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("f128"))));
+    let path = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+    assert_eq!(
+        path.res,
+        hir::Res::Builtin(hir::BuiltinSelfType::Primitive("f128".to_owned()))
+    );
+    let associated = ast::Expr::new(ast::ExprKind::Name(ast::Name::path(ast::Path::new(
+        fp_core::ast::path::PathPrefix::Plain,
+        vec!["f128".into(), "MAX".into()],
+    ))));
+    let associated_path =
+        generator.ast_expr_to_hir_path(&associated, PathResolutionScope::Value)?;
+    assert_eq!(
+        associated_path.res,
+        hir::Res::Builtin(hir::BuiltinSelfType::Primitive("f128".to_owned()))
+    );
+    assert_eq!(associated_path.segments.len(), 1);
+    assert_eq!(associated_path.segments[0].name.as_str(), "MAX");
+    Ok(())
+}
+
+#[test]
 fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> {
     let mut generator = AstToHirLowerer::new(
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
@@ -1703,6 +1733,43 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
             )
             .is_not_found()
     );
+    Ok(())
+}
+
+#[test]
+fn generic_transparent_type_alias_resolves_rhs_parameter() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items =
+        parser.parse_items_ast("type Alias<T> = T; fn read<T>(value: Alias<T>) -> T { value }")?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let program = lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "generic alias RHS should resolve in its parameter scope: {diagnostics:?}"
+    );
+    let alias = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::TypeAlias(alias) if alias.name.as_str() == "Alias" => Some(alias),
+            _ => None,
+        })
+        .expect("generic alias should be published as a HIR item");
+    let hir::TypeExprKind::Path(path) = &alias.target.kind else {
+        panic!(
+            "expected generic alias target path: {:?}",
+            alias.target.kind
+        );
+    };
+    assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
     Ok(())
 }
 
@@ -5007,6 +5074,58 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
          Marker;` expansion — got unresolved path {ret_path:?}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn transform_package_expands_item_macro_in_nested_module_before_resolution() -> Result<()> {
+    let parser = fp_lang::ast::FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            r#"
+            mod num {
+                mod niche_types {
+                    macro_rules! define_valid_range_type {
+                        ($($(#[$m:meta])*$vis:vis struct$name:ident($int:ident is$pat:pat);)+) => {
+                            $($(#[$m])* $vis struct$name($int);)+
+                        };
+                    }
+
+                    define_valid_range_type! {
+                        pub struct Nanoseconds(u32 is ..0 | 1..);
+                    }
+
+                    impl Nanoseconds {}
+                }
+            }
+            "#,
+        )
+        .map_err(|e| crate::error::optimization_error(format!("{e:?}")))?;
+    let package = package_from_items(items)?;
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    )
+    .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
+    let program = generator.transform_package(&package)?;
+
+    assert!(program.items.iter().any(|item| {
+        matches!(
+            &item.kind,
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Nanoseconds"
+        )
+    }));
+    assert!(
+        generator
+            .take_diagnostics()
+            .get_diagnostics()
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("Nanoseconds"))
+    );
     Ok(())
 }
 

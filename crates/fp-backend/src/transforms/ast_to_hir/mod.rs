@@ -1072,12 +1072,29 @@ impl AstToHirLowerer {
         // root. Publish those declarations to the AST workspace before the
         // global resolver pass so generated closure paths receive ordinary
         // module bindings and DefIds just like source declarations.
-        if generated_count != 0 {
+        if generated_count != 0 || self.intrinsic_normalizer.is_some() {
             let mut resolver_source = package.clone();
-            resolver_source
-                .module
-                .items
-                .splice(0..0, lowered_items[..generated_count].iter().cloned());
+            if generated_count != 0 {
+                resolver_source
+                    .module
+                    .items
+                    .splice(0..0, lowered_items[..generated_count].iter().cloned());
+            }
+            if self.intrinsic_normalizer.is_some() {
+                let wrapped_root = fp_core::ast::package::PackageItem {
+                    module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
+                    item: ast::Item::from(ast::ItemKind::Module(resolver_source.module.clone())),
+                };
+                if let Some(expanded_root) = self
+                    .expand_item_macros(vec![wrapped_root])
+                    .into_iter()
+                    .next()
+                {
+                    if let ast::ItemKind::Module(module) = expanded_root.item.kind() {
+                        resolver_source.module = module.clone();
+                    }
+                }
+            }
             self.workspace.import_package(
                 self.package_id.clone(),
                 Rc::new(RefCell::new(resolver_source)),
@@ -1126,7 +1143,6 @@ impl AstToHirLowerer {
         // expands an *expression*-position invocation: match each rule in
         // declaration order, substitute the bindings, re-parse the result.
         let package_items = self.expand_item_macros(package_items);
-
         // The Rust provider flattens inline modules into package items while
         // retaining each item's owning module path. Those paths are real
         // modules even when no separate provider descriptor exists, such as
@@ -3517,7 +3533,18 @@ impl AstToHirLowerer {
                 // definition identity. Type checking may defer evaluating
                 // the target, but resolution must still see a real HIR type
                 // item instead of a missing or value-shaped definition.
-                let target = self.transform_type_to_hir(&def_type.value)?;
+                // Alias parameters are lexical bindings of the alias target;
+                // install them before lowering the RHS just as function and
+                // impl parameters are installed before their signatures.
+                self.push_type_scope();
+                self.push_value_scope();
+                let target_result = (|| {
+                    self.transform_generics(&def_type.generics_params)?;
+                    self.transform_type_to_hir(&def_type.value)
+                })();
+                self.pop_value_scope();
+                self.pop_type_scope();
+                let target = target_result?;
                 (
                     hir::ItemKind::TypeAlias(hir::TypeAlias {
                         name: hir::Symbol::new(def_type.name.name.clone()),
