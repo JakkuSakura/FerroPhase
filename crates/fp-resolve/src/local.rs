@@ -133,3 +133,63 @@ impl LocalResolver {
             .resolve_parsed_path(current_package, location, &parsed, namespace)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::ast::package::provider::EmptyProvider;
+    use fp_core::hir;
+    use fp_core::hir::resolve::{Binding, Namespace};
+    use fp_core::span::Span;
+    use std::sync::Arc;
+
+    #[test]
+    fn lexical_binding_preserves_projection_tail() {
+        let package_id = PackageId::new("test");
+        let package = Rc::new(RefCell::new(HirPackage::new(package_id.clone())));
+        let program = Rc::new(RefCell::new(HirProgram::new()));
+        program.borrow_mut().add_package(Rc::clone(&package));
+        let mut resolver = LocalResolver::new(
+            Rc::new(AstProgram::new(Arc::new(EmptyProvider))),
+            program,
+            package,
+            DeclarationRules::rust(),
+            ResolutionRules::rust(),
+        );
+        resolver.enter_scope();
+        let generic = hir::DefId::new(package_id.clone(), 7);
+        resolver.declare(
+            "T",
+            Binding::Generic {
+                id: generic.clone(),
+                namespace: Namespace::Type,
+                span: Span::null(),
+            },
+        );
+        let path = Path::new(
+            PathPrefix::Plain,
+            vec!["T".into(), "Assoc".into(), "Field".into()],
+        );
+        assert_eq!(
+            resolver.resolve_parsed_path(
+                &package_id,
+                &InPackagePath::new(Vec::new()),
+                &path,
+                Namespace::Type,
+            ),
+            ResolutionResult::Found(hir::Path {
+                res: Res::Generic(generic),
+                segments: vec![
+                    hir::PathSegment {
+                        name: "Assoc".into(),
+                        args: None
+                    },
+                    hir::PathSegment {
+                        name: "Field".into(),
+                        args: None
+                    },
+                ],
+            })
+        );
+    }
+}
