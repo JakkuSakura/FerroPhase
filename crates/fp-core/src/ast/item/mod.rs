@@ -210,6 +210,7 @@ impl Item {
         match self.kind() {
             ItemKind::DefFunction(define) => Some(&define.name),
             ItemKind::DefStruct(define) => Some(&define.name),
+            ItemKind::DefStructural(define) => Some(&define.name),
             ItemKind::DefEnum(define) => Some(&define.name),
             ItemKind::DefType(define) => Some(&define.name),
             ItemKind::OpaqueType(define) => Some(&define.name),

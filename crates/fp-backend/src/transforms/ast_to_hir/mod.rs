@@ -1603,21 +1603,56 @@ impl AstToHirLowerer {
             return Ok(hir::StmtKind::Expr(unit_expr));
         }
 
-        // Block-local functions are visible from their own body (for
-        // recursion) and from the remainder of the enclosing block. Declare
-        // the identity before lowering the item so `transform_item_to_hir`
-        // reuses it instead of allocating an unrelated definition after the
-        // body has already started resolving names.
-        if let ItemKind::DefFunction(function) = item.as_ref().kind() {
+        // Block-local named items are visible from the remainder of the
+        // enclosing block. Declare their identities before lowering the item
+        // so `transform_item_to_hir` reuses them and later expressions can
+        // resolve the item through the lexical resolver. This is especially
+        // important for local structs/enums, whose global registration is
+        // deliberately suppressed in the statement path.
+        let local_namespace = match item.as_ref().kind() {
+            ItemKind::DefStruct(_)
+            | ItemKind::DefStructural(_)
+            | ItemKind::DefEnum(_)
+            | ItemKind::DefType(_)
+            | ItemKind::OpaqueType(_)
+            | ItemKind::DefTrait(_)
+            | ItemKind::DeclType(_) => Some(fp_core::hir::resolve::Namespace::Type),
+            ItemKind::DefFunction(_)
+            | ItemKind::DeclFunction(_)
+            | ItemKind::DefConst(_)
+            | ItemKind::DeclConst(_)
+            | ItemKind::DefStatic(_)
+            | ItemKind::DeclStatic(_) => Some(fp_core::hir::resolve::Namespace::Value),
+            _ => None,
+        };
+        if let (Some(namespace), Some(ident)) = (local_namespace, item.as_ref().get_ident()) {
             let def_id = self.next_def_id();
             let _ = self.local_resolver.declare(
-                function.name.name.clone(),
+                ident.name.clone(),
                 fp_core::hir::resolve::Binding::Definition {
-                    target: def_id,
-                    namespace: fp_core::hir::resolve::Namespace::Value,
+                    target: def_id.clone(),
+                    namespace,
                     span: item.span(),
                 },
             );
+            // Struct and enum constructors inhabit the value namespace while
+            // their nominal item inhabits the type namespace. Both bindings
+            // point at the same definition identity, matching module-level
+            // registration and allowing `let x = Local(...)` in the rest of
+            // the block.
+            if matches!(
+                item.as_ref().kind(),
+                ItemKind::DefStruct(_) | ItemKind::DefStructural(_) | ItemKind::DefEnum(_)
+            ) {
+                let _ = self.local_resolver.declare(
+                    ident.name.clone(),
+                    fp_core::hir::resolve::Binding::Definition {
+                        target: def_id,
+                        namespace: fp_core::hir::resolve::Namespace::Value,
+                        span: item.span(),
+                    },
+                );
+            }
         }
 
         match item.as_ref().kind() {
