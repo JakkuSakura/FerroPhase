@@ -235,6 +235,15 @@ impl AstToHirLowerer {
                 .bounds
                 .iter()
                 .filter_map(|bound| {
+                    // Lifetime bounds (`T: 'a`) are erased from this HIR;
+                    // they are not type paths and must not be sent through
+                    // the resolver as a missing type named `'a`.
+                    if let ast::ExprKind::Name(ast::Name { path, .. }) = bound.kind()
+                        && path.segments.len() == 1
+                        && path.segments[0].as_str().starts_with('\'')
+                    {
+                        return None;
+                    }
                     if let ast::ExprKind::Value(value) = bound.kind() {
                         if let ast::Value::Type(ty) = &**value {
                             return self.transform_type_to_hir(ty).ok();
@@ -777,6 +786,12 @@ impl AstToHirLowerer {
                             .bounds
                             .iter()
                             .filter_map(|bound| {
+                                if let ast::ExprKind::Name(ast::Name { path, .. }) = bound.kind()
+                                    && path.segments.len() == 1
+                                    && path.segments[0].as_str().starts_with('\'')
+                                {
+                                    return None;
+                                }
                                 let path = self
                                     .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
                                     .ok()?;

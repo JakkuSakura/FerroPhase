@@ -74,6 +74,17 @@ impl AstToHirLowerer {
                 if matches!(expr.kind(), ast::ExprKind::Assign(_)) {
                     continue;
                 }
+                // Lifetimes are part of Rust's syntax, but this compiler
+                // does not carry them into HIR types. A lifetime supplied as
+                // a path argument (for example `Cow<'a, B>`) must therefore
+                // be erased here rather than sent through type-path
+                // resolution as the ordinary name `'a`.
+                if let ast::ExprKind::Name(name) = expr.kind()
+                    && name.path.segments.len() == 1
+                    && name.path.segments[0].as_str().starts_with('\'')
+                {
+                    continue;
+                }
                 // A const generic argument (`Simd<f32, 4>`, `[T; N]`'s own
                 // `N` reused as a generic arg elsewhere, ...) parses as a
                 // plain integer-literal `Ty::Expr`, not a type at all —
@@ -92,6 +103,28 @@ impl AstToHirLowerer {
                     ast::ExprKind::Value(value)
                         if matches!(value.as_ref(), ast::Value::Int(_) | ast::Value::UInt(_))
                 ) {
+                    let hir_expr = self.transform_expr_to_hir(expr)?;
+                    hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
+                    continue;
+                }
+                // An identifier in generic-argument position can denote a
+                // const parameter (`Array<T, N>`). Classify it from the
+                // value namespace before treating it as a type path; this
+                // avoids turning a valid const generic into an unresolved
+                // type named `N`.
+                if let ast::ExprKind::Name(name) = expr.kind()
+                    && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
+                    && name.path.segments.len() == 1
+                    && matches!(
+                        self.local_resolver.resolve_parsed_path(
+                            &self.package_id,
+                            &self.module_path,
+                            &name.path,
+                            fp_core::hir::resolve::Namespace::Value,
+                        ),
+                        fp_core::hir::resolve::ResolutionResult::Found(_)
+                    )
+                {
                     let hir_expr = self.transform_expr_to_hir(expr)?;
                     hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
                     continue;

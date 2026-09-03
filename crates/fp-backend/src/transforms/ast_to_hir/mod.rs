@@ -2424,6 +2424,12 @@ impl AstToHirLowerer {
                     .bounds
                     .iter()
                     .filter_map(|bound| {
+                        if let ast::ExprKind::Name(ast::Name { path, .. }) = bound.kind()
+                            && path.segments.len() == 1
+                            && path.segments[0].as_str().starts_with('\'')
+                        {
+                            return None;
+                        }
                         self.ast_expr_to_hir_path(bound, PathResolutionScope::Trait)
                             .ok()
                     })

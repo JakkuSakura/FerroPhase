@@ -1774,6 +1774,56 @@ fn generic_transparent_type_alias_resolves_rhs_parameter() -> Result<()> {
 }
 
 #[test]
+fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "struct Wrapper<T>(T); fn read<'a, T: 'a>(value: Wrapper<&'a T>) -> Wrapper<&'a T> { value }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let _ = lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("'a")),
+        "lifetime arguments must not be resolved as type paths: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn const_generic_identifier_arguments_use_value_namespace() -> Result<()> {
+    let parser = FerroPhaseParser::new();
+    let items = parser.parse_items_ast(
+        "struct Array<T, const N: usize>([T; N]); fn take<T, const N: usize>(value: Array<T, N>) -> Array<T, N> { value }",
+    )?;
+    let package = package_from_items(items)?;
+    let mut lowerer = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let _ = lowerer.transform_package(&package)?;
+    let diagnostics = lowerer.take_diagnostics().get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("unresolved Type path `N`")),
+        "const generic identifiers must resolve in the value namespace: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -> Result<()> {
     let parser = FerroPhaseParser::new();
 
