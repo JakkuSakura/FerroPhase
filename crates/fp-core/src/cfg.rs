@@ -7,6 +7,28 @@ pub struct TargetEnv {
     pub pointer_width: String,
 }
 
+/// Shared cfg decision used by declaration collection and lowering. Keeping
+/// the enabled switch and target environment together prevents resolvers from
+/// assigning identities to declarations that lowering will later discard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfgFilter {
+    pub target_env: TargetEnv,
+    pub enabled: bool,
+}
+
+impl CfgFilter {
+    pub fn host() -> Self {
+        Self {
+            target_env: TargetEnv::host(),
+            enabled: true,
+        }
+    }
+
+    pub fn allows(&self, item: &ast::Item) -> bool {
+        !self.enabled || item_enabled_by_cfg(item, &self.target_env)
+    }
+}
+
 impl TargetEnv {
     pub fn host() -> Self {
         Self {

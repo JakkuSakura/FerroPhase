@@ -8,7 +8,7 @@ use fp_core::query::{
     statement_to_query_ir,
 };
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
+use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::CfgFilter, hir};
 use fp_resolve::local::LocalResolver;
 use fp_resolve::package::InPackageResolver;
 use fp_sql::sql_ast::parse_sql_ast;
@@ -168,8 +168,7 @@ pub struct AstToHirLowerer {
     /// is never part of any actual name-resolution decision.
     local_item_debug_labels: HashMap<hir::DefId, String>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
-    target_env: TargetEnv,
-    respect_cfg: bool,
+    cfg_filter: CfgFilter,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
@@ -322,7 +321,7 @@ impl AstToHirLowerer {
     }
 
     fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
-        !self.respect_cfg || fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
+        self.cfg_filter.allows(item)
     }
 
     fn normalize_span(&self, span: Span) -> Span {
@@ -376,8 +375,7 @@ impl AstToHirLowerer {
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
-            target_env: TargetEnv::host(),
-            respect_cfg: true,
+            cfg_filter: CfgFilter::host(),
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             workspace: Rc::clone(&workspace),
@@ -420,15 +418,15 @@ impl AstToHirLowerer {
     }
 
     pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
-        self.target_env = TargetEnv::from_triple(target_triple);
+        self.cfg_filter.target_env = fp_core::cfg::TargetEnv::from_triple(target_triple);
     }
 
     pub fn set_target_lang(&mut self, target_lang: Option<&str>) {
-        self.target_env.lang = target_lang.map(str::to_owned);
+        self.cfg_filter.target_env.lang = target_lang.map(str::to_owned);
     }
 
     pub fn set_cfg_filtering(&mut self, enabled: bool) {
-        self.respect_cfg = enabled;
+        self.cfg_filter.enabled = enabled;
     }
 
     fn reset_file_context<P: AsRef<Path>>(&mut self, file_path: P) {
@@ -1064,7 +1062,7 @@ impl AstToHirLowerer {
             self.workspace.provider().declaration_rules(),
             self.workspace.provider().resolution_rules(),
             Rc::clone(&self.workspace),
-        )));
+        ).with_cfg_filter(self.cfg_filter.clone())));
         resolver.borrow_mut().resolve_package(&self.package_id)?;
         self.package_resolver = Some(Rc::clone(&resolver));
         let root_path = fp_core::ast::path::InPackagePath::new(Vec::new());
@@ -1709,7 +1707,20 @@ impl AstToHirLowerer {
 
     /// Transform an AST item into a HIR item
     fn transform_item_to_hir(&mut self, item: &ast::Item) -> Result<hir::Item> {
-        let def_id = self.next_def_id();
+        let namespace = match item.kind() {
+            ItemKind::DefStruct(_)
+            | ItemKind::DefStructural(_)
+            | ItemKind::DefEnum(_)
+            | ItemKind::DefType(_)
+            | ItemKind::OpaqueType(_)
+            | ItemKind::DefTrait(_)
+            | ItemKind::DeclType(_) => fp_core::hir::resolve::Namespace::Type,
+            _ => fp_core::hir::resolve::Namespace::Value,
+        };
+        let def_id = item
+            .get_ident()
+            .and_then(|ident| self.declared_def_id(ident.as_str(), namespace))
+            .unwrap_or_else(|| self.next_def_id());
         let result = self.with_owner(def_id.clone(), |this| {
             this.transform_item_to_hir_inner(item, def_id)
         });

@@ -3,6 +3,7 @@ use super::worklist::ResolutionWorklist;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
+use fp_core::cfg::CfgFilter;
 use fp_core::hir;
 use fp_core::hir::HirProgram;
 use fp_core::hir::Symbol;
@@ -23,6 +24,7 @@ pub struct InPackageResolver {
     /// The resolver retains the program instead of cloning package/module
     /// state into a second registry.
     ast_program: Rc<AstProgram>,
+    cfg_filter: CfgFilter,
 }
 
 impl InPackageResolver {
@@ -39,7 +41,13 @@ impl InPackageResolver {
             declaration_rules,
             resolution_rules,
             ast_program,
+            cfg_filter: CfgFilter::host(),
         }
+    }
+
+    pub fn with_cfg_filter(mut self, cfg_filter: CfgFilter) -> Self {
+        self.cfg_filter = cfg_filter;
+        self
     }
 
     pub fn resolve_package(&mut self, package_id: &PackageId) -> fp_core::error::Result<()> {
@@ -85,6 +93,9 @@ impl InPackageResolver {
         worklist: &mut ResolutionWorklist,
     ) {
         for item in items {
+            if !self.cfg_filter.allows(item) {
+                continue;
+            }
             self.ensure_module_bindings(module, item.span());
             self.collect_item(module, item);
             if !matches!(item.kind(), fp_core::ast::ItemKind::Module(_)) {
