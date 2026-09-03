@@ -7,6 +7,7 @@ use fp_compiler::CompilerExecutor;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::program::AstProgram;
+use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::hir::HirProgram;
 use fp_core::lir::LirDataLayout;
 use fp_rust::RustStdProvider;
@@ -57,6 +58,7 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
         shared_hir_program.add_package(package);
     }
 
+    let mut total_diagnostics = 0usize;
     for package_id in package_ids {
         let package = hir_program
             .borrow()
@@ -95,12 +97,17 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             .borrow()
             .diagnostics
             .get_diagnostics();
+        let error_count = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+            .count();
+        total_diagnostics += error_count;
         let successfully_typed_items = checker.borrow().successfully_typed_items();
         let failed_typed_items = checker.borrow().failed_typed_items();
         eprintln!(
             "typecheck `{package_id}`: {successfully_typed_items} successful + {failed_typed_items} failed = {} item(s) checked, {} diagnostic(s)",
             successfully_typed_items + failed_typed_items,
-            diagnostics.len(),
+            error_count,
         );
         for diagnostic in diagnostics.iter().take(20) {
             eprintln!("  {:?}: {}", diagnostic.level, diagnostic.message);
@@ -113,6 +120,11 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             lowering_failures.join("\n")
         );
     }
+
+    assert!(
+        total_diagnostics < 10_000,
+        "Rust std type checking emitted {total_diagnostics} errors (threshold: 10000)"
+    );
 }
 
 fn dependency_closure(provider: &RustStdProvider, roots: &[PackageId]) -> Vec<PackageId> {
