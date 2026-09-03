@@ -271,6 +271,14 @@ impl QPath {
     pub fn new(qself: Option<QSelf>, path: Path) -> Self {
         Self { qself, path }
     }
+
+    pub fn plain(path: Path) -> Self {
+        Self::new(None, path)
+    }
+
+    pub fn is_qualified(&self) -> bool {
+        self.qself.is_some()
+    }
 }
 
 /// A name can be an identifier or a path. Generic arguments are stored on
@@ -305,6 +313,10 @@ impl Name {
             Name::Ident(ident) => Path::from_ident(ident.clone()),
             Name::Path(path) => path.clone(),
         }
+    }
+
+    pub fn to_qpath(&self) -> QPath {
+        QPath::plain(self.to_path())
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {
