@@ -110,7 +110,10 @@ impl ModuleData {
             .map(|(_, _, resolution)| resolution.clone())
             .collect();
         match matches.as_slice() {
-            [resolution] => ResolutionResult::Found(resolution.clone()),
+            [resolution] => ResolutionResult::Found(crate::hir::Path {
+                res: resolution.clone(),
+                segments: Vec::new(),
+            }),
             [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
                 module: InPackagePath::new(Vec::new()),
                 symbol: Symbol::from(name),
@@ -159,7 +162,10 @@ impl ModuleData {
             .map(|(_, _, resolution)| resolution.clone())
             .collect();
         match matches.as_slice() {
-            [resolution] => ResolutionResult::Found(resolution.clone()),
+            [resolution] => ResolutionResult::Found(crate::hir::Path {
+                res: resolution.clone(),
+                segments: Vec::new(),
+            }),
             [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
                 module: InPackagePath::new(parents.to_vec()),
                 symbol: Symbol::from(last.as_str()),
@@ -407,7 +413,7 @@ pub enum DeclarationOutcome {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolutionResult {
-    Found(crate::hir::Res),
+    Found(crate::hir::Path),
     Ambiguous,
     NotFound(ResolutionNotFound),
 }
@@ -522,7 +528,12 @@ impl LocalScope {
                     .collect();
                 match matching.as_slice() {
                     [] => {}
-                    [binding] => return ResolutionResult::Found(binding_to_res(binding)),
+                    [binding] => {
+                        return ResolutionResult::Found(crate::hir::Path {
+                            res: binding_to_res(binding),
+                            segments: Vec::new(),
+                        });
+                    }
                     _ => return ResolutionResult::Ambiguous,
                 }
             }

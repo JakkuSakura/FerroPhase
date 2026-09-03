@@ -182,8 +182,13 @@ impl SharedHirProgram {
         rules: crate::hir::resolve::ResolutionRules,
     ) -> crate::hir::resolve::ResolutionResult {
         match self.resolve_module_path_with_rules(package_id, module, path, namespace, rules) {
-            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_)) => {
-                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Error)
+            crate::hir::resolve::ResolutionResult::Found(path)
+                if matches!(path.res, crate::hir::Res::Module(_)) =>
+            {
+                crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+                    res: crate::hir::Res::Error,
+                    segments: Vec::new(),
+                })
             }
             result => result,
         }
@@ -204,7 +209,9 @@ impl SharedHirProgram {
                     &path.segments,
                     crate::hir::resolve::Namespace::Type,
                 ) {
-                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => {
+                    crate::hir::resolve::ResolutionResult::Found(path)
+                        if let crate::hir::Res::Module(id) = path.res.clone() =>
+                    {
                         Some(id)
                     }
                     _ => None,
@@ -363,13 +370,18 @@ impl HirProgram {
         for segment in segments {
             match self.resolve_module_child(&module, segment, crate::hir::resolve::Namespace::Type)
             {
-                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(next)) => {
+                crate::hir::resolve::ResolutionResult::Found(path)
+                    if let crate::hir::Res::Module(next) = path.res.clone() =>
+                {
                     module = next;
                 }
                 result => return result,
             }
         }
-        crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(module))
+        crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+            res: crate::hir::Res::Module(module),
+            segments: Vec::new(),
+        })
     }
 
     /// Publishes a completed package snapshot into this program.
@@ -409,7 +421,11 @@ impl HirProgram {
         self.package(package_id)
             .map(|package| {
                 let module_id = match self.resolve_module_location(package_id, module) {
-                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => id,
+                    crate::hir::resolve::ResolutionResult::Found(path)
+                        if let crate::hir::Res::Module(id) = path.res.clone() =>
+                    {
+                        id
+                    }
                     _ => crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone()),
                 };
                 package
@@ -433,7 +449,11 @@ impl HirProgram {
         self.package(package_id)
             .map(|package| {
                 let mut module_id = match self.resolve_module_location(package_id, module) {
-                    crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(id)) => id,
+                    crate::hir::resolve::ResolutionResult::Found(path)
+                        if let crate::hir::Res::Module(id) = path.res.clone() =>
+                    {
+                        id
+                    }
                     _ => {
                         return crate::hir::resolve::ResolutionResult::NotFound(
                             crate::hir::resolve::ResolutionNotFound::ModuleDefinition(
@@ -450,14 +470,19 @@ impl HirProgram {
                         .module_data
                         .resolve_child(&module_id, segment, namespace)
                     {
-                        crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(
-                            next,
-                        )) => module_id = next,
+                        crate::hir::resolve::ResolutionResult::Found(path)
+                            if let crate::hir::Res::Module(next) = path.res.clone() =>
+                        {
+                            module_id = next
+                        }
                         result if segments.len() == 0 => return result,
                         result => return result,
                     }
                 }
-                crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(module_id))
+                crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+                    res: crate::hir::Res::Module(module_id),
+                    segments: Vec::new(),
+                })
             })
             .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
                 crate::hir::resolve::ResolutionNotFound::Package(package_id.clone()),
@@ -471,7 +496,8 @@ impl HirProgram {
     ) -> bool {
         matches!(
             self.resolve_module_location(package_id, path),
-            crate::hir::resolve::ResolutionResult::Found(crate::hir::Res::Module(_))
+            crate::hir::resolve::ResolutionResult::Found(path)
+                if matches!(path.res, crate::hir::Res::Module(_))
         )
     }
 

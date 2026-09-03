@@ -536,11 +536,13 @@ impl HirPackage {
         rules: resolve::DeclarationRules,
     ) -> (DefId, resolve::DeclarationOutcome) {
         let name: Symbol = name.into();
-        if let resolve::ResolutionResult::Found(Res::Def(existing)) = self
-            .module_data
-            .resolve_child(module, name.as_str(), namespace)
+        if let resolve::ResolutionResult::Found(path) =
+            self.module_data
+                .resolve_child(module, name.as_str(), namespace)
         {
-            return (existing, resolve::DeclarationOutcome::Conflict);
+            if let Res::Def(existing) = path.res {
+                return (existing, resolve::DeclarationOutcome::Conflict);
+            }
         }
         let target = self.allocate_anonymous_def_id();
         let outcome = self.module_data.declare(
@@ -565,11 +567,13 @@ impl HirPackage {
         rules: resolve::DeclarationRules,
     ) -> (DefId, resolve::DeclarationOutcome) {
         let name: Symbol = name.into();
-        if let resolve::ResolutionResult::Found(Res::Module(existing)) = self
-            .module_data
-            .resolve_child(parent, name.as_str(), resolve::Namespace::Type)
+        if let resolve::ResolutionResult::Found(path) =
+            self.module_data
+                .resolve_child(parent, name.as_str(), resolve::Namespace::Type)
         {
-            return (existing, resolve::DeclarationOutcome::Conflict);
+            if let Res::Module(existing) = path.res {
+                return (existing, resolve::DeclarationOutcome::Conflict);
+            }
         }
         let target = self.allocate_anonymous_def_id();
         self.module_data.set_children(target.clone(), Vec::new());

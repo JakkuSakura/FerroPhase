@@ -147,13 +147,23 @@ impl AstToHirLowerer {
                 } else {
                     namespace
                 };
-                let res = match self.local_resolver.resolve_parsed_path(
+                let resolved = match self.local_resolver.resolve_parsed_path(
                     &self.package_id,
                     &self.module_path,
                     &parsed,
                     resolution_namespace,
                 ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(res) => res,
+                    fp_core::hir::resolve::ResolutionResult::Found(path) => {
+                        let mut path = path;
+                        let args = self.name_segment_args(name)?;
+                        let skip = args.len().saturating_sub(path.segments.len());
+                        for (segment, args) in
+                            path.segments.iter_mut().zip(args.into_iter().skip(skip))
+                        {
+                            segment.args = args;
+                        }
+                        return Ok(path);
+                    }
                     fp_core::hir::resolve::ResolutionResult::NotFound(_)
                     | fp_core::hir::resolve::ResolutionResult::Ambiguous => hir::Res::Error,
                 };
@@ -172,7 +182,7 @@ impl AstToHirLowerer {
                         .collect(),
                 };
                 Ok(hir::Path {
-                    res,
+                    res: resolved,
                     segments: names
                         .into_iter()
                         .zip(segment_args)

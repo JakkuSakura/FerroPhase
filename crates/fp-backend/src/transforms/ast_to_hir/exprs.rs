@@ -1974,7 +1974,7 @@ impl AstToHirLowerer {
         &self,
         path: &fp_core::ast::path::InPackagePath,
         scope: PathResolutionScope,
-    ) -> Option<hir::Res> {
+    ) -> Option<hir::Path> {
         if path.segments.is_empty() {
             return None;
         }
@@ -1984,7 +1984,7 @@ impl AstToHirLowerer {
             path,
             scope.namespace(),
         ) {
-            fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
+            fp_core::hir::resolve::ResolutionResult::Found(path) => Some(path),
             _ => None,
         }
     }

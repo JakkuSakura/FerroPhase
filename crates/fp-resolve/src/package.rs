@@ -80,8 +80,10 @@ impl InPackageResolver {
             .module_data()
             .resolve_child(&module_id, name, namespace)
         {
-            ResolutionResult::Found(hir::Res::Def(id))
-            | ResolutionResult::Found(hir::Res::Module(id)) => Some(id),
+            ResolutionResult::Found(path) => match path.res {
+                hir::Res::Def(id) | hir::Res::Module(id) => Some(id),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -116,13 +118,14 @@ impl InPackageResolver {
             .prelude_modules
             .clone();
         for prelude in preludes {
-            if let ResolutionResult::Found(hir::Res::Module(def_id)) =
-                self.module_data().resolve_module(
-                    &ModuleData::virtual_root_for(self.hir_package.borrow().id.clone()),
-                    &prelude.path.segments,
-                    Namespace::Type,
-                )
-            {
+            if let ResolutionResult::Found(path) = self.module_data().resolve_module(
+                &ModuleData::virtual_root_for(self.hir_package.borrow().id.clone()),
+                &prelude.path.segments,
+                Namespace::Type,
+            ) {
+                let hir::Res::Module(def_id) = path.res else {
+                    continue;
+                };
                 if !self.hir_package.borrow().prelude_modules.contains(&def_id) {
                     self.hir_package.borrow_mut().prelude_modules.push(def_id);
                 }
@@ -159,7 +162,10 @@ impl InPackageResolver {
             .module_data()
             .resolve_module(&root, &path.segments, Namespace::Type)
         {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(id)) => Some(id),
+            fp_core::hir::resolve::ResolutionResult::Found(path) => match path.res {
+                hir::Res::Module(id) => Some(id),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -211,7 +217,12 @@ impl InPackageResolver {
                 self.module_data()
                     .resolve_module(&root, &child_path.segments, Namespace::Type);
             let module_id = match existing {
-                fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(id)) => id,
+                fp_core::hir::resolve::ResolutionResult::Found(path) => {
+                    let hir::Res::Module(id) = path.res else {
+                        return;
+                    };
+                    id
+                }
                 _ => {
                     let id = self.item_def_id();
                     self.module_data_mut().set_children(id.clone(), Vec::new());
@@ -224,7 +235,8 @@ impl InPackageResolver {
             let already_declared = matches!(
                 self.module_data()
                     .resolve_child(&parent_id, &child, Namespace::Type),
-                fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(_))
+                fp_core::hir::resolve::ResolutionResult::Found(path)
+                    if matches!(path.res, hir::Res::Module(_))
             );
             if !already_declared {
                 self.declare_module(
@@ -337,9 +349,12 @@ impl InPackageResolver {
         while let Some(directive) = worklist.queue.pop_front() {
             if directive.kind == ImportKind::Glob {
                 let resolved = if directive.target.segments.is_empty() {
-                    ResolutionResult::Found(hir::Res::Module(ModuleData::virtual_root_for(
-                        self.hir_package.borrow().id.clone(),
-                    )))
+                    ResolutionResult::Found(hir::Path {
+                        res: hir::Res::Module(ModuleData::virtual_root_for(
+                            self.hir_package.borrow().id.clone(),
+                        )),
+                        segments: Vec::new(),
+                    })
                 } else {
                     self.resolver.resolve_parsed_path(
                         &self.hir_package.borrow().id,
@@ -349,7 +364,9 @@ impl InPackageResolver {
                     )
                 };
                 let members = match resolved {
-                    ResolutionResult::Found(hir::Res::Module(module)) => {
+                    ResolutionResult::Found(path)
+                        if let hir::Res::Module(module) = path.res.clone() =>
+                    {
                         self.module_data().children(&module).map(|children| {
                             children
                                 .iter()
@@ -400,7 +417,7 @@ impl InPackageResolver {
                 directive.namespace,
             );
             let target = match resolved {
-                fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
+                fp_core::hir::resolve::ResolutionResult::Found(path) => Some(path.res),
                 fp_core::hir::resolve::ResolutionResult::Ambiguous => None,
                 fp_core::hir::resolve::ResolutionResult::NotFound(_) => None,
             };
@@ -634,7 +651,10 @@ mod tests {
                 "Alias",
                 Namespace::Type
             ),
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(target)),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(target),
+                segments: Vec::new()
+            }),
         );
     }
 
@@ -692,7 +712,7 @@ mod tests {
                 "Second",
                 Namespace::Type
             ),
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(_))
+            fp_core::hir::resolve::ResolutionResult::Found(path) if matches!(path.res, hir::Res::Def(_))
         ));
     }
 
@@ -738,7 +758,10 @@ mod tests {
                 "Item",
                 Namespace::Type
             ),
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(target)),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                res: hir::Res::Def(target),
+                segments: Vec::new()
+            }),
         );
     }
 
@@ -778,7 +801,10 @@ mod tests {
                 "alias",
                 Namespace::Type
             ),
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Module(hir::DefId::local(1))),
+            fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                res: hir::Res::Module(hir::DefId::local(1)),
+                segments: Vec::new()
+            }),
         );
     }
 }

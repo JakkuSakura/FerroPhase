@@ -980,7 +980,7 @@ fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()>
         &InPackagePath::new(vec!["map".into(), "NodeRef".into()]),
         fp_core::hir::resolve::Namespace::Type,
     );
-    assert!(matches!(binding, Some(hir::Res::Def(_))));
+    assert!(matches!(binding, Some(path) if matches!(path.res, hir::Res::Def(_))));
     Ok(())
 }
 
@@ -1759,7 +1759,10 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
             &["Ok".to_string()],
             fp_core::hir::resolve::Namespace::Type,
         ),
-        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(ok_def_id.clone())),
+        fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+            res: hir::Res::Def(ok_def_id.clone()),
+            segments: Vec::new(),
+        }),
     );
 
     let workspace = std_lowerer.hir_program.clone();
@@ -2634,7 +2637,7 @@ fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Resu
         PathResolutionScope::Type,
     );
     assert!(
-        matches!(reexport, Some(hir::Res::Def(_))),
+        matches!(reexport, Some(ref path) if matches!(path.res, hir::Res::Def(_))),
         "re-export resolution: {reexport:?}"
     );
     let make = program

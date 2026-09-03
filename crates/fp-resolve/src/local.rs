@@ -42,7 +42,6 @@ impl LocalResolver {
             hir_package,
         }
     }
-
     pub fn enter_scope(&mut self) {
         self.scopes.enter();
     }
@@ -90,10 +89,10 @@ impl LocalResolver {
     ) -> ResolutionResult {
         if matches!(path.prefix, fp_core::ast::path::PathPrefix::Plain) && path.segments.len() == 1
         {
-            if let ResolutionResult::Found(res) =
+            if let ResolutionResult::Found(path) =
                 self.resolve_local(path.segments[0].as_str(), namespace)
             {
-                return ResolutionResult::Found(res);
+                return ResolutionResult::Found(path);
             }
         }
         self.resolver

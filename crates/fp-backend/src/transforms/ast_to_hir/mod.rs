@@ -670,12 +670,12 @@ impl AstToHirLowerer {
         &self,
         path: &fp_core::ast::path::InPackagePath,
         ns: fp_core::hir::resolve::Namespace,
-    ) -> Option<hir::Res> {
+    ) -> Option<hir::Path> {
         match self
             .local_resolver
             .resolve_global_path(&self.package_id, &self.module_path, path, ns)
         {
-            fp_core::hir::resolve::ResolutionResult::Found(res) => Some(res),
+            fp_core::hir::resolve::ResolutionResult::Found(path) => Some(path),
             _ => None,
         }
     }
@@ -692,7 +692,9 @@ impl AstToHirLowerer {
             .local_resolver
             .resolve_local(name, fp_core::hir::resolve::Namespace::Type)
         {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(path)
+                if let hir::Res::Def(id) = path.res.clone() =>
+            {
                 Some(hir::Res::Def(id))
             }
             _ => None,
@@ -704,7 +706,9 @@ impl AstToHirLowerer {
             .local_resolver
             .resolve_local(name, fp_core::hir::resolve::Namespace::Value)
         {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(path)
+                if let hir::Res::Def(id) = path.res.clone() =>
+            {
                 Some(hir::Res::Def(id))
             }
             _ => None,
@@ -726,7 +730,9 @@ impl AstToHirLowerer {
             &path,
             fp_core::hir::resolve::Namespace::Type,
         ) {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(path)
+                if let hir::Res::Def(def_id) = path.res.clone() =>
+            {
                 Some(hir::Res::Def(def_id))
             }
             _ => None,
@@ -771,7 +777,9 @@ impl AstToHirLowerer {
                     &qualified,
                     fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(path)
+                        if let hir::Res::Def(id) = path.res.clone() =>
+                    {
                         Some(hir::Res::Def(id))
                     }
                     _ => None,
@@ -786,7 +794,9 @@ impl AstToHirLowerer {
                     &path,
                     fp_core::hir::resolve::Namespace::Type,
                 ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                    fp_core::hir::resolve::ResolutionResult::Found(path)
+                        if let hir::Res::Def(id) = path.res.clone() =>
+                    {
                         Some(hir::Res::Def(id))
                     }
                     _ => None,
@@ -815,7 +825,9 @@ impl AstToHirLowerer {
             &path,
             fp_core::hir::resolve::Namespace::Value,
         ) {
-            fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
+            fp_core::hir::resolve::ResolutionResult::Found(path)
+                if let hir::Res::Def(def_id) = path.res.clone() =>
+            {
                 Some(hir::Res::Def(def_id))
             }
             _ => None,
@@ -3297,7 +3309,9 @@ impl AstToHirLowerer {
                         &source_path,
                         fp_core::hir::resolve::Namespace::Type,
                     ) {
-                        fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(id)) => {
+                        fp_core::hir::resolve::ResolutionResult::Found(path)
+                            if let hir::Res::Def(id) = path.res.clone() =>
+                        {
                             Some(hir::Res::Def(id))
                         }
                         _ => None,

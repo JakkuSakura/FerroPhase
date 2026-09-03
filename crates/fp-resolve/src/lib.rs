@@ -69,14 +69,19 @@ impl Resolver {
                 _ => &location.segments,
             };
             match hir_program.resolve_module_location_segments(&target_package_id, start_segments) {
-                ResolutionResult::Found(hir::Res::Module(start)) => module = start,
+                ResolutionResult::Found(path) if let hir::Res::Module(start) = path.res.clone() => {
+                    module = start
+                }
                 result => return result,
             }
         }
         let first = usize::from(skip_external);
         let count = parsed.segments.len().saturating_sub(first);
         if count == 0 {
-            return ResolutionResult::Found(hir::Res::Module(module));
+            return ResolutionResult::Found(hir::Path {
+                res: hir::Res::Module(module),
+                segments: Vec::new(),
+            });
         }
         let mut last_result = ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
         for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
@@ -92,11 +97,26 @@ impl Resolver {
                 return result;
             }
             match result {
-                ResolutionResult::Found(hir::Res::Module(next)) => module = next,
+                ResolutionResult::Found(path) if let hir::Res::Module(next) = path.res.clone() => {
+                    module = next
+                }
                 ResolutionResult::Found(found) => {
-                    return ResolutionResult::NotFound(ResolutionNotFound::ExpectedModule {
-                        path: location.clone(),
-                        found,
+                    // A non-module segment is the resolved base (for
+                    // example `Vec` in `Vec::new` or `Trait::Assoc`).  Keep
+                    // the remaining path segments for type checking to
+                    // resolve as associated items instead of treating them
+                    // as an invalid module traversal.
+                    return ResolutionResult::Found(hir::Path {
+                        res: found.res,
+                        segments: parsed
+                            .segments
+                            .iter()
+                            .skip(first + offset + 1)
+                            .map(|segment| hir::PathSegment {
+                                name: segment.name.clone().into(),
+                                args: None,
+                            })
+                            .collect(),
                     });
                 }
                 _ => break,
