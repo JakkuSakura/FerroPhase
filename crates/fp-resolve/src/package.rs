@@ -289,10 +289,28 @@ impl InPackageResolver {
                 );
             }
             ItemKind::DefStruct(def) => {
-                self.declare_definition(module, &def.name, Namespace::Type, span);
+                let def_id = self.declare_definition(module, &def.name, Namespace::Type, span);
+                self.declare_module(
+                    module,
+                    def.name.clone(),
+                    Binding::Definition {
+                        target: def_id,
+                        namespace: Namespace::Value,
+                        span,
+                    },
+                );
             }
             ItemKind::DefStructural(def) => {
-                self.declare_definition(module, &def.name, Namespace::Type, span);
+                let def_id = self.declare_definition(module, &def.name, Namespace::Type, span);
+                self.declare_module(
+                    module,
+                    def.name.clone(),
+                    Binding::Definition {
+                        target: def_id,
+                        namespace: Namespace::Value,
+                        span,
+                    },
+                );
             }
             ItemKind::DefEnum(def) => {
                 self.declare_definition(module, &def.name, Namespace::Type, span);
@@ -342,89 +360,92 @@ impl InPackageResolver {
     }
 
     pub fn resolve_worklist(&mut self, worklist: &mut ResolutionWorklist) {
-        let mut deferred = VecDeque::new();
-        let mut made_progress = false;
-        while let Some(directive) = worklist.queue.pop_front() {
-            if directive.kind == ImportKind::Glob {
-                let resolved = if directive.target.segments.is_empty() {
-                    ResolutionResult::Found(hir::Path {
-                        res: hir::Res::Module(ModuleData::virtual_root_for(
-                            self.hir_package.borrow().id.clone(),
-                        )),
-                        segments: Vec::new(),
-                    })
-                } else {
-                    self.resolver.resolve_parsed_path(
-                        &self.hir_package.borrow().id,
-                        &InPackagePath::new(Vec::new()),
-                        &directive.target.to_ast_path(),
-                        Namespace::Type,
-                    )
-                };
-                let members = match resolved {
-                    ResolutionResult::Found(path)
-                        if let hir::Res::Module(module) = path.res.clone() =>
-                    {
-                        self.hir_program
-                            .borrow()
-                            .package(&module.package_id)
-                            .and_then(|package| {
-                                package.module_data.children(&module).map(|children| {
-                                    children
-                                        .iter()
-                                        .filter(|(_, ns, _)| *ns == directive.namespace)
-                                        .map(|(name, _, res)| (name.clone(), res.clone()))
-                                        .collect::<Vec<_>>()
+        // Imports form a dependency graph: a glob can only be expanded after
+        // another import has populated its target module. Resolve in explicit
+        // fixed-point rounds so a directive deferred in one round is retried
+        // after every successful declaration, without requiring callers to
+        // invoke the resolver a second time.
+        while !worklist.queue.is_empty() {
+            let mut deferred = VecDeque::new();
+            let mut made_progress = false;
+            while let Some(directive) = worklist.queue.pop_front() {
+                if directive.kind == ImportKind::Glob {
+                    let resolved = if directive.target.segments.is_empty() {
+                        ResolutionResult::Found(hir::Path {
+                            res: hir::Res::Module(ModuleData::virtual_root_for(
+                                self.hir_package.borrow().id.clone(),
+                            )),
+                            segments: Vec::new(),
+                        })
+                    } else {
+                        self.resolver.resolve_parsed_path(
+                            &self.hir_package.borrow().id,
+                            &InPackagePath::new(Vec::new()),
+                            &directive.target.to_ast_path(),
+                            Namespace::Type,
+                        )
+                    };
+                    let members = match resolved {
+                        ResolutionResult::Found(path)
+                            if let hir::Res::Module(module) = path.res.clone() =>
+                        {
+                            self.hir_program
+                                .borrow()
+                                .package(&module.package_id)
+                                .and_then(|package| {
+                                    package.module_data.children(&module).map(|children| {
+                                        children
+                                            .iter()
+                                            .filter(|(_, ns, _)| *ns == directive.namespace)
+                                            .map(|(name, _, res)| (name.clone(), res.clone()))
+                                            .collect::<Vec<_>>()
+                                    })
                                 })
-                            })
-                    }
-                    _ => None,
-                };
-                let Some(members) = members else {
-                    deferred.push_back(directive);
-                    if worklist.queue.is_empty() && !made_progress {
-                        break;
+                        }
+                        _ => None,
+                    };
+                    let Some(members) = members else {
+                        deferred.push_back(directive);
+                        continue;
+                    };
+                    if members.is_empty() {
+                        deferred.push_back(directive);
+                    } else {
+                        let mut inserted = false;
+                        for (name, target) in members {
+                            let outcome = self.declare_import(
+                                &directive.module,
+                                name,
+                                target,
+                                directive.namespace,
+                                directive.span,
+                            );
+                            inserted |= outcome == DeclarationOutcome::Inserted;
+                        }
+                        made_progress |= inserted;
+                        // Keep a glob alive for another round. Its target
+                        // module may gain additional re-exports after another
+                        // directive populates that module.
+                        deferred.push_back(directive);
                     }
                     continue;
-                };
-                if members.is_empty() {
+                }
+
+                // Imports may legally bind a module itself (`use crate::foo as
+                // bar`), so terminal type/value checks stay out of this pass.
+                let resolved = self.resolver.resolve_parsed_path(
+                    &self.hir_package.borrow().id,
+                    &InPackagePath::new(Vec::new()),
+                    &directive.target.to_ast_path(),
+                    directive.namespace,
+                );
+                let Some(target) = (match resolved {
+                    ResolutionResult::Found(path) => Some(path.res),
+                    ResolutionResult::Ambiguous | ResolutionResult::NotFound(_) => None,
+                }) else {
                     deferred.push_back(directive);
-                } else {
-                    for (name, target) in members {
-                        self.declare_import(
-                            &directive.module,
-                            name,
-                            target,
-                            directive.namespace,
-                            directive.span,
-                        );
-                        made_progress = true;
-                    }
-                }
-                if worklist.queue.is_empty() {
-                    if !made_progress {
-                        break;
-                    }
-                    made_progress = false;
-                    worklist.queue.extend(deferred.drain(..));
-                }
-                continue;
-            }
-            // Imports may legally bind a module itself (`use crate::foo as bar`),
-            // so do not apply value/type terminal checks here. Those checks are
-            // reserved for expression/type references at lowering time.
-            let resolved = self.resolver.resolve_parsed_path(
-                &self.hir_package.borrow().id,
-                &InPackagePath::new(Vec::new()),
-                &directive.target.to_ast_path(),
-                directive.namespace,
-            );
-            let target = match resolved {
-                fp_core::hir::resolve::ResolutionResult::Found(path) => Some(path.res),
-                fp_core::hir::resolve::ResolutionResult::Ambiguous => None,
-                fp_core::hir::resolve::ResolutionResult::NotFound(_) => None,
-            };
-            if let Some(target) = target {
+                    continue;
+                };
                 self.declare_import(
                     &directive.module,
                     directive.name,
@@ -433,19 +454,20 @@ impl InPackageResolver {
                     directive.span,
                 );
                 made_progress = true;
-                worklist.queue.extend(deferred.drain(..));
-            } else {
-                deferred.push_back(directive);
-                if worklist.queue.is_empty() {
-                    if !made_progress {
-                        break;
-                    }
-                    made_progress = false;
-                    worklist.queue.extend(deferred.drain(..));
-                }
             }
+            if !made_progress {
+                // No directive can make progress in the current state. Keep
+                // unresolved explicit imports for diagnostics, but consume
+                // quiescent globs so callers do not need to drain a
+                // permanently retryable wildcard.
+                worklist.queue = deferred
+                    .into_iter()
+                    .filter(|directive| directive.kind != ImportKind::Glob)
+                    .collect();
+                break;
+            }
+            worklist.queue = deferred;
         }
-        worklist.queue.extend(deferred);
     }
 
     fn collect_import_item(

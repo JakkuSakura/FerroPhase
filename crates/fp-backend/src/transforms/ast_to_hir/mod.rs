@@ -1587,6 +1587,23 @@ impl AstToHirLowerer {
             return Ok(hir::StmtKind::Expr(unit_expr));
         }
 
+        // Block-local functions are visible from their own body (for
+        // recursion) and from the remainder of the enclosing block. Declare
+        // the identity before lowering the item so `transform_item_to_hir`
+        // reuses it instead of allocating an unrelated definition after the
+        // body has already started resolving names.
+        if let ItemKind::DefFunction(function) = item.as_ref().kind() {
+            let def_id = self.next_def_id();
+            let _ = self.local_resolver.declare(
+                function.name.name.clone(),
+                fp_core::hir::resolve::Binding::Definition {
+                    target: def_id,
+                    namespace: fp_core::hir::resolve::Namespace::Value,
+                    span: item.span(),
+                },
+            );
+        }
+
         match item.as_ref().kind() {
             ItemKind::Import(import) => {
                 let unit_block = hir::Block {
@@ -1749,6 +1766,15 @@ impl AstToHirLowerer {
             | ItemKind::DeclType(_) => fp_core::hir::resolve::Namespace::Type,
             _ => fp_core::hir::resolve::Namespace::Value,
         };
+        let local_def_id = item.get_ident().and_then(|ident| {
+            match self.local_resolver.resolve_local(ident.as_str(), namespace) {
+                fp_core::hir::resolve::ResolutionResult::Found(path) => match path.res {
+                    hir::Res::Def(def_id) => Some(def_id),
+                    _ => None,
+                },
+                _ => None,
+            }
+        });
         let def_id = if matches!(item.kind(), ItemKind::Impl(_)) {
             let module_key = self.module_path.to_key();
             let existing = self
@@ -1756,8 +1782,11 @@ impl AstToHirLowerer {
                 .registered_impl_def_id(&module_key, item.span());
             existing.unwrap_or_else(|| self.package_mut().impl_def_id(&module_key, item.span()))
         } else {
-            item.get_ident()
-                .and_then(|ident| self.declared_def_id(ident.as_str(), namespace))
+            local_def_id
+                .or_else(|| {
+                    item.get_ident()
+                        .and_then(|ident| self.declared_def_id(ident.as_str(), namespace))
+                })
                 .unwrap_or_else(|| self.next_def_id())
         };
         let result = self.with_owner(def_id.clone(), |this| {
@@ -3531,6 +3560,21 @@ fn lower_closures_in_items(
     pass.collect_struct_field_types(items);
     pass.find_and_transform_functions(items)?;
     pass.rewrite_usage(items)?;
+
+    // A closure body can itself contain a closure. The first rewrite pass
+    // transforms closures in the original package items, but generated call
+    // functions are stored separately and therefore need to be walked as
+    // well. Process that generated queue until no nested closure emits more
+    // items; otherwise the nested literal reaches HIR lowering unchanged.
+    let mut pending = std::mem::take(&mut pass.generated_items);
+    let mut rewritten = Vec::with_capacity(pending.len());
+    while let Some(mut item) = pending.pop() {
+        pass.rewrite_in_item(&mut item)?;
+        rewritten.push(item);
+        pending.extend(std::mem::take(&mut pass.generated_items));
+    }
+    rewritten.reverse();
+    pass.generated_items = rewritten;
 
     if !pass.generated_items.is_empty() {
         let mut new_items = pass.generated_items;

@@ -190,8 +190,27 @@ impl AstToHirLowerer {
                 // `Vec::from` must resolve `Vec` as a type, never as a value
                 // constructor or a same-named lexical binding. Keep a value
                 // lookup only as the module-qualified constant fallback below.
-                let type_base =
-                    self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
+                let base_scope = match select.obj.kind() {
+                    ast::ExprKind::Name(name)
+                        if matches!(name.path.prefix, fp_core::ast::path::PathPrefix::Plain) =>
+                    {
+                        match self.local_resolver.resolve_local(
+                            name.path
+                                .segments
+                                .first()
+                                .map(|segment| segment.as_str())
+                                .unwrap_or_default(),
+                            fp_core::hir::resolve::Namespace::Value,
+                        ) {
+                            fp_core::hir::resolve::ResolutionResult::Found(_) => {
+                                PathResolutionScope::Value
+                            }
+                            _ => PathResolutionScope::Type,
+                        }
+                    }
+                    _ => PathResolutionScope::Type,
+                };
+                let type_base = self.ast_expr_to_hir_path(&select.obj, base_scope)?;
                 let mut base = type_base;
                 let member_args = if select.generic_args.is_empty() {
                     None

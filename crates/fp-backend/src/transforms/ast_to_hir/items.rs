@@ -413,6 +413,23 @@ impl AstToHirLowerer {
         // its own registration here or it stays unresolved.
         self.push_value_scope();
         let result = (|| {
+            // `Self` is a lexical binding of every impl, in both namespaces:
+            // type references use it directly, while `Self { ... }` and
+            // associated-value paths use the value namespace. Register it
+            // before lowering the self type and any method signatures.
+            for namespace in [
+                fp_core::hir::resolve::Namespace::Type,
+                fp_core::hir::resolve::Namespace::Value,
+            ] {
+                let _ = self.local_resolver.declare(
+                    "Self",
+                    fp_core::hir::resolve::Binding::Import {
+                        target: hir::Res::SelfTy,
+                        namespace,
+                        span: Span::null(),
+                    },
+                );
+            }
             // Register impl generics in the current type scope.
             let generics = self.transform_generics(&impl_block.generics_params)?;
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());

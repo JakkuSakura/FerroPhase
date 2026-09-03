@@ -90,13 +90,21 @@ impl LocalResolver {
     ) -> ResolutionResult {
         if matches!(path.prefix, fp_core::ast::path::PathPrefix::Plain) && !path.segments.is_empty()
         {
-            if let ResolutionResult::Found(mut resolved) =
-                self.resolve_local(path.segments[0].as_str(), namespace)
-            {
-                // A lexical binding can be the base of a type-relative path
-                // (`T::Assoc`). Preserve the unresolved projection tail for
-                // type checking instead of asking the package resolver to
-                // look up `T` as a module.
+            // A lexical binding can be the base of a type-relative path
+            // (`T::Assoc`) even when the use site is in value scope. Try the
+            // requested namespace first so a value local still shadows a
+            // same-named type, then try the type namespace for a projection
+            // whose base is a generic/type binding.
+            let mut local = self.resolve_local(path.segments[0].as_str(), namespace);
+            if path.segments.len() > 1 && namespace != Namespace::Type {
+                if matches!(local, ResolutionResult::NotFound(_)) {
+                    local = self.resolve_local(path.segments[0].as_str(), Namespace::Type);
+                }
+            }
+            if let ResolutionResult::Found(mut resolved) = local {
+                // Preserve the unresolved projection tail for type checking
+                // instead of asking the package resolver to look up the base
+                // as a module.
                 if !matches!(resolved.res, Res::Module(_)) {
                     resolved
                         .segments

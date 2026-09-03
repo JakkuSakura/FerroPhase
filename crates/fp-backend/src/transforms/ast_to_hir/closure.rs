@@ -33,6 +33,9 @@ pub(super) struct ClosureLowering {
     /// expression built from those simply doesn't resolve here, same as
     /// any other unhandled shape.
     current_param_types: HashMap<String, ast::Ty>,
+    /// Generic parameters from the enclosing function. Generated closure
+    /// items must carry these when captured field types refer to them.
+    current_generics_params: Vec<ast::GenericParam>,
 }
 // TODO: move to new file
 impl ClosureLowering {
@@ -47,6 +50,7 @@ impl ClosureLowering {
             diagnostics: Vec::new(),
             struct_field_types: HashMap::new(),
             current_param_types: HashMap::new(),
+            current_generics_params: Vec::new(),
         }
     }
 
@@ -377,8 +381,13 @@ impl ClosureLowering {
                             .map(|param| (param.name.as_str().to_string(), param.ty.clone()))
                             .collect(),
                     );
+                    let previous_generics = std::mem::replace(
+                        &mut self.current_generics_params,
+                        func.sig.generics_params.clone(),
+                    );
                     let info = self.transform_function(func)?;
                     self.current_param_types = previous;
+                    self.current_generics_params = previous_generics;
                     if let Some(info) = info {
                         self.function_infos
                             .insert(func.name.as_str().to_string(), info.clone());
@@ -550,7 +559,7 @@ impl ClosureLowering {
         }
         let struct_decl = ast::TypeStruct {
             name: struct_ident.clone(),
-            generics_params: Vec::new(),
+            generics_params: self.current_generics_params.clone(),
             repr: ast::ReprOptions::default(),
             fields: struct_fields,
         };
@@ -610,11 +619,12 @@ impl ClosureLowering {
             ast::ExprBlock::new_expr(rewritten_body),
         );
         fn_item_ast.visibility = ast::Visibility::Private;
+        fn_item_ast.sig.generics_params = self.current_generics_params.clone();
         fn_item_ast.sig.params = fn_params;
         fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());
         fn_item_ast.ty = Some(ast::TypeFunction {
             params: fn_param_tys.clone(),
-            generics_params: Vec::new(),
+            generics_params: self.current_generics_params.clone(),
             ret_ty: Some(Box::new(call_ret_ty.clone())),
         });
         fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| ast::Ty::Function(ty_fn));
@@ -670,8 +680,13 @@ impl ClosureLowering {
                             .map(|param| (param.name.as_str().to_string(), param.ty.clone()))
                             .collect(),
                     );
+                    let previous_generics = std::mem::replace(
+                        &mut self.current_generics_params,
+                        func.sig.generics_params.clone(),
+                    );
                     self.rewrite_in_block(&mut func.body)?;
                     self.current_param_types = previous;
+                    self.current_generics_params = previous_generics;
                 }
                 ast::ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
                 ast::ItemKind::DefStatic(def) if !attrs_has_name(&def.attrs, "host") => {
@@ -993,7 +1008,7 @@ impl ClosureLowering {
         Ok(())
     }
 
-    fn rewrite_in_item(&mut self, item: &mut ast::Item) -> Result<()> {
+    pub(super) fn rewrite_in_item(&mut self, item: &mut ast::Item) -> Result<()> {
         match item.kind_mut() {
             ast::ItemKind::Expr(expr) => self.rewrite_in_expr(expr)?,
             ast::ItemKind::DefConst(def) => {
@@ -1121,6 +1136,16 @@ impl CaptureCollector {
                 match &invoke.target {
                     ast::ExprInvokeTarget::Expr(target) => self.visit(target.as_ref()),
                     ast::ExprInvokeTarget::Method(select) => self.visit(select.obj.as_ref()),
+                    ast::ExprInvokeTarget::Function(name) => {
+                        if let Some(ident) = name.as_ident() {
+                            let name = ident.as_str();
+                            if !self.is_in_scope(name) && !self.seen.contains(name) {
+                                self.seen.insert(name.to_owned());
+                                self.captures
+                                    .push((name.to_owned(), ast::Ty::Any(ast::TypeAny)));
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 for arg in &invoke.args {
@@ -1214,9 +1239,24 @@ impl CaptureCollector {
                 self.visit(expr_for.body.as_ref());
             }
             ast::ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_ref() {
+                    self.visit(scrutinee);
+                }
                 for case in &expr_match.cases {
                     self.visit(case.cond.as_ref());
+                    self.scope.push(HashSet::new());
+                    let mut names = Vec::new();
+                    if let Some(pattern) = case.pat.as_ref() {
+                        collect_pattern_idents(pattern, &mut names);
+                    }
+                    if let Some(scope) = self.scope.last_mut() {
+                        scope.extend(names);
+                    }
+                    if let Some(guard) = case.guard.as_ref() {
+                        self.visit(guard);
+                    }
                     self.visit(case.body.as_ref());
+                    self.scope.pop();
                 }
             }
             ast::ExprKind::FormatString(format) => {
@@ -1439,8 +1479,14 @@ impl CaptureReplacer {
                 self.visit(const_block.expr.as_mut());
             }
             ast::ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    self.visit(scrutinee.as_mut());
+                }
                 for case in &mut expr_match.cases {
                     self.visit(case.cond.as_mut());
+                    if let Some(guard) = case.guard.as_mut() {
+                        self.visit(guard.as_mut());
+                    }
                     self.visit(case.body.as_mut());
                 }
             }

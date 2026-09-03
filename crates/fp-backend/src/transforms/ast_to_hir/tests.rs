@@ -4058,6 +4058,23 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn resolves_block_local_function_in_body() {
+        let (package, diagnostics) = lower("fn outer() -> i64 { fn inner() -> i64 { 1 } inner() }");
+        assert!(
+            diagnostics.is_empty(),
+            "block-local function resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Call(callee, _) = &body_expr(function(&package, "outer")).kind else {
+            panic!("expected block-local function call");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected block-local function path: {callee:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert!(path.segments.is_empty(), "fully resolved path: {path:?}");
+    }
+
+    #[test]
     fn resolves_closure_body_parameter_and_capture() {
         let (package, diagnostics) = lower(
             "fn apply(input: i64) -> i64 { let closure = |value: i64| input + value; closure(1) }",
@@ -4103,7 +4120,7 @@ mod function_body_resolution {
                 .iter()
                 .map(|segment| segment.name.as_str())
                 .collect::<Vec<_>>(),
-            ["__env", "input"]
+            ["input"]
         );
         let hir::ExprKind::Path(parameter_path) = &parameter.kind else {
             panic!("expected closure parameter path: {parameter:?}");
@@ -4134,6 +4151,249 @@ mod function_body_resolution {
         assert!(
             matches!(path.res, hir::Res::Local(_) | hir::Res::Parameter(_)),
             "generic callable should resolve to its parameter: {path:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_callable_capture_in_generated_closure_body() {
+        let (package, diagnostics) = lower(
+            "fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| f(x); closure(value) }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "callable capture resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let closure_function = package.items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function)
+                if function.sig.inputs.len() == 2
+                    && function
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.expr.as_deref())
+                        .is_some_and(|expr| matches!(expr.kind, hir::ExprKind::Call(..))) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        });
+        let closure_function =
+            closure_function.expect("callable capture should produce a closure function");
+        let hir::ExprKind::Call(callee, _) = &body_expr(closure_function).kind else {
+            panic!("expected generated closure call body");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected captured callable path: {callee:?}");
+        };
+        assert!(
+            matches!(path.res, hir::Res::Local(_) | hir::Res::Parameter(_)),
+            "captured callable should retain the environment binding: {path:?}"
+        );
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["f"]
+        );
+    }
+
+    #[test]
+    fn resolves_capture_field_base_in_generated_closure_body() {
+        let (package, diagnostics) = lower(
+            "struct Holder { value: i64 } fn read(holder: Holder) -> i64 { let closure = || holder.value; closure() }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "capture field resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let closure_function = package.items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function)
+                if function.sig.inputs.len() == 1
+                    && function
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.expr.as_deref())
+                        .is_some_and(|expr| {
+                            matches!(expr.kind, hir::ExprKind::FieldAccess(..))
+                        }) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        });
+        let closure_function =
+            closure_function.expect("field capture should produce a closure function");
+        let hir::ExprKind::FieldAccess(base, field) = &body_expr(closure_function).kind else {
+            panic!("expected generated closure field path");
+        };
+        let hir::ExprKind::Path(path) = &base.kind else {
+            panic!("expected generated closure field base path: {base:?}");
+        };
+        assert!(
+            matches!(path.res, hir::Res::Local(_) | hir::Res::Parameter(_)),
+            "capture field should retain the environment binding: {path:?}"
+        );
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["holder"]
+        );
+        assert_eq!(field.as_str(), "value");
+    }
+
+    #[test]
+    fn resolves_capture_in_match_scrutinee() {
+        let (package, diagnostics) = lower(
+            "fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| match f(x) { _ => 1 }; closure(value) }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "match scrutinee capture emitted diagnostics: {diagnostics:?}"
+        );
+        let closure_function = package.items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function)
+                if function.sig.inputs.len() == 2
+                    && function
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.expr.as_deref())
+                        .is_some_and(|expr| matches!(expr.kind, hir::ExprKind::Match(..))) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        });
+        let closure_function =
+            closure_function.expect("match closure should publish its environment function");
+        let hir::ExprKind::Match(scrutinee, _) = &body_expr(closure_function).kind else {
+            panic!("expected generated closure match body");
+        };
+        let hir::ExprKind::Call(callee, _) = &scrutinee.kind else {
+            panic!("expected match scrutinee call: {scrutinee:?}");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected captured callable path: {callee:?}");
+        };
+        assert!(
+            matches!(path.res, hir::Res::Local(_) | hir::Res::Parameter(_)),
+            "captured callable should retain the environment binding: {path:?}"
+        );
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["f"]
+        );
+    }
+
+    #[test]
+    fn resolves_nested_closure_body() {
+        let (package, diagnostics) =
+            lower("fn nested() -> i64 { let outer = || { let inner = || 1; inner() }; outer() }");
+        assert!(
+            diagnostics.is_empty(),
+            "nested closure lowering emitted diagnostics: {diagnostics:?}"
+        );
+        let generated_functions = package
+            .items
+            .iter()
+            .filter(|item| matches!(item.kind, hir::ItemKind::Function(_)))
+            .count();
+        assert_eq!(
+            generated_functions, 3,
+            "nested closure functions: {package:?}"
+        );
+    }
+
+    #[test]
+    fn resolves_module_qualified_function_in_body() {
+        let (package, diagnostics) = lower(
+            "mod helpers { fn answer() -> i64 { 1 } } fn call() -> i64 { helpers::answer() }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "module-qualified body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Call(callee, _) = &body_expr(function(&package, "call")).kind else {
+            panic!("expected module-qualified call");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected module-qualified callee path: {callee:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert!(path.segments.is_empty(), "fully resolved path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_enum_variant_path_in_body() {
+        let (package, diagnostics) =
+            lower("enum Choice { Yes, No } fn pick() -> Choice { Choice::Yes }");
+        assert!(
+            diagnostics.is_empty(),
+            "enum variant body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "pick")).kind else {
+            panic!("expected enum variant path");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Yes"]
+        );
+    }
+
+    #[test]
+    fn resolves_self_in_impl_method_signature() {
+        let (package, diagnostics) =
+            lower("struct Value; impl Value { fn identity(&self) -> Self { self } }");
+        assert!(
+            diagnostics.is_empty(),
+            "impl Self resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let impl_block = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl item should be present");
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "identity" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("impl method should be present");
+        assert_eq!(type_path(&method.sig.output).res, hir::Res::SelfTy);
+    }
+
+    #[test]
+    fn resolves_associated_projection_from_generic_body() {
+        let (package, diagnostics) = lower("fn project<T>(value: T) -> i64 { T::VALUE }");
+        assert!(
+            diagnostics.is_empty(),
+            "generic projection body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Path(path) = &body_expr(function(&package, "project")).kind else {
+            panic!("expected associated projection path");
+        };
+        assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["VALUE"]
         );
     }
 

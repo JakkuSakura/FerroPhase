@@ -93,6 +93,39 @@ fn resolves_std_runtime_and_thread_items_within_std_package() {
     );
 }
 
+#[test]
+fn prelude_exports_are_visible_in_each_package_root() {
+    let prepared = prepare_std();
+    let mut failures = Vec::new();
+    for (package, names) in [
+        ("core", ["Option", "Result", "IntoIterator"].as_slice()),
+        ("alloc", ["Option", "Result", "IntoIterator"].as_slice()),
+        (
+            "std",
+            ["Option", "Result", "IntoIterator", "Box", "String", "Vec"].as_slice(),
+        ),
+    ] {
+        let package_id = PackageId::new(package);
+        for name in names {
+            let path = Path::new(PathPrefix::Root, vec![package.into(), (*name).into()]);
+            let result = prepared.resolver.resolve_parsed_path(
+                &package_id,
+                &InPackagePath::new(Vec::new()),
+                &path,
+                Namespace::Type,
+            );
+            if !matches!(result, ResolutionResult::Found(_)) {
+                failures.push(format!("{package}::{name}: {result:?}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "prelude failures:\n{}",
+        failures.join("\n")
+    );
+}
+
 struct PreparedStd {
     program: Rc<AstProgram>,
     hir_program: Rc<std::cell::RefCell<HirProgram>>,
