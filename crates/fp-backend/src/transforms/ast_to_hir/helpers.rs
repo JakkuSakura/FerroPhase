@@ -11,8 +11,30 @@ impl AstToHirLowerer {
     /// rustc carrying the resolved `Res` on the path node rather than
     /// reconstructing it from the spelling later.
     pub(super) fn resolved_type_path(&mut self, expr: &ast::Expr) -> Result<Option<hir::Path>> {
-        let _ = expr;
-        Ok(None)
+        match expr.kind() {
+            ast::ExprKind::Name(name) => {
+                let result = self.local_resolver.resolve_parsed_path(
+                    &self.package_id,
+                    &self.module_path,
+                    &name.path,
+                    fp_core::hir::resolve::Namespace::Type,
+                );
+                let fp_core::hir::resolve::ResolutionResult::Found(mut path) = result else {
+                    return Ok(None);
+                };
+                let args = self.name_segment_args(name)?;
+                let skip = args.len().saturating_sub(path.segments.len());
+                for (segment, args) in path.segments.iter_mut().zip(args.into_iter().skip(skip)) {
+                    segment.args = args;
+                }
+                Ok(Some(path))
+            }
+            ast::ExprKind::Value(value) => match value.as_ref() {
+                ast::Value::Expr(inner) => self.resolved_type_path(inner),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
     }
 
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
@@ -113,8 +135,24 @@ impl AstToHirLowerer {
                         }
                         return Ok(path);
                     }
-                    fp_core::hir::resolve::ResolutionResult::NotFound(_)
-                    | fp_core::hir::resolve::ResolutionResult::Ambiguous => hir::Res::Error,
+                    fp_core::hir::resolve::ResolutionResult::NotFound(reason) => {
+                        self.add_error(
+                            fp_core::diagnostics::Diagnostic::error(format!(
+                                "unresolved {scope:?} path `{parsed}`: {reason:?}"
+                            ))
+                            .with_span(expr.span()),
+                        );
+                        hir::Res::Error
+                    }
+                    fp_core::hir::resolve::ResolutionResult::Ambiguous => {
+                        self.add_error(
+                            fp_core::diagnostics::Diagnostic::error(format!(
+                                "ambiguous {scope:?} path `{parsed}`"
+                            ))
+                            .with_span(expr.span()),
+                        );
+                        hir::Res::Error
+                    }
                 };
                 let segment_args = self.name_segment_args(name)?;
                 let names: Vec<&str> = name
