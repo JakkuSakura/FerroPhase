@@ -4,6 +4,7 @@ use fp_core::ast::package::PackageId;
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::program::AstProgram;
+use fp_core::hir::HirPackage;
 use fp_core::hir::HirProgram;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, LocalScope, Namespace, ResolutionResult,
@@ -22,12 +23,14 @@ pub struct LocalResolver {
     scopes: LocalScope,
     declaration_rules: DeclarationRules,
     resolution_rules: ResolutionRules,
+    hir_package: Rc<RefCell<HirPackage>>,
 }
 
 impl LocalResolver {
     pub fn new(
         ast_program: Rc<AstProgram>,
         hir_program: Rc<RefCell<HirProgram>>,
+        hir_package: Rc<RefCell<HirPackage>>,
         declaration_rules: DeclarationRules,
         resolution_rules: ResolutionRules,
     ) -> Self {
@@ -36,6 +39,7 @@ impl LocalResolver {
             scopes: LocalScope::new(),
             declaration_rules,
             resolution_rules,
+            hir_package,
         }
     }
 
@@ -53,6 +57,24 @@ impl LocalResolver {
         binding: Binding,
     ) -> DeclarationOutcome {
         self.scopes.declare(name, binding, self.declaration_rules)
+    }
+
+    pub fn declare_definition(
+        &mut self,
+        name: impl Into<fp_core::hir::Symbol>,
+        namespace: Namespace,
+        span: fp_core::span::Span,
+    ) -> fp_core::hir::DefId {
+        let id = self.hir_package.borrow_mut().allocate_anonymous_def_id();
+        let _ = self.declare(
+            name,
+            Binding::Definition {
+                target: id.clone(),
+                namespace,
+                span,
+            },
+        );
+        id
     }
 
     pub fn resolve_local(&self, name: &str, namespace: Namespace) -> ResolutionResult {

@@ -165,7 +165,7 @@ impl InPackageResolver {
     }
 
     fn item_def_id(&mut self) -> hir::DefId {
-        self.hir_package.borrow_mut().next_def_id()
+        self.hir_package.borrow_mut().allocate_anonymous_def_id()
     }
 
     pub fn declare_module(
@@ -247,16 +247,15 @@ impl InPackageResolver {
         namespace: Namespace,
         span: Span,
     ) -> hir::DefId {
-        let target = self.item_def_id();
-        let name: Symbol = name.into();
-        self.declare_module(
-            module,
+        let Some(module_id) = self.module_id(module) else {
+            return self.item_def_id();
+        };
+        let (target, _) = self.hir_package.borrow_mut().register_definition(
+            &module_id,
             name,
-            Binding::Definition {
-                target: target.clone(),
-                namespace,
-                span,
-            },
+            namespace,
+            span,
+            self.declaration_rules,
         );
         target
     }
@@ -268,17 +267,15 @@ impl InPackageResolver {
         match item.kind() {
             ItemKind::Module(child) => {
                 let child_path = module.with_segment(child.name.name.clone());
-                let module_def_id = self.item_def_id();
-                self.module_data_mut()
-                    .set_children(module_def_id.clone(), Vec::new());
-                self.declare_module(
-                    module,
+                let Some(parent_id) = self.module_id(module) else {
+                    return;
+                };
+                self.hir_package.borrow_mut().register_module(
+                    &parent_id,
                     &child.name,
-                    Binding::Module {
-                        target: child_path.clone(),
-                        def_id: module_def_id,
-                        span,
-                    },
+                    child_path,
+                    span,
+                    self.declaration_rules,
                 );
             }
             ItemKind::DefStruct(def) => {
@@ -319,6 +316,10 @@ impl InPackageResolver {
             }
             ItemKind::DeclFunction(def) => {
                 self.declare_definition(module, &def.name, Namespace::Value, span);
+            }
+            ItemKind::Impl(_) => {
+                let module_key = module.to_key();
+                self.hir_package.borrow_mut().impl_def_id(&module_key, span);
             }
             ItemKind::Macro(mac) => {
                 if let Some(name) = mac.declared_name.as_ref() {

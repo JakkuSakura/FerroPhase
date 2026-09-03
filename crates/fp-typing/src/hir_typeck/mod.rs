@@ -3572,28 +3572,28 @@ impl HirTypeChecker {
         // resolver's prebuilt leaf-name index. This preserves recovery when
         // the defining module was erased by an older HIR producer without
         // scanning or selecting arbitrary package-local definitions.
-        let recovered_def_id =
-            if !matches!(path.res, hir::Res::Def(_)) && path.segments.len() >= 2 {
-                let trait_name = &path.segments[path.segments.len() - 2].name;
-                // Use only the namespace-qualified export index. The old
-                // package-wide source-path scan selected an arbitrary same-
-                // named trait from an unrelated module and made resolution
-                // depend on fallback ordering.
-                let found = None::<hir::Res>;
-                match found {
-                    Some(hir::Res::Def(def_id))
-                        if self
-                            .program_rc()
-                            .item(def_id.clone())
-                            .is_some_and(|item| matches!(&item.kind, hir::ItemKind::Trait(_))) =>
-                    {
-                        Some(def_id)
-                    }
-                    _ => None,
+        let recovered_def_id = if !matches!(path.res, hir::Res::Def(_)) && path.segments.len() >= 2
+        {
+            let trait_name = &path.segments[path.segments.len() - 2].name;
+            // Use only the namespace-qualified export index. The old
+            // package-wide source-path scan selected an arbitrary same-
+            // named trait from an unrelated module and made resolution
+            // depend on fallback ordering.
+            let found = None::<hir::Res>;
+            match found {
+                Some(hir::Res::Def(def_id))
+                    if self
+                        .program_rc()
+                        .item(def_id.clone())
+                        .is_some_and(|item| matches!(&item.kind, hir::ItemKind::Trait(_))) =>
+                {
+                    Some(def_id)
                 }
-            } else {
-                None
-            };
+                _ => None,
+            }
+        } else {
+            None
+        };
         let def_id = match (&path.res, &recovered_def_id) {
             (hir::Res::Def(def_id), _) => def_id.clone(),
             (_, Some(def_id)) => def_id.clone(),

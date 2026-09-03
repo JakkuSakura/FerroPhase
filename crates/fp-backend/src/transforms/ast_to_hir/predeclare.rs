@@ -5,6 +5,7 @@ impl AstToHirLowerer {
         self.local_resolver = fp_resolve::local::LocalResolver::new(
             std::rc::Rc::clone(&self.workspace),
             self.hir_program.rc(),
+            std::rc::Rc::clone(&self.package_handle),
             self.workspace.provider().declaration_rules(),
             self.workspace.provider().resolution_rules(),
         );
@@ -146,12 +147,13 @@ impl AstToHirLowerer {
                         &def_enum.visibility,
                     );
                     if attrs_has_name(&def_enum.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id);
+                        self.unimplemented_type_def_ids.insert(def_id.clone());
                     }
 
                     for variant in &def_enum.value.variants {
-                        let variant_def_id = self.declared_or_next_def_id(
-                            &variant.name.name,
+                        let variant_def_id = self.package_mut().member_def_id(
+                            &def_id,
+                            variant.name.name.clone(),
                             fp_core::hir::resolve::Namespace::Value,
                         );
                         let variant_path = fp_core::ast::path::InPackagePath::new(vec![
@@ -211,9 +213,6 @@ impl AstToHirLowerer {
                         .insert(def_trait.name.name.clone(), def_trait.clone());
                     self.trait_def_modules
                         .insert(def_trait.name.name.clone(), self.module_path.clone());
-                    for trait_item in &def_trait.items {
-                        self.next_def_id();
-                    }
                 }
                 ItemKind::DefType(def_type) => {
                     // Every Rust type alias has a definition identity, even
@@ -221,7 +220,10 @@ impl AstToHirLowerer {
                     // table for substitution, but also publish the normal
                     // type binding so dependent crates resolve it through
                     // the HIR definition graph like rustc does.
-                    let def_id = self.next_def_id();
+                    let def_id = self.declared_or_next_def_id(
+                        &def_type.name.name,
+                        fp_core::hir::resolve::Namespace::Type,
+                    );
                     self.register_type_def(
                         &def_type.name.name,
                         def_id.clone(),
@@ -242,7 +244,11 @@ impl AstToHirLowerer {
                             }
                             MaterializedTypeAlias::Enum(enum_ty) => {
                                 for variant in &enum_ty.variants {
-                                    let variant_def_id = self.next_def_id();
+                                    let variant_def_id = self.package_mut().member_def_id(
+                                        &def_id,
+                                        variant.name.name.clone(),
+                                        fp_core::hir::resolve::Namespace::Value,
+                                    );
 
                                     let variant_path =
                                         fp_core::ast::path::InPackagePath::new(vec![
@@ -299,26 +305,11 @@ impl AstToHirLowerer {
                         // do for an ordinary module-qualified alias RHS.
                         let defer = false;
                         if !defer {
-                            let def_id = self.next_def_id();
                             self.register_type_def(
                                 &def_type.name.name,
                                 def_id.clone(),
                                 &def_type.visibility,
                             );
-                            // A type alias whose RHS is a const block can
-                            // evaluate to a concrete ADT. Bind the alias in
-                            // the value namespace too so a following
-                            // `Alias { ... }` literal carries this DefId into
-                            // type checking and MIR lowering; its concrete
-                            // shape still comes solely from the checked
-                            // const-block result.
-                            if comptime_type_alias_rhs(&def_type.value).is_some() {
-                                self.register_value_def(
-                                    &def_type.name.name,
-                                    def_id.clone(),
-                                    &def_type.visibility,
-                                );
-                            }
                             let _ = self.transform_type_to_hir(&def_type.value)?;
                         }
                     }
@@ -338,7 +329,13 @@ impl AstToHirLowerer {
                     // is safe to fully re-run later, unmodified.
                     let defer = false;
                     if !defer {
-                        let impl_def_id = self.next_def_id();
+                        let module_key = self.module_path.to_key();
+                        let existing = self
+                            .package()
+                            .registered_impl_def_id(&module_key, item.span());
+                        let impl_def_id = existing.unwrap_or_else(|| {
+                            self.package_mut().impl_def_id(&module_key, item.span())
+                        });
                         // A self-type can be permanently unresolvable — not a
                         // timing issue an import-order retry would fix, but a
                         // genuine dead end (e.g. its target type lives in a
@@ -350,7 +347,11 @@ impl AstToHirLowerer {
                         // already applied at the file level (parse errors).
                         self.push_type_scope();
                         for (index, param) in impl_block.generics_params.iter().enumerate() {
-                            let def_id = self.next_def_id();
+                            let def_id = self.package_mut().member_def_id(
+                                &impl_def_id,
+                                param.name.name.clone(),
+                                fp_core::hir::resolve::Namespace::Type,
+                            );
                             self.impl_generic_param_ids
                                 .insert((impl_def_id.clone(), index), def_id.clone());
                             self.register_type_generic(&param.name.name, def_id);
@@ -377,33 +378,28 @@ impl AstToHirLowerer {
                         for impl_item in &impl_block.items {
                             match impl_item.kind() {
                                 ast::ItemKind::DefFunction(function) => {
-                                    let def_id = self.next_def_id();
+                                    let def_id = self.package_mut().member_def_id(
+                                        &impl_def_id,
+                                        function.name.name.clone(),
+                                        fp_core::hir::resolve::Namespace::Value,
+                                    );
                                     self.impl_items.insert(
                                         (impl_key.clone(), function.name.name.clone().into()),
                                         def_id,
                                     );
                                 }
                                 ast::ItemKind::DefConst(constant) => {
-                                    let def_id = self.next_def_id();
+                                    let def_id = self.package_mut().member_def_id(
+                                        &impl_def_id,
+                                        constant.name.name.clone(),
+                                        fp_core::hir::resolve::Namespace::Value,
+                                    );
                                     self.impl_items.insert(
                                         (impl_key.clone(), constant.name.name.clone().into()),
                                         def_id,
                                     );
                                 }
                                 _ => continue,
-                            }
-                        }
-                    } else {
-                        // Collection still assigns stable identities to the
-                        // impl and its members. Header resolution is owned by
-                        // the AST resolver before lowering.
-                        self.next_def_id();
-                        for impl_item in &impl_block.items {
-                            if matches!(
-                                impl_item.kind(),
-                                ast::ItemKind::DefFunction(_) | ast::ItemKind::DefConst(_)
-                            ) {
-                                self.next_def_id();
                             }
                         }
                     }

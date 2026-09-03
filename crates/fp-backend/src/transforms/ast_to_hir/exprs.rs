@@ -447,20 +447,19 @@ impl AstToHirLowerer {
 
     /// Generate next definition ID
     pub(super) fn next_def_id(&mut self) -> hir::DefId {
-        self.package_mut().next_def_id()
+        self.package_mut().allocate_anonymous_def_id()
     }
 
-    // transform_function moved to items.rs
-
-    // transform_params moved to items.rs
-
-    // transform_generics moved to items.rs
-
-    // wrap_ref_type moved to items.rs
-
-    // make_self_param moved to items.rs
-
-    // transform_impl moved to items.rs
+    pub(super) fn member_def_id(
+        &mut self,
+        name: impl Into<hir::Symbol>,
+        namespace: fp_core::hir::resolve::Namespace,
+    ) -> hir::DefId {
+        let Some(owner) = self.current_owner.clone() else {
+            return self.package_mut().allocate_anonymous_def_id();
+        };
+        self.package_mut().member_def_id(&owner, name, namespace)
+    }
 
     /// Transform AST value to HIR expression kind
     pub(super) fn transform_value_to_hir(&mut self, value: &ast::BValue) -> Result<hir::ExprKind> {
@@ -1122,9 +1121,8 @@ impl AstToHirLowerer {
                 return Err(eyre::eyre!("inclusive range requires an end bound").into());
             }
         };
-        let path_expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
-            ast::Ident::new(name),
-        )));
+        let path_expr =
+            ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ast::Ident::new(name))));
         let path = self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Type)?;
         let fields = fields
             .into_iter()

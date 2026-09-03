@@ -2753,13 +2753,11 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn param_names_for_callee(&mut self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
         match &path.res {
-            hir::Res::Def(def_id) => {
-                self.param_names_for_def_id(def_id.clone()).or_else(|| {
-                    self.lowering
-                        .ensure_generic_method_def(def_id.clone())
-                        .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
-                })
-            }
+            hir::Res::Def(def_id) => self.param_names_for_def_id(def_id.clone()).or_else(|| {
+                self.lowering
+                    .ensure_generic_method_def(def_id.clone())
+                    .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
+            }),
             _ => None,
         }
     }

@@ -19,13 +19,10 @@ pub(super) fn should_drop_const_type_item(item: &ast::Item) -> bool {
     false
 }
 
-/// A type alias's RHS that needs compile-time evaluation to produce a
-/// concrete type (`type X = const { .. };` or the bare-expression form
-/// `type X = EXPR;`) — the one case `materialized_type_alias` returns
-/// `None` for. Returns the inner expression to check/comptime-evaluate,
-/// unwrapping an explicit `const { .. }` wrapper (redundant sugar in this
-/// position, per Part B) so both syntaxes lower identically.
-pub(super) fn comptime_type_alias_rhs(ty: &ast::Ty) -> Option<&ast::Expr> {
+/// Returns the expression represented by comptime-produced type syntax.
+/// Ordinary path aliases are intentionally excluded; their identity and
+/// namespace are handled as regular type declarations.
+pub(super) fn comptime_type_expr(ty: &ast::Ty) -> Option<&ast::Expr> {
     match ty {
         ast::Ty::ConstBlock(const_block) => Some(const_block.expr.as_ref()),
         // A name/path expression is an ordinary transparent type alias

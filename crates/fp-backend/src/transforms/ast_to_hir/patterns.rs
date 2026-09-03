@@ -217,7 +217,7 @@ impl AstToHirLowerer {
                         kind: hir::PatKind::Struct(
                             hir::Path {
                                 segments: Vec::new(),
-                            res: hir::Res::Error,
+                                res: hir::Res::Error,
                             },
                             fields,
                             structural.has_rest,

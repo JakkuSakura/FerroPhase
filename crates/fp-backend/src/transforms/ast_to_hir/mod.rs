@@ -369,7 +369,7 @@ impl AstToHirLowerer {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            package_handle,
+            package_handle: Rc::clone(&package_handle),
             program_def_map: HashMap::new(),
             local_dispatch_items: Vec::new(),
             suppress_global_registration_depth: 0,
@@ -382,6 +382,7 @@ impl AstToHirLowerer {
             local_resolver: LocalResolver::new(
                 Rc::clone(&workspace),
                 hir_program.rc(),
+                Rc::clone(&package_handle),
                 workspace.provider().declaration_rules(),
                 workspace.provider().resolution_rules(),
             ),
@@ -389,7 +390,9 @@ impl AstToHirLowerer {
             package_resolver: None,
             diagnostics: DiagnosticManager::new(),
         };
-        lowerer.hir_program.add_package(lowerer.hir_package_handle());
+        lowerer
+            .hir_program
+            .add_package(lowerer.hir_package_handle());
         lowerer
     }
 
@@ -437,6 +440,7 @@ impl AstToHirLowerer {
         self.local_resolver = LocalResolver::new(
             Rc::clone(&self.workspace),
             self.hir_program.rc(),
+            Rc::clone(&self.package_handle),
             self.workspace.provider().declaration_rules(),
             self.workspace.provider().resolution_rules(),
         );
@@ -1056,13 +1060,16 @@ impl AstToHirLowerer {
                 Rc::new(RefCell::new(resolver_source)),
             );
         }
-        let resolver = Rc::new(RefCell::new(InPackageResolver::new(
-            self.hir_package_handle(),
-            self.hir_program.rc(),
-            self.workspace.provider().declaration_rules(),
-            self.workspace.provider().resolution_rules(),
-            Rc::clone(&self.workspace),
-        ).with_cfg_filter(self.cfg_filter.clone())));
+        let resolver = Rc::new(RefCell::new(
+            InPackageResolver::new(
+                self.hir_package_handle(),
+                self.hir_program.rc(),
+                self.workspace.provider().declaration_rules(),
+                self.workspace.provider().resolution_rules(),
+                Rc::clone(&self.workspace),
+            )
+            .with_cfg_filter(self.cfg_filter.clone()),
+        ));
         resolver.borrow_mut().resolve_package(&self.package_id)?;
         self.package_resolver = Some(Rc::clone(&resolver));
         let root_path = fp_core::ast::path::InPackagePath::new(Vec::new());
@@ -1455,7 +1462,8 @@ impl AstToHirLowerer {
             }
             ItemKind::Import(import) => Ok(()),
             ItemKind::DefType(def_type) => {
-                if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
+                let hir_item = self.materialize_def_type_item(item, def_type)?;
+                if let Some(hir_item) = hir_item {
                     self.record_source_path(program, item, &hir_item.def_id);
                     program
                         .def_map
@@ -1571,9 +1579,10 @@ impl AstToHirLowerer {
                 Ok(hir::StmtKind::Expr(unit_expr))
             }
             ItemKind::DefType(def_type) => {
-                if let Some(hir_item) = self.materialize_def_type_item(item.as_ref(), def_type)? {
+                let hir_item = self.materialize_def_type_item(item.as_ref(), def_type)?;
+                if let Some(hir_item) = hir_item {
                     Ok(hir::StmtKind::Item(hir_item))
-                } else if comptime_type_alias_rhs(&def_type.value).is_some() {
+                } else if comptime_type_expr(&def_type.value).is_some() {
                     // `type X = const { .. };` / `type X = EXPR;` (where
                     // `EXPR` needs compile-time evaluation to produce a
                     // concrete type, e.g. a `TypeBuilder`-constructed
@@ -1717,10 +1726,17 @@ impl AstToHirLowerer {
             | ItemKind::DeclType(_) => fp_core::hir::resolve::Namespace::Type,
             _ => fp_core::hir::resolve::Namespace::Value,
         };
-        let def_id = item
-            .get_ident()
-            .and_then(|ident| self.declared_def_id(ident.as_str(), namespace))
-            .unwrap_or_else(|| self.next_def_id());
+        let def_id = if matches!(item.kind(), ItemKind::Impl(_)) {
+            let module_key = self.module_path.to_key();
+            let existing = self
+                .package()
+                .registered_impl_def_id(&module_key, item.span());
+            existing.unwrap_or_else(|| self.package_mut().impl_def_id(&module_key, item.span()))
+        } else {
+            item.get_ident()
+                .and_then(|ident| self.declared_def_id(ident.as_str(), namespace))
+                .unwrap_or_else(|| self.next_def_id())
+        };
         let result = self.with_owner(def_id.clone(), |this| {
             this.transform_item_to_hir_inner(item, def_id)
         });
@@ -1874,16 +1890,20 @@ impl AstToHirLowerer {
                             self.module_path.join(&variant_path.segments).to_key()
                         };
 
-                        let variant_def_id = if let Some(def_id) =
-                            self.enum_variant_def_ids.get(&fully_qualified).cloned()
-                        {
-                            def_id
-                        } else {
-                            let new_id = self.next_def_id();
-                            self.enum_variant_def_ids
-                                .insert(fully_qualified.clone(), new_id.clone());
-                            new_id
-                        };
+                        let variant_def_id = self
+                            .enum_variant_def_ids
+                            .get(&fully_qualified)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                let new_id = self.package_mut().member_def_id(
+                                    &def_id,
+                                    variant.name.name.clone(),
+                                    fp_core::hir::resolve::Namespace::Value,
+                                );
+                                self.enum_variant_def_ids
+                                    .insert(fully_qualified.clone(), new_id.clone());
+                                new_id
+                            });
 
                         self.register_value_def(
                             &variant.name.name,
@@ -2009,6 +2029,22 @@ impl AstToHirLowerer {
                 let hir_impl = self.transform_impl(impl_block)?;
                 (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
             }
+            ItemKind::DeclType(decl_type) => {
+                self.register_type_def(
+                    &decl_type.name.name,
+                    def_id.clone(),
+                    &ast::Visibility::Public,
+                );
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name: hir::Symbol::new(decl_type.name.name.clone()),
+                        fields: Vec::new(),
+                        generics: hir::Generics::default(),
+                        repr: attrs_repr(&[]),
+                    }),
+                    hir::Visibility::Public,
+                )
+            }
             ItemKind::DefType(def_type) => {
                 let unit_expr = hir::Expr {
                     hir_id: self.next_id(),
@@ -2096,12 +2132,29 @@ impl AstToHirLowerer {
         })
     }
 
+    pub(super) fn materialize_def_type_item(
+        &mut self,
+        item: &ast::Item,
+        def_type: &ast::ItemDefType,
+    ) -> Result<Option<hir::Item>> {
+        let def_id = self
+            .declared_def_id(
+                def_type.name.as_str(),
+                fp_core::hir::resolve::Namespace::Type,
+            )
+            .unwrap_or_else(|| self.next_def_id());
+        self.with_owner(def_id.clone(), |this| {
+            this.materialize_def_type_item_inner(item, def_type, def_id)
+        })
+    }
+
     fn transform_decl_function(
         &mut self,
         item: &ast::Item,
         decl: &ast::ItemDeclFunction,
     ) -> Result<hir::Item> {
-        let def_id = self.next_def_id();
+        let def_id =
+            self.declared_or_next_def_id(&decl.name.name, fp_core::hir::resolve::Namespace::Value);
         self.with_owner(def_id.clone(), |this| {
             let hir_id = this.next_id();
             let span = this.create_span(1);
@@ -2367,9 +2420,9 @@ impl AstToHirLowerer {
                 // such as `impl<T> Trait for Vec<T>` indistinguishable from
                 // an unresolved path to the HIR impl index, so it cannot be
                 // placed in rustc's ADT dispatch bucket.
-                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(
-                    ast::Ident::new("Vec"),
-                )));
+                let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Ident(ast::Ident::new(
+                    "Vec",
+                ))));
                 let mut path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
                 if let Some(last) = path.segments.last_mut() {
                     last.args = Some(args);
@@ -3211,17 +3264,6 @@ impl AstToHirLowerer {
         }
     }
 
-    pub(super) fn materialize_def_type_item(
-        &mut self,
-        item: &ast::Item,
-        def_type: &ast::ItemDefType,
-    ) -> Result<Option<hir::Item>> {
-        let def_id = self.next_def_id();
-        self.with_owner(def_id.clone(), |this| {
-            this.materialize_def_type_item_inner(item, def_type, def_id)
-        })
-    }
-
     pub(super) fn materialize_def_type_item_inner(
         &mut self,
         item: &ast::Item,
@@ -3413,18 +3455,14 @@ impl AstToHirLowerer {
                     self.map_visibility(&def_type.visibility),
                 )
             }
-            None if comptime_type_alias_rhs(&def_type.value).is_some() => {
-                // A const-block alias is an expression-backed local shape,
-                // not an ordinary nominal type definition.  Its existing
-                // AST-side evaluation path remains authoritative.
+            None if comptime_type_expr(&def_type.value).is_some() => {
                 return Ok(None);
             }
             None => {
-                // Transparent aliases still have a rustc definition identity
-                // and must be present in HIR so exports from std/core/alloc
-                // resolve by DefId.  Type checking may inspect the target;
-                // resolution must not replace the alias with a spelling-based
-                // special case.
+                // Transparent and const-block aliases retain their own
+                // definition identity. Type checking may defer evaluating
+                // the target, but resolution must still see a real HIR type
+                // item instead of a missing or value-shaped definition.
                 let target = self.transform_type_to_hir(&def_type.value)?;
                 (
                     hir::ItemKind::TypeAlias(hir::TypeAlias {

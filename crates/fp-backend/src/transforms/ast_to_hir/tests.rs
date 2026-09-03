@@ -131,7 +131,9 @@ fn package_from_items_with_paths_as(
             is_external: false,
         };
         insert_item(&mut child, tail, item);
-        module.items.push(ast::Item::from(ast::ItemKind::Module(child)));
+        module
+            .items
+            .push(ast::Item::from(ast::ItemKind::Module(child)));
     }
     let mut root = ast::Module {
         attrs: Vec::new(),
@@ -422,6 +424,15 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
         "`type X = const {{ ... }};` must not synthesize a fake HIR item: {:?}",
         program.items
     );
+    let root = fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test"));
+    assert!(matches!(
+        generator
+            .hir_package_handle()
+            .borrow()
+            .module_data
+            .resolve_child(&root, "X", fp_core::hir::resolve::Namespace::Value),
+        fp_core::hir::resolve::ResolutionResult::NotFound(_)
+    ));
     Ok(())
 }
 

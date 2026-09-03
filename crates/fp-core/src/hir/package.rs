@@ -55,6 +55,10 @@ pub struct HirPackage {
     /// reserved for the package-root `OwnerId` (see `OwnerId::root`), so a
     /// real item can never mint a `DefId` that collides with it.
     pub next_def_id: u32,
+    /// Stable identities for named members created while lowering an owning
+    /// item (impl/trait members and similar nested declarations).
+    pub member_def_ids: HashMap<(DefId, Symbol, crate::hir::resolve::Namespace), DefId>,
+    pub impl_def_ids: HashMap<(String, crate::span::Span), DefId>,
     /// Identity-based module namespace, keyed by module definition id.
     pub module_data: crate::hir::resolve::ModuleData,
     /// Prelude modules participating in this package's resolved namespace.
@@ -445,6 +449,8 @@ impl HirPackage {
             items: Vec::new(),
             def_map: HashMap::new(),
             next_def_id: 1,
+            member_def_ids: HashMap::new(),
+            impl_def_ids: HashMap::new(),
             module_data: crate::hir::resolve::ModuleData::new(),
             prelude_modules: Vec::new(),
             source_paths: HashMap::new(),
@@ -482,10 +488,102 @@ impl HirPackage {
         }
     }
 
-    pub fn next_def_id(&mut self) -> DefId {
+    /// Allocates an identity for a compiler-generated HIR entity. Source
+    /// declarations should use `register_definition` so allocation and
+    /// namespace registration happen together.
+    pub fn allocate_anonymous_def_id(&mut self) -> DefId {
         let id = self.next_def_id;
         self.next_def_id += 1;
         DefId::new(self.id.clone(), id)
+    }
+
+    pub fn member_def_id(
+        &mut self,
+        owner: &DefId,
+        name: impl Into<Symbol>,
+        namespace: resolve::Namespace,
+    ) -> DefId {
+        let key = (owner.clone(), name.into(), namespace);
+        if let Some(existing) = self.member_def_ids.get(&key) {
+            return existing.clone();
+        }
+        let id = self.allocate_anonymous_def_id();
+        self.member_def_ids.insert(key, id.clone());
+        id
+    }
+
+    pub fn impl_def_id(&mut self, module: &str, span: crate::span::Span) -> DefId {
+        let key = (module.to_owned(), span);
+        if let Some(existing) = self.impl_def_ids.get(&key) {
+            return existing.clone();
+        }
+        let id = self.allocate_anonymous_def_id();
+        self.impl_def_ids.insert(key, id.clone());
+        id
+    }
+
+    pub fn registered_impl_def_id(&self, module: &str, span: crate::span::Span) -> Option<DefId> {
+        self.impl_def_ids.get(&(module.to_owned(), span)).cloned()
+    }
+
+    /// Allocates and registers a named source definition atomically.
+    pub fn register_definition(
+        &mut self,
+        module: &DefId,
+        name: impl Into<Symbol>,
+        namespace: resolve::Namespace,
+        span: crate::span::Span,
+        rules: resolve::DeclarationRules,
+    ) -> (DefId, resolve::DeclarationOutcome) {
+        let name: Symbol = name.into();
+        if let resolve::ResolutionResult::Found(Res::Def(existing)) = self
+            .module_data
+            .resolve_child(module, name.as_str(), namespace)
+        {
+            return (existing, resolve::DeclarationOutcome::Conflict);
+        }
+        let target = self.allocate_anonymous_def_id();
+        let outcome = self.module_data.declare(
+            module,
+            name,
+            resolve::Binding::Definition {
+                target: target.clone(),
+                namespace,
+                span,
+            },
+            rules,
+        );
+        (target, outcome)
+    }
+
+    pub fn register_module(
+        &mut self,
+        parent: &DefId,
+        name: impl Into<Symbol>,
+        target_path: crate::ast::path::InPackagePath,
+        span: crate::span::Span,
+        rules: resolve::DeclarationRules,
+    ) -> (DefId, resolve::DeclarationOutcome) {
+        let name: Symbol = name.into();
+        if let resolve::ResolutionResult::Found(Res::Module(existing)) = self
+            .module_data
+            .resolve_child(parent, name.as_str(), resolve::Namespace::Type)
+        {
+            return (existing, resolve::DeclarationOutcome::Conflict);
+        }
+        let target = self.allocate_anonymous_def_id();
+        self.module_data.set_children(target.clone(), Vec::new());
+        let outcome = self.module_data.declare(
+            parent,
+            name,
+            resolve::Binding::Module {
+                target: target_path,
+                def_id: target.clone(),
+                span,
+            },
+            rules,
+        );
+        (target, outcome)
     }
 
     /// Registers `item`'s derived-index entries (`struct_defs_by_name`,

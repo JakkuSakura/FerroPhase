@@ -255,17 +255,13 @@ impl AstToHirLowerer {
                                         let expr = ast::Expr::new(ast::ExprKind::Name(
                                             ast::Name::Ident(struct_ty.name.clone()),
                                         ));
-                                        self.ast_expr_to_hir_path(
-                                            &expr,
-                                            PathResolutionScope::Type,
-                                        )?
+                                        self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
                                     }
                                     ast::Ty::Expr(inner_expr) => match inner_expr.kind() {
-                                        ast::ExprKind::Name(name) => self
-                                            .ast_expr_to_hir_path(
-                                                inner_expr,
-                                                PathResolutionScope::Type,
-                                            )?,
+                                        ast::ExprKind::Name(name) => self.ast_expr_to_hir_path(
+                                            inner_expr,
+                                            PathResolutionScope::Type,
+                                        )?,
                                         _ => {
                                             self.add_error(
                                                 Diagnostic::error(

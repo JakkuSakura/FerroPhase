@@ -139,7 +139,9 @@ pub fn discharge(
 /// `omega`'s unit tests.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use fp_core::hir::{BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, Res};
+    use fp_core::hir::{
+        BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, Res,
+    };
     use fp_core::span::Span;
 
     pub fn lit_int(v: i64) -> Expr {

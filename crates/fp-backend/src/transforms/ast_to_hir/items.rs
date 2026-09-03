@@ -192,6 +192,15 @@ impl AstToHirLowerer {
                         .get(&(owner.clone(), index))
                         .cloned()
                 })
+                .or_else(|| {
+                    self.current_owner.as_ref().map(|owner| {
+                        self.package_mut().member_def_id(
+                            owner,
+                            param.name.name.clone(),
+                            fp_core::hir::resolve::Namespace::Type,
+                        )
+                    })
+                })
                 .unwrap_or_else(|| self.next_def_id());
             self.register_type_generic(&param.name.name, def_id.clone());
             // A generic parameter's own trait bounds (`F: FnOnce() -> R`,
@@ -496,7 +505,10 @@ impl AstToHirLowerer {
                     ast::ItemKind::DefType(type_item) => {
                         let ty = self.transform_type_to_hir(&type_item.value)?;
                         items.push(hir::ImplItem {
-                            def_id: self.next_def_id(),
+                            def_id: self.member_def_id(
+                                type_item.name.clone(),
+                                fp_core::hir::resolve::Namespace::Type,
+                            ),
                             hir_id: self.next_id(),
                             name: type_item.name.clone().into(),
                             kind: hir::ImplItemKind::AssocType(hir::AssocType {
@@ -560,10 +572,8 @@ impl AstToHirLowerer {
                         let res = match trait_generic_args.get(index) {
                             Some(ast::Ty::Expr(expr)) => match expr.kind() {
                                 ast::ExprKind::Name(name) => {
-                                    let path = self.ast_expr_to_hir_path(
-                                        expr,
-                                        PathResolutionScope::Type,
-                                    )?;
+                                    let path =
+                                        self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
                                     Some(path.res)
                                 }
                                 _ => None,
@@ -614,7 +624,10 @@ impl AstToHirLowerer {
                             });
                             if let Some(trait_method_def_id) = trait_method_def_id {}
                             items.push(hir::ImplItem {
-                                def_id: self.next_def_id(),
+                                def_id: self.member_def_id(
+                                    method.sig.name.clone(),
+                                    fp_core::hir::resolve::Namespace::Value,
+                                ),
                                 hir_id: self.next_id(),
                                 name: method.sig.name.clone(),
                                 kind: hir::ImplItemKind::Method(method),
@@ -683,7 +696,10 @@ impl AstToHirLowerer {
                         // reads when a concrete impl doesn't redeclare it.
                         let function =
                             self.transform_function_with_body(func, Some(self_ty.clone()), true)?;
-                        let method_def_id = self.next_def_id();
+                        let method_def_id = self.member_def_id(
+                            func.name.name.clone(),
+                            fp_core::hir::resolve::Namespace::Value,
+                        );
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),
@@ -697,7 +713,10 @@ impl AstToHirLowerer {
                         // fallback signature source.
                         let function =
                             self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
-                        let method_def_id = self.next_def_id();
+                        let method_def_id = self.member_def_id(
+                            func_decl.name.name.clone(),
+                            fp_core::hir::resolve::Namespace::Value,
+                        );
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),
@@ -722,7 +741,10 @@ impl AstToHirLowerer {
                             })
                             .collect();
                         items.push(hir::TraitItem {
-                            def_id: self.next_def_id(),
+                            def_id: self.member_def_id(
+                                decl_type.name.name.clone(),
+                                fp_core::hir::resolve::Namespace::Type,
+                            ),
                             hir_id: self.next_id(),
                             name: decl_type.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocType(hir::TraitAssocType {
@@ -734,7 +756,10 @@ impl AstToHirLowerer {
                     ast::ItemKind::DefConst(const_item) => {
                         let konst = self.transform_const_def(const_item)?;
                         items.push(hir::TraitItem {
-                            def_id: self.next_def_id(),
+                            def_id: self.member_def_id(
+                                const_item.name.name.clone(),
+                                fp_core::hir::resolve::Namespace::Value,
+                            ),
                             hir_id: self.next_id(),
                             name: const_item.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {
@@ -747,7 +772,10 @@ impl AstToHirLowerer {
                     ast::ItemKind::DeclConst(const_item) => {
                         let ty = self.transform_type_to_hir(&const_item.ty)?;
                         items.push(hir::TraitItem {
-                            def_id: self.next_def_id(),
+                            def_id: self.member_def_id(
+                                const_item.name.name.clone(),
+                                fp_core::hir::resolve::Namespace::Value,
+                            ),
                             hir_id: self.next_id(),
                             name: const_item.name.name.clone().into(),
                             kind: hir::TraitItemKind::AssocConst(hir::TraitAssocConst {
