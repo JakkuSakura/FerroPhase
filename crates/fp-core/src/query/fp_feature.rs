@@ -406,7 +406,7 @@ fn object_name_from_name(name: &Name) -> ObjectName {
     ObjectName::new(
         path.segments
             .into_iter()
-            .map(sql_ident_from_ident)
+            .map(|segment| sql_ident_from_ident(segment.ident))
             .collect(),
     )
 }
@@ -486,13 +486,13 @@ fn sql_expr_from_name(name: &Name) -> Option<SqlExpr> {
     let path = name.to_path();
     if path.segments.len() == 1 {
         Some(SqlExpr::Identifier(sql_ident_from_ident(
-            path.segments.first()?.clone(),
+            path.segments.first()?.ident.clone(),
         )))
     } else {
         Some(SqlExpr::CompoundIdentifier(
             path.segments
                 .into_iter()
-                .map(sql_ident_from_ident)
+                .map(|segment| sql_ident_from_ident(segment.ident))
                 .collect(),
         ))
     }
@@ -595,7 +595,6 @@ fn name_tail(name: &Name) -> &str {
     match name {
         Name::Ident(ident) => ident.as_str(),
         Name::Path(path) => path.last().as_str(),
-        Name::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()).unwrap_or(""),
     }
 }
 

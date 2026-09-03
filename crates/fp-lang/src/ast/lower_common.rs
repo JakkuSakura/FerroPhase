@@ -1,7 +1,7 @@
 use crate::lexer::lexeme::Lexeme;
 use crate::lexer::tokenizer::Span as LexSpan;
 use fp_core::ast::path::PathPrefix;
-use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, ParameterPathSegment};
+use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, PathSegment};
 use fp_core::span::Span;
 
 pub(crate) fn split_path_prefix(
@@ -45,9 +45,9 @@ pub(crate) fn split_path_prefix(
 }
 
 pub(crate) fn split_parameter_path_prefix(
-    mut segments: Vec<ParameterPathSegment>,
+    mut segments: Vec<PathSegment>,
     saw_root: bool,
-) -> (PathPrefix, Vec<ParameterPathSegment>) {
+) -> (PathPrefix, Vec<PathSegment>) {
     if saw_root {
         return (PathPrefix::Root, segments);
     }

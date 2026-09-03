@@ -65,7 +65,9 @@ impl KotlinEmitter {
                 // uses for the pattern case.
                 if let Some(enum_name) = enum_name_from_ty(None) {
                     let variant_name = match name {
-                        fp_core::ast::Name::Path(p) => p.segments.last().map(|s| s.name.clone()),
+                        fp_core::ast::Name::Path(p) => {
+                            p.segments.last().map(|s| s.ident.name.clone())
+                        }
                         fp_core::ast::Name::Ident(id) => Some(id.name.clone()),
                         _ => None,
                     };
@@ -1066,7 +1068,7 @@ pub(super) fn enum_name_from_ty(ty: Option<&Ty>) -> Option<String> {
         Ty::Enum(en) => Some(en.name.name.clone()),
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Name(fp_core::ast::Name::Path(p)) => {
-                p.segments.last().map(|s| s.name.clone())
+                p.segments.last().map(|s| s.ident.name.clone())
             }
             ExprKind::Name(fp_core::ast::Name::Ident(id)) => Some(id.name.clone()),
             _ => None,
@@ -1093,7 +1095,8 @@ pub(super) fn qualified_name_with_self(
             }
         }
         fp_core::ast::Name::Path(p) => {
-            let mut segments: Vec<String> = p.segments.iter().map(|s| s.name.clone()).collect();
+            let mut segments: Vec<String> =
+                p.segments.iter().map(|s| s.ident.name.clone()).collect();
             if let (Some(first), Some(sn)) = (segments.first_mut(), self_name) {
                 if first == "Self" {
                     *first = sn.to_string();

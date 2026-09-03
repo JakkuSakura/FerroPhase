@@ -220,7 +220,7 @@ impl ClosureLowering {
         let ast::Ty::Expr(expr) = ty else {
             return None;
         };
-        let ast::ExprKind::Name(ast::Name::ParameterPath(path)) = expr.kind() else {
+        let ast::ExprKind::Name(ast::Name::Path(path)) = expr.kind() else {
             return None;
         };
         path.segments.last()?.args.get(index).cloned()

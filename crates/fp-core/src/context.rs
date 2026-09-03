@@ -137,7 +137,7 @@ impl ScopedContext {
         }
 
         if path.segments.len() == 1 {
-            if let Some(runtime_value) = self.get_runtime_value(&path.segments[0]) {
+            if let Some(runtime_value) = self.get_runtime_value(&path.segments[0].ident) {
                 return Some(runtime_value);
             }
         }
@@ -236,11 +236,11 @@ impl SharedScopedContext {
             return Some(this);
         }
         for seg in &key.segments {
-            if seg.is_root() {
+            if seg.ident.is_root() {
                 this = this.root().clone();
                 continue;
             }
-            let v = this.childs.get_cloned(seg)?;
+            let v = this.childs.get_cloned(&seg.ident)?;
             this = Self(v);
         }
 
@@ -259,7 +259,7 @@ impl SharedScopedContext {
         if key.segments.len() == 1 {
             // TODO: when calling function, use context of its own
             // if access_local {
-            if let Some(value) = self.storages.get_cloned(&key.segments[0]) {
+            if let Some(value) = self.storages.get_cloned(&key.segments[0].ident) {
                 return Some(value);
             }
             // }
@@ -269,8 +269,11 @@ impl SharedScopedContext {
         }
 
         let (paths, key) = key.segments.split_at(key.segments.len() - 1);
-        let this = self.get_module_recursive(Path::plain(paths.to_owned()))?;
-        this.storages.get_cloned(&key[0])
+        let this = self.get_module_recursive(Path::new(
+            crate::ast::path::PathPrefix::Plain,
+            paths.to_vec(),
+        ))?;
+        this.storages.get_cloned(&key[0].ident)
     }
     pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let storage = self.get_storage(key, true)?;

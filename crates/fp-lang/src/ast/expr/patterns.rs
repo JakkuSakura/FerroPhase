@@ -304,7 +304,7 @@ pub(super) fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> 
             .to_path()
             .segments
             .last()
-            .cloned()
+            .map(|segment| segment.ident.clone())
             .or_else(|| name.as_ident().cloned())
             .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
         return Ok(Pattern::new(PatternKind::Struct(

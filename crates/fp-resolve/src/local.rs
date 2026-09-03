@@ -126,7 +126,9 @@ impl LocalResolver {
             path.segments
                 .iter()
                 .cloned()
-                .map(fp_core::ast::Ident::new)
+                .map(|segment| {
+                    fp_core::ast::PathSegment::new(fp_core::ast::Ident::new(segment), Vec::new())
+                })
                 .collect(),
         );
         self.resolver

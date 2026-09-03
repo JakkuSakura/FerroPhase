@@ -189,7 +189,7 @@ impl LangItemRegistry {
                     .path
                     .segments
                     .iter()
-                    .map(|seg| seg.name.as_str())
+                    .map(|seg| seg.ident.as_str())
                     .collect::<Vec<_>>()
                     == segments
             })
@@ -250,12 +250,20 @@ pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     let registry = try_get_threadlocal_lang_items()?;
     let name_segments: Vec<&str> = match name {
         Name::Ident(ident) => vec![ident.name.as_str()],
-        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
+        Name::Path(path) => path
+            .segments
+            .iter()
+            .map(|seg| seg.ident.name.as_str())
+            .collect(),
         _ => return None,
     };
 
     for (name, path) in registry.items {
-        let path_segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+        let path_segments: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|seg| seg.ident.name.as_str())
+            .collect();
         if path_segments == name_segments {
             return Some(name);
         }

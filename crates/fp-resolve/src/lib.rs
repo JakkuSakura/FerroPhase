@@ -380,8 +380,11 @@ impl Resolver {
             } else {
                 Namespace::Type
             };
-            let result =
-                hir_program.resolve_module_child(&module, segment.name.as_str(), segment_namespace);
+            let result = hir_program.resolve_module_child(
+                &module,
+                segment.ident.as_str(),
+                segment_namespace,
+            );
             last_result = result.clone();
             if offset + 1 == count {
                 return result;
@@ -403,7 +406,7 @@ impl Resolver {
                             .iter()
                             .skip(first + offset + 1)
                             .map(|segment| hir::PathSegment {
-                                name: segment.name.clone().into(),
+                                name: segment.ident.name.clone().into(),
                                 args: None,
                             })
                             .collect(),

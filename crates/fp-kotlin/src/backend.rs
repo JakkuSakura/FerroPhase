@@ -446,7 +446,7 @@ mod tests {
         let Ty::Expr(expr) = function.sig.ret_ty.as_ref().expect("return type") else {
             panic!("expected expression type");
         };
-        let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
             panic!("expected parameterized Result type");
         };
         assert_eq!(path.segments.last().expect("Result segment").args.len(), 1);
@@ -649,7 +649,7 @@ mod tests {
         let Ty::Expr(expr) = ty else {
             panic!("expected Kotlin collection type");
         };
-        let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
             panic!("expected parameterized MutableList type");
         };
         let segment = path.last().expect("MutableList segment");
@@ -704,7 +704,7 @@ mod tests {
             let actual = match name {
                 Name::Ident(ident) => ident.as_str(),
                 Name::Path(path) => path.last().as_str(),
-                Name::ParameterPath(path) => path.last().expect("path segment").ident.as_str(),
+                Name::Path(path) => path.last().ident.as_str(),
             };
             assert_eq!(actual, expected);
         }
@@ -748,7 +748,7 @@ mod tests {
         let Ty::Expr(expr) = &pattern.ty else {
             panic!("expected Kotlin collection type");
         };
-        let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        let ExprKind::Name(Name::Path(path)) = expr.kind() else {
             panic!("expected parameterized MutableList type");
         };
         assert_eq!(
@@ -1654,7 +1654,7 @@ fn materialize_kotlin_ty(ty: &mut Ty) {
 
 #[cfg(test)]
 fn materialize_kotlin_type_arguments(name: &mut Name) {
-    let Name::ParameterPath(path) = name else {
+    let Name::Path(path) = name else {
         return;
     };
     for segment in &mut path.segments {
@@ -1674,7 +1674,7 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     let (last, args) = match name {
         Name::Ident(ident) => (ident.as_str(), Vec::new()),
         Name::Path(path) => (path.last().as_str(), Vec::new()),
-        Name::ParameterPath(path) => {
+        Name::Path(path) => {
             let segment = path.last()?;
             (segment.ident.as_str(), segment.args.clone())
         }
@@ -1750,7 +1750,7 @@ fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
 fn is_std_io_error(name: &Name) -> bool {
     let segments: Vec<&str> = match name {
         Name::Path(path) => path.segments.iter().map(Ident::as_str).collect(),
-        Name::ParameterPath(path) => path
+        Name::Path(path) => path
             .segments
             .iter()
             .map(|segment| segment.ident.as_str())
@@ -1768,7 +1768,7 @@ fn kotlin_type_name(name: &Name) -> Option<&str> {
     match name {
         Name::Ident(ident) => Some(ident.as_str()),
         Name::Path(path) => Some(path.last().as_str()),
-        Name::ParameterPath(path) => path.last().map(|segment| segment.ident.as_str()),
+        Name::Path(path) => Some(path.last().ident.as_str()),
     }
 }
 
@@ -1817,7 +1817,7 @@ fn materialize_process_type(name: &mut Name) {
     let last = match name {
         Name::Ident(ident) => ident.as_str(),
         Name::Path(path) => path.last().as_str(),
-        Name::ParameterPath(path) => match path.last() {
+        Name::Path(path) => match Some(path.last()) {
             Some(segment) => segment.ident.as_str(),
             None => return,
         },
@@ -1844,7 +1844,7 @@ fn materialize_process_type(name: &mut Name) {
 #[cfg(test)]
 fn materialize_external_type(name: &mut Name) {
     let is_json_value = match name {
-        Name::ParameterPath(path) => {
+        Name::Path(path) => {
             let mut segments = path.segments.iter();
             matches!(
                 (segments.next(), segments.next(), segments.next()),
@@ -1877,7 +1877,7 @@ fn materialize_jvm_path_type(name: &mut Name) {
     let last = match name {
         Name::Ident(ident) => ident.as_str(),
         Name::Path(path) => path.last().as_str(),
-        Name::ParameterPath(path) => match path.last() {
+        Name::Path(path) => match Some(path.last()) {
             Some(segment) => segment.ident.as_str(),
             None => return,
         },

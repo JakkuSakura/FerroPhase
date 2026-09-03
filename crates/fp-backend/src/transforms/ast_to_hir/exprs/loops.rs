@@ -26,12 +26,11 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name::Path(path) => (path.segments.clone(), path.prefix),
-                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
-                ast::Name::ParameterPath(path) => (
+                ast::Name::Path(path) => (
                     path.segments.iter().map(|seg| seg.ident.clone()).collect(),
                     path.prefix,
                 ),
+                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
@@ -136,12 +135,11 @@ impl AstToHirLowerer {
         }
         let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(name) => match name {
-                ast::Name::Path(path) => (path.segments.clone(), path.prefix),
-                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
-                ast::Name::ParameterPath(path) => (
+                ast::Name::Path(path) => (
                     path.segments.iter().map(|seg| seg.ident.clone()).collect(),
                     path.prefix,
                 ),
+                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
@@ -190,7 +188,10 @@ impl AstToHirLowerer {
     ) -> Result<hir::ExprKind> {
         let mut stmts = Vec::new();
 
-        let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
+        let base_path = ast::Path::new(
+            spec.base_prefix,
+            spec.base_segments.iter().cloned().map(Into::into).collect(),
+        );
         let base_name = ast::Name::path(base_path);
         let base_ast = ast::Expr::new(ast::ExprKind::Name(base_name));
         let base_expr = hir::Expr {
@@ -391,7 +392,10 @@ impl AstToHirLowerer {
         for_expr: &ast::ExprFor,
         spec: IterLoopSpec,
     ) -> Result<hir::ExprKind> {
-        let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
+        let base_path = ast::Path::new(
+            spec.base_prefix,
+            spec.base_segments.iter().cloned().map(Into::into).collect(),
+        );
         let base_name = ast::Name::path(base_path);
         let base_ast = ast::Expr::new(ast::ExprKind::Name(base_name));
         let base_expr = hir::Expr {

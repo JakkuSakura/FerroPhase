@@ -254,7 +254,7 @@ impl AstToHirLowerer {
                 .bounds
                 .iter()
                 .flat_map(|bound| {
-                    let ast::ExprKind::Name(fp_core::ast::Name::ParameterPath(parameter_path)) =
+                    let ast::ExprKind::Name(fp_core::ast::Name::Path(parameter_path)) =
                         bound.kind()
                     else {
                         return Vec::new();
@@ -523,7 +523,7 @@ impl AstToHirLowerer {
 
             if let Some(trait_name) = &impl_block.trait_ty {
                 let trait_generic_args: &[ast::Ty] = match trait_name {
-                    ast::Name::ParameterPath(path) => path
+                    ast::Name::Path(path) => path
                         .segments
                         .last()
                         .map(|seg| seg.args.as_slice())
@@ -533,11 +533,6 @@ impl AstToHirLowerer {
                 let trait_name = match trait_name {
                     ast::Name::Ident(ident) => ident.name.clone(),
                     ast::Name::Path(path) => path
-                        .segments
-                        .last()
-                        .map(|seg| seg.name.clone())
-                        .unwrap_or_default(),
-                    ast::Name::ParameterPath(path) => path
                         .segments
                         .last()
                         .map(|seg| seg.ident.name.clone())

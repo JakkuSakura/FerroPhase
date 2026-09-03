@@ -1038,7 +1038,7 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 match expr.kind {
                     ExprKind::Name(name) => {
                         let mut path = name.to_path();
-                        path.segments.push(field);
+                        path.segments.push(field.into());
                         Expr::new(ExprKind::Name(Name::path(path))).with_span(span)
                     }
                     _ => ExprKind::FieldAccess(ExprFieldAccess {

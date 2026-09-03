@@ -60,11 +60,11 @@ fn is_byte_vector_ty(ty: &Ty) -> bool {
     match ty {
         Ty::Vec(vector) => is_u8_type(&vector.ty),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::ParameterPath(path)) => path.last().is_some_and(|segment| {
-                segment.ident.as_str() == "Vec"
-                    && segment.args.len() == 1
-                    && is_u8_type(&segment.args[0])
-            }),
+            ExprKind::Name(Name::Path(path)) => {
+                path.last().ident.as_str() == "Vec"
+                    && path.last().args.len() == 1
+                    && is_u8_type(&path.last().args[0])
+            }
             _ => false,
         },
         _ => false,
@@ -75,9 +75,9 @@ fn is_collection_ty(ty: &Ty) -> bool {
     match ty {
         Ty::Vec(_) | Ty::Slice(_) => true,
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Name(Name::ParameterPath(path)) => path.last().is_some_and(|segment| {
+            ExprKind::Name(Name::Path(path)) => {
                 matches!(
-                    segment.ident.as_str(),
+                    path.last().ident.as_str(),
                     "Vec"
                         | "MutableList"
                         | "List"
@@ -86,7 +86,7 @@ fn is_collection_ty(ty: &Ty) -> bool {
                         | "slice_to_vec"
                         | "slice_to_vec_in"
                 )
-            }),
+            }
             _ => false,
         },
         _ => false,

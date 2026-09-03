@@ -774,7 +774,7 @@ pub fn expand_item_macro_invocation(
     invocation: &fp_core::ast::MacroInvocation,
     defs: &HashMap<String, MacroRulesDef>,
 ) -> Option<Vec<Item>> {
-    let macro_name = invocation.path.segments.last()?.name.as_str();
+    let macro_name = invocation.path.segments.last()?.ident.as_str();
     // `cfg_select! { pred => { items... } _ => { items... } }` used at item
     // position (real vendored std's own `mod c_char_definition { crate::
     // cfg_select! { .. } }`) — this is a `#[rustc_builtin_macro]` with no

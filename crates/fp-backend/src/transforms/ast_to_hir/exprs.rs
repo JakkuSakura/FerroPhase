@@ -1480,11 +1480,10 @@ impl AstToHirLowerer {
     fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
         match expr.kind() {
             ast::ExprKind::Name(name) => match name {
-                ast::Name::Path(path) => Some(path.segments.clone()),
-                ast::Name::Ident(ident) => Some(vec![ident.clone()]),
-                ast::Name::ParameterPath(path) => {
+                ast::Name::Path(path) => {
                     Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                 }
+                ast::Name::Ident(ident) => Some(vec![ident.clone()]),
             },
             ast::ExprKind::Invoke(invoke) => {
                 // Permit no-arg method chains like `xs.iter().enumerate()` to be treated as a path.
@@ -1494,11 +1493,10 @@ impl AstToHirLowerer {
                 }
                 match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => match name {
-                        ast::Name::Path(path) => Some(path.segments.clone()),
-                        ast::Name::Ident(ident) => Some(vec![ident.clone()]),
-                        ast::Name::ParameterPath(path) => {
+                        ast::Name::Path(path) => {
                             Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                         }
+                        ast::Name::Ident(ident) => Some(vec![ident.clone()]),
                     },
                     ast::ExprInvokeTarget::Method(select) => {
                         let mut base = self.path_segments_from_expr(&select.obj)?;

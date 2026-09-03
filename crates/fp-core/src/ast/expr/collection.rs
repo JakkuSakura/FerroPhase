@@ -250,7 +250,6 @@ fn name_segments(name: &Name) -> Vec<&str> {
     match name {
         Name::Ident(ident) => vec![ident.as_str()],
         Name::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
-        Name::ParameterPath(path) => path.segments.iter().map(|seg| seg.ident.as_str()).collect(),
     }
 }
 

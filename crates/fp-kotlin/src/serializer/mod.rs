@@ -2502,8 +2502,9 @@ impl KotlinEmitter {
             Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
             Ty::Expr(expr) => {
                 let name = expr_to_name(expr);
-                if let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() {
-                    if let Some(segment) = path.last() {
+                if let ExprKind::Name(Name::Path(path)) = expr.kind() {
+                    {
+                        let segment = path.last();
                         if segment.ident.as_str() == "Nullable" {
                             return segment
                                 .args

@@ -587,7 +587,7 @@ impl CEmitter {
                 // `Enum::Variant` name expr — take the path's first segment.
                 match variant.name.kind() {
                     ExprKind::Name(Name::Path(path)) => {
-                        path.segments.first().map(|i| i.name.clone())
+                        path.segments.first().map(|i| i.ident.name.clone())
                     }
                     _ => None,
                 }
@@ -600,7 +600,9 @@ impl CEmitter {
         let pat = case.pat.as_deref()?;
         match pat.kind() {
             PatternKind::Variant(variant) => match variant.name.kind() {
-                ExprKind::Name(Name::Path(path)) => path.segments.last().map(|i| i.name.clone()),
+                ExprKind::Name(Name::Path(path)) => {
+                    path.segments.last().map(|i| i.ident.name.clone())
+                }
                 _ => None,
             },
             _ => None,
@@ -659,7 +661,7 @@ impl CEmitter {
                 if let ExprKind::Name(name) = select.obj.kind() {
                     let base = match name {
                         Name::Ident(ident) => Some(ident.name.clone()),
-                        Name::Path(path) => path.segments.last().map(|i| i.name.clone()),
+                        Name::Path(path) => path.segments.last().map(|i| i.ident.name.clone()),
                         _ => None,
                     };
                     if let Some(base) = base {
@@ -698,10 +700,10 @@ impl CEmitter {
                 if path.segments.len() >= 2 {
                     let base = &path.segments[path.segments.len() - 2];
                     let last = path.segments.last().unwrap();
-                    if self.plain_enums.contains(&base.name)
-                        || self.tagged_enums.contains(&base.name)
+                    if self.plain_enums.contains(&base.ident.name)
+                        || self.tagged_enums.contains(&base.ident.name)
                     {
-                        return Ok(Some(self.variant_tag(&base.name, &last.name)));
+                        return Ok(Some(self.variant_tag(&base.ident.name, &last.ident.name)));
                     }
                 }
                 Ok(Some(path.join(".")))
@@ -736,7 +738,7 @@ impl CEmitter {
                 Name::Path(path) => path
                     .segments
                     .last()
-                    .map(|i| i.name.clone())
+                    .map(|i| i.ident.name.clone())
                     .unwrap_or_default(),
                 _ => return Ok(None),
             },
@@ -763,7 +765,7 @@ impl CEmitter {
             ExprKind::Name(Name::Path(path)) => path
                 .segments
                 .last()
-                .map(|i| i.name.clone())
+                .map(|i| i.ident.name.clone())
                 .unwrap_or_default(),
             _ => "/* unsupported struct name */".to_string(),
         };
@@ -973,7 +975,7 @@ impl CEmitter {
 fn type_name_from_expr(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Name(Name::Ident(ident)) => Some(ident.name.clone()),
-        ExprKind::Name(Name::Path(path)) => path.segments.last().map(|i| i.name.clone()),
+        ExprKind::Name(Name::Path(path)) => path.segments.last().map(|i| i.ident.name.clone()),
         _ => None,
     }
 }

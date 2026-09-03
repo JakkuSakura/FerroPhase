@@ -8,10 +8,10 @@ use fp_core::ast::{
     ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference,
     ExprReturn, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
     ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternStruct,
-    PatternStructField, PatternTuple, PatternTupleStruct, PatternVariant, StmtLet, StructuralField,
-    Ty, TypeArray, TypeEnum, TypeFunction, TypeReference, TypeSlice, TypeStruct, TypeTuple, Value,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, PathSegment,
+    Pattern, PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternTuple,
+    PatternTupleStruct, PatternVariant, StmtLet, StructuralField, Ty, TypeArray, TypeEnum,
+    TypeFunction, TypeReference, TypeSlice, TypeStruct, TypeTuple, Value,
 };
 use fp_core::error::Result;
 use fp_core::hir;
@@ -40,7 +40,7 @@ impl PortableOpAstConverter {
         let path = binding.path.clone();
         if call.op.arity.receiver {
             let (receiver, args) = call.args.split_first()?;
-            let field = path.segments.last()?.clone();
+            let field = path.segments.last()?.ident.clone();
             let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                 span: call.span,
                 target: ast::ExprInvokeTarget::Method(ast::ExprFieldAccess {
@@ -1478,9 +1478,7 @@ impl<'a> HirToAstLifter<'a> {
             // parameter order before a target backend can materialize it.
             hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty(path)? {
                 Some(ty) => ty,
-                None => Ty::expr(Expr::name(Name::parameter_path(
-                    self.lift_parameter_path(path)?,
-                ))),
+                None => Ty::expr(Expr::name(Name::path(self.lift_ast_path(path)?))),
             },
             hir::TypeExprKind::Projection(projection) => {
                 Ty::Projection(Box::new(ast::TypeProjection {
@@ -1618,7 +1616,7 @@ impl<'a> HirToAstLifter<'a> {
         Ok(Some(Ty::Structural(ast::TypeStructural { fields })))
     }
 
-    fn lift_parameter_path(&self, path: &hir::Path) -> Result<ParameterPath> {
+    fn lift_ast_path(&self, path: &hir::Path) -> Result<Path> {
         let segments = path
             .segments
             .iter()
@@ -1637,13 +1635,10 @@ impl<'a> HirToAstLifter<'a> {
                     })
                     .transpose()?
                     .unwrap_or_default();
-                Ok(ParameterPathSegment::new(
-                    Ident::new(segment.name.as_str()),
-                    args,
-                ))
+                Ok(PathSegment::new(Ident::new(segment.name.as_str()), args))
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(ParameterPath::new(PathPrefix::Plain, segments))
+        Ok(Path::new(PathPrefix::Plain, segments))
     }
 
     /// Converts a *resolved* (post-typecheck) HIR type — `fp_core::hir::ty::Ty`,
@@ -1938,10 +1933,11 @@ impl<'a> HirToAstLifter<'a> {
     /// The correct conversion for any path whose identity needs no further
     /// resolution (a local, a plain function/const/struct reference, ...).
     fn lift_path_verbatim(path: &hir::Path) -> Path {
-        Path::plain(
+        Path::new(
+            PathPrefix::Plain,
             path.segments
                 .iter()
-                .map(|segment| Ident::new(segment.name.as_str()))
+                .map(|segment| PathSegment::new(Ident::new(segment.name.as_str()), Vec::new()))
                 .collect(),
         )
     }
@@ -2805,12 +2801,6 @@ mod tests {
                     PatternKind::Type(typed) => match &typed.ty {
                         Ty::Expr(expr) => match expr.kind() {
                             ast::ExprKind::Name(Name::Path(path)) => path.join("."),
-                            ast::ExprKind::Name(Name::ParameterPath(path)) => path
-                                .segments
-                                .iter()
-                                .map(|segment| segment.ident.as_str())
-                                .collect::<Vec<_>>()
-                                .join("."),
                             other => panic!("expected source path type name, got {other:?}"),
                         },
                         other => panic!("expected nominal type, got {other:?}"),
@@ -3036,7 +3026,7 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
                 ast::ExprKind::Name(Name::Path(p)) => p
                     .segments
                     .iter()
-                    .map(|s| s.name.as_str())
+                    .map(|s| s.ident.as_str())
                     .collect::<Vec<_>>()
                     .join("::"),
                 ast::ExprKind::Name(Name::Ident(id)) => id.name.clone(),

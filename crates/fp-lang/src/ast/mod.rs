@@ -201,8 +201,8 @@ use fp_core::ast::{
     FunctionSignature, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroGroup,
-    MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath, ParameterPathSegment,
-    Path, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr, PatternQuote, PatternStruct,
+    MacroInvocation, MacroToken, MacroTokenTree, Module, Name, Path, PathSegment, Pattern,
+    PatternBox, PatternIdent, PatternKind, PatternOr, PatternQuote, PatternStruct,
     PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
     PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer,
     StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum,
@@ -445,7 +445,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         .is_some();
     let first = ident_like(input)?;
     let first_args = parse_optional_type_args(input)?;
-    let mut segments = vec![ParameterPathSegment::new(first, first_args)];
+    let mut segments = vec![PathSegment::new(first, first_args)];
     loop {
         let mut probe = *input;
         if skip_symbol(&mut probe, "::").is_err() {
@@ -456,17 +456,10 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         };
         let args = parse_optional_type_args(&mut probe)?;
         *input = probe;
-        segments.push(ParameterPathSegment::new(next, args));
+        segments.push(PathSegment::new(next, args));
     }
-    let has_args = segments.iter().any(|segment| !segment.args.is_empty());
     let (prefix, segments) = split_parameter_path_prefix(segments, saw_root);
-    if has_args {
-        Ok(Name::parameter_path(ParameterPath::new(prefix, segments)))
-    } else {
-        let plain_segments: Vec<Ident> =
-            segments.into_iter().map(|segment| segment.ident).collect();
-        Ok(Name::path(Path::new(prefix, plain_segments)))
-    }
+    Ok(Name::path(Path::new(prefix, segments)))
 }
 
 pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
@@ -486,7 +479,10 @@ pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
         segments.push(next);
     }
     let (prefix, segments) = split_path_prefix(segments, saw_root);
-    Ok(Path::new(prefix, segments))
+    Ok(Path::new(
+        prefix,
+        segments.into_iter().map(Into::into).collect(),
+    ))
 }
 
 fn token_kind(input: &mut &[Token], kind: TokenKind) -> ModalResult<Token> {

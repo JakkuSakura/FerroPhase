@@ -320,7 +320,7 @@ pub(super) fn ast_value_ty_to_hir_ty(ty: &fp_core::ast::Ty) -> Option<Ty> {
             fp_core::ast::ExprKind::Name(fp_core::ast::Name::Path(path)) => path
                 .segments
                 .last()
-                .and_then(|segment| primitive_path_ty(segment.name.as_str())),
+                .and_then(|segment| primitive_path_ty(segment.ident.as_str())),
             _ => None,
         },
         fp_core::ast::Ty::Reference(reference) => {

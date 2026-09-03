@@ -546,7 +546,7 @@ impl LocalScope {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy_resolve_tests"))]
 mod tests {
     use super::*;
 

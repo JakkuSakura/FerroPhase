@@ -18,8 +18,7 @@ impl AstToHirLowerer {
     fn name_segment_args(&mut self, name: &Name) -> Result<Vec<Option<hir::GenericArgs>>> {
         match name {
             Name::Ident(_) => Ok(vec![None]),
-            Name::Path(path) => Ok(path.segments.iter().map(|_| None).collect()),
-            Name::ParameterPath(path) => path
+            Name::Path(path) => path
                 .segments
                 .iter()
                 .map(|segment| {
@@ -99,30 +98,8 @@ impl AstToHirLowerer {
                 let parsed = match name {
                     Name::Ident(ident) => ast::Path::from_ident(ident.clone()),
                     Name::Path(path) => path.clone(),
-                    Name::ParameterPath(path) => {
-                        // Generic arguments do not participate in lexical
-                        // name lookup. Resolve the first generic-bearing
-                        // type/trait anchor and leave projections for type
-                        // checking.
-                        let anchor = path
-                            .segments
-                            .iter()
-                            .position(|segment| !segment.args.is_empty())
-                            .unwrap_or(path.segments.len().saturating_sub(1));
-                        ast::Path::new(
-                            path.prefix,
-                            path.segments[..=anchor]
-                                .iter()
-                                .map(|segment| segment.ident.clone())
-                                .collect(),
-                        )
-                    }
                 };
-                let resolution_namespace = if matches!(name, Name::ParameterPath(_)) {
-                    fp_core::hir::resolve::Namespace::Type
-                } else {
-                    namespace
-                };
+                let resolution_namespace = namespace;
                 let resolved = match self.local_resolver.resolve_parsed_path(
                     &self.package_id,
                     &self.module_path,
@@ -150,11 +127,6 @@ impl AstToHirLowerer {
                         .segments
                         .iter()
                         .map(|segment| segment.as_str())
-                        .collect(),
-                    Name::ParameterPath(path) => path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.ident.as_str())
                         .collect(),
                 };
                 Ok(hir::Path {

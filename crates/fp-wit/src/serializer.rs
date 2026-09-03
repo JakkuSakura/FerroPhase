@@ -1379,28 +1379,6 @@ fn name_namespace_and_name(name: &Name) -> Option<(String, String)> {
             }
             Some((namespace, name))
         }
-        Name::ParameterPath(path) => {
-            if path.segments.is_empty() {
-                return None;
-            }
-            let mut segments: Vec<String> = path
-                .segments
-                .iter()
-                .map(|seg| sanitize_identifier(seg.ident.as_str()))
-                .collect();
-            if segments.len() < 2 {
-                return None;
-            }
-            let name = segments.pop()?;
-            let namespace = segments.join("-");
-            if namespace.starts_with("fp-core-error")
-                || namespace.starts_with("fp-core-ast")
-                || namespace.starts_with("fp-core-span")
-            {
-                return None;
-            }
-            Some((namespace, name))
-        }
         _ => None,
     }
 }
@@ -1565,7 +1543,7 @@ fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<St
 fn name_to_ident(name: &Name) -> Option<&Ident> {
     match name {
         Name::Ident(ident) => Some(ident),
-        Name::Path(path) => path.segments.last(),
+        Name::Path(path) => path.segments.last().map(|segment| &segment.ident),
         _ => None,
     }
 }

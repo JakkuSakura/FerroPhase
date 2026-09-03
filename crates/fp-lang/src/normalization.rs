@@ -807,7 +807,7 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
         // code. Segment-matched (not string-matched) so a leading `::`
         // absolute-path prefix doesn't need special-casing.
         Name::Path(path) => {
-            let segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+            let segments: Vec<&str> = path.segments.iter().map(|seg| seg.ident.as_str()).collect();
             match segments.as_slice() {
                 ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
                 ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),

@@ -33,7 +33,7 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         };
         let args = parse_optional_type_args(&mut seg_probe)?;
         probe = seg_probe;
-        extra_segments.push(ParameterPathSegment::new(next, args));
+        extra_segments.push(PathSegment::new(next, args));
     }
     if let Some(trait_ty) = trait_ty {
         let Some(first) = extra_segments.first() else {
@@ -60,21 +60,13 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         // common case for a disambiguated type in a qualified path
         // (`<I as Iterator>::Item`), so this needs its own arm rather
         // than falling through to the catch-all below.
-        ExprKind::Name(Name::Ident(ident)) => Name::parameter_path(ParameterPath::new(
+        ExprKind::Name(Name::Ident(ident)) => Name::path(Path::new(
             PathPrefix::Plain,
-            std::iter::once(ParameterPathSegment::new(ident.clone(), Vec::new()))
+            std::iter::once(PathSegment::from_ident(ident.clone()))
                 .chain(extra_segments)
                 .collect(),
         )),
-        ExprKind::Name(Name::Path(path)) => Name::parameter_path(ParameterPath::new(
-            path.prefix,
-            path.segments
-                .iter()
-                .map(|ident| ParameterPathSegment::new(ident.clone(), Vec::new()))
-                .chain(extra_segments)
-                .collect(),
-        )),
-        ExprKind::Name(Name::ParameterPath(path)) => Name::parameter_path(ParameterPath::new(
+        ExprKind::Name(Name::Path(path)) => Name::path(Path::new(
             path.prefix,
             path.segments
                 .iter()
@@ -409,7 +401,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
-    if let Name::ParameterPath(parameter_path) = &name {
+    if let Name::Path(parameter_path) = &name {
         if parameter_path.prefix == PathPrefix::Plain
             && parameter_path.segments.len() == 1
             && parameter_path.segments[0].ident.as_str() == "quote"
@@ -484,26 +476,20 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             }));
         }
     }
-    let (bare_path, parameter_path) = match &name {
-        Name::Path(p) => (Some(p), None),
-        Name::ParameterPath(p) => (None, Some(p)),
-        _ => (None, None),
+    let bare_path = match &name {
+        Name::Path(p) => Some(p),
+        _ => None,
     };
     // Handle `type` keyword — both bare and with type args like `type<_>`, `type<i64>`
-    let type_name = match (&bare_path, &parameter_path) {
-        (Some(path), _) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
+    let type_name = match bare_path {
+        Some(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
             path.segments[0].as_str().to_string()
         }
-        (_, Some(ppath)) if ppath.prefix == PathPrefix::Plain && ppath.segments.len() == 1 => {
-            ppath.segments[0].ident.as_str().to_string()
-        }
-        (None, None) if matches!(&name, Name::Ident(ident) if ident.as_str() == "type") => {
-            "type".to_string()
-        }
+        _ if matches!(&name, Name::Ident(ident) if ident.as_str() == "type") => "type".to_string(),
         _ => String::new(),
     };
     if type_name == "type" {
-        if let Some(ppath) = parameter_path {
+        if let Some(ppath) = bare_path {
             let args = &ppath.segments[0].args;
             if args.len() == 1 {
                 let inner = if is_path_ident(&args[0], "_") {

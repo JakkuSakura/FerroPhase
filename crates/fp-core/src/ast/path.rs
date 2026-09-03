@@ -184,7 +184,9 @@ pub fn resolve_path(
             } else {
                 let local = InPackagePath::new(vec![first.to_owned()]);
                 if module_defs.contains(&local) {
-                    return parsed.resolve_from(module_path);
+                    return Some(InPackagePath::new(
+                        parsed.segments.iter().map(|s| s.as_str().to_owned()).collect(),
+                    ));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {

@@ -1,7 +1,7 @@
 //! AST-specific identifier types
 //!
 //! Each compilation stage has its own identifier representation:
-//! - AST: Ident, Path, ParameterPath, Name (this module)
+//! - AST: Ident, Path, Name (this module)
 //! - HIR: Symbol (String), hir::Path
 //! - MIR: Symbol (String), Vec<Symbol>
 //! - LIR: String
@@ -71,14 +71,14 @@ impl From<&str> for Ident {
 
 /// A path is a sequence of identifiers separated by `::`, like `std::io::File`.
 /// The prefix captures leading qualifiers like `::`, `crate`, `self`, or `super`.
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct Path {
     pub prefix: PathPrefix,
-    pub segments: Vec<Ident>,
+    pub segments: Vec<PathSegment>,
 }
 
 impl Path {
-    pub fn new(prefix: PathPrefix, segments: Vec<Ident>) -> Self {
+    pub fn new(prefix: PathPrefix, segments: Vec<PathSegment>) -> Self {
         debug_assert!(
             !segments.is_empty() || !matches!(prefix, PathPrefix::Plain),
             "Plain path must have at least one segment"
@@ -87,20 +87,14 @@ impl Path {
     }
 
     pub fn plain(segments: Vec<Ident>) -> Self {
-        Self::new(PathPrefix::Plain, segments)
+        Self::new(
+            PathPrefix::Plain,
+            segments.into_iter().map(PathSegment::from_ident).collect(),
+        )
     }
 
     pub fn from_ident(ident: Ident) -> Self {
-        Self::new(PathPrefix::Plain, vec![ident])
-    }
-
-    /// Build a generic path while retaining per-segment arguments.
-    ///
-    /// Generic arguments live on `ParameterPathSegment`, mirroring rustc's
-    /// per-segment `GenericArgs`; this constructor keeps ordinary `Path`
-    /// values lightweight for paths without arguments.
-    pub fn parameterized(prefix: PathPrefix, segments: Vec<ParameterPathSegment>) -> ParameterPath {
-        ParameterPath::new(prefix, segments)
+        Self::new(PathPrefix::Plain, vec![PathSegment::from_ident(ident)])
     }
 
     pub fn is_empty(&self) -> bool {
@@ -111,16 +105,16 @@ impl Path {
         self.segments.len()
     }
 
-    pub fn first(&self) -> Option<&Ident> {
+    pub fn first(&self) -> Option<&PathSegment> {
         self.segments.first()
     }
 
-    pub fn last(&self) -> &Ident {
+    pub fn last(&self) -> &PathSegment {
         self.segments.last().unwrap()
     }
 
-    pub fn push(&mut self, ident: Ident) {
-        self.segments.push(ident);
+    pub fn push(&mut self, segment: impl Into<PathSegment>) {
+        self.segments.push(segment.into());
     }
 
     pub fn join(&self, separator: &str) -> String {
@@ -135,7 +129,10 @@ impl Path {
         if self.prefix != PathPrefix::Plain || self.segments.len() != 1 {
             return None;
         }
-        self.segments.into_iter().next()
+        self.segments
+            .into_iter()
+            .next()
+            .map(|segment| segment.ident)
     }
 
     pub fn is_root(&self) -> bool {
@@ -148,7 +145,7 @@ impl Path {
 
     pub fn with_ident(&self, ident: Ident) -> Self {
         let mut segments = self.segments.clone();
-        segments.push(ident);
+        segments.push(ident.into());
         Self::new(self.prefix, segments)
     }
 
@@ -215,14 +212,15 @@ impl From<&Path> for Path {
     }
 }
 
-/// A segment of a parameterized path, like `Vec<i32>` in `std::collections::Vec<i32>`
+/// A path segment with optional generic arguments, matching rustc's AST path
+/// representation. Generic arguments belong to the segment they parameterize.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
-pub struct ParameterPathSegment {
+pub struct PathSegment {
     pub ident: Ident,
     pub args: Vec<Ty>,
 }
 
-impl ParameterPathSegment {
+impl PathSegment {
     pub fn new(ident: Ident, args: Vec<Ty>) -> Self {
         Self { ident, args }
     }
@@ -233,72 +231,33 @@ impl ParameterPathSegment {
             args: Vec::new(),
         }
     }
-}
 
-/// A parameterized path like `std::collections::Vec<i32>`
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
-pub struct ParameterPath {
-    pub prefix: PathPrefix,
-    pub segments: Vec<ParameterPathSegment>,
-}
-
-impl ParameterPath {
-    pub fn new(prefix: PathPrefix, segments: Vec<ParameterPathSegment>) -> Self {
-        Self { prefix, segments }
-    }
-
-    pub fn from_ident(ident: Ident) -> Self {
-        Self {
-            prefix: PathPrefix::Plain,
-            segments: vec![ParameterPathSegment::from_ident(ident)],
-        }
-    }
-
-    pub fn from_path(path: Path) -> Self {
-        Self {
-            prefix: path.prefix,
-            segments: path
-                .segments
-                .into_iter()
-                .map(ParameterPathSegment::from_ident)
-                .collect(),
-        }
-    }
-
-    /// Return the argument-bearing path segments without losing their
-    /// generic arguments. This is the AST counterpart of HIR's
-    /// `PathSegment.args` projection.
-    pub fn segments_with_args(&self) -> &[ParameterPathSegment] {
-        &self.segments
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.segments.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.segments.len()
-    }
-
-    pub fn first(&self) -> Option<&ParameterPathSegment> {
-        self.segments.first()
-    }
-
-    pub fn last(&self) -> Option<&ParameterPathSegment> {
-        self.segments.last()
-    }
-
-    pub fn span(&self) -> Span {
-        Span::null()
+    pub fn as_str(&self) -> &str {
+        self.ident.as_str()
     }
 }
 
-/// A name can be an identifier, a path, or a parameterized path
+impl From<Ident> for PathSegment {
+    fn from(ident: Ident) -> Self {
+        Self::from_ident(ident)
+    }
+}
+
+impl From<&str> for PathSegment {
+    fn from(name: &str) -> Self {
+        Self::from_ident(Ident::new(name))
+    }
+}
+
+impl Eq for PathSegment {}
+impl Eq for Path {}
+
+/// A name can be an identifier or a path. Generic arguments are stored on
+/// the path segments themselves.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum Name {
     Ident(Ident),
     Path(Path),
-    ParameterPath(ParameterPath),
 }
 
 impl Name {
@@ -308,22 +267,9 @@ impl Name {
 
     pub fn path(path: Path) -> Self {
         if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {
-            return Name::Ident(path.segments[0].clone());
+            return Name::Ident(path.segments[0].ident.clone());
         }
         Name::Path(path)
-    }
-
-    pub fn parameter_path(path: ParameterPath) -> Self {
-        // if no parameters, convert to path
-        if path.segments.iter().all(|seg| seg.args.is_empty()) {
-            let segments = path
-                .segments
-                .into_iter()
-                .map(|seg| seg.ident)
-                .collect::<Vec<_>>();
-            return Name::path(Path::new(path.prefix, segments));
-        }
-        Name::ParameterPath(path)
     }
 
     pub fn from_ident(ident: Ident) -> Self {
@@ -334,10 +280,6 @@ impl Name {
         match self {
             Name::Ident(ident) => Path::from_ident(ident.clone()),
             Name::Path(path) => path.clone(),
-            Name::ParameterPath(path) => Path::new(
-                path.prefix,
-                path.segments.iter().map(|seg| seg.ident.clone()).collect(),
-            ),
         }
     }
 
@@ -352,7 +294,6 @@ impl Name {
         match self {
             Name::Ident(ident) => ident.span(),
             Name::Path(path) => path.span(),
-            Name::ParameterPath(path) => path.span(),
         }
     }
 }
@@ -362,41 +303,25 @@ impl std::fmt::Display for Name {
         match self {
             Name::Ident(ident) => write!(f, "{}", ident),
             Name::Path(path) => write!(f, "{}", path),
-            Name::ParameterPath(path) => {
-                match path.prefix {
-                    PathPrefix::Root => write!(f, "::")?,
-                    PathPrefix::Crate => write!(f, "crate")?,
-                    PathPrefix::SelfMod => write!(f, "self")?,
-                    PathPrefix::Super(depth) => {
-                        let prefix = std::iter::repeat("super")
-                            .take(depth)
-                            .collect::<Vec<_>>()
-                            .join("::");
-                        write!(f, "{}", prefix)?;
-                    }
-                    PathPrefix::Plain => {}
-                }
-                for (i, seg) in path.segments.iter().enumerate() {
-                    if i > 0 || path.prefix != PathPrefix::Plain {
-                        write!(f, "::")?;
-                    }
-                    write!(f, "{}", seg.ident)?;
-                    if !seg.args.is_empty() {
-                        write!(f, "<")?;
-                        for (j, arg) in seg.args.iter().enumerate() {
-                            if j > 0 {
-                                write!(f, ", ")?;
-                            }
-                            write!(f, "{}", arg)?;
-                        }
-                        write!(f, ">")?;
-                    }
-                }
-                Ok(())
-            }
         }
     }
 }
 
-// Import Ty from parent module for ParameterPathSegment
+// Import Ty from parent module for PathSegment
 use super::Ty;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameterized_path_retains_per_segment_arguments() {
+        let path = Path::new(
+            PathPrefix::Plain,
+            vec![PathSegment::new(Ident::new("Vec"), Vec::new())],
+        );
+        assert_eq!(path.segments.len(), 1);
+        assert_eq!(path.segments[0].ident.as_str(), "Vec");
+        assert!(path.segments[0].args.is_empty());
+    }
+}

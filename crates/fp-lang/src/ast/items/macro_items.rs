@@ -57,11 +57,12 @@ pub(super) fn skip_balanced_delimiters(
 pub(super) fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
     let path = parse_macro_path(input)?;
     skip_symbol(input, "!")?;
-    let declared_name = if path.segments.last().map(Ident::as_str) == Some("macro_rules") {
-        Some(ident_like(input)?)
-    } else {
-        None
-    };
+    let declared_name =
+        if path.segments.last().map(|segment| segment.ident.as_str()) == Some("macro_rules") {
+            Some(ident_like(input)?)
+        } else {
+            None
+        };
     let (delimiter, group_span, token_trees, text) = parse_macro_group(input)?;
     let _ = expect_symbol(input, ";");
     Ok(Item::from(ItemKind::Macro(ItemMacro {

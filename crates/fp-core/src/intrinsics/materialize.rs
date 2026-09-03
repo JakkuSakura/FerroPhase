@@ -149,7 +149,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
     };
     match ty {
         ast::Ty::Expr(mut expr) => {
-            if let ast::ExprKind::Name(ast::Name::ParameterPath(path)) = expr.kind_mut() {
+            if let ast::ExprKind::Name(ast::Name::Path(path)) = expr.kind_mut() {
                 for segment in &mut path.segments {
                     let args = std::mem::take(&mut segment.args);
                     segment.args = args
@@ -738,11 +738,6 @@ fn is_hashmap_ty(ty: &ast::Ty) -> bool {
                     .segments
                     .last()
                     .map(|seg| seg.as_str() == "HashMap")
-                    .unwrap_or(false),
-                ast::Name::ParameterPath(path) => path
-                    .segments
-                    .last()
-                    .map(|seg| seg.ident.as_str() == "HashMap")
                     .unwrap_or(false),
             },
             _ => false,
