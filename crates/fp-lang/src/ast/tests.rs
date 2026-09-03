@@ -99,7 +99,7 @@ fn parse_expr_ast_strips_prefix_from_parameter_path_segments() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("super::super::Foo<Bar>").unwrap();
     match expr.kind() {
-        ExprKind::Name(Name::ParameterPath(path)) => {
+        ExprKind::Name(Name::Path(path)) => {
             assert_eq!(path.prefix, PathPrefix::Super(2));
             assert_eq!(path.segments.len(), 1);
             assert_eq!(path.segments[0].ident.as_str(), "Foo");
@@ -122,7 +122,7 @@ fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
     let Ty::Expr(expr) = &def.value else {
         panic!("expected parameterized name, got {:?}", def.value);
     };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
         panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.prefix, PathPrefix::Crate);
@@ -151,7 +151,7 @@ fn parse_type_args_accept_trailing_comma_before_close_angle() {
     let Ty::Expr(expr) = &def.value else {
         panic!("expected parameterized name, got {:?}", def.value);
     };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
         panic!("expected parameterized name expr, got {:?}", expr);
     };
     assert_eq!(path.segments.last().unwrap().args.len(), 2);
@@ -800,7 +800,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let Ty::Expr(expr) = &def.value.fields[0].value else {
         panic!("expected path type");
     };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(box_arg) = path.segments[0].args.first() else {
@@ -809,7 +809,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let Ty::Expr(box_expr) = box_arg else {
         panic!("expected Box path type");
     };
-    let ExprKind::Name(Name::ParameterPath(box_path)) = box_expr.kind() else {
+    let ExprKind::Name(Name::Path(box_path)) = box_expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(Ty::TypeBounds(bounds)) = box_path.segments[0].args.first() else {
@@ -833,7 +833,7 @@ fn parse_items_ast_supports_dyn_trait_object_with_multiple_bounds() {
     let Ty::Expr(expr) = &def.value.fields[0].value else {
         panic!("expected path type");
     };
-    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+    let ExprKind::Name(Name::Path(path)) = expr.kind() else {
         panic!("expected parameter path type");
     };
     let Some(Ty::TypeBounds(bounds)) = path.segments[0].args.first() else {

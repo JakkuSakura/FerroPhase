@@ -266,7 +266,10 @@ impl Name {
     }
 
     pub fn path(path: Path) -> Self {
-        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 {
+        if path.prefix == PathPrefix::Plain
+            && path.segments.len() == 1
+            && path.segments[0].args.is_empty()
+        {
             return Name::Ident(path.segments[0].ident.clone());
         }
         Name::Path(path)
