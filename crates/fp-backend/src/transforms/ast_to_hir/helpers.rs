@@ -180,7 +180,7 @@ impl AstToHirLowerer {
                         .collect(),
                 })
             }
-            ast::ExprKind::Select(select) => {
+            ast::ExprKind::FieldAccess(select) => {
                 // `T::ASSOC` is a type-relative path. Resolve its base in
                 // the type namespace, as rustc does for a qualified path,
                 // even when the surrounding expression is in value scope.
@@ -190,19 +190,7 @@ impl AstToHirLowerer {
                 // lookup only as the module-qualified constant fallback below.
                 let type_base =
                     self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
-                let value_base = if matches!(select.select, ast::ExprSelectType::Const) {
-                    Some(self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?)
-                } else {
-                    None
-                };
-                // A module-qualified constant (`self::CONST` or
-                // `module::CONST`) also uses `::`, but its base is a module,
-                // not a type-relative path. Preserve rustc's namespace
-                // fallback for that case after the type-relative lookup.
-                let mut base = match value_base {
-                    Some(value_base) if matches!(value_base.res, hir::Res::Module(_)) => value_base,
-                    _ => type_base,
-                };
+                let mut base = type_base;
                 let member_args = if select.generic_args.is_empty() {
                     None
                 } else {

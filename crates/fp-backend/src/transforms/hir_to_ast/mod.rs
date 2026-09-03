@@ -4,9 +4,9 @@ use std::collections::{HashMap, HashSet};
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprCast, ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg,
-    ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect,
-    ExprSelectType, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
+    ExprCast, ExprClosure, ExprContinue, ExprFieldAccess, ExprFor, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop, ExprMatch, ExprMatchCase, ExprReference,
+    ExprReturn, ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp,
     ExprWhile, ExprWith, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemKind, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternStruct,
@@ -43,11 +43,10 @@ impl PortableOpAstConverter {
             let field = path.segments.last()?.clone();
             let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                 span: call.span,
-                target: ast::ExprInvokeTarget::Method(ast::ExprSelect {
+                target: ast::ExprInvokeTarget::Method(ast::ExprFieldAccess {
                     obj: Box::new(receiver.clone()),
                     field,
                     generic_args: Vec::new(),
-                    select: ast::ExprSelectType::Method,
                     span: call.span,
                 }),
                 args: args.to_vec(),
@@ -844,7 +843,7 @@ impl<'a> HirToAstLifter<'a> {
                 } else {
                     Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                         span: expr.span,
-                        target: ast::ExprInvokeTarget::Method(ExprSelect {
+                        target: ast::ExprInvokeTarget::Method(ExprFieldAccess {
                             span: expr.span,
                             obj: Box::new(self.lift_expr(receiver)?),
                             field: Ident::new(name.as_str()),
@@ -860,7 +859,6 @@ impl<'a> HirToAstLifter<'a> {
                                         .collect()
                                 })
                                 .unwrap_or_default(),
-                            select: ExprSelectType::Method,
                         }),
                         args: lifted_args,
                         kwargs: lifted_kwargs,
@@ -868,12 +866,11 @@ impl<'a> HirToAstLifter<'a> {
                 }
             }
             hir::ExprKind::FieldAccess(base, field) => {
-                Expr::new(ast::ExprKind::Select(ExprSelect {
+                Expr::new(ast::ExprKind::FieldAccess(ExprFieldAccess {
                     span: expr.span,
                     obj: Box::new(self.lift_expr(base)?),
                     field: Ident::new(field.as_str()),
                     generic_args: Vec::new(),
-                    select: ExprSelectType::Field,
                 }))
             }
             hir::ExprKind::Index(base, index) => Expr::new(ast::ExprKind::Index(ExprIndex {
@@ -2683,7 +2680,7 @@ mod tests {
                 _ => unreachable!(),
             })
             .expect("lift Output.status field");
-        assert!(matches!(status_field.kind, ast::ExprKind::Select(_)));
+        assert!(matches!(status_field.kind, ast::ExprKind::FieldAccess(_)));
     }
 
     #[test]
@@ -3136,7 +3133,7 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
         ast::ExprKind::UnOp(un) => {
             recon_closures_in_expr(&mut un.val, types);
         }
-        ast::ExprKind::Select(sel) => {
+        ast::ExprKind::FieldAccess(sel) => {
             recon_closures_in_expr(&mut sel.obj, types);
         }
         ast::ExprKind::Index(idx) => {

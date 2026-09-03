@@ -652,7 +652,7 @@ impl CEmitter {
                     .unwrap_or_default();
                 Ok(Some(format!("({inner})")))
             }
-            ExprKind::Select(select) => {
+            ExprKind::FieldAccess(select) => {
                 // `Enum::Variant`/`Enum.Variant` selecting a known enum's
                 // variant lowers to the prefixed tag constant, not a C
                 // field-access expression (`Enum.Variant` isn't valid C).

@@ -106,6 +106,7 @@ pub(super) fn expand_pattern_alternatives(pat: &Pattern) -> Vec<Pattern> {
             None => vec![pat.clone()],
         },
         PatternKind::Ident(_)
+        | PatternKind::Name(_)
         | PatternKind::Quote(_)
         | PatternKind::QuotePlural(_)
         | PatternKind::Wildcard(_) => vec![pat.clone()],

@@ -1448,7 +1448,7 @@ fn materialize_expr_types(expr: &mut Expr) {
             materialize_io_error_constructor(invoke);
         }
         ExprKind::Await(await_expr) => materialize_expr_types(&mut await_expr.base),
-        ExprKind::Select(select) => materialize_expr_types(&mut select.obj),
+        ExprKind::FieldAccess(select) => materialize_expr_types(&mut select.obj),
         ExprKind::Index(index) => {
             materialize_expr_types(&mut index.obj);
             materialize_expr_types(&mut index.index);

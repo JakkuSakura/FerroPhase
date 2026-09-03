@@ -345,7 +345,7 @@ fn collect_mutated_fields_in_stmts(stmts: &[BlockStmt], out: &mut HashSet<String
 fn collect_mutated_fields_in_expr(expr: &Expr, out: &mut HashSet<String>) {
     match expr.kind() {
         ExprKind::Assign(a) => {
-            if let ExprKind::Select(sel) = a.target.kind() {
+            if let ExprKind::FieldAccess(sel) = a.target.kind() {
                 out.insert(sel.field.name.to_string());
             }
             collect_mutated_fields_in_expr(&a.target, out);
@@ -389,7 +389,7 @@ fn collect_mutated_fields_in_expr(expr: &Expr, out: &mut HashSet<String>) {
             collect_mutated_fields_in_expr(&b.rhs, out);
         }
         ExprKind::UnOp(u) => collect_mutated_fields_in_expr(&u.val, out),
-        ExprKind::Select(s) => collect_mutated_fields_in_expr(&s.obj, out),
+        ExprKind::FieldAccess(s) => collect_mutated_fields_in_expr(&s.obj, out),
         ExprKind::Index(idx) => {
             collect_mutated_fields_in_expr(&idx.obj, out);
             collect_mutated_fields_in_expr(&idx.index, out);

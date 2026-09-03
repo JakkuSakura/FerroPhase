@@ -329,7 +329,7 @@ pub trait IntrinsicMaterializer {
 
     fn materialize_select_expression(
         &self,
-        select: crate::ast::ExprSelect,
+        select: crate::ast::ExprFieldAccess,
         expr_ty: &TySlot,
     ) -> Result<MaterializeOutcome<Expr>> {
         let _ = (select, expr_ty);

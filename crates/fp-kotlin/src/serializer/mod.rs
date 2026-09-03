@@ -1753,7 +1753,7 @@ impl KotlinEmitter {
                     // `let`, discarding the field type the literal is compared against — track
                     // it across the pair so a `Long`-typed field's literal gets an `L` suffix.
                     if var_name == "__fp_assert_left" {
-                        self.pending_assert_long = matches!(init.kind(), ExprKind::Select(sel)
+                        self.pending_assert_long = matches!(init.kind(), ExprKind::FieldAccess(sel)
                             if self.long_field_names.contains(sel.field.name.as_str()));
                     }
                     let mut val = self.render_expr(init)?;
@@ -1832,9 +1832,9 @@ impl KotlinEmitter {
                 // closure params) — infer the element type when iterating a struct
                 // field we know is `List<T>`/`MutableList<T>` (self.g. `for hunk in &f.hunks`).
                 let field_name = match fr.iter.kind() {
-                    ExprKind::Select(sel) => Some(sel.field.name.as_str()),
+                    ExprKind::FieldAccess(sel) => Some(sel.field.name.as_str()),
                     ExprKind::Reference(r) => match r.referee.kind() {
-                        ExprKind::Select(sel) => Some(sel.field.name.as_str()),
+                        ExprKind::FieldAccess(sel) => Some(sel.field.name.as_str()),
                         _ => None,
                     },
                     _ => None,
@@ -2426,7 +2426,7 @@ fn is_known_enum_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
 fn expr_receiver_name(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Name(n) => Some(name_to_string(n)),
-        ExprKind::Select(inner) => Some(inner.field.name.to_string()),
+        ExprKind::FieldAccess(inner) => Some(inner.field.name.to_string()),
         _ => None,
     }
 }
@@ -2856,12 +2856,11 @@ mod tests {
         let input = Expr::ident(Ident::new("input"));
         let split_at = Expr::new(ExprKind::Invoke(ExprInvoke {
             span: fp_core::span::Span::null(),
-            target: ExprInvokeTarget::Method(fp_core::ast::ExprSelect {
+            target: ExprInvokeTarget::Method(fp_core::ast::ExprFieldAccess {
                 span: fp_core::span::Span::null(),
                 obj: input.clone().into(),
                 field: Ident::new("split_at"),
                 generic_args: Vec::new(),
-                select: fp_core::ast::ExprSelectType::Method,
             }),
             args: vec![Expr::value(Value::int(3))],
             kwargs: Vec::new(),
@@ -2934,12 +2933,11 @@ mod tests {
     fn native_option_operation_does_not_require_runtime_helper() {
         let call = Expr::new(ExprKind::Invoke(ExprInvoke {
             span: fp_core::span::Span::null(),
-            target: ExprInvokeTarget::Method(fp_core::ast::ExprSelect {
+            target: ExprInvokeTarget::Method(fp_core::ast::ExprFieldAccess {
                 span: fp_core::span::Span::null(),
                 obj: Expr::value(Value::bool(true)).into(),
                 field: Ident::new("then_some"),
                 generic_args: Vec::new(),
-                select: fp_core::ast::ExprSelectType::Method,
             }),
             args: vec![Expr::value(Value::int(1))],
             kwargs: Vec::new(),

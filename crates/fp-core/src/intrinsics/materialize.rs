@@ -297,7 +297,9 @@ fn materialize_pattern_types(
             .patterns
             .iter_mut()
             .try_for_each(|pattern| materialize_pattern_types(pattern, strategy)),
-        ast::PatternKind::Ident(_) | ast::PatternKind::Wildcard(_) => Ok(()),
+        ast::PatternKind::Ident(_) | ast::PatternKind::Name(_) | ast::PatternKind::Wildcard(_) => {
+            Ok(())
+        }
     }
 }
 
@@ -410,7 +412,7 @@ pub fn materialize_expr(
                 ast::Expr::new(ast::ExprKind::Invoke(invoke))
             }
         }
-        ast::ExprKind::Select(mut select) => {
+        ast::ExprKind::FieldAccess(mut select) => {
             select.obj = Box::new(materialize_expr(*select.obj, strategy)?);
             // Rust's postfix `.await` is represented by the frontend as a
             // field select rather than `ExprKind::Await`. Canonicalize it at
@@ -433,7 +435,7 @@ pub fn materialize_expr(
             {
                 expr
             } else {
-                ast::Expr::new(ast::ExprKind::Select(select))
+                ast::Expr::new(ast::ExprKind::FieldAccess(select))
             }
         }
         ast::ExprKind::Struct(mut struct_expr) => {
@@ -750,11 +752,10 @@ fn is_hashmap_ty(ty: &ast::Ty) -> bool {
 }
 
 fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> ast::Expr {
-    let select = ast::ExprSelect {
+    let select = ast::ExprFieldAccess {
         obj: expr_index.obj,
         field: ast::Ident::new("get_unchecked"),
         generic_args: Vec::new(),
-        select: ast::ExprSelectType::Method,
         span: Span::null(),
     };
     let invoke = ast::ExprInvoke {

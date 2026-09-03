@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    BlockStmt, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect,
-    ExprSelectType, File, Ident, Item, ItemDefFunction, ItemKind, Name, PatternKind, Ty, Value,
+    BlockStmt, ExprBlock, ExprFieldAccess, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
+    ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::{PortableOpCall, materialize_file};
 use fp_core::lang::LangItemRegistry;
@@ -387,12 +387,11 @@ fn materializes_kotlin_result_status_properties_through_the_runtime() {
         ("isSuccess", "RustKotlinRuntime.resultIsSuccess"),
         ("isFailure", "RustKotlinRuntime.resultIsFailure"),
     ] {
-        let mut select = ExprSelect {
+        let mut select = ExprFieldAccess {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new(field),
             generic_args: Vec::new(),
-            select: ExprSelectType::Field,
         };
         let materialized = materializer
             .lower_select(&mut select, &None)
@@ -410,31 +409,28 @@ fn materializes_kotlin_result_status_properties_through_the_runtime() {
 fn leaves_unresolved_result_operations_for_resolution() {
     let map_err = Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
-        target: ExprInvokeTarget::Method(ExprSelect {
+        target: ExprInvokeTarget::Method(ExprFieldAccess {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("map_err"),
             generic_args: Vec::new(),
-            select: ExprSelectType::Method,
         }),
         args: vec![Expr::name(Name::ident("convert_error"))],
         kwargs: Vec::new(),
     }));
-    let is_success = Expr::new(ExprKind::Select(ExprSelect {
+    let is_success = Expr::new(ExprKind::FieldAccess(ExprFieldAccess {
         span: Default::default(),
         obj: Box::new(Expr::name(Name::ident("result"))),
         field: Ident::new("isSuccess"),
         generic_args: Vec::new(),
-        select: ExprSelectType::Field,
     }));
     let ok = Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
-        target: ExprInvokeTarget::Method(ExprSelect {
+        target: ExprInvokeTarget::Method(ExprFieldAccess {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("ok"),
             generic_args: Vec::new(),
-            select: ExprSelectType::Method,
         }),
         args: Vec::new(),
         kwargs: Vec::new(),
@@ -1026,7 +1022,7 @@ fn materializes_filesystem_and_stream_operations_through_jvm_runtime_apis() {
             .lower_portable_operation(&mut call, &None)
             .expect("materialize Path property")
             .expect("Path property replacement");
-        let ExprKind::Select(select) = materialized.kind() else {
+        let ExprKind::FieldAccess(select) = materialized.kind() else {
             panic!("expected Kotlin property selection");
         };
         assert_eq!(select.field.as_str(), expected);

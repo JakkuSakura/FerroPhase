@@ -820,7 +820,7 @@ impl ScriptEmitter {
             ExprKind::Value(value) => Ok(render_js_value(value.as_ref())),
             ExprKind::Name(name) => Ok(self.render_name(name)),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
-            ExprKind::Select(select) => Ok(format!(
+            ExprKind::FieldAccess(select) => Ok(format!(
                 "{}.{}",
                 self.render_expr(select.obj.as_ref())?,
                 select.field.name

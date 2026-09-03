@@ -364,10 +364,7 @@ pub(super) fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> 
         _ => false,
     };
     if !is_plain_ident_pattern {
-        return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-            name: Expr::name(name),
-            pattern: None,
-        })));
+        return Ok(Pattern::new(PatternKind::Name(name)));
     }
 
     let ident = name

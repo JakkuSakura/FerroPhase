@@ -14,7 +14,7 @@ common_enum! {
     pub enum ExprInvokeTarget {
         Function(Name),
         Type(Ty),
-        Method(ExprSelect),
+        Method(ExprFieldAccess),
         Closure(ValueFunction),
         BinOp(BinOpKind),
         Expr(BExpr),
@@ -25,7 +25,7 @@ impl ExprInvokeTarget {
         let (span, kind) = expr.into_parts();
         match kind {
             ExprKind::Name(name) => Self::Function(name),
-            ExprKind::Select(select) => Self::Method(select),
+            ExprKind::FieldAccess(select) => Self::Method(select),
             ExprKind::Value(value) => Self::value(*value),
             other => Self::Expr(Expr::from_parts(span, other).into()),
         }
@@ -381,7 +381,7 @@ impl ExprSplice {
     }
 }
 
-impl ExprSelect {
+impl ExprFieldAccess {
     pub fn span(&self) -> Span {
         span_or(self.span, self.obj.span())
     }
@@ -1374,26 +1374,14 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder, String>
     }
 }
 
-common_enum! {
-    pub enum ExprSelectType {
-        Unknown,
-        Field,
-        Method,
-        Function,
-        Const,
-    }
-
-}
-
 common_struct! {
-    pub struct ExprSelect {
+    pub struct ExprFieldAccess {
         #[serde(default)]
         pub span: Span,
         pub obj: BExpr,
         pub field: Ident,
         #[serde(default)]
         pub generic_args: Vec<Ty>,
-        pub select: ExprSelectType,
     }
 }
 

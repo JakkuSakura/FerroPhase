@@ -1026,26 +1026,34 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 finally: None,
             })
             .into(),
-            Postfix::Field(field) => ExprKind::Select(ExprSelect {
+            Postfix::Field(field) => ExprKind::FieldAccess(ExprFieldAccess {
                 span: span_from_expr(&expr),
                 obj: Box::new(expr),
                 field,
                 generic_args: Vec::new(),
-                select: ExprSelectType::Field,
             })
             .into(),
-            Postfix::ConstField(field) => ExprKind::Select(ExprSelect {
-                span: span_from_expr(&expr),
-                obj: Box::new(expr),
-                field,
-                generic_args: Vec::new(),
-                select: ExprSelectType::Const,
-            })
-            .into(),
+            Postfix::ConstField(field) => {
+                let span = span_from_expr(&expr);
+                match expr.kind {
+                    ExprKind::Name(name) => {
+                        let mut path = name.to_path();
+                        path.segments.push(field);
+                        Expr::new(ExprKind::Name(Name::path(path))).with_span(span)
+                    }
+                    _ => ExprKind::FieldAccess(ExprFieldAccess {
+                        span,
+                        obj: Box::new(expr),
+                        field,
+                        generic_args: Vec::new(),
+                    })
+                    .into(),
+                }
+            }
             Postfix::Turbofish(args) => match expr.kind {
-                ExprKind::Select(mut select) => {
+                ExprKind::FieldAccess(mut select) => {
                     select.generic_args = args;
-                    expr = Expr::new(ExprKind::Select(select));
+                    expr = Expr::new(ExprKind::FieldAccess(select));
                     expr
                 }
                 _ => expr,
@@ -1094,7 +1102,7 @@ fn parse_struct_literal_after_expr(
 fn expr_can_start_struct_literal(expr: &Expr) -> bool {
     match expr.kind() {
         ExprKind::Name(_) => true,
-        ExprKind::Select(select) => expr_can_start_struct_literal(&select.obj),
+        ExprKind::FieldAccess(select) => expr_can_start_struct_literal(&select.obj),
         _ => false,
     }
 }

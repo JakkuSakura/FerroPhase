@@ -6,7 +6,7 @@ use crate::ast::sql::{
     Value as SqlValue,
 };
 use crate::ast::{
-    Expr, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, File, Name, Value,
+    Expr, ExprField, ExprFieldAccess, ExprInvoke, ExprInvokeTarget, ExprKind, File, Name, Value,
 };
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::query::{
@@ -142,7 +142,7 @@ fn lower_root_invoke(name: &Name, invoke: &ExprInvoke, pipeline: &mut QueryPipel
 }
 
 fn lower_method_invoke(
-    select: &ExprSelect,
+    select: &ExprFieldAccess,
     invoke: &ExprInvoke,
     pipeline: &mut QueryPipeline,
 ) -> Option<()> {
@@ -450,7 +450,7 @@ fn fold_and(filters: Vec<SqlExpr>) -> Option<SqlExpr> {
 fn sql_expr(expr: &Expr) -> Option<SqlExpr> {
     match expr.kind() {
         ExprKind::Name(name) => sql_expr_from_name(name),
-        ExprKind::Select(select) => sql_expr_from_select(select),
+        ExprKind::FieldAccess(field) => sql_expr_from_field_access(field),
         ExprKind::Value(value) => sql_expr_from_value(value.as_ref()),
         ExprKind::BinOp(bin) => Some(SqlExpr::BinaryOp {
             left: Box::new(sql_expr(bin.lhs.as_ref())?),
@@ -498,14 +498,14 @@ fn sql_expr_from_name(name: &Name) -> Option<SqlExpr> {
     }
 }
 
-fn sql_expr_from_select(select: &ExprSelect) -> Option<SqlExpr> {
+fn sql_expr_from_field_access(select: &ExprFieldAccess) -> Option<SqlExpr> {
     match select.obj.kind() {
         ExprKind::Name(name) => {
             let mut parts = object_name_from_name(name).parts;
             parts.push(sql_ident(select.field.as_str()));
             Some(SqlExpr::CompoundIdentifier(parts))
         }
-        ExprKind::Select(_) => {
+        ExprKind::FieldAccess(_) => {
             let SqlExpr::CompoundIdentifier(mut parts) = sql_expr(select.obj.as_ref())? else {
                 return None;
             };

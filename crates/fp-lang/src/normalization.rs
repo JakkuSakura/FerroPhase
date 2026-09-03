@@ -1,8 +1,8 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType,
-    ExprStringTemplate, ExprStruct, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec,
-    FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprFieldAccess, ExprIf,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprReference, ExprStringTemplate,
+    ExprStruct, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident,
+    MacroTokenTree, Name, Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -487,12 +487,11 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     span,
                     ExprKind::Invoke(ExprInvoke {
                         span: span.unwrap_or_default(),
-                        target: ExprInvokeTarget::Method(ExprSelect {
+                        target: ExprInvokeTarget::Method(ExprFieldAccess {
                             span: span.unwrap_or_default(),
                             obj: Box::new(args[0].clone()),
                             field: Ident::new("append"),
                             generic_args: Vec::new(),
-                            select: ExprSelectType::Method,
                         }),
                         args: vec![formatted],
                         kwargs: Vec::new(),
@@ -751,7 +750,7 @@ fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
                 }
             }
         }
-        ExprKind::Select(sel) => {
+        ExprKind::FieldAccess(sel) => {
             normalize_expr(&mut sel.obj, n)?;
         }
         ExprKind::Index(idx) => {

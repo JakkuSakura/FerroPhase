@@ -375,7 +375,7 @@ impl KotlinMaterializer {
 
     pub(crate) fn lower_select_core(
         &self,
-        select: ExprSelect,
+        select: ExprFieldAccess,
         _ty: &TySlot,
     ) -> Result<Option<Expr>> {
         let receiver = (*select.obj).clone();
@@ -489,7 +489,7 @@ impl KotlinMaterializer {
     #[cfg(test)]
     pub(crate) fn lower_select(
         &self,
-        select: impl IntoMaterialized<ExprSelect>,
+        select: impl IntoMaterialized<ExprFieldAccess>,
         ty: &TySlot,
     ) -> Result<Option<Expr>> {
         self.lower_select_core(select.into_materialized(), ty)
@@ -523,7 +523,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
     }
     fn materialize_select_expression(
         &self,
-        select: ExprSelect,
+        select: ExprFieldAccess,
         ty: &TySlot,
     ) -> Result<MaterializeOutcome<Expr>> {
         Ok(self

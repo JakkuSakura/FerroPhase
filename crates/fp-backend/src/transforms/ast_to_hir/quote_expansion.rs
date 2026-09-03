@@ -183,7 +183,7 @@ fn rewrite_expr(expr: &mut ast::Expr, quotes: &HashMap<String, ast::ExprQuote>) 
             rewrite_expr(&mut repeat.elem, quotes)?;
             rewrite_expr(&mut repeat.len, quotes)
         }
-        ast::ExprKind::Select(select) => rewrite_expr(&mut select.obj, quotes),
+        ast::ExprKind::FieldAccess(select) => rewrite_expr(&mut select.obj, quotes),
         ast::ExprKind::Index(index) => {
             rewrite_expr(&mut index.obj, quotes)?;
             rewrite_expr(&mut index.index, quotes)

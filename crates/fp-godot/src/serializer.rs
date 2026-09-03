@@ -1,8 +1,8 @@
 use eyre::eyre;
 use fp_core::ast::{
-    BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprRange,
-    ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File, FunctionParam,
+    BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprFieldAccess, ExprIf,
+    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
+    ExprRange, ExprRangeLimit, ExprReturn, ExprStruct, ExprUnOp, ExprWhile, File, FunctionParam,
     Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name, Pattern,
     PatternKind, PatternTupleStruct, Ty, TypeStruct, Value, ValueList, ValueMap, ValueMapEntry,
     ValueStruct, ValueTuple,
@@ -802,7 +802,7 @@ impl GdscriptEmitter {
             ExprKind::Value(value) => self.render_value(value.as_ref()),
             ExprKind::Name(name) => self.render_name_expr(name),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
-            ExprKind::Select(select) => self.render_select(select),
+            ExprKind::FieldAccess(select) => self.render_select(select),
             ExprKind::Assign(assign) => self.render_assign(assign),
             ExprKind::BinOp(bin_op) => self.render_bin_op(bin_op),
             ExprKind::UnOp(un_op) => self.render_un_op(un_op),
@@ -1066,7 +1066,7 @@ impl GdscriptEmitter {
         Ok(format!("{rendered_target}({args})"))
     }
 
-    fn render_select(&mut self, select: &ExprSelect) -> Result<String> {
+    fn render_select(&mut self, select: &ExprFieldAccess) -> Result<String> {
         let obj_rendered = self.render_expr(select.obj.as_ref())?;
         let field = select.field.name.as_str();
         if let Some(info) = self.enums.get(&obj_rendered) {

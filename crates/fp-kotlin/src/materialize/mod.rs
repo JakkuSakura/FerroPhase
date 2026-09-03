@@ -1,8 +1,8 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprIntrinsicCall,
-    ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, ExprSelectType,
-    Ident, Name, Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt,
-    TypePrimitive, Value,
+    BlockStmt, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprFieldAccess,
+    ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, Ident, Name,
+    Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt, TypePrimitive,
+    Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome, PortableOpCall};
@@ -153,7 +153,7 @@ fn runtime_method(method: &str, args: Vec<Expr>) -> Expr {
 fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Expr {
     Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
-        target: ExprInvokeTarget::Method(ExprSelect {
+        target: ExprInvokeTarget::Method(ExprFieldAccess {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::path(Path::plain(
                 receiver
@@ -163,7 +163,6 @@ fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Exp
             )))),
             field: Ident::new(method),
             generic_args: Vec::new(),
-            select: ExprSelectType::Method,
         }),
         args,
         kwargs: Vec::new(),
@@ -298,12 +297,11 @@ mod tests;
 fn invoke_method(receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {
     Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
-        target: ExprInvokeTarget::Method(ExprSelect {
+        target: ExprInvokeTarget::Method(ExprFieldAccess {
             span: Default::default(),
             obj: Box::new(receiver),
             field: Ident::new(method),
             generic_args: Vec::new(),
-            select: ExprSelectType::Method,
         }),
         args,
         kwargs: Vec::new(),
@@ -311,11 +309,10 @@ fn invoke_method(receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {
 }
 
 fn select_property(receiver: Expr, property: &str) -> Expr {
-    Expr::new(ExprKind::Select(ExprSelect {
+    Expr::new(ExprKind::FieldAccess(ExprFieldAccess {
         span: Default::default(),
         obj: Box::new(receiver),
         field: Ident::new(property),
         generic_args: Vec::new(),
-        select: ExprSelectType::Field,
     }))
 }

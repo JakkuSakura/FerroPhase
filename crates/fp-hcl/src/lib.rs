@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, Expr, ExprArray, ExprBinOp, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprParen, ExprSelect, ExprSelectType, ExprStringTemplate,
+    AstSerializer, Expr, ExprArray, ExprBinOp, ExprFieldAccess, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprParen, ExprStringTemplate,
     ExprUnOp, File, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, Item, ItemKind,
     Name, Path as AstPath, Value, ValueList, ValueMap,
 };
@@ -272,13 +272,14 @@ fn lower_traversal(traversal: &Traversal) -> CoreResult<Expr> {
 
     for op in &traversal.operators {
         current = match op {
-            TraversalOperator::GetAttr(ident) => Expr::new(ExprKind::Select(ExprSelect {
-                span: Span::null(),
-                obj: Box::new(current),
-                field: Ident::new(ident.as_str()),
-                generic_args: Vec::new(),
-                select: ExprSelectType::Field,
-            })),
+            TraversalOperator::GetAttr(ident) => {
+                Expr::new(ExprKind::FieldAccess(ExprFieldAccess {
+                    span: Span::null(),
+                    obj: Box::new(current),
+                    field: Ident::new(ident.as_str()),
+                    generic_args: Vec::new(),
+                }))
+            }
             TraversalOperator::Index(expr) => Expr::new(ExprKind::Index(ExprIndex {
                 span: Span::null(),
                 obj: Box::new(current),
@@ -557,7 +558,7 @@ fn value_to_hcl_value(value: &Value) -> CoreResult<HclValue> {
 
 fn expr_to_hcl_expression(expr: &Expr) -> CoreResult<Expression> {
     match expr.kind() {
-        ExprKind::Select(_) | ExprKind::Index(_) => {
+        ExprKind::FieldAccess(_) | ExprKind::Index(_) => {
             let mut operators = Vec::new();
             let base = peel_traversal(expr, &mut operators)?;
             operators.reverse();
@@ -572,7 +573,7 @@ fn expr_to_hcl_expression(expr: &Expr) -> CoreResult<Expression> {
 
 fn peel_traversal(expr: &Expr, operators: &mut Vec<TraversalOperator>) -> CoreResult<Expression> {
     match expr.kind() {
-        ExprKind::Select(select) => {
+        ExprKind::FieldAccess(select) => {
             let ident = hcl::Identifier::new(select.field.to_string())
                 .map_err(|err| CoreError::from(err.to_string()))?;
             operators.push(TraversalOperator::GetAttr(ident));

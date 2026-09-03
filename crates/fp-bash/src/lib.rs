@@ -722,7 +722,7 @@ impl<'a> BashRenderer<'a> {
                 ..
             } => self.render_word(&paren.expr),
             Expr {
-                kind: ExprKind::Select(select),
+                kind: ExprKind::FieldAccess(select),
                 ..
             } => {
                 let field = select.field.as_str();

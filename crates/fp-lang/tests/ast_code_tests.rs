@@ -235,7 +235,7 @@ fn node_contains_splice_quote(file: &File) -> bool {
             ExprKind::While(w) => expr_contains(w.cond.as_ref()) || expr_contains(w.body.as_ref()),
             ExprKind::Loop(l) => expr_contains(l.body.as_ref()),
             ExprKind::Invoke(inv) => inv.args.iter().any(expr_contains),
-            ExprKind::Select(sel) => expr_contains(sel.obj.as_ref()),
+            ExprKind::FieldAccess(sel) => expr_contains(sel.obj.as_ref()),
             ExprKind::Reference(r) => expr_contains(r.referee.as_ref()),
             ExprKind::Dereference(d) => expr_contains(d.referee.as_ref()),
             ExprKind::Array(arr) => arr.values.iter().any(expr_contains),

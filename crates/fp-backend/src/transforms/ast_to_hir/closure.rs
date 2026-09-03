@@ -183,7 +183,7 @@ impl ClosureLowering {
                 .current_param_types
                 .get(name.as_ident()?.as_str())
                 .cloned(),
-            ast::ExprKind::Select(select) => {
+            ast::ExprKind::FieldAccess(select) => {
                 let base_ty = self.infer_static_expr_ty(&select.obj)?;
                 let struct_name = Self::struct_name_of(&base_ty)?;
                 self.struct_field_types
@@ -853,7 +853,7 @@ impl ClosureLowering {
                 self.rewrite_in_expr(assign.target.as_mut())?;
                 self.rewrite_in_expr(assign.value.as_mut())?;
             }
-            ast::ExprKind::Select(select) => self.rewrite_in_expr(select.obj.as_mut())?,
+            ast::ExprKind::FieldAccess(select) => self.rewrite_in_expr(select.obj.as_mut())?,
             ast::ExprKind::Struct(struct_expr) => {
                 self.rewrite_in_expr(struct_expr.name.as_mut())?;
                 for field in &mut struct_expr.fields {
@@ -1142,7 +1142,7 @@ impl CaptureCollector {
                 self.visit(binop.rhs.as_ref());
             }
             ast::ExprKind::UnOp(unop) => self.visit(unop.val.as_ref()),
-            ast::ExprKind::Select(select) => self.visit(select.obj.as_ref()),
+            ast::ExprKind::FieldAccess(select) => self.visit(select.obj.as_ref()),
             ast::ExprKind::Struct(struct_expr) => {
                 self.visit(struct_expr.name.as_ref());
                 for field in &struct_expr.fields {
@@ -1390,12 +1390,11 @@ impl CaptureReplacer {
                 if let Some(ident) = name.as_ident() {
                     if let Some(capture_ty) = self.captures.get(ident.as_str()) {
                         let mut expr_struct =
-                            ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                            ast::Expr::new(ast::ExprKind::FieldAccess(ast::ExprFieldAccess {
                                 span: fp_core::span::Span::null(),
                                 obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                 field: ident.clone(),
                                 generic_args: Vec::new(),
-                                select: ast::ExprSelectType::Field,
                             }));
                         *expr = expr_struct;
                     }
@@ -1462,14 +1461,14 @@ impl CaptureReplacer {
                     ast::ExprInvokeTarget::Function(name) => {
                         if let Some(ident) = name.as_ident() {
                             if let Some(capture_ty) = self.captures.get(ident.as_str()) {
-                                let expr_struct =
-                                    ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                                let expr_struct = ast::Expr::new(ast::ExprKind::FieldAccess(
+                                    ast::ExprFieldAccess {
                                         span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                         field: ident.clone(),
                                         generic_args: Vec::new(),
-                                        select: ast::ExprSelectType::Field,
-                                    }));
+                                    },
+                                ));
                                 invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());
                             }
                         }
@@ -1490,7 +1489,7 @@ impl CaptureReplacer {
                 self.visit(assign.target.as_mut());
                 self.visit(assign.value.as_mut());
             }
-            ast::ExprKind::Select(select) => self.visit(select.obj.as_mut()),
+            ast::ExprKind::FieldAccess(select) => self.visit(select.obj.as_mut()),
             ast::ExprKind::Struct(struct_expr) => {
                 self.visit(struct_expr.name.as_mut());
                 for field in &mut struct_expr.fields {

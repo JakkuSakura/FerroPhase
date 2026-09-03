@@ -63,7 +63,7 @@ pub fn project_assign_target(expr: &Expr) -> Option<ProjectedAssignTarget> {
     match expr.kind() {
         ExprKind::Name(name) => Some(ProjectedAssignTarget::from_name(name.clone(), expr.span())),
         ExprKind::Paren(paren) => project_assign_target(paren.expr.as_ref()),
-        ExprKind::Select(select) => {
+        ExprKind::FieldAccess(select) => {
             let mut target = project_assign_target(select.obj.as_ref())
                 .unwrap_or_else(|| ProjectedAssignTarget::from_expr(select.obj.as_ref().clone()));
             target.push(AssignTargetProjection::Field(select.field.clone()));

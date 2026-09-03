@@ -10,7 +10,7 @@ impl ZigEmitter {
         match expr.kind() {
             ExprKind::Value(value) => self.render_value(value),
             ExprKind::Name(name) => Some(self.render_name(name)),
-            ExprKind::Select(select) => {
+            ExprKind::FieldAccess(select) => {
                 let target = self.render_expr(select.obj.as_ref())?;
                 Some(format!("{}.{}", target, select.field.name))
             }

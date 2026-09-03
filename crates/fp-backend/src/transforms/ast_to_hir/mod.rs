@@ -2547,7 +2547,7 @@ impl AstToHirLowerer {
                 // below and into a silently-wrong error path.
                 if matches!(
                     block.expr.kind(),
-                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_)
+                    ast::ExprKind::Name(_) | ast::ExprKind::FieldAccess(_)
                 ) {
                     if let Ok(path) =
                         self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)

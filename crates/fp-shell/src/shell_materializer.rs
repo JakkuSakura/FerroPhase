@@ -304,7 +304,7 @@ fn inject_with_contexts(
             inject_with_contexts(assign.target.as_mut(), sigs, context);
             inject_with_contexts(assign.value.as_mut(), sigs, context);
         }
-        ExprKind::Select(select) => inject_with_contexts(select.obj.as_mut(), sigs, context),
+        ExprKind::FieldAccess(select) => inject_with_contexts(select.obj.as_mut(), sigs, context),
         ExprKind::Index(index) => {
             inject_with_contexts(index.obj.as_mut(), sigs, context);
             inject_with_contexts(index.index.as_mut(), sigs, context);

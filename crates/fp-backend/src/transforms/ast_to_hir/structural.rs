@@ -28,25 +28,7 @@ impl AstToHirLowerer {
                     }
                 }
             }
-            ast::Ty::Expr(expr) => {
-                if let ast::ExprKind::Name(name) = expr.kind() {
-                    let path = name.to_path();
-                    let qualified = fp_core::ast::path::InPackagePath::new(
-                        path.segments.iter().map(|seg| seg.name.clone()).collect(),
-                    );
-                    if let fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) =
-                        self.hir_program.resolve_module_path_final(
-                            &self.package_id,
-                            &self.module_path,
-                            &qualified,
-                            fp_core::hir::resolve::Namespace::Type,
-                        )
-                    {
-                        if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
-                            return Ok(fields);
-                        }
-                    }
-                }
+            ast::Ty::Expr(_) => {
                 self.add_error(
                     Diagnostic::error(
                         "struct update requires a resolved struct definition".to_string(),

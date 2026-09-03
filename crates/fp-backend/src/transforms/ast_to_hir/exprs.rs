@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::{InPackagePath, PathPrefix};
+use fp_core::ast::path::PathPrefix;
 use fp_core::intrinsics::CallKind;
 use fp_core::query::lower_fp_expr_to_query;
 
@@ -123,7 +123,7 @@ impl AstToHirLowerer {
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
             ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
-            ExprKind::Select(select) => self.transform_select_to_hir(select)?,
+            ExprKind::FieldAccess(select) => self.transform_select_to_hir(select)?,
             ExprKind::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
             ExprKind::Block(block) => {
                 hir::ExprKind::Block(self.transform_block_node_to_hir(block)?)
@@ -729,7 +729,7 @@ impl AstToHirLowerer {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
                 let receiver_can_be_type_path = match select.obj.kind() {
-                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_) => true,
+                    ast::ExprKind::Name(_) | ast::ExprKind::FieldAccess(_) => true,
                     ast::ExprKind::Invoke(receiver) => {
                         matches!(receiver.target, ast::ExprInvokeTarget::Type(_))
                     }
@@ -889,10 +889,10 @@ impl AstToHirLowerer {
     /// Transform field selection to HIR
     pub(super) fn transform_select_to_hir(
         &mut self,
-        select: &ast::ExprSelect,
+        select: &ast::ExprFieldAccess,
     ) -> Result<hir::ExprKind> {
         // A `::name` select (`u8::MAX`, `Map::SOME_CONST`) — syntactically
-        // identical to `.name` in this parser (both fold into `ExprSelect`;
+        // identical to `.name` in this parser (both fold into `FieldAccess`;
         // see `Postfix::ConstField`'s doc comment), but semantically a
         // *path* continuation, never a runtime field access. Build it the
         // same way a call's callee/a struct literal's name already does
@@ -902,14 +902,8 @@ impl AstToHirLowerer {
         // ordinary value read, not immediately called) permanently
         // unresolvable, since a plain runtime field access has no notion
         // of a type-relative base at all.
-        if matches!(select.select, ast::ExprSelectType::Const) {
-            let type_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
-            let value_path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?;
-            let mut path = if matches!(value_path.res, hir::Res::Module(_)) {
-                value_path
-            } else {
-                type_path
-            };
+        if let ast::ExprKind::Name(_) = select.obj.kind() {
+            let mut path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
             let seg = self.make_path_segment(&select.field.name, None);
             path.segments.push(seg);
             return Ok(hir::ExprKind::Path(path));
@@ -984,34 +978,14 @@ impl AstToHirLowerer {
                 }
             }
             _ => {
-                let qualified = InPackagePath::new(
-                    path.segments
-                        .iter()
-                        .map(|seg| seg.name.as_str().to_owned())
-                        .collect(),
+                self.add_error(
+                    Diagnostic::error(
+                        "struct update requires a resolved struct definition".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(struct_span),
                 );
-                let fields = match self.hir_program.resolve_module_path_final(
-                    &self.package_id,
-                    &self.module_path,
-                    &qualified,
-                    fp_core::hir::resolve::Namespace::Type,
-                ) {
-                    fp_core::hir::resolve::ResolutionResult::Found(hir::Res::Def(def_id)) => {
-                        self.struct_field_defs.get(&def_id).cloned()
-                    }
-                    _ => None,
-                };
-                let Some(fields) = fields else {
-                    self.add_error(
-                        Diagnostic::error(
-                            "struct update requires a resolved struct definition".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(struct_span),
-                    );
-                    return Ok(hir::ExprKind::Struct(path, Vec::new()));
-                };
-                fields
+                return Ok(hir::ExprKind::Struct(path, Vec::new()));
             }
         };
 
@@ -1534,7 +1508,7 @@ impl AstToHirLowerer {
                     _ => None,
                 }
             }
-            ast::ExprKind::Select(select) => {
+            ast::ExprKind::FieldAccess(select) => {
                 let mut base = self.path_segments_from_expr(&select.obj)?;
                 base.push(select.field.clone());
                 Some(base)

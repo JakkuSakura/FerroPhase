@@ -8,49 +8,6 @@ impl AstToHirLowerer {
         use fp_core::ast::PatternKind;
         match pat.kind() {
             PatternKind::Ident(ident) => {
-                // A bare identifier pattern is syntactically ambiguous
-                // between a new binding and a reference to an existing
-                // nullary variant/const (`None`) — the parser always
-                // produces `Ident` for this shape (see
-                // `parse_general_pattern`, fp-lang), so disambiguate here
-                // by identity: only treat it as a variant reference when
-                // the name already resolves, at module/prelude/workspace
-                // scope (never lexical — a pattern always introduces a
-                // fresh binding unless it names something truly global),
-                // to an enum variant or a portable-op-tagged definition.
-                // Enum variants imported with `use Enum::*` are ordinary
-                // Rust name-resolution results; they must not depend on an
-                // operation attribute being present. The local variant
-                // index is populated during predeclaration, while an
-                // already-published dependency is identified by its owning
-                // enum index in HIR.
-                if let Some(hir::Res::Def(def_id)) =
-                    self.resolve_global_value_symbol(ident.ident.as_str())
-                {
-                    let is_enum_variant = self
-                        .enum_variant_def_ids
-                        .values()
-                        .any(|candidate| candidate == &def_id)
-                        || self
-                            .hir_program
-                            .member_owner(def_id.clone())
-                            .and_then(|owner| self.hir_program.item(owner))
-                            .map(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
-                            .unwrap_or(false);
-                    if is_enum_variant {
-                        let hir_pat = hir::Pat {
-                            hir_id: self.next_id(),
-                            kind: hir::PatKind::Variant(hir::Path {
-                                segments: vec![hir::PathSegment {
-                                    name: hir::Symbol::new(ident.ident.as_str().to_string()),
-                                    args: None,
-                                }],
-                                res: hir::Res::Def(def_id),
-                            }),
-                        };
-                        return Ok((hir_pat, None, false));
-                    }
-                }
                 let mutable = ident.mutability.unwrap_or(false);
                 let hir_pat = hir::Pat {
                     hir_id: self.next_id(),
@@ -60,6 +17,18 @@ impl AstToHirLowerer {
                     },
                 };
                 Ok((hir_pat, None, mutable))
+            }
+            PatternKind::Name(name) => {
+                let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
+                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?;
+                Ok((
+                    hir::Pat {
+                        hir_id: self.next_id(),
+                        kind: hir::PatKind::Variant(path),
+                    },
+                    None,
+                    false,
+                ))
             }
             PatternKind::Bind(bind) => {
                 let mutable = bind.ident.mutability.unwrap_or(false);

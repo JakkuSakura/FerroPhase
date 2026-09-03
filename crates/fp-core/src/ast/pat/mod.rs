@@ -15,6 +15,7 @@ pub type BPattern = Box<Pattern>;
 common_enum! {
     pub enum PatternKind {
         Ident(PatternIdent),
+        Name(Name),
         Bind(PatternBind),
         Tuple(PatternTuple),
         TupleStruct(PatternTupleStruct),
@@ -103,6 +104,7 @@ impl Pattern {
     pub fn as_ident(&self) -> Option<&Ident> {
         match &self.kind {
             PatternKind::Ident(ident) => Some(&ident.ident),
+            PatternKind::Name(name) => name.as_ident(),
             PatternKind::Bind(bind) => Some(&bind.ident.ident),
             PatternKind::Type(pattern_type) => pattern_type.pat.as_ident(),
             _ => None,
@@ -342,6 +344,7 @@ impl PatternKind {
     pub fn span(&self) -> Span {
         match self {
             PatternKind::Ident(ident) => ident.span(),
+            PatternKind::Name(name) => name.span(),
             PatternKind::Bind(bind) => bind.span(),
             PatternKind::Tuple(tuple) => tuple.span(),
             PatternKind::TupleStruct(tuple) => tuple.span(),

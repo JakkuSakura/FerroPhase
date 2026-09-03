@@ -1544,7 +1544,7 @@ fn parse_expr_ast_handles_tuple_field_access() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("self.0").unwrap();
-    assert!(matches!(expr.kind(), ExprKind::Select(_)));
+    assert!(matches!(expr.kind(), ExprKind::FieldAccess(_)));
 }
 
 #[test]
@@ -1566,7 +1566,7 @@ fn parse_expr_ast_self_field_access_targets_self_ident() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("self.x").unwrap();
-    let ExprKind::Select(select) = expr.kind() else {
+    let ExprKind::FieldAccess(select) = expr.kind() else {
         panic!("expected field access, got {:?}", expr.kind());
     };
     let ExprKind::Name(Name::Ident(ident)) = select.obj.kind() else {
@@ -2216,7 +2216,7 @@ fn parse_expr_ast_handles_type_value_call_arg_static_str_ref() {
         .unwrap();
     assert!(matches!(
         expr.kind(),
-        ExprKind::Invoke(_) | ExprKind::Select(_)
+        ExprKind::Invoke(_) | ExprKind::FieldAccess(_)
     ));
 }
 

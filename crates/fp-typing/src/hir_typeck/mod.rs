@@ -3616,6 +3616,54 @@ impl HirTypeChecker {
             }
         };
         let def_id = &def_id;
+        // Enum constructors are type-relative values. Resolve the variant
+        // from the enum definition during type checking when the path carries
+        // the enum head rather than a pre-resolved variant identity.
+        if path.segments.len() == 2 {
+            if let Some(item) = self.program_rc().item(def_id.clone()) {
+                if let hir::ItemKind::Enum(enum_def) = &item.kind {
+                    if let Some(variant) = enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == path.segments[1].name)
+                    {
+                        let receiver = self.path_ty(path).await?;
+                        let TyKind::Adt(adt, args) = receiver.kind else {
+                            return Ok(self.error_ty("enum constructor has no enum receiver"));
+                        };
+                        let Some(payload) = &variant.payload else {
+                            return Ok(Ty {
+                                kind: TyKind::Adt(adt, args),
+                            });
+                        };
+                        let mut scope = self.with_generics(&enum_def.generics);
+                        let payload_ty = scope.check_type_expr(payload).await?;
+                        let payload_ty =
+                            scope.substitute_params(payload_ty, &args, &enum_def.generics.params);
+                        let inputs = match payload_ty.kind {
+                            TyKind::Tuple(fields) => fields,
+                            _ => vec![Box::new(payload_ty)],
+                        };
+                        return Ok(Ty {
+                            kind: TyKind::FnPtr(ty::PolyFnSig {
+                                binder: ty::Binder {
+                                    value: ty::FnSig {
+                                        inputs,
+                                        output: Box::new(Ty {
+                                            kind: TyKind::Adt(adt, args),
+                                        }),
+                                        c_variadic: false,
+                                        unsafety: ty::Unsafety::Normal,
+                                        abi: ty::Abi::Rust,
+                                    },
+                                    bound_vars: Vec::new(),
+                                },
+                            }),
+                        });
+                    }
+                }
+            }
+        }
         // Type-relative value path (`Map::new(..)`, `T::default()`) —
         // `ast_to_hir` resolves only the *base* segment (mirroring rustc's
         // `QPath::TypeRelative`: the resolver settles the type, typeck
@@ -5499,6 +5547,20 @@ impl HirTypeChecker {
             };
             match &pattern.kind {
                 hir::PatKind::Binding { name, .. } => {
+                    // Unit enum variants are resolved with the scrutinee
+                    // type, not as lexical bindings. This mirrors rustc's
+                    // type-dependent pattern resolution and keeps variant
+                    // lookup out of AST→HIR lowering.
+                    if let TyKind::Adt(adt, _) = &adt_ty.kind {
+                        if self.program_rc().item(adt.did.clone()).is_some_and(|item| {
+                            matches!(&item.kind, hir::ItemKind::Enum(def) if def
+                                .variants
+                                .iter()
+                                .any(|variant| variant.name == *name && variant.payload.is_none()))
+                        }) {
+                            return Ok(());
+                        }
+                    }
                     self.locals.insert(name.clone(), ty);
                 }
                 hir::PatKind::Wild => {}

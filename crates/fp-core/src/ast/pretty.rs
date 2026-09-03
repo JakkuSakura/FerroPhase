@@ -160,9 +160,8 @@ impl PrettyPrintable for ast::Expr {
                     ctx.with_indent(|ctx| assign.value.fmt_pretty(f, ctx))
                 })
             }
-            ast::ExprKind::Select(select) => {
-                let selector = render_select_kind(&select.select);
-                ctx.write_line(format!("select .{} [{}]{}", select.field, selector, suffix))?;
+            ast::ExprKind::FieldAccess(select) => {
+                ctx.write_line(format!("field .{}{}", select.field, suffix))?;
                 ctx.with_indent(|ctx| {
                     ctx.write_line("object:")?;
                     ctx.with_indent(|ctx| select.obj.fmt_pretty(f, ctx))
@@ -1265,7 +1264,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             render_expr_inline(assign.target.as_ref()),
             render_expr_inline(assign.value.as_ref())
         ),
-        ast::ExprKind::Select(select) => format!(
+        ast::ExprKind::FieldAccess(select) => format!(
             "{}.{}",
             render_expr_inline(select.obj.as_ref()),
             select.field
@@ -1434,6 +1433,7 @@ fn render_pattern(pattern: &Pattern) -> String {
                 ident.ident.to_string()
             }
         }
+        PatternKind::Name(name) => name.to_string(),
         PatternKind::Tuple(tuple) => {
             let inner = tuple
                 .patterns
@@ -1602,16 +1602,6 @@ fn fmt_expr_fields(
         }
     }
     Ok(())
-}
-
-fn render_select_kind(kind: &ast::ExprSelectType) -> &'static str {
-    match kind {
-        ast::ExprSelectType::Unknown => "unknown",
-        ast::ExprSelectType::Field => "field",
-        ast::ExprSelectType::Method => "method",
-        ast::ExprSelectType::Function => "function",
-        ast::ExprSelectType::Const => "const",
-    }
 }
 
 fn render_intrinsic_kind(kind: &CallKind) -> String {

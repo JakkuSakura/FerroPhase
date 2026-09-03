@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
-    ExprSelectType, ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile,
-    ExprWith, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
-    ItemDefFunction, ItemDefStruct, ItemKind, Name, Pattern, PatternIdent, PatternKind,
-    PatternTuple, ReprOptions, StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap,
-    ValueTuple,
+    ExprClosure, ExprContinue, ExprFieldAccess, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprRange, ExprRangeLimit, ExprReturn,
+    ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith, File,
+    FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item, ItemDefFunction,
+    ItemDefStruct, ItemKind, Name, Pattern, PatternIdent, PatternKind, PatternTuple, ReprOptions,
+    StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap, ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -580,12 +579,11 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
         PyExpr::Constant(constant) => lower_constant(&constant.value),
         PyExpr::Name(name) => Ok(Expr::name(Name::ident(name.id.as_str()))),
         PyExpr::Call(call) => lower_call(call),
-        PyExpr::Attribute(attr) => Ok(Expr::new(ExprKind::Select(ExprSelect {
+        PyExpr::Attribute(attr) => Ok(Expr::new(ExprKind::FieldAccess(ExprFieldAccess {
             span: Span::null(),
             obj: Box::new(lower_expr(&attr.value)?),
             field: Ident::new(attr.attr.as_str()),
             generic_args: Vec::new(),
-            select: ExprSelectType::Field,
         }))),
         PyExpr::Subscript(subscript) => {
             let index_expr = lower_expr(&subscript.slice)?;

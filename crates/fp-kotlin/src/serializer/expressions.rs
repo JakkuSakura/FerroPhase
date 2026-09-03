@@ -45,7 +45,7 @@ impl KotlinEmitter {
                 // rendered here since `render_expr` sees just the receiver
                 // expression, not the surrounding `Select`) — Kotlin has no
                 // implicit local named `self`; `this` is the equivalent and,
-                // unlike the field-access case (`ExprKind::Select` below, which
+                // unlike the field-access case (`ExprKind::FieldAccess` below, which
                 // drops it entirely), stays valid written out explicitly even
                 // inside an extension function body.
                 if raw == "self" {
@@ -361,7 +361,7 @@ impl KotlinEmitter {
                 }
             }
 
-            ExprKind::Select(sel) => {
+            ExprKind::FieldAccess(sel) => {
                 let obj = self.render_expr(&sel.obj)?;
                 if obj == "self" {
                     let field = map_kt_field(sel.field.name.as_str());

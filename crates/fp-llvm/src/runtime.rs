@@ -1,7 +1,7 @@
 use fp_core::ast::{
-    DecimalType, Expr, ExprDereference, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprSelect, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot,
-    TypeAny, TypeInt, TypeNothing, TypePrimitive, TypeUnit, Value,
+    DecimalType, Expr, ExprDereference, ExprFieldAccess, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, FormatArgRef, FormatTemplatePart,
+    FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypeNothing, TypePrimitive, TypeUnit, Value,
 };
 use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
@@ -135,7 +135,7 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
             Value::Int(_) | Value::Decimal(_) | Value::Bool(_) | Value::Char(_) | Value::String(_)
         ),
         ExprKind::Cast(_) => false,
-        ExprKind::Select(_) | ExprKind::Reference(_) => true,
+        ExprKind::FieldAccess(_) | ExprKind::Reference(_) => true,
         _ => true,
     }
 }
@@ -224,7 +224,7 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
 
     match expr.kind() {
         ExprKind::Value(value) => infer_printf_spec_for_value(value.as_ref()),
-        ExprKind::Select(select) => infer_printf_spec_for_select(select),
+        ExprKind::FieldAccess(select) => infer_printf_spec_for_select(select),
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
         ExprKind::Reference(reference) => Err(fp_core::error::Error::from(
             "missing type information for printf argument".to_string(),
@@ -235,7 +235,7 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
     }
 }
 
-fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<Expr>)> {
+fn infer_printf_spec_for_select(select: &ExprFieldAccess) -> Result<(String, Option<Expr>)> {
     let _ = select;
     Err(fp_core::error::Error::from(
         "missing type information for printf argument".to_string(),
@@ -274,7 +274,7 @@ fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<E
             }
             let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
             let deref = Expr::new(ExprKind::Dereference(ExprDereference {
-                referee: Box::new(Expr::new(ExprKind::Select(select.clone()))),
+                referee: Box::new(Expr::new(ExprKind::FieldAccess(select.clone()))),
                 span: Span::null(),
             }));
             Ok((spec, Some(deref)))

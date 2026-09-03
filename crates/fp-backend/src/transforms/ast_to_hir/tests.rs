@@ -223,6 +223,37 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
 }
 
 #[test]
+fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> {
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let root = fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test"));
+    let module = hir::DefId::new(hir::PackageId::new("test"), 7);
+    generator
+        .package_mut()
+        .module_data
+        .set_children(module.clone(), Vec::new());
+    generator.package_mut().module_data.add_child(
+        root,
+        "missing",
+        fp_core::hir::resolve::Namespace::Type,
+        hir::Res::Module(module),
+    );
+    let path = ast::Path::new(
+        fp_core::ast::path::PathPrefix::Plain,
+        vec![ident("missing"), ident("Item")],
+    );
+    let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Path(path)));
+    let lowered = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+    assert_eq!(lowered.res, hir::Res::Error);
+    Ok(())
+}
+
+#[test]
 fn impl_self_keys_use_definition_identity_and_generic_arguments() {
     let package = hir::PackageId::new("impl-key-test");
     let adt = |index| ImplSelfKey::Adt {
@@ -1037,13 +1068,14 @@ fn transform_generic_function_and_method() -> Result<()> {
     let container = make_struct("Container", vec![("value", int_ty())]);
     let mut method = ast::ItemDefFunction::new_simple(
         ident("get"),
-        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::Select(ast::ExprSelect {
-            span: Span::null(),
-            obj: Box::new(ast::Expr::ident(ident("self"))),
-            field: ident("value"),
-            generic_args: Vec::new(),
-            select: ast::ExprSelectType::Field,
-        }))),
+        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::FieldAccess(
+            ast::ExprFieldAccess {
+                span: Span::null(),
+                obj: Box::new(ast::Expr::ident(ident("self"))),
+                field: ident("value"),
+                generic_args: Vec::new(),
+            },
+        ))),
     );
     method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
     method.sig.ret_ty = Some(int_ty());
@@ -3081,13 +3113,14 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
     let container = make_struct("Container", vec![("value", int_ty())]);
     let mut method = ast::ItemDefFunction::new_simple(
         ident("get"),
-        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::Select(ast::ExprSelect {
-            span: Span::null(),
-            obj: Box::new(ast::Expr::ident(ident("self"))),
-            field: ident("value"),
-            generic_args: Vec::new(),
-            select: ast::ExprSelectType::Field,
-        }))),
+        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::FieldAccess(
+            ast::ExprFieldAccess {
+                span: Span::null(),
+                obj: Box::new(ast::Expr::ident(ident("self"))),
+                field: ident("value"),
+                generic_args: Vec::new(),
+            },
+        ))),
     );
     method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
     method.sig.ret_ty = Some(int_ty());
