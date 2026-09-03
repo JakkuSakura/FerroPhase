@@ -993,6 +993,18 @@ impl AstToHirLowerer {
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
+        // `InPackageResolver` reads the package tree through the workspace
+        // registry.  Direct callers (notably backend unit tests) may provide
+        // an AST package without first publishing it, so publish this source
+        // snapshot before running the package-wide resolution pass.
+        self.workspace.import_package(
+            self.package_id.clone(),
+            Rc::new(RefCell::new(package.clone())),
+        );
+        // Register the mutable HIR package up front so global path queries
+        // performed while its module bindings are collected can traverse the
+        // package through the shared HIR program as well.
+        self.hir_program.add_package(self.hir_package_handle());
         let resolver = Rc::new(RefCell::new(InPackageResolver::new(
             self.hir_package_handle(),
             self.hir_program.rc(),

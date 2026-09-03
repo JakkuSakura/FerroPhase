@@ -1,5 +1,4 @@
 use super::*;
-use fp_core::ast::path::{InPackagePath, PathPrefix};
 use fp_core::hir::Res;
 
 impl AstToHirLowerer {
@@ -166,26 +165,70 @@ impl AstToHirLowerer {
     ) -> Result<hir::Path> {
         match expr.kind() {
             ast::ExprKind::Name(name) => {
-                // Lexical type bindings have rustc's normal shadowing
-                // precedence, so preserve the local HIR identity before
-                // consulting the module-level resolution snapshot.
-                if scope == PathResolutionScope::Type {
-                    let local_name = match name {
-                        Name::Ident(ident) => Some(ident.name.as_str()),
-                        Name::Path(path) if path.segments.len() == 1 => {
-                            path.segments.first().map(|segment| segment.name.as_str())
-                        }
-                        _ => None,
-                    };
-                    if let Some(local_name) = local_name {
-                        if let Some(res) = self.resolve_lexical_type_symbol(local_name) {
-                            let mut path: hir::Path = todo!();
-                            path.res = res;
-                            return Ok(path);
-                        }
+                let namespace = match scope {
+                    PathResolutionScope::Type => fp_core::hir::resolve::Namespace::Type,
+                    PathResolutionScope::Value => fp_core::hir::resolve::Namespace::Value,
+                    PathResolutionScope::Trait => fp_core::hir::resolve::Namespace::Type,
+                };
+                let parsed = match name {
+                    Name::Ident(ident) => ast::Path::from_ident(ident.clone()),
+                    Name::Path(path) => path.clone(),
+                    Name::ParameterPath(path) => {
+                        // Generic arguments do not participate in lexical
+                        // name lookup. Resolve the first generic-bearing
+                        // type/trait anchor and leave projections for type
+                        // checking.
+                        let anchor = path
+                            .segments
+                            .iter()
+                            .position(|segment| !segment.args.is_empty())
+                            .unwrap_or(path.segments.len().saturating_sub(1));
+                        ast::Path::new(
+                            path.prefix,
+                            path.segments[..=anchor]
+                                .iter()
+                                .map(|segment| segment.ident.clone())
+                                .collect(),
+                        )
                     }
-                }
-                todo!()
+                };
+                let resolution_namespace = if matches!(name, Name::ParameterPath(_)) {
+                    fp_core::hir::resolve::Namespace::Type
+                } else {
+                    namespace
+                };
+                let res = match self.local_resolver.resolve_parsed_path(
+                    &self.package_id,
+                    &self.module_path,
+                    &parsed,
+                    resolution_namespace,
+                ) {
+                    fp_core::hir::resolve::ResolutionResult::Found(res) => res,
+                    fp_core::hir::resolve::ResolutionResult::NotFound(_)
+                    | fp_core::hir::resolve::ResolutionResult::Ambiguous => hir::Res::Error,
+                };
+                let segment_args = self.name_segment_args(name)?;
+                let names: Vec<&str> = match name {
+                    Name::Ident(ident) => vec![ident.as_str()],
+                    Name::Path(path) => path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.as_str())
+                        .collect(),
+                    Name::ParameterPath(path) => path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.as_str())
+                        .collect(),
+                };
+                Ok(hir::Path {
+                    res,
+                    segments: names
+                        .into_iter()
+                        .zip(segment_args)
+                        .map(|(name, args)| self.make_path_segment(name, args))
+                        .collect(),
+                })
             }
             ast::ExprKind::Select(select) => {
                 // `T::ASSOC` is a type-relative path. Resolve its base in
