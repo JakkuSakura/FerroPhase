@@ -360,4 +360,26 @@ mod tests {
         assert_eq!(path.segments[0].ident.as_str(), "Vec");
         assert!(path.segments[0].args.is_empty());
     }
+
+    #[test]
+    fn qualified_path_keeps_qself_outside_path_segments() {
+        let ty = Ty::Expr(Box::new(crate::ast::Expr::new(crate::ast::ExprKind::Name(
+            Name::ident("Vec"),
+        ))));
+        let path = Path::new(
+            PathPrefix::Plain,
+            vec![PathSegment::from("Trait"), PathSegment::from("Item")],
+        );
+        let qualified = QPath::new(
+            Some(QSelf {
+                ty: Box::new(ty),
+                path_span: Span::null(),
+                position: 0,
+            }),
+            path,
+        );
+        assert!(qualified.is_qualified());
+        assert_eq!(qualified.path.join("::"), "Trait::Item");
+        assert_eq!(qualified.qself.as_ref().unwrap().position, 0);
+    }
 }
