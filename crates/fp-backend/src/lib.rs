@@ -341,9 +341,13 @@ mod tests {
             panic!("expected a trailing expression statement, got {stmt:?}");
         };
         match expr_stmt.expr.kind() {
-            ast::ExprKind::Name(Name::Path(path)) => {
-                path.segments.last().expect("non-empty path").name.clone()
-            }
+            ast::ExprKind::Name(Name::Path(path)) => path
+                .segments
+                .last()
+                .expect("non-empty path")
+                .ident
+                .name
+                .clone(),
             ast::ExprKind::Name(Name::Ident(ident)) => ident.name.clone(),
             other => panic!("expected a name/path expression, got {other:?}"),
         }

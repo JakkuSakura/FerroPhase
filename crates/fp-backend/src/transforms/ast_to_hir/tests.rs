@@ -245,7 +245,7 @@ fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> 
     );
     let path = ast::Path::new(
         fp_core::ast::path::PathPrefix::Plain,
-        vec![ident("missing"), ident("Item")],
+        vec![ident("missing").into(), ident("Item").into()],
     );
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::Path(path)));
     let lowered = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
@@ -4481,7 +4481,7 @@ fn transform_package_resolves_module_self_plus_named_item_group_import() -> Resu
         ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
             target: ast::ExprInvokeTarget::Function(ast::Name::Path(ast::Path::new(
                 fp_core::ast::path::PathPrefix::Plain,
-                vec![ident("intrinsics"), ident("make_value")],
+                vec![ident("intrinsics").into(), ident("make_value").into()],
             ))),
             args: Vec::new(),
             kwargs: Vec::new(),

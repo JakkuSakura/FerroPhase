@@ -737,8 +737,7 @@ fn is_hashmap_ty(ty: &ast::Ty) -> bool {
                 ast::Name::Path(path) => path
                     .segments
                     .last()
-                    .map(|seg| seg.as_str() == "HashMap")
-                    .unwrap_or(false),
+                    .is_some_and(|seg| seg.as_str() == "HashMap"),
             },
             _ => false,
         },

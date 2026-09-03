@@ -154,6 +154,14 @@ impl Path {
     }
 }
 
+/// Type qualification on a path, matching rustc's AST representation.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub struct QSelf {
+    pub ty: Box<Ty>,
+    pub path_span: Span,
+    pub position: usize,
+}
+
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self.prefix {
@@ -252,8 +260,21 @@ impl From<&str> for PathSegment {
 impl Eq for PathSegment {}
 impl Eq for Path {}
 
+/// A qualified path use, matching rustc's separation of QSelf from Path.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub struct QPath {
+    pub qself: Option<QSelf>,
+    pub path: Path,
+}
+
+impl QPath {
+    pub fn new(qself: Option<QSelf>, path: Path) -> Self {
+        Self { qself, path }
+    }
+}
+
 /// A name can be an identifier or a path. Generic arguments are stored on
-/// the path segments themselves.
+/// path segments; qualified paths use [`QPath`] at their expression/type site.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum Name {
     Ident(Ident),
@@ -289,7 +310,7 @@ impl Name {
     pub fn as_ident(&self) -> Option<&Ident> {
         match self {
             Name::Ident(ident) => Some(ident),
-            _ => None,
+            Name::Path(_) => None,
         }
     }
 

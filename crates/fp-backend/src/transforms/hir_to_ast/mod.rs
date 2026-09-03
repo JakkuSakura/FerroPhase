@@ -2371,8 +2371,8 @@ mod tests {
         let ast::ExprKind::Name(ast::Name::Path(path)) = &expr.kind else {
             panic!("expected a path-shaped AST expression");
         };
-        assert_eq!(path.segments[0].name, "dependency");
-        assert_eq!(path.segments[1].name, "Widget");
+        assert_eq!(path.segments[0].ident.name, "dependency");
+        assert_eq!(path.segments[1].ident.name, "Widget");
     }
 
     #[test]

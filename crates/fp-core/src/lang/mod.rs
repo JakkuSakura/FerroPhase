@@ -255,7 +255,6 @@ pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
             .iter()
             .map(|seg| seg.ident.name.as_str())
             .collect(),
-        _ => return None,
     };
 
     for (name, path) in registry.items {
