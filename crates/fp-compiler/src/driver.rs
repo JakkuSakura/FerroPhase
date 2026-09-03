@@ -594,7 +594,6 @@ impl CompilerDriver {
         &mut self,
         package_source: &fp_core::ast::package::AstPackage,
         hir_package_id: hir::PackageId,
-        resolution_only: bool,
     ) -> Result<(hir::HirPackage, std::collections::HashMap<String, hir::Res>), CompilerDriverError>
     {
         let normalizer = self
@@ -612,7 +611,6 @@ impl CompilerDriver {
         .with_lowering_config(HirLoweringConfig {
             capabilities: self.state.borrow().backend_capabilities(),
             operations: self.state.borrow().source_operations().unwrap_or_default(),
-            resolution_only,
         });
         let hir_package = generator.transform_package(package_source)?;
         Ok((hir_package, generator.exported_symbols()))
@@ -624,8 +622,7 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().package_id.clone();
         let package_source = package.borrow().clone();
-        let (mut hir_package, exports) =
-            self.lower_package_hir(&package_source, hir_package_id, true)?;
+        let (mut hir_package, exports) = self.lower_package_hir(&package_source, hir_package_id)?;
         hir_package.hir_exports.extend(exports);
         self.state.borrow_mut().insert_hir(hir_package);
         Ok(())
@@ -681,7 +678,7 @@ impl CompilerDriver {
                 (hir_package.const_values(), hir_package.const_block_values())
             });
         let (hir_program, package_exports) =
-            self.lower_package_hir(&package_source, hir_package_id.clone(), false)?;
+            self.lower_package_hir(&package_source, hir_package_id.clone())?;
         self.type_check_program(hir_program, package_exports)
             .await
             .map_err(|error| {

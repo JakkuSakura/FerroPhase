@@ -35,11 +35,7 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
             Rc::clone(&ast_program),
             shared_hir_program.clone(),
             package_id.clone(),
-        )
-        .with_lowering_config(fp_backend::transformations::HirLoweringConfig {
-            resolution_only: true,
-            ..Default::default()
-        });
+        );
         let lowered =
             match std::panic::catch_unwind(AssertUnwindSafe(|| lowerer.transform_package(&source)))
             {
@@ -53,6 +49,14 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
                     continue;
                 }
             };
+        let lowering_diagnostics = lowerer.take_diagnostics().get_diagnostics();
+        eprintln!(
+            "lowering `{package_id}` produced {} diagnostic(s)",
+            lowering_diagnostics.len()
+        );
+        for diagnostic in lowering_diagnostics.iter().take(20) {
+            eprintln!("  {:?}: {}", diagnostic.level, diagnostic.message);
+        }
         let package = Rc::new(RefCell::new(lowered));
         hir_program.borrow_mut().add_package(Rc::clone(&package));
         shared_hir_program.add_package(package);
