@@ -345,12 +345,10 @@ mod tests {
                 .load_package_source(&PackageId::new(package))
                 .expect("embedded package source should load");
             assert!(
-                source.items().iter().all(|item| item
-                    .module_path
-                    .segments
-                    .first()
-                    .is_some_and(|segment| segment == package)),
-                "all {package} modules should be rooted at {package}"
+                source
+                    .items()
+                    .iter()
+                    .all(|item| item.module_path.segments.is_empty())
             );
         }
     }

@@ -262,11 +262,9 @@ mod tests {
             .iter()
             .map(|item| item.module_path.to_key())
             .collect::<HashSet<_>>();
-        assert_eq!(paths.len(), 4);
-        assert!(paths.contains("app::main"));
-        assert!(paths.contains("app::main::modules"));
-        assert!(paths.contains("app::main::modules::helpers"));
-        assert!(paths.contains("app::main::modules::helpers::math"));
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(""));
+        assert!(paths.contains("modules::helpers::math"));
     }
 
     #[test]
