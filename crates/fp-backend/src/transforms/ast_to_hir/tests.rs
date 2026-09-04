@@ -4517,6 +4517,29 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn explicit_empty_generic_arguments_disable_inference() {
+        let (package, diagnostics) = lower(
+            "struct Wrapper<T>(T); fn take(value: Wrapper<>) -> Wrapper<> { value }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "explicit empty arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "take");
+        let input_path = type_path(&function.sig.inputs[0].ty);
+        let segment = input_path
+            .segments()
+            .first()
+            .expect("Wrapper path segment");
+        assert!(segment.args.is_some(), "explicit <> must be retained");
+        assert!(
+            segment.args.as_ref().is_some_and(|args| args.args.is_empty()),
+            "explicit <> must remain empty"
+        );
+        assert!(!segment.infer_args);
+    }
+
+    #[test]
     fn classifies_named_const_generic_arguments_as_constants() {
         let (package, diagnostics) = lower(
             "struct Array<T, const N: usize> { value: T } fn use_array<T, const N: usize>(value: Array<T, N>) -> Array<T, N> { value }",

@@ -1058,14 +1058,20 @@ impl AstToHirLowerer {
     }
 
     fn infer_path_segment_args(args: &Option<hir::GenericArgs>, param_mode: ParamMode) -> bool {
-        param_mode == ParamMode::Optional
-            && args.as_ref().is_none_or(|args| {
-                    matches!(args.parenthesized, hir::GenericArgsParentheses::No)
+        if param_mode != ParamMode::Optional {
+            return false;
+        }
+        match args {
+            None => true,
+            Some(args) => {
+                matches!(args.parenthesized, hir::GenericArgsParentheses::No)
+                    && !args.args.is_empty()
                     && args
                         .args
                         .iter()
                         .all(|arg| matches!(arg, hir::GenericArg::Lifetime(_)))
-            })
+            }
+        }
     }
 }
 
