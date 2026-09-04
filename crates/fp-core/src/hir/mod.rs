@@ -1962,20 +1962,22 @@ impl PathSegment {
     pub fn span(&self) -> Span {
         self.args
             .as_ref()
-            .map(GenericArgs::span)
+            .and_then(GenericArgs::span_ext)
             .unwrap_or_else(Span::null)
     }
 }
 
 impl GenericArgs {
-    pub fn span(&self) -> Span {
-        let payload = Span::union(
-            self.args
-                .iter()
-                .map(GenericArg::span)
-                .chain(self.constraints.iter().map(AssocItemConstraint::span)),
-        );
-        self.span_ext.or(payload)
+    /// Return the span inside the surrounding delimiters, matching rustc
+    /// HIR's `GenericArgs::span`. The complete source span remains available
+    /// through `span_ext`.
+    pub fn span(&self) -> Option<Span> {
+        let span = self.span_ext()?;
+        Some(Span::new(
+            span.file,
+            span.lo.saturating_add(1),
+            span.hi.saturating_sub(1),
+        ))
     }
 }
 
@@ -2022,6 +2024,16 @@ impl GenericArg {
     pub fn is_ty_or_const(&self) -> bool {
         !matches!(self, Self::Lifetime(_))
     }
+
+    /// Return the ordering class used by rustc's generic-parameter checks.
+    pub fn to_ord(&self) -> crate::ast::ParamKindOrd {
+        match self {
+            Self::Lifetime(_) => crate::ast::ParamKindOrd::Lifetime,
+            Self::Type(_) | Self::Const(_) | Self::Infer(_) => {
+                crate::ast::ParamKindOrd::TypeOrConst
+            }
+        }
+    }
 }
 
 impl AssocItemConstraint {
@@ -2036,7 +2048,10 @@ impl AssocItemConstraint {
             }
         };
         self.span
-            .or(Span::union([self.gen_args.span(), payload]))
+            .or(Span::union([
+                self.gen_args.span_ext().unwrap_or_else(Span::null),
+                payload,
+            ]))
     }
 
     /// Obtain the right-hand side of an associated type equality constraint.
@@ -2171,6 +2186,7 @@ mod path_tests {
         };
         assert!(constraint_only.is_empty());
         assert_eq!(constraint_only.span_ext(), Some(Span::new(1, 4, 7)));
+        assert_eq!(constraint_only.span(), Some(Span::new(1, 5, 6)));
 
         let synthesized = GenericArgs {
             span_ext: Span::new(1, 7, 7),
@@ -2178,6 +2194,7 @@ mod path_tests {
         };
         assert!(synthesized.is_empty());
         assert_eq!(synthesized.span_ext(), None);
+        assert_eq!(synthesized.span(), None);
     }
 
     #[test]
@@ -2205,10 +2222,16 @@ mod path_tests {
 
         assert_eq!(lifetime.descr(), "lifetime");
         assert!(!lifetime.is_ty_or_const());
+        assert_eq!(lifetime.to_ord(), crate::ast::ParamKindOrd::Lifetime);
         assert_eq!(ty.descr(), "type");
         assert!(ty.is_ty_or_const());
+        assert_eq!(ty.to_ord(), crate::ast::ParamKindOrd::TypeOrConst);
         assert_eq!(placeholder.descr(), "placeholder");
         assert!(placeholder.is_ty_or_const());
+        assert_eq!(
+            placeholder.to_ord(),
+            crate::ast::ParamKindOrd::TypeOrConst
+        );
         assert_eq!(constant_placeholder.descr(), "constant");
         assert!(constant_placeholder.is_ty_or_const());
 

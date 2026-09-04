@@ -599,6 +599,26 @@ pub enum GenericArg {
     Const(Box<Expr>),
 }
 
+/// The ordering class used for generic arguments and parameters.
+///
+/// Rust enforces lifetimes before type-or-const parameters. Keeping the
+/// two-class ordering separate from the concrete `GenericArg` variants lets
+/// HIR perform the same diagnostics-oriented ordering checks as rustc.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ParamKindOrd {
+    Lifetime,
+    TypeOrConst,
+}
+
+impl std::fmt::Display for ParamKindOrd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lifetime => f.write_str("lifetime"),
+            Self::TypeOrConst => f.write_str("type and const"),
+        }
+    }
+}
+
 /// An angle-bracketed argument in rustc's AST is either a positional generic
 /// argument or an associated-item constraint. Keeping constraints outside
 /// `GenericArg` preserves the distinction used by HIR lowering.
