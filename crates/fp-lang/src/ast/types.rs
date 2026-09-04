@@ -555,10 +555,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     {
         return Ok(Ty::Expr(Box::new(Expr::name(name))));
     }
-    let bare_path = match &name {
-        Name { path: p, .. } => Some(p),
-        _ => None,
-    };
+    let bare_path = Some(&name.path);
     // Handle `type` keyword — both bare and with type args like `type<_>`, `type<i64>`
     let type_name = match bare_path {
         Some(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
