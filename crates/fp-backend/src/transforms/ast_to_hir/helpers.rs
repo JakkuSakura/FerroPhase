@@ -384,6 +384,7 @@ impl AstToHirLowerer {
                         };
                         let first_segment =
                             self.make_path_segment(first_segment.as_str(), first_args, param_mode);
+                        let trait_res = trait_path.res;
                         let mut resolved_segments = trait_path.segments;
                         resolved_segments.push(first_segment.clone());
                         // Rustc keeps an explicitly qualified trait path in
@@ -393,7 +394,7 @@ impl AstToHirLowerer {
                         let mut qpath = hir::QPath::Resolved(
                             Some(Box::new(base_ty)),
                             hir::Path {
-                                res: first_segment.res.clone(),
+                                res: trait_res,
                                 segments: resolved_segments,
                             },
                         );

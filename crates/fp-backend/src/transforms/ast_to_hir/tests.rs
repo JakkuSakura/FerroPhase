@@ -4137,7 +4137,7 @@ mod function_body_resolution {
             );
         };
         assert_eq!(path.segments.len(), 2);
-        assert!(matches!(path.res, hir::Res::Error));
+        assert!(matches!(path.res, hir::Res::Def(_)));
         assert!(matches!(path.segments[0].res, hir::Res::Def(_)));
         assert_eq!(path.segments[0].ident.as_str(), "Trait");
         assert!(!path.segments[0].infer_args);
