@@ -262,6 +262,7 @@ pub fn write_string(path: &::std::path::Path, content: &str) { ::std::intrinsics
 #[op(func = "fs_append_string")]
 pub fn append_string(path: &::std::path::Path, content: &str) { ::std::intrinsics::fs::append_string(path, content) }
 
+#[op(func = "fs_exists")]
 pub fn exists(path: &::std::path::Path) -> bool { ::libc::access(::std::ffi::CString::new(path.as_str()).as_ptr(), 0) == 0 }
 
 #[op(func = "fs_is_dir")]

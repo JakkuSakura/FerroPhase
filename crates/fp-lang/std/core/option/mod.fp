@@ -13,6 +13,7 @@ pub fn none<T>() -> Option<T> {
 
 #[op(class = "Option")]
 impl<T> Option<T> {
+    #[op(method = "is_some")]
     pub fn is_some(&self) -> bool {
         match self {
             Option::Some(_) => true,
@@ -20,10 +21,12 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "is_none")]
     pub fn is_none(&self) -> bool {
         !self.is_some()
     }
 
+    #[op(method = "unwrap")]
     pub fn unwrap(self) -> T {
         match self {
             Option::Some(value) => value,
@@ -31,6 +34,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "expect")]
     pub fn expect(self, message: &str) -> T {
         match self {
             Option::Some(value) => value,
@@ -46,6 +50,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "map")]
     pub fn map<U>(self, f: fn(T) -> U) -> Option<U> {
         match self {
             Option::Some(value) => Option::Some(f(value)),
@@ -61,6 +66,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "unwrap_or_else")]
     pub fn unwrap_or_else(self, f: fn() -> T) -> T {
         match self {
             Option::Some(value) => value,
@@ -68,6 +74,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "ok_or")]
     pub fn ok_or<E>(self, err: E) -> Result<T, E> {
         match self {
             Option::Some(value) => Result::Ok(value),

@@ -29,10 +29,12 @@ pub enum TokenTree {
 
 pub struct TokenStream {}
 
+#[op(func = "proc_macro_token_stream_from_str")]
 pub const fn token_stream_from_str(text: str) -> TokenStream {
     ::std::intrinsics::proc_macro::token_stream_from_str(text)
 }
 
+#[op(func = "proc_macro_token_stream_to_string")]
 pub const fn token_stream_to_string(stream: TokenStream) -> str {
     ::std::intrinsics::proc_macro::token_stream_to_string(stream)
 }

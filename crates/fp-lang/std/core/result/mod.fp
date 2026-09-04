@@ -18,6 +18,7 @@ impl<T, E> Result<T, E> {
         self.unwrap()
     }
 
+    #[op(method = "is_ok")]
     pub fn is_ok(&self) -> bool {
         match self {
             Result::Ok(_) => true,
@@ -25,10 +26,12 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "is_err")]
     pub fn is_err(&self) -> bool {
         !self.is_ok()
     }
 
+    #[op(method = "unwrap")]
     pub fn unwrap(self) -> T {
         match self {
             Result::Ok(value) => value,
@@ -36,6 +39,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "expect")]
     pub fn expect(self, message: &str) -> T {
         match self {
             Result::Ok(value) => value,
@@ -43,6 +47,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "unwrap_or")]
     pub fn unwrap_or(self, default: T) -> T {
         match self {
             Result::Ok(value) => value,
@@ -50,6 +55,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "unwrap_or_else")]
     pub fn unwrap_or_else(self, f: fn(E) -> T) -> T {
         match self {
             Result::Ok(value) => value,
@@ -57,6 +63,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "map")]
     pub fn map<U>(self, f: fn(T) -> U) -> Result<U, E> {
         match self {
             Result::Ok(value) => Result::Ok(f(value)),
@@ -64,6 +71,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "map_or")]
     pub fn map_or<U>(self, default: U, f: fn(T) -> U) -> U {
         match self {
             Result::Ok(value) => f(value),
@@ -71,6 +79,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "map_err")]
     pub fn map_err<F>(self, f: fn(E) -> F) -> Result<T, F> {
         match self {
             Result::Ok(value) => Result::Ok(value),
@@ -78,6 +87,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "ok")]
     pub fn ok(self) -> Option<T> {
         match self {
             Result::Ok(value) => Option::Some(value),
@@ -85,6 +95,7 @@ impl<T, E> Result<T, E> {
         }
     }
 
+    #[op(method = "err")]
     pub fn err(self) -> Option<E> {
         match self {
             Result::Ok(_) => Option::None,

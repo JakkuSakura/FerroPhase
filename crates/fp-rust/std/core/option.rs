@@ -669,6 +669,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
+    #[op(method = "is_some")]
     pub const fn is_some(&self) -> bool {
         matches!(*self, Some(_))
     }
@@ -718,6 +719,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
+    #[op(method = "is_none")]
     pub const fn is_none(&self) -> bool {
         !self.is_some()
     }
@@ -1002,6 +1004,7 @@ impl<T> Option<T> {
     #[rustc_diagnostic_item = "option_expect"]
     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
+    #[op(method = "expect")]
     pub const fn expect(self, msg: &str) -> T {
         match self {
             Some(val) => val,
@@ -1047,6 +1050,7 @@ impl<T> Option<T> {
     #[rustc_diagnostic_item = "option_unwrap"]
     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     #[rustc_const_stable(feature = "const_option", since = "1.83.0")]
+    #[op(method = "unwrap")]
     pub const fn unwrap(self) -> T {
         match self {
             Some(val) => val,
@@ -1072,6 +1076,7 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "unwrap_or")]
     pub const fn unwrap_or(self, default: T) -> T
     where
         T: Destruct,
@@ -1095,6 +1100,7 @@ impl<T> Option<T> {
     #[track_caller]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "unwrap_or_else")]
     pub const fn unwrap_or_else<F>(self, f: F) -> T
     where
         F: FnOnce() -> T + Destruct,
@@ -1194,6 +1200,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "map")]
     pub const fn map<U, F>(self, f: F) -> Option<U>
     where
         F: FnOnce(T) -> U + Destruct,
@@ -1258,6 +1265,7 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[must_use = "if you don't need the returned value, use `if let` instead"]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "map_or")]
     pub const fn map_or<U, F>(self, default: U, f: F) -> U
     where
         F: FnOnce(T) -> U + Destruct,
@@ -1369,6 +1377,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "ok_or")]
     pub const fn ok_or<E: Destruct>(self, err: E) -> Result<T, E> {
         match self {
             Some(v) => Ok(v),

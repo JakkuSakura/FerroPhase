@@ -50,6 +50,7 @@ use crate::{array, fmt, io, sys};
 #[doc(alias = "getcwd")]
 #[doc(alias = "GetCurrentDirectory")]
 #[stable(feature = "env", since = "1.0.0")]
+#[op(func = "env_current_dir")]
 pub fn current_dir() -> io::Result<PathBuf> {
     paths_imp::getcwd()
 }
@@ -225,6 +226,7 @@ impl fmt::Debug for VarsOs {
 /// }
 /// ```
 #[stable(feature = "env", since = "1.0.0")]
+#[op(func = "env_var")]
 pub fn var<K: AsRef<OsStr>>(key: K) -> Result<String, VarError> {
     fn inner(key: &OsStr) -> Result<String, VarError> {
         env_imp::getenv(key)
@@ -643,6 +645,7 @@ impl Error for JoinPathsError {
 #[must_use]
 #[stable(feature = "env", since = "1.0.0")]
 #[doc(alias = "home")]
+#[op(func = "env_home_dir")]
 pub fn home_dir() -> Option<PathBuf> {
     paths_imp::home_dir()
 }
@@ -703,6 +706,7 @@ pub fn home_dir() -> Option<PathBuf> {
 #[must_use]
 #[doc(alias = "GetTempPath", alias = "GetTempPath2")]
 #[stable(feature = "env", since = "1.0.0")]
+#[op(func = "env_temp_dir")]
 pub fn temp_dir() -> PathBuf {
     paths_imp::temp_dir()
 }

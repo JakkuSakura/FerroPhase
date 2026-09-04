@@ -10,7 +10,7 @@ pipeline.
 An operation is a high-level standard-library-facing call:
 
 ```ferro
-#[op = "fs_read_to_string"]
+#[op(func = "fs_read_to_string")]
 pub fn read_to_string(path: &Path) -> str {
     std::intrinsics::fs::read_to_string(path)
 }
@@ -24,6 +24,28 @@ In compile mode, the Ferro frontend maps supported operations to their ordinary
 `std` wrapper paths, for example `fs_read_to_string` becomes
 `std::fs::read_to_string`. The backend then sees a regular function call rather
 than a frontend-only operation.
+
+## Three-language operation design
+
+Operations are declared consistently in the three language layers:
+
+1. `fp-rust/std` annotates the real Rust standard-library declaration with
+   `#[op(...)]`.
+2. `fp-lang/std` annotates the FerroPhase-facing wrapper with the same
+   canonical operation name.
+3. `fp-kotlin/std` (and other target std packages) annotates the target-side
+   declaration with corresponding `@Op(...)` metadata.
+
+The compiler collects these declarations into source and target operation
+registries. HIR lowering carries the canonical operation identity forward;
+the target materializer performs the language-specific transformation. The
+std declarations remain ordinary implementations and do not need new
+intrinsic declarations just to participate in operation lowering.
+
+`func` identifies a free function. `class` marks an implementation's receiver
+type, and `method` identifies a receiver operation. Operation names must be
+identical across participating std packages; do not create layer-specific
+aliases.
 
 ## `#[intrinsic]`
 

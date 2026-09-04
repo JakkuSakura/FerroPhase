@@ -4,14 +4,17 @@ pub struct Future<T> {
     pub handle: any,
 }
 
+#[op(func = "spawn")]
 pub fn spawn(fut: any) -> any {
     ::std::intrinsics::task::spawn(fut)
 }
 
+#[op(func = "join")]
 pub fn join(fut: any) -> any {
     ::std::intrinsics::task::join(fut)
 }
 
+#[op(func = "select")]
 pub fn select(fut: any) -> any {
     ::std::intrinsics::task::select(fut)
 }

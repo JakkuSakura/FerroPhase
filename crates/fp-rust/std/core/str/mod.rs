@@ -1380,6 +1380,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
+    #[op(method = "contains")]
     pub fn contains<P: Pattern>(&self, pat: P) -> bool {
         pat.is_contained_in(self)
     }
@@ -1418,6 +1419,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_starts_with"]
+    #[op(method = "starts_with")]
     pub fn starts_with<P: Pattern>(&self, pat: P) -> bool {
         pat.is_prefix_of(self)
     }
@@ -1443,6 +1445,7 @@ impl str {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_ends_with"]
+    #[op(method = "ends_with")]
     pub fn ends_with<P: Pattern>(&self, pat: P) -> bool
     where
         for<'a> P::Searcher<'a>: ReverseSearcher<'a>,
@@ -2184,6 +2187,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "str_trim"]
+    #[op(method = "trim")]
     pub fn trim(&self) -> &str {
         self.trim_matches(char::is_whitespace)
     }
@@ -2223,6 +2227,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_start"]
+    #[op(method = "trim_start")]
     pub fn trim_start(&self) -> &str {
         self.trim_start_matches(char::is_whitespace)
     }
@@ -2262,6 +2267,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_end"]
+    #[op(method = "trim_end")]
     pub fn trim_end(&self) -> &str {
         self.trim_end_matches(char::is_whitespace)
     }

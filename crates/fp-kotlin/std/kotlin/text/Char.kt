@@ -258,6 +258,7 @@ public expect fun Char.isDefined(): Boolean
  * @sample samples.text.Chars.isLetter
  */
 @SinceKotlin("1.5")
+@Op(class = "char", method = "is_alphabetic")
 public expect fun Char.isLetter(): Boolean
 
 /**
@@ -279,6 +280,7 @@ public expect fun Char.isLetterOrDigit(): Boolean
  * @sample samples.text.Chars.isDigit
  */
 @SinceKotlin("1.5")
+@Op(class = "char", method = "is_digit")
 public expect fun Char.isDigit(): Boolean
 
 /**
@@ -335,4 +337,5 @@ public expect fun Char.isISOControl(): Boolean
  *
  * @sample samples.text.Chars.isWhitespace
  */
+@Op(class = "char", method = "is_whitespace")
 public expect fun Char.isWhitespace(): Boolean

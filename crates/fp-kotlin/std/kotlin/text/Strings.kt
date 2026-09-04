@@ -1192,6 +1192,7 @@ public fun CharSequence.lastIndexOf(string: String, startIndex: Int = lastIndex,
  * @sample samples.text.Strings.contains
  */
 @Suppress("INAPPLICABLE_OPERATOR_MODIFIER")
+@Op(class = "str", method = "contains")
 public operator fun CharSequence.contains(other: CharSequence, ignoreCase: Boolean = false): Boolean =
     if (other is String)
         indexOf(other, ignoreCase = ignoreCase) >= 0
