@@ -1078,10 +1078,23 @@ fn fmt_qpath(path: &super::QPath, ctx: &PrettyCtx<'_>) -> String {
     match path {
         super::QPath::Resolved(qself, path) => {
             let rendered = fmt_path(path, ctx);
-            qself
-                .as_ref()
-                .map(|ty| format!("<{} as {}>", fmt_type_expr(ty, ctx), rendered))
-                .unwrap_or(rendered)
+            let Some(qself) = qself.as_ref() else {
+                return rendered;
+            };
+            let Some((associated, trait_segments)) = path.segments.split_last() else {
+                return format!("<{}>", fmt_type_expr(qself, ctx));
+            };
+            if trait_segments.is_empty() {
+                return format!("<{} as {}>", fmt_type_expr(qself, ctx), rendered);
+            }
+            let trait_path = Path::new(path.res.clone(), trait_segments.to_vec());
+            let associated_path = Path::new(associated.res.clone(), vec![associated.clone()]);
+            format!(
+                "<{} as {}>::{}",
+                fmt_type_expr(qself, ctx),
+                fmt_path(&trait_path, ctx),
+                fmt_path(&associated_path, ctx)
+            )
         }
         super::QPath::TypeRelative(receiver, segment) => {
             let segment_path = Path::new(segment.res.clone(), vec![segment.clone()]);
@@ -1091,6 +1104,55 @@ fn fmt_qpath(path: &super::QPath, ctx: &PrettyCtx<'_>) -> String {
                 fmt_path(&segment_path, ctx)
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::{HirId, OwnerId, PackageId, PathSegment, QPath, Res, TypeExpr, TypeExprKind};
+    use crate::pretty::PrettyOptions;
+    use crate::span::Span;
+
+    fn path_segment(name: &str) -> PathSegment {
+        PathSegment {
+            ident: name.into(),
+            args: None,
+            infer_args: false,
+            res: Res::Error,
+        }
+    }
+
+    #[test]
+    fn formats_explicit_qself_associated_path() {
+        let qself = TypeExpr::new(
+            HirId::new(OwnerId::root(PackageId::new("test")), 1),
+            TypeExprKind::Path(QPath::resolved(Path::new(
+                Res::Error,
+                vec![path_segment("Value")],
+            ))),
+            Span::null(),
+        );
+        let path = QPath::qualified(
+            qself,
+            Path::new(Res::Error, vec![path_segment("Trait"), path_segment("Item")]),
+        );
+        let options = PrettyOptions::default();
+        let ctx = PrettyCtx::new(&options);
+        assert_eq!(fmt_qpath(&path, &ctx), "<Value as Trait>::Item");
+
+        let trait_only = QPath::qualified(
+            TypeExpr::new(
+                HirId::new(OwnerId::root(PackageId::new("test")), 2),
+                TypeExprKind::Path(QPath::resolved(Path::new(
+                    Res::Error,
+                    vec![path_segment("Value")],
+                ))),
+                Span::null(),
+            ),
+            Path::new(Res::Error, vec![path_segment("Trait")]),
+        );
+        assert_eq!(fmt_qpath(&trait_only, &ctx), "<Value as Trait>");
     }
 }
 
