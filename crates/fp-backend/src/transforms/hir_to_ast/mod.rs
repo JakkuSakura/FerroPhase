@@ -675,8 +675,8 @@ impl<'a> HirToAstLifter<'a> {
                 bounds: trait_def
                     .supertraits
                     .iter()
-                    .map(|bound| Expr::name(Name::path(self.lift_path(bound))))
-                    .collect(),
+                    .map(|bound| self.lift_path(bound).map(|path| Expr::name(Name::path(path))))
+                    .collect::<Result<Vec<_>>>()?,
             },
             collected_items: Vec::new(),
             items,
@@ -1458,7 +1458,7 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::PatKind::TupleStruct(path, items) => {
                 let mut lifted = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
-                    name: Name::path(self.lift_path(path)),
+                    name: Name::path(self.lift_path(path)?),
                     patterns: items
                         .iter()
                         .map(|p| self.lift_pat(p))
@@ -1491,7 +1491,7 @@ impl<'a> HirToAstLifter<'a> {
             }
             hir::PatKind::Variant(path) => {
                 let mut lifted = Pattern::new(PatternKind::Variant(PatternVariant {
-                    name: Expr::path(self.lift_path(path)),
+                    name: Expr::path(self.lift_path(path)?),
                     pattern: None,
                 }));
                 if let Some(op) = self.portable_op_for_path(path) {
@@ -1532,7 +1532,7 @@ impl<'a> HirToAstLifter<'a> {
             hir::TypeExprKind::Projection(projection) => {
                 Ty::Projection(Box::new(ast::TypeProjection {
                     self_ty: Box::new(self.lift_type(&projection.self_ty)?),
-                    trait_ty: Box::new(Ty::path(self.lift_path(&projection.trait_path))),
+                    trait_ty: Box::new(Ty::path(self.lift_path(&projection.trait_path)?)),
                     assoc: Ident::new(projection.assoc.as_str()),
                 }))
             }
@@ -1573,8 +1573,11 @@ impl<'a> HirToAstLifter<'a> {
             hir::TypeExprKind::Dynamic(bounds) => Ty::TypeBounds(ast::TypeBounds {
                 bounds: bounds
                     .iter()
-                    .map(|bound| ast::Expr::name(ast::Name::path(self.lift_path(bound))))
-                    .collect(),
+                    .map(|bound| {
+                        self.lift_path(bound)
+                            .map(|path| ast::Expr::name(ast::Name::path(path)))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
             }),
             hir::TypeExprKind::Never => Ty::Nothing(ast::TypeNothing),
             hir::TypeExprKind::Infer | hir::TypeExprKind::Error => Ty::Unknown(ast::TypeUnknown),
@@ -2155,14 +2158,8 @@ impl<'a> HirToAstLifter<'a> {
     /// resolution, no lookup, just copying each segment's own name across.
     /// The correct conversion for any path whose identity needs no further
     /// resolution (a local, a plain function/const/struct reference, ...).
-    fn lift_path_verbatim(path: &hir::Path) -> Path {
-        Path::new(
-            PathPrefix::Plain,
-            path.segments()
-                .iter()
-                .map(|segment| PathSegment::new(Ident::new(segment.ident.as_str()), Vec::new()))
-                .collect(),
-        )
+    fn lift_path_verbatim(&self, path: &hir::Path) -> Result<Path> {
+        self.lift_ast_path(path)
     }
 
     /// Lifts an `hir::Path` to an `ast::Path`, substituting a renamed
@@ -2179,10 +2176,10 @@ impl<'a> HirToAstLifter<'a> {
     /// that ISN'T a variant (a function/const/struct reference) falls
     /// through to the plain conversion below, which is simply correct for
     /// those, not a guess.
-    fn lift_path(&self, path: &hir::Path) -> Path {
+    fn lift_path(&self, path: &hir::Path) -> Result<Path> {
         if let hir::Res::Local(hir_id) = &path.res() {
             if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
-                return Path::plain(vec![Ident::new(renamed.clone())]);
+                return Ok(Path::plain(vec![Ident::new(renamed.clone())]));
             }
         }
         if let hir::Res::Def(def_id) = &path.res() {
@@ -2196,14 +2193,14 @@ impl<'a> HirToAstLifter<'a> {
                 });
             if let Some(enum_name) = enum_name {
                 if let Some(variant_name) = path.segments().last() {
-                    return Path::plain(vec![
+                    return Ok(Path::plain(vec![
                         Ident::new(enum_name),
                         Ident::new(variant_name.ident.as_str()),
-                    ]);
+                    ]));
                 }
             }
         }
-        Self::lift_path_verbatim(path)
+        self.lift_path_verbatim(path)
     }
 }
 
@@ -2624,6 +2621,46 @@ mod tests {
             ] if lifetime == "'a"
                 && matches!(ty.as_ref(), ast::Ty::Primitive(_))
                 && matches!(infer.as_ref(), ast::Ty::Wildcard(_))
+        ));
+    }
+
+    #[test]
+    fn path_lifting_preserves_structured_generic_arguments() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let type_id = hir::HirId::new(owner.clone(), 1);
+        let generic_args = hir::GenericArgs {
+            args: vec![hir::GenericArg::Type(Box::new(hir::TypeExpr::new(
+                type_id,
+                hir::TypeExprKind::Primitive(fp_core::ast::TypePrimitive::Int(
+                    fp_core::ast::TypeInt::U8,
+                )),
+                Span::null(),
+            )))],
+            constraints: Vec::new(),
+            parenthesized: hir::GenericArgsParentheses::No,
+        };
+        let path = hir::Path::new(
+            hir::Res::Error,
+            vec![hir::PathSegment {
+                ident: "Vec".into(),
+                args: Some(generic_args),
+                infer_args: false,
+                res: hir::Res::Error,
+            }],
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+        let lifted = lifter.lift_path(&path).expect("lift generic path");
+        let ast::PathArguments::AngleBracketed(args) = &lifted.segments[0].arguments else {
+            panic!("expected lifted generic arguments");
+        };
+        assert!(matches!(
+            args.as_slice(),
+            [ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty))]
+                if matches!(ty.as_ref(), ast::Ty::Primitive(_))
         ));
     }
 

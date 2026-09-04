@@ -428,10 +428,10 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Result"),
-                vec![
+                fp_core::ast::PathArguments::from_types(&[
                     Ty::ident(Ident::new("String")),
                     Ty::ident(Ident::new("CoreError")),
-                ],
+                ]),
             )],
         )));
         let mut function = ItemDefFunction::new_simple(Ident::new("load"), ExprBlock::new());
@@ -643,7 +643,10 @@ mod tests {
             vec![
                 PathSegment::from_ident(Ident::new("alloc")),
                 PathSegment::from_ident(Ident::new("vec")),
-                PathSegment::new(Ident::new("Vec"), vec![Ty::ident(Ident::new("Entry"))]),
+                PathSegment::new(
+                    Ident::new("Vec"),
+                    fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("Entry"))]),
+                ),
             ],
         )));
 
@@ -678,7 +681,9 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                vec![Ty::Primitive(TypePrimitive::Int(TypeInt::U8))],
+                fp_core::ast::PathArguments::from_types(&[Ty::Primitive(TypePrimitive::Int(
+                    TypeInt::U8,
+                ))]),
             )],
         )));
 
@@ -721,7 +726,7 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                vec![Ty::ident(Ident::new("Entry"))],
+                fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("Entry"))]),
             )],
         )));
         let mut function = ItemDefFunction::new_simple(Ident::new("load"), ExprBlock::new());
@@ -824,7 +829,10 @@ mod tests {
         let named_ty = |name, args| {
             Ty::name(Name::path(Path::new(
                 PathPrefix::Plain,
-                vec![PathSegment::new(Ident::new(name), args)],
+                vec![PathSegment::new(
+                    Ident::new(name),
+                    fp_core::ast::PathArguments::from_types(&args),
+                )],
             )))
         };
         let mut function =
@@ -1802,7 +1810,10 @@ fn kotlin_type_name(name: &Name) -> Option<&str> {
 pub(crate) fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
     Ty::Expr(Box::new(Expr::name(Name::path(fp_core::ast::Path::new(
         fp_core::ast::path::PathPrefix::Plain,
-        vec![fp_core::ast::PathSegment::new(Ident::new(name), vec![arg])],
+        vec![fp_core::ast::PathSegment::new(
+            Ident::new(name),
+            fp_core::ast::PathArguments::from_types(&[arg]),
+        )],
     )))))
 }
 
@@ -1818,7 +1829,7 @@ fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("MutableList"),
-            vec![element_ty.clone()],
+            fp_core::ast::PathArguments::from_types(&[element_ty.clone()]),
         )],
     )))))
 }

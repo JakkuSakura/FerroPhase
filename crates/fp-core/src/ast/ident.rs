@@ -282,11 +282,8 @@ pub struct PathSegment {
 }
 
 impl PathSegment {
-    pub fn new(ident: Ident, args: Vec<Ty>) -> Self {
-        Self {
-            ident,
-            arguments: PathArguments::from_types(&args),
-        }
+    pub fn new(ident: Ident, arguments: PathArguments) -> Self {
+        Self { ident, arguments }
     }
 
     pub fn with_arguments(ident: Ident, arguments: PathArguments) -> Self {
@@ -699,7 +696,7 @@ mod tests {
     fn parameterized_path_retains_per_segment_arguments() {
         let path = Path::new(
             PathPrefix::Plain,
-            vec![PathSegment::new(Ident::new("Vec"), Vec::new())],
+            vec![PathSegment::new(Ident::new("Vec"), PathArguments::None)],
         );
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].ident.as_str(), "Vec");
@@ -727,7 +724,7 @@ mod tests {
 
     #[test]
     fn path_segment_retains_structured_generic_arguments() {
-        let segment = PathSegment::with_arguments(
+        let segment = PathSegment::new(
             Ident::new("Array"),
             PathArguments::AngleBracketed(vec![
                 AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),

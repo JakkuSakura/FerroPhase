@@ -775,8 +775,16 @@ impl AstToHirLowerer {
                     ast::ExprInvokeTarget::Method(select) => {
                         let base =
                             self.ast_expr_to_hir_path(&select.obj, scope, param_mode)?;
-                        let seg =
-                            self.make_path_segment(&select.field.name, None, param_mode);
+                        let member_args = if select.generic_args.is_none() {
+                            None
+                        } else {
+                            Some(self.convert_path_arguments(&select.generic_args)?)
+                        };
+                        let seg = self.make_path_segment(
+                            &select.field.name,
+                            member_args,
+                            param_mode,
+                        );
                         match base {
                             hir::QPath::Resolved(qself, mut path) => {
                                 path.segments.push(seg);

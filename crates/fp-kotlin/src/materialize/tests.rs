@@ -519,7 +519,7 @@ fn materializes_collection_defaults_without_rust_default_calls() {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("Vec"),
-            vec![Ty::ident(Ident::new("u8"))],
+            fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("u8"))]),
         )],
     ))));
     let lists_ty = Some(Ty::Vec(fp_core::ast::TypeVec {

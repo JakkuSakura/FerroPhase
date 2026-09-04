@@ -113,7 +113,10 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
 pub(super) fn parameterized(name: &str, arg: Ty) -> Ty {
     Ty::Expr(Box::new(Expr::name(Name::path(fp_core::ast::Path::new(
         fp_core::ast::path::PathPrefix::Plain,
-        vec![fp_core::ast::PathSegment::new(Ident::new(name), vec![arg])],
+        vec![fp_core::ast::PathSegment::new(
+            Ident::new(name),
+            fp_core::ast::PathArguments::from_types(&[arg]),
+        )],
     )))))
 }
 

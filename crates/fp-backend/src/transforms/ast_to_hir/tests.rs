@@ -4577,6 +4577,59 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn preserves_generic_arguments_on_method_target_paths() -> Result<()> {
+        let package_id = hir::PackageId::new("test");
+        let mut generator = AstToHirLowerer::new(
+            std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+                fp_core::ast::package::provider::EmptyProvider,
+            ))),
+            hir::SharedHirProgram::new(hir::HirProgram::new()),
+            package_id.clone(),
+        );
+        let receiver_def = hir::DefId::new(package_id.clone(), 7);
+        generator.package_mut().module_data.add_child(
+            hir::resolve::ModuleData::virtual_root_for(package_id.clone()),
+            "Receiver",
+            hir::resolve::Namespace::Type,
+            hir::Res::Def(receiver_def),
+        );
+        generator
+            .hir_program
+            .add_package(generator.hir_package_handle());
+
+        let select = ast::ExprFieldAccess {
+            span: Span::null(),
+            obj: Box::new(ast::Expr::name(ast::Name::ident("Receiver"))),
+            field: ast::Ident::new("method"),
+            generic_args: ast::PathArguments::AngleBracketed(vec![ast::AngleBracketedArg::Arg(
+                ast::GenericArg::Type(Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
+                    ast::TypeInt::U8,
+                )))),
+            )]),
+        };
+        let expr = ast::Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+            span: Span::null(),
+            target: ast::ExprInvokeTarget::Method(select),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        }));
+        let path = generator.ast_expr_to_hir_path(
+            &expr,
+            PathResolutionScope::Type,
+            ParamMode::Explicit,
+        )?;
+        let hir::QPath::Resolved(_, path) = path else {
+            panic!("expected a resolved method path");
+        };
+        let method = path.segments.last().expect("method path segment");
+        assert_eq!(method.ident.as_str(), "method");
+        let args = method.args.as_ref().expect("method generic arguments");
+        assert_eq!(args.args.len(), 1);
+        assert!(!method.infer_args);
+        Ok(())
+    }
+
+    #[test]
     fn resolves_const_generic_parameter_in_body() {
         let (package, diagnostics) = lower("fn constant<const N: usize>() -> usize { N }");
         let hir::ExprKind::Path(path) = &body_expr(function(&package, "constant")).kind else {
