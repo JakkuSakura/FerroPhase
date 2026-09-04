@@ -188,6 +188,7 @@ impl AstToHirLowerer {
         let mut hir_params = Vec::new();
         for (index, param) in params.iter().enumerate() {
             let namespace = match param.kind {
+                ast::GenericParamKind::Lifetime => fp_core::hir::resolve::Namespace::Type,
                 ast::GenericParamKind::Type => fp_core::hir::resolve::Namespace::Type,
                 ast::GenericParamKind::Const { .. } => fp_core::hir::resolve::Namespace::Value,
             };
@@ -208,6 +209,7 @@ impl AstToHirLowerer {
                 })
                 .unwrap_or_else(|| self.next_def_id());
             match &param.kind {
+                ast::GenericParamKind::Lifetime => {}
                 ast::GenericParamKind::Type => {
                     self.register_type_generic(&param.name.name, def_id.clone());
                 }
@@ -345,6 +347,7 @@ impl AstToHirLowerer {
                 })
                 .collect();
             let kind = match &param.kind {
+                ast::GenericParamKind::Lifetime => hir::GenericParamKind::Lifetime,
                 ast::GenericParamKind::Type => hir::GenericParamKind::Type {
                     default: param
                         .default

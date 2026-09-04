@@ -351,6 +351,9 @@ impl AstToHirLowerer {
                         self.push_value_scope();
                         for (index, param) in impl_block.generics_params.iter().enumerate() {
                             let namespace = match param.kind {
+                                ast::GenericParamKind::Lifetime => {
+                                    fp_core::hir::resolve::Namespace::Type
+                                }
                                 ast::GenericParamKind::Type => {
                                     fp_core::hir::resolve::Namespace::Type
                                 }
@@ -366,6 +369,7 @@ impl AstToHirLowerer {
                             self.impl_generic_param_ids
                                 .insert((impl_def_id.clone(), index), def_id.clone());
                             match param.kind {
+                                ast::GenericParamKind::Lifetime => {}
                                 ast::GenericParamKind::Type => {
                                     self.register_type_generic(&param.name.name, def_id)
                                 }

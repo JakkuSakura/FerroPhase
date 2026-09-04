@@ -1917,6 +1917,18 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
             .all(|diagnostic| !diagnostic.message.contains("'a")),
         "lifetime arguments must not be resolved as type paths: {diagnostics:?}"
     );
+    let wrapper = lowered
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) if def.name.as_str() == "Wrapper" => Some(def),
+            _ => None,
+        })
+        .expect("Wrapper should be lowered");
+    assert!(matches!(
+        wrapper.generics.params.first().map(|param| &param.kind),
+        Some(hir::GenericParamKind::Lifetime)
+    ));
     let read = lowered
         .items
         .iter()

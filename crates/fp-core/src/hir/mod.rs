@@ -1228,6 +1228,10 @@ pub struct GenericParam {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
+    /// A named lifetime parameter. Region checking is not implemented yet,
+    /// but retaining the declaration preserves rustc's generic parameter
+    /// ordering and keeps lifetime arguments aligned with their source.
+    Lifetime,
     Type {
         default: Option<Box<TypeExpr>>,
     },
@@ -2102,6 +2106,7 @@ impl GenericParam {
 impl GenericParamKind {
     pub fn span(&self) -> Span {
         match self {
+            GenericParamKind::Lifetime => Span::null(),
             GenericParamKind::Type { default } => default
                 .as_ref()
                 .map(|ty| ty.span())

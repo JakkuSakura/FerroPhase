@@ -861,10 +861,10 @@ common_enum! {
     ///
     /// Keeping const parameters distinct is required during body lowering:
     /// `N` in `fn f<const N: usize>() { N }` is a value binding, not a type
-    /// binding.  The parser currently represents lifetime parameters by
-    /// omitting them from this list, so only type and const parameters are
-    /// represented here.
+    /// binding. Lifetime parameters are retained as first-class declarations,
+    /// even though the current type checker erases regions after lowering.
     pub enum GenericParamKind {
+        Lifetime,
         Type,
         Const { ty: Box<Ty> },
     }

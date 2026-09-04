@@ -1233,6 +1233,32 @@ fn parse_items_ast_supports_reference_lifetimes() {
 }
 
 #[test]
+fn parse_generic_lifetime_parameters_like_rustc() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("pub struct Pair<'a: 'b, T> { value: &'a T }")
+        .expect("parse generic lifetime parameter");
+    let ItemKind::DefStruct(def) = items[0].kind() else {
+        panic!("expected struct item");
+    };
+    assert_eq!(def.value.generics_params.len(), 2);
+    assert!(matches!(
+        def.value.generics_params[0].kind,
+        fp_core::ast::GenericParamKind::Lifetime
+    ));
+    assert_eq!(def.value.generics_params[0].name.as_str(), "'a");
+    let ExprKind::Name(bound_name) = def.value.generics_params[0].bounds.bounds[0].kind() else {
+        panic!("expected lifetime bound path");
+    };
+    assert_eq!(bound_name.as_ident().map(Ident::as_str), Some("'b"));
+    assert!(matches!(
+        def.value.generics_params[1].kind,
+        fp_core::ast::GenericParamKind::Type
+    ));
+}
+
+#[test]
 fn parse_items_ast_supports_static_reference_return_type() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

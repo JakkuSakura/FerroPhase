@@ -1147,23 +1147,29 @@ pub(crate) fn parse_optional_generic_params(
             // `alloc`'s `pub struct Box<T: ?Sized, #[unstable(feature =
             // "allocator_api", issue = "32838")] A: Allocator = Global>`).
             skip_bracketed_attr(&mut probe);
-            // A lifetime parameter (`<'a, T>`, `<'a: 'b, T>`) — this
-            // checker doesn't model borrow-checking, so it's dropped
-            // rather than fed through the type-parameter pipeline (a
-            // lifetime is not a type parameter with its own `DefId`/`Ty`,
-            // even though real Rust's own `<'a, T>` list mixes them
-            // syntactically). Its own `: 'b + 'c` lifetime-bound list (if
-            // any) is dropped along with it.
+            // A lifetime parameter (`<'a, T>`, `<'a: 'b, T>`). Keep it in
+            // the generic parameter list like rustc does; later stages may
+            // erase regions, but must still see the declaration when
+            // matching generic argument positions.
             if matches!(peek_ident_like(probe), Some(name) if name.starts_with('\'')) {
-                let _ = ident_like(&mut probe)?;
+                let name = ident_like(&mut probe)?;
+                let mut bounds = Vec::new();
                 if skip_symbol(&mut probe, ":").is_ok() {
                     loop {
-                        let _ = ident_like(&mut probe)?;
+                        let bound = ident_like(&mut probe)?;
+                        bounds.push(Expr::name(Name::from_ident(bound)));
                         if skip_symbol(&mut probe, "+").is_err() {
                             break;
                         }
                     }
                 }
+                params.push(fp_core::ast::GenericParam {
+                    name,
+                    bounds: fp_core::ast::TypeBounds { bounds },
+                    kind: fp_core::ast::GenericParamKind::Lifetime,
+                    default: None,
+                    projection_bounds: Vec::new(),
+                });
                 if skip_symbol(&mut probe, ",").is_err() {
                     break;
                 }
