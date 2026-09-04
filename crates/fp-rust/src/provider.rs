@@ -1184,7 +1184,7 @@ fn is_cfg_test(attrs: &[Attribute]) -> bool {
 // even if the embedded Rust source remains byte-for-byte identical. Cached
 // items carry resolver-visible structure, so source hashing alone is not a
 // sufficient compatibility boundary.
-const STD_PARSE_CACHE_SCHEMA: u8 = 2;
+const STD_PARSE_CACHE_SCHEMA: u8 = 3;
 
 /// Parse every embedded real-std `.rs` file, skipping (with a warning) any
 /// that `RustFrontend` can't handle yet, rather than failing the whole load.

@@ -5001,13 +5001,15 @@ mod function_body_resolution {
             diagnostics.is_empty(),
             "nested child should inherit the parent import: {diagnostics:?}"
         );
-        assert!(
-            package.items.iter().any(|item| matches!(
-                &item.kind,
-                hir::ItemKind::Function(function) if function.sig.name.as_str() == "call"
-            )),
-            "nested function should be lowered"
-        );
+        let call = function(&package, "call");
+        let hir::ExprKind::Call(callee, _) = &body_expr(call).kind else {
+            panic!("expected nested imported function call: {:?}", body_expr(call));
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected nested imported callee path: {callee:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+        assert!(path.segments.is_empty(), "path: {path:?}");
     }
 
     #[test]
