@@ -203,6 +203,7 @@ impl AstToHirLowerer {
                     // path resolution remains the resolver's responsibility.
                     if let ast::Ty::Expr(expr) = ty.as_ref()
                         && let ast::ExprKind::Name(name) = expr.kind()
+                        && name.qself.is_none()
                         && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
                         && name.path.segments.len() == 1
                         && !matches!(
@@ -338,6 +339,7 @@ impl AstToHirLowerer {
                     continue;
                 }
                 if let ast::ExprKind::Name(name) = expr.kind()
+                    && name.qself.is_none()
                     && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
                     && name.path.segments.len() == 1
                     && !matches!(

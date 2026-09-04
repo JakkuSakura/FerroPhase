@@ -353,6 +353,59 @@ fn optional_path_parameters_infer_when_arguments_have_no_types_or_consts() {
 }
 
 #[test]
+fn qualified_generic_paths_remain_types_even_when_value_lookup_succeeds() -> Result<()> {
+    let package_id = hir::PackageId::new("test");
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        package_id.clone(),
+    );
+    let root = hir::resolve::ModuleData::virtual_root_for(package_id.clone());
+    generator.package_mut().module_data.add_child(
+        root,
+        "VALUE",
+        hir::resolve::Namespace::Value,
+        hir::Res::Def(hir::DefId::new(package_id.clone(), 7)),
+    );
+    generator
+        .hir_program
+        .add_package(generator.hir_package_handle());
+
+    let qualified = ast::Ty::Expr(Box::new(ast::Expr::name(ast::Name {
+        qself: Some(ast::QSelf {
+            ty: Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
+                ast::TypeInt::U8,
+            ))),
+            path_span: Span::null(),
+            position: 0,
+        }),
+        path: ast::Path::from_ident(ast::Ident::new("VALUE")),
+    })));
+    let arguments = ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span: Span::null(),
+        args: vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(Box::new(
+            qualified.clone(),
+        )))],
+    });
+    let lowered = generator.convert_path_arguments(&arguments)?;
+    assert!(matches!(
+        lowered.args.as_slice(),
+        [hir::GenericArg::Type(ty)]
+            if matches!(ty.kind, hir::TypeExprKind::Path(hir::QPath::TypeRelative(_, _)))
+    ));
+
+    let lowered = generator.convert_generic_args(&[qualified])?;
+    assert!(matches!(
+        lowered.args.as_slice(),
+        [hir::GenericArg::Type(ty)]
+            if matches!(ty.kind, hir::TypeExprKind::Path(hir::QPath::TypeRelative(_, _)))
+    ));
+    Ok(())
+}
+
+#[test]
 fn impl_self_keys_use_definition_identity_and_generic_arguments() {
     let package = hir::PackageId::new("impl-key-test");
     let adt = |index| ImplSelfKey::Adt {
