@@ -1053,6 +1053,35 @@ impl GenericArgs {
         self.args.is_empty()
     }
 
+    /// Return the number of explicit lifetime arguments.
+    #[inline]
+    pub fn num_lifetime_args(&self) -> usize {
+        self.args
+            .iter()
+            .filter(|arg| matches!(arg, GenericArg::Lifetime(_)))
+            .count()
+    }
+
+    /// Whether at least one explicit lifetime argument is present.
+    #[inline]
+    pub fn has_lifetime_args(&self) -> bool {
+        self.args
+            .iter()
+            .any(|arg| matches!(arg, GenericArg::Lifetime(_)))
+    }
+
+    /// Return the number of explicit type and const arguments.
+    ///
+    /// This mirrors rustc's diagnostic-oriented `num_generic_params` view;
+    /// inference arguments count as type-or-const arguments.
+    #[inline]
+    pub fn num_generic_params(&self) -> usize {
+        self.args
+            .iter()
+            .filter(|arg| !matches!(arg, GenericArg::Lifetime(_)))
+            .count()
+    }
+
     /// Return the source span for non-empty generic argument syntax, matching
     /// rustc's optional `span_ext()` accessor. A zero-width span represents a
     /// synthesized or absent argument list.
@@ -1970,6 +1999,29 @@ impl GenericArg {
             GenericArg::Infer(infer) => infer.hir_id.clone(),
         }
     }
+
+    /// Human-readable category used by rustc diagnostics.
+    pub fn descr(&self) -> &'static str {
+        match self {
+            Self::Lifetime(_) => "lifetime",
+            Self::Type(_) => "type",
+            Self::Const(_) => "constant",
+            Self::Infer(InferArg {
+                kind: InferArgKind::TypeOrConst,
+                ..
+            }) => "placeholder",
+            Self::Infer(InferArg {
+                kind: InferArgKind::Const,
+                ..
+            }) => "constant",
+        }
+    }
+
+    /// Whether this argument may be either a type or a const argument.
+    #[inline]
+    pub fn is_ty_or_const(&self) -> bool {
+        !matches!(self, Self::Lifetime(_))
+    }
 }
 
 impl AssocItemConstraint {
@@ -2044,12 +2096,12 @@ impl GenericParamKind {
 
 #[cfg(test)]
 mod path_tests {
-    use crate::span::Span;
     use super::{
         AssocItemConstraint, AssocItemConstraintKind, GenericArg, GenericArgs,
-        GenericArgsParentheses, HirId, Lifetime, LifetimeKind, OwnerId, PackageId, PathSegment,
-        Term, TypeExpr, TypeExprKind,
+        GenericArgsParentheses, HirId, InferArg, InferArgKind, Lifetime, LifetimeKind, OwnerId,
+        PackageId, PathSegment, Term, TypeExpr, TypeExprKind,
     };
+    use crate::span::Span;
 
     #[test]
     fn omitted_segment_arguments_use_rustc_empty_view() {
@@ -2126,6 +2178,47 @@ mod path_tests {
         };
         assert!(synthesized.is_empty());
         assert_eq!(synthesized.span_ext(), None);
+    }
+
+    #[test]
+    fn generic_arg_views_match_rustc_categories() {
+        let lifetime = GenericArg::Lifetime(Lifetime::from_name(
+            "'a",
+            HirId::default(),
+            Span::null(),
+        ));
+        let ty = GenericArg::Type(Box::new(TypeExpr::new(
+            HirId::default(),
+            TypeExprKind::Never,
+            Span::null(),
+        )));
+        let placeholder = GenericArg::Infer(InferArg {
+            hir_id: HirId::default(),
+            span: Span::null(),
+            kind: InferArgKind::TypeOrConst,
+        });
+        let constant_placeholder = GenericArg::Infer(InferArg {
+            hir_id: HirId::default(),
+            span: Span::null(),
+            kind: InferArgKind::Const,
+        });
+
+        assert_eq!(lifetime.descr(), "lifetime");
+        assert!(!lifetime.is_ty_or_const());
+        assert_eq!(ty.descr(), "type");
+        assert!(ty.is_ty_or_const());
+        assert_eq!(placeholder.descr(), "placeholder");
+        assert!(placeholder.is_ty_or_const());
+        assert_eq!(constant_placeholder.descr(), "constant");
+        assert!(constant_placeholder.is_ty_or_const());
+
+        let args = GenericArgs {
+            args: vec![lifetime, ty, placeholder],
+            ..GenericArgs::default()
+        };
+        assert_eq!(args.num_lifetime_args(), 1);
+        assert!(args.has_lifetime_args());
+        assert_eq!(args.num_generic_params(), 2);
     }
 
     #[test]
