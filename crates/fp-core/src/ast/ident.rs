@@ -318,6 +318,9 @@ pub enum PathArguments {
         inputs: Vec<Ty>,
         output: Option<Box<Ty>>,
     },
+    /// Return-type notation, `Trait(..)`, as distinct from the concrete
+    /// parenthesized `Trait(Args) -> Output` form.
+    ParenthesizedElided,
 }
 
 impl Default for PathArguments {
@@ -357,6 +360,7 @@ impl PathArguments {
                 })
                 .collect(),
             Self::Parenthesized { inputs, .. } => inputs.clone(),
+            Self::ParenthesizedElided => Vec::new(),
         }
     }
 }
@@ -487,6 +491,7 @@ impl std::fmt::Display for PathSegment {
                     write!(f, " -> {}", output)?;
                 }
             }
+            PathArguments::ParenthesizedElided => write!(f, "(..)")?,
         }
         Ok(())
     }
@@ -567,6 +572,7 @@ impl std::fmt::Display for PathArguments {
                 }
                 Ok(())
             }
+            Self::ParenthesizedElided => f.write_str("(..)"),
         }
     }
 }

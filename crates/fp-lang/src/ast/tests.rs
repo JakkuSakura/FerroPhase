@@ -415,6 +415,28 @@ fn parse_parenthesized_path_arguments() {
 }
 
 #[test]
+fn parse_return_type_notation_as_elided_path_arguments() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("type Alias = Trait(..);")
+        .unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected path type");
+    };
+    let ExprKind::Name(Name { path, .. }) = expr.kind() else {
+        panic!("expected named path");
+    };
+    assert!(matches!(
+        path.last().arguments,
+        fp_core::ast::PathArguments::ParenthesizedElided
+    ));
+}
+
+#[test]
 fn parse_byte_string_literal_as_bytes_value() {
     // `b"..."` is a byte string (`&[u8; N]` in real Rust), not a `String` —
     // it can contain non-UTF-8 bytes, so it must not be conflated with a

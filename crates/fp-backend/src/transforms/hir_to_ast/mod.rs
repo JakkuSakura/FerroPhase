@@ -1750,6 +1750,14 @@ impl<'a> HirToAstLifter<'a> {
                     .map(|args| {
                         if matches!(
                             args.parenthesized,
+                            hir::GenericArgsParentheses::ReturnTypeNotation
+                        ) {
+                            return Ok::<_, fp_core::error::Error>(
+                                ast::PathArguments::ParenthesizedElided,
+                            );
+                        }
+                        if matches!(
+                            args.parenthesized,
                             hir::GenericArgsParentheses::ParenSugar
                         ) {
                             let inputs = match args.args.first() {

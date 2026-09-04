@@ -1694,6 +1694,7 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
                     materialize_kotlin_ty(output);
                 }
             }
+            fp_core::ast::PathArguments::ParenthesizedElided => {}
             fp_core::ast::PathArguments::None => {}
         }
     }

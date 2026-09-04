@@ -924,7 +924,12 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
                 .join(" + ")
         ),
     }));
-    if matches!(args.parenthesized, GenericArgsParentheses::ParenSugar) {
+    if matches!(
+        args.parenthesized,
+        GenericArgsParentheses::ReturnTypeNotation
+    ) {
+        "(..)".to_owned()
+    } else if matches!(args.parenthesized, GenericArgsParentheses::ParenSugar) {
         let inputs = match args.args.first() {
             Some(GenericArg::Type(ty)) => match &ty.kind {
                 TypeExprKind::Tuple(inputs) => inputs
@@ -1011,6 +1016,11 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
             }));
             let args = args.join(", ");
             if matches!(
+                generic_args.parenthesized,
+                GenericArgsParentheses::ReturnTypeNotation
+            ) {
+                text.push_str("(..)");
+            } else if matches!(
                 generic_args.parenthesized,
                 GenericArgsParentheses::ParenSugar
             ) {

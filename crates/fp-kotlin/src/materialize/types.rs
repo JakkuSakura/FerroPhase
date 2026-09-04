@@ -204,6 +204,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                             **output = materialize_jvm_type((**output).clone());
                         }
                     }
+                    fp_core::ast::PathArguments::ParenthesizedElided => {}
                     fp_core::ast::PathArguments::None => {}
                 }
                 if segment.ident.as_str() == "Result" {

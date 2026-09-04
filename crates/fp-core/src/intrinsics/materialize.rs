@@ -185,6 +185,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                 **output = materialize_ty((**output).clone(), strategy)?;
                             }
                         }
+                        ast::PathArguments::ParenthesizedElided => {}
                         ast::PathArguments::None => {}
                     }
                 }

@@ -4359,6 +4359,36 @@ mod function_body_resolution {
         ));
     }
 
+    #[test]
+    fn lowers_return_type_notation_like_rustc() {
+        let (package, diagnostics) = lower("trait Trait {} type Alias = Trait(..);");
+        assert!(
+            diagnostics.is_empty(),
+            "return-type notation emitted diagnostics: {diagnostics:?}"
+        );
+        let alias = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::TypeAlias(alias) if alias.name.as_str() == "Alias" => Some(alias),
+                _ => None,
+            })
+            .expect("type alias should be present");
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(_, path)) = &alias.target.kind else {
+            panic!("expected resolved trait path, got {:?}", alias.target.kind);
+        };
+        let args = path.segments[0]
+            .args
+            .as_ref()
+            .expect("trait path arguments");
+        assert_eq!(
+            args.parenthesized,
+            hir::GenericArgsParentheses::ReturnTypeNotation
+        );
+        assert!(args.args.is_empty());
+        assert!(args.constraints.is_empty());
+    }
+
     fn body_expr(function: &hir::Function) -> &hir::Expr {
         function
             .body

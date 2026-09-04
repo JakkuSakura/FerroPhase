@@ -377,6 +377,18 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     }
     let name = parse_name(input)?;
     if skip_symbol(input, "(").is_ok() {
+        if skip_symbol(input, "..").is_ok() {
+            skip_symbol(input, ")")?;
+            let Name { mut path, qself } = name;
+            if qself.is_some() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            let Some(segment) = path.segments.last_mut() else {
+                return Err(ErrMode::Cut(ContextError::new()));
+            };
+            segment.arguments = PathArguments::ParenthesizedElided;
+            return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
+        }
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {
@@ -729,6 +741,18 @@ fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
 fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let name = parse_name(input)?;
     if skip_symbol(input, "(").is_ok() {
+        if skip_symbol(input, "..").is_ok() {
+            skip_symbol(input, ")")?;
+            let Name { mut path, qself } = name;
+            if qself.is_some() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            let Some(segment) = path.segments.last_mut() else {
+                return Err(ErrMode::Cut(ContextError::new()));
+            };
+            segment.arguments = PathArguments::ParenthesizedElided;
+            return Ok(Expr::name(Name { qself, path }));
+        }
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {

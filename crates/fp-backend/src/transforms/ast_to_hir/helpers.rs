@@ -111,6 +111,10 @@ impl AstToHirLowerer {
                 parenthesized = hir::GenericArgsParentheses::ParenSugar;
                 &[]
             }
+            ast::PathArguments::ParenthesizedElided => {
+                parenthesized = hir::GenericArgsParentheses::ReturnTypeNotation;
+                &[]
+            }
         };
         for arg in args {
             let ast::AngleBracketedArg::Arg(arg) = arg else {
