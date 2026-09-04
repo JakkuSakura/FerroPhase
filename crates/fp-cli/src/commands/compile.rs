@@ -14,6 +14,7 @@ struct KotlinTranspileConfig {
     packages: Vec<PackageId>,
     package_prefix: String,
 }
+
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
@@ -137,7 +138,12 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
 }
 
 /// Execute the compile command
-pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<()> {
+pub fn compile_command(mut args: CompileArgs, config: &CliConfig) -> Result<()> {
+    // Apply persistent compilation settings before resolving the workspace.
+    // Explicit command-line values remain authoritative.
+    if config.compilation.debug {
+        args.debug = true;
+    }
     info!("Starting compilation with target: {}", args.target);
 
     let progress = setup_progress_bar(1);
@@ -172,7 +178,7 @@ pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<(
     // has the resolved `BackendConfig`.
     let output_file = resolve_output_path(input_file, args.output.as_deref())?;
 
-    compile_workspace_entrypoint(input_file, &output_file, &args, exec).await?;
+    compile_workspace_entrypoint(input_file, &output_file, &args, config, exec)?;
     progress.inc(1);
 
     progress.finish_with_message(format!("{} Compiled successfully", style("✓").green()));
@@ -210,14 +216,15 @@ fn resolve_output_path(input: &Path, output: Option<&Path>) -> Result<PathBuf> {
 /// bytecode, CIL/.NET), which resolves like any other language through
 /// its own `PackageProvider` (`fp_native::NativeObjectPackageProvider`
 /// and friends), not a separate code path.
-async fn compile_workspace_entrypoint(
+fn compile_workspace_entrypoint(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
+    config: &CliConfig,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
-    run_named_target(input, output, args, &args.target, exec).await?;
+    run_named_target(input, output, args, config, &args.target, exec)?;
     Ok(Some(output.to_path_buf()))
 }
 
@@ -246,10 +253,11 @@ fn provider_and_package_for_input(
 /// just the trivial one-package case of the same discovery, not a
 /// separate code path — so `--exec` falls out of `backend.exec()` for
 /// free.
-async fn run_named_target(
+fn run_named_target(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
+    config: &CliConfig,
     target_name: &str,
     exec: bool,
 ) -> Result<()> {
@@ -293,12 +301,8 @@ async fn run_named_target(
         let discovered_packages = provider
             .list_packages()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
-        let kotlin_config = if (lang == crate::languages::RUST || lang == "rs")
-            && target_name == "kotlin"
-            && args.package.is_none()
-            && input.join("Magnet.toml").is_file()
-        {
-            Some(kotlin_transpile_config(input, discovered_packages.clone())?)
+        let kotlin_config = if target_name == "kotlin" && input.join("Magnet.toml").is_file() {
+            Some(kotlin_transpile_config(config, discovered_packages.clone())?)
         } else {
             None
         };
@@ -417,71 +421,32 @@ async fn run_named_target(
         &root_name,
         exec,
     )
-    .await
 }
 
 fn kotlin_transpile_config(
-    input: &Path,
+    config: &CliConfig,
     discovered: Vec<PackageId>,
 ) -> Result<KotlinTranspileConfig> {
-    let manifest = input.join("Magnet.toml");
-    let content = std::fs::read_to_string(&manifest)
-        .map_err(|error| CliError::Compilation(format!("read {}: {error}", manifest.display())))?;
-    let document = toml::from_str::<toml::Value>(&content)
-        .map_err(|error| CliError::Compilation(format!("parse {}: {error}", manifest.display())))?;
-    let kotlin = document
-        .get("transpile")
-        .and_then(|section| section.get("kotlin"))
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "{} must define [transpile.kotlin]",
-                manifest.display()
-            ))
-        })?;
-    let names = kotlin
-        .get("packages")
-        .and_then(toml::Value::as_array)
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "{} must define [transpile.kotlin].packages",
-                manifest.display()
-            ))
-        })?;
+    let kotlin = config.transpile.kotlin.as_ref().ok_or_else(|| {
+        CliError::Compilation("Magnet.toml must define [transpile.kotlin]".to_string())
+    })?;
     let discovered = discovered
         .into_iter()
         .map(|id| (id.as_str().to_string(), id))
         .collect::<std::collections::HashMap<_, _>>();
-    let packages = names
+    let packages = kotlin.packages
         .iter()
         .map(|name| {
-            let name = name.as_str().ok_or_else(|| {
-                CliError::Compilation(format!(
-                    "{} contains a non-string Kotlin package selection",
-                    manifest.display()
-                ))
-            })?;
             discovered.get(name).cloned().ok_or_else(|| {
                 CliError::Compilation(format!(
-                    "Kotlin package `{name}` in {} is not a Cargo workspace member",
-                    manifest.display()
+                    "Kotlin package `{name}` in Magnet.toml is not a Cargo workspace member",
                 ))
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let package_prefix = kotlin
-        .get("package-prefix")
-        .and_then(toml::Value::as_str)
-        .filter(|prefix| !prefix.is_empty())
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "{} must define transpile.kotlin.package-prefix",
-                manifest.display()
-            ))
-        })?
-        .to_string();
     Ok(KotlinTranspileConfig {
         packages,
-        package_prefix,
+        package_prefix: kotlin.package_prefix.clone(),
     })
 }
 
@@ -558,7 +523,7 @@ fn cargo_manifest_declares_workspace(manifest: &Path) -> bool {
 /// Shared tail of every named-target compile: typechecks every package in
 /// one `CompilerDriver::compile_workspace` call, hands each one to
 /// `backend.emit_package_artifact`, then `write_workspace_files`/`exec`.
-async fn run_compile_pipeline(
+fn run_compile_pipeline(
     input: &Path,
     output: &Path,
     target_name: &str,
