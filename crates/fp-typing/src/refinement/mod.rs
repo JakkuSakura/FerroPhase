@@ -63,7 +63,7 @@ fn path_expr(name: &str) -> hir::Expr {
             segments: vec![hir::PathSegment {
                 ident: name.into(),
                 hir_id: Default::default(),
-                args: None,
+                args: Default::default(),
                 infer_args: true,
                 res: fp_core::hir::Res::Error,
             }],
@@ -164,7 +164,7 @@ pub(crate) mod test_support {
                 segments: vec![PathSegment {
                     ident: name.into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: Res::Error,
                 }],

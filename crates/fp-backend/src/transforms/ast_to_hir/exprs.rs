@@ -597,7 +597,7 @@ impl AstToHirLowerer {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("__fp_escaped"),
                         hir_id: Default::default(),
-                        args: None,
+                        args: Default::default(),
                         infer_args: true,
                         res: hir::Res::Error,
                     }],
@@ -1052,7 +1052,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: base_symbol,
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Local(base_pat_id.clone()),
                 }],
@@ -1419,7 +1419,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: loop_name.clone(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: loop_res.clone(),
                 }],

@@ -104,7 +104,7 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
                                 segments: vec![hir::PathSegment {
                                     ident: "B".into(),
                                     hir_id: Default::default(),
-                                    args: None,
+                                    args: Default::default(),
                                     infer_args: true,
                                     res: hir::Res::Def(b_def_id.clone()),
                                 }],
@@ -427,7 +427,7 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
                         segments: vec![hir::PathSegment {
                             ident: path_name.into(),
                             hir_id: Default::default(),
-                            args: None,
+                            args: Default::default(),
                             infer_args: true,
                             res: hir::Res::Error,
                         }],
@@ -512,7 +512,7 @@ fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
             segments: vec![hir::PathSegment {
                 ident: "Wrapper".into(),
                 hir_id: Default::default(),
-                args: Some(hir::GenericArgs {
+                args: hir::GenericArgs {
                     args: vec![
                         hir::GenericArg::Lifetime("'a".into()),
                         hir::GenericArg::Type(Box::new(hir::TypeExpr {
@@ -524,7 +524,7 @@ fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
                     constraints: Vec::new(),
                     parenthesized: hir::GenericArgsParentheses::No,
                     span_ext: fp_core::span::Span::null(),
-                }),
+                },
                 infer_args: false,
                 res: hir::Res::Def(wrapper_id.clone()),
             }],
@@ -590,7 +590,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
             segments: vec![hir::PathSegment {
                 ident: "Command".into(),
                 hir_id: Default::default(),
-                args: None,
+                args: Default::default(),
                 infer_args: true,
                 res: hir::Res::Def(command_id.clone()),
             }],
@@ -647,7 +647,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                             segments: vec![hir::PathSegment {
                                 ident: "Command".into(),
                                 hir_id: Default::default(),
-                                args: None,
+                                args: Default::default(),
                                 infer_args: true,
                                 res: hir::Res::Def(command_id.clone()),
                             }],
@@ -728,7 +728,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                         segments: vec![hir::PathSegment {
                                             ident: "Command".into(),
                                             hir_id: Default::default(),
-                                            args: None,
+                                            args: Default::default(),
                                             infer_args: true,
                                             res: hir::Res::Def(command_id.clone()),
                                         }],
@@ -778,7 +778,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                                 segments: vec![hir::PathSegment {
                                                     ident: "helper".into(),
                                                     hir_id: Default::default(),
-                                                    args: None,
+                                                    args: Default::default(),
                                                     infer_args: true,
                                                     res: hir::Res::Def(helper_id.clone()),
                                                 }],
@@ -817,14 +817,14 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                                     hir::PathSegment {
                                                         ident: "Command".into(),
                                                         hir_id: Default::default(),
-                                                        args: None,
+                                                        args: Default::default(),
                                                         infer_args: true,
                                                         res: hir::Res::Def(command_id.clone()),
                                                     },
                                                     hir::PathSegment {
                                                         ident: "new".into(),
                                                         hir_id: Default::default(),
-                                                        args: None,
+                                                        args: Default::default(),
                                                         infer_args: true,
                                                         res: hir::Res::Error,
                                                     },
@@ -853,7 +853,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                 segments: vec![hir::PathSegment {
                                     ident: "cmd".into(),
                                     hir_id: Default::default(),
-                                    args: None,
+                                    args: Default::default(),
                                     infer_args: true,
                                     res: hir::Res::Local(hid(43)),
                                 }],

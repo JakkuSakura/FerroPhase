@@ -969,14 +969,15 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
     let mut segments = Vec::new();
     for segment in &path.segments {
         let mut text = String::from(segment.ident.clone());
-        if let Some(generic_args) = &segment.args {
+        if !segment.args.is_empty() || !segment.infer_args {
+            let generic_args = &segment.args;
             let mut args = generic_args
                 .args
                 .iter()
                 .map(|arg| match arg {
                     GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
-                    GenericArg::Type(ty) => fmt_type_expr(ty, ctx),
-                    GenericArg::Const(expr) => format_expr_inline(expr, ctx),
+                    GenericArg::Type(ty) => fmt_type_expr(ty.as_ref(), ctx),
+                    GenericArg::Const(expr) => format_expr_inline(expr.as_ref(), ctx),
                     GenericArg::Infer(_) => "_".to_owned(),
                 })
                 .collect::<Vec<_>>();
@@ -1118,8 +1119,8 @@ mod tests {
         PathSegment {
             ident: name.into(),
             hir_id: Default::default(),
-            args: None,
-            infer_args: false,
+            args: Default::default(),
+            infer_args: true,
             res: Res::Error,
         }
     }

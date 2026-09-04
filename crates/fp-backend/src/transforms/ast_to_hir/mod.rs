@@ -581,7 +581,7 @@ impl AstToHirLowerer {
                     .and_then(|path| {
                         path.segments
                             .iter()
-                            .find_map(|segment| segment.args.as_ref())
+                            .find_map(|segment| segment.generic_args())
                     })
                     .map(|args| {
                         args.args
@@ -1287,7 +1287,7 @@ impl AstToHirLowerer {
                                 segments: vec![hir::PathSegment {
                                     ident: hir::Symbol::new(name),
                                     hir_id: Default::default(),
-                                    args: None,
+                                    args: Default::default(),
                                     infer_args: true,
                                     res: hir::Res::Def(def_id.clone()),
                                 }],
@@ -2581,14 +2581,14 @@ impl AstToHirLowerer {
                 )?;
                 if let Some(segment) = path.segments_mut().first_mut() {
                     segment.infer_args = false;
-                    segment.args = Some(args);
+                    segment.args = args;
                 } else {
                     path = hir::QPath::resolved(hir::Path::new(
                         path.res(),
                         vec![hir::PathSegment {
                             ident: "Vec".into(),
                             hir_id: Default::default(),
-                            args: Some(args),
+                            args,
                             infer_args: false,
                             res: path.res(),
                         }],
@@ -2984,7 +2984,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new(type_name),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Error,
                 }],
@@ -3014,7 +3014,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new("null"),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Error,
                 }],
@@ -3243,7 +3243,7 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(name.clone()),
                 hir_id: Default::default(),
-                args: None,
+                args: Default::default(),
                 infer_args: true,
                 res: hir::Res::Def(def_id.clone()),
             }],
@@ -3319,7 +3319,7 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(def.name.clone()),
                 hir_id: Default::default(),
-                args: None,
+                args: Default::default(),
                 infer_args: true,
                 res: hir::Res::Def(def.def_id.clone()),
             }],

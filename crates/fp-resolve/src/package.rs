@@ -705,7 +705,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "Alias".into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Def(target),
                 }]
@@ -819,7 +819,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "Item".into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Def(target),
                 }]
@@ -869,7 +869,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "alias".into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: Default::default(),
                     infer_args: true,
                     res: hir::Res::Module(hir::DefId::local(1)),
                 }]

@@ -457,7 +457,7 @@ impl AstToHirLowerer {
                         for (segment, args) in path.segments.iter_mut().zip(args.iter()) {
                             segment.hir_id = self.next_id();
                             segment.infer_args = Self::infer_path_segment_args(args, param_mode);
-                            segment.args = args.clone();
+                            segment.args = args.clone().unwrap_or_default();
                         }
                         // The resolver returns only the resolved base path.
                         // The remaining source segments are associated
@@ -882,13 +882,13 @@ impl AstToHirLowerer {
                         .collect();
                     let hir_args = self.convert_generic_args(&args)?;
                     if let Some(last) = base.segments_mut().last_mut() {
-                        if last.args.is_none() {
+                        if last.generic_args().is_none() {
                             last.infer_args = false;
-                            last.args = Some(hir_args);
+                            last.args = hir_args;
                         }
                     } else if let Some(first) = base.segments_mut().first_mut() {
                         first.infer_args = false;
-                        first.args = Some(hir_args);
+                        first.args = hir_args;
                     }
                 }
 
@@ -1075,7 +1075,7 @@ impl AstToHirLowerer {
         hir::PathSegment {
             ident: hir::Symbol::new(name),
             hir_id: self.next_id(),
-            args,
+            args: args.unwrap_or_default(),
             infer_args,
             res: hir::Res::Error,
         }

@@ -814,10 +814,10 @@ pub struct PathSegment {
     /// uses `Res::Error` here and is resolved by type checking, matching
     /// rustc HIR.
     pub res: Res,
-    pub args: Option<GenericArgs>,
+    pub args: GenericArgs,
     /// Whether generic arguments were omitted and should be inferred. This
     /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
-    /// represented by `args = Some(...)` with an `Infer` generic argument.
+    /// represented in `args` with an `Infer` generic argument.
     pub infer_args: bool,
 }
 
@@ -827,7 +827,7 @@ impl PathSegment {
         Self {
             ident: ident.into(),
             hir_id: HirId::default(),
-            args,
+            args: args.unwrap_or_default(),
             infer_args,
             res: Res::Error,
         }
@@ -843,14 +843,23 @@ impl PathSegment {
         Self {
             ident: ident.into(),
             hir_id,
-            args,
+            args: args.unwrap_or_default(),
             infer_args,
             res,
         }
     }
+
+    /// Returns arguments that were explicitly present on this segment.
+    ///
+    /// Rustc stores an empty `GenericArgs` for both omitted and explicit
+    /// empty argument lists; `infer_args` carries the distinction. Consumers
+    /// that only care about source-provided arguments can use this view.
+    pub fn generic_args(&self) -> Option<&GenericArgs> {
+        (!self.args.is_empty() || !self.infer_args).then_some(&self.args)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GenericArgs {
     pub args: Vec<GenericArg>,
     /// Associated-item constraints attached to this segment, matching
@@ -866,8 +875,9 @@ pub struct GenericArgs {
     pub span_ext: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GenericArgsParentheses {
+    #[default]
     No,
     ReturnTypeNotation,
     ParenSugar,
@@ -1718,14 +1728,17 @@ impl QPath {
 
 impl PathSegment {
     pub fn span(&self) -> Span {
-        self.args
-            .as_ref()
-            .map(GenericArgs::span)
-            .unwrap_or_else(Span::null)
+        self.args.span()
     }
 }
 
 impl GenericArgs {
+    pub fn is_empty(&self) -> bool {
+        self.args.is_empty()
+            && self.constraints.is_empty()
+            && matches!(self.parenthesized, GenericArgsParentheses::No)
+    }
+
     pub fn span(&self) -> Span {
         let payload = Span::union(
             self.args

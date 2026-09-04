@@ -785,7 +785,7 @@ impl<'a> BodyBuilder<'a> {
         let mut generic_args = resolved_path
             .segments()
             .iter()
-            .find_map(|segment| segment.args.as_ref())
+            .find_map(|segment| segment.generic_args())
             .map(|args| self.lowering.lower_generic_args(Some(args), span))
             .unwrap_or_default();
         let def_id = self.lowering.resolve_path_def_id(&resolved_path);
@@ -1405,7 +1405,7 @@ impl<'a> BodyBuilder<'a> {
             let path_args = path.path().and_then(|path| {
                 path.segments
                     .iter()
-                    .find_map(|segment| segment.args.as_ref())
+                    .find_map(|segment| segment.generic_args())
             });
             if path_args.map(|args| args.args.is_empty()).unwrap_or(true) {
                 if expected_type_args.len() != function.sig.generics.params.len() {
@@ -1441,7 +1441,9 @@ impl<'a> BodyBuilder<'a> {
                 let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
                     return None;
                 };
-                if type_path.segments().len() != 1 || type_path.segments()[0].args.is_some() {
+                if type_path.segments().len() != 1
+                    || type_path.segments()[0].generic_args().is_some()
+                {
                     return None;
                 }
                 let name = type_path.segments()[0].ident.as_str();
