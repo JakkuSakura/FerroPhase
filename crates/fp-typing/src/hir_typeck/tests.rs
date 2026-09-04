@@ -472,6 +472,102 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
 }
 
 #[test]
+fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
+    let package_id = test_pkg();
+    let wrapper_id = hir::DefId::new(package_id.clone(), 2);
+    let wrapper_param_id = hir::DefId::new(package_id.clone(), 3);
+    let value_id = hir::DefId::new(package_id.clone(), 1);
+    let wrapper_generics = hir::Generics {
+        params: vec![hir::GenericParam {
+            hir_id: hid(30),
+            def_id: wrapper_param_id,
+            name: "T".into(),
+            kind: hir::GenericParamKind::Type { default: None },
+            bounds: Vec::new(),
+            explicit_bindings: Vec::new(),
+            projection_bounds: Vec::new(),
+        }],
+        where_clause: None,
+    };
+    let wrapper = hir::Item {
+        hir_id: hid(2),
+        def_id: wrapper_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Struct(hir::Struct {
+            name: "Wrapper".into(),
+            fields: Vec::new(),
+            generics: wrapper_generics,
+            repr: fp_core::ast::ReprOptions::default(),
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let wrapper_path = hir::TypeExpr {
+        hir_id: hid(11),
+        kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            segments: vec![hir::PathSegment {
+                ident: "Wrapper".into(),
+                args: Some(hir::GenericArgs {
+                    args: vec![
+                        hir::GenericArg::Lifetime("'a".into()),
+                        hir::GenericArg::Type(Box::new(hir::TypeExpr {
+                            hir_id: hid(12),
+                            kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I32)),
+                            span: fp_core::span::Span::null(),
+                        })),
+                    ],
+                    constraints: Vec::new(),
+                    parenthesized: hir::GenericArgsParentheses::No,
+                    span_ext: fp_core::span::Span::null(),
+                }),
+                infer_args: false,
+                res: hir::Res::Def(wrapper_id.clone()),
+            }],
+            res: hir::Res::Def(wrapper_id.clone()),
+        })),
+        span: fp_core::span::Span::null(),
+    };
+    let item = hir::Item {
+        hir_id: hid(1),
+        def_id: value_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Expr(hir::Expr {
+            hir_id: hid(13),
+            kind: hir::ExprKind::Let(
+                hir::Pat {
+                    hir_id: hid(14),
+                    kind: hir::PatKind::Binding {
+                        name: "value".into(),
+                        mutable: false,
+                    },
+                },
+                Box::new(wrapper_path),
+                None,
+            ),
+            span: fp_core::span::Span::null(),
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let mut package = hir::HirPackage::new(package_id);
+    package.items.extend([wrapper.clone(), item.clone()]);
+    package.def_map.insert(wrapper_id, wrapper);
+    package.def_map.insert(value_id, item);
+
+    let executor = fp_core::executor::CompilerExecutor::new().handle();
+    let results = executor
+        .run(typecheck_program(package, executor.clone()))
+        .expect("HIR type check");
+    let actual = results.borrow().pat_type(hid(14));
+    let Some(Ty {
+        kind: TyKind::Adt(_, args),
+    }) = actual.as_ref()
+    else {
+        panic!("expected Wrapper<'a, i32> to resolve as an ADT, got {actual:?}");
+    };
+    assert_eq!(args.len(), 1, "erased lifetimes must not occupy ADT arg slots");
+    assert_eq!(args[0], ty::GenericArg::Type(Ty::int(ty::IntTy::I32)));
+}
+
+#[test]
 fn typed_command_helper_local_preserves_method_def_identity() {
     let package_id = test_pkg();
     let command_id = hir::DefId::new(package_id.clone(), 1);

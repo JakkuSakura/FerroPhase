@@ -3247,7 +3247,12 @@ impl HirTypeChecker {
                 let mut checked = Vec::with_capacity(args.args.len());
                 for arg in &args.args {
                     let arg = match arg {
-                        hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
+                        // Lifetimes remain source-visible HIR arguments, as
+                        // in rustc, but this compiler erases lifetime
+                        // parameters from `hir::Generics`. They therefore
+                        // cannot occupy a type/const substitution slot or
+                        // contribute to trailing-default alignment here.
+                        hir::GenericArg::Lifetime(_) => continue,
                         hir::GenericArg::Type(ty) => {
                             GenericArg::Type(self.check_type_expr(ty).await?)
                         }
@@ -4271,7 +4276,9 @@ impl HirTypeChecker {
             let mut checked = Vec::with_capacity(args.args.len());
             for arg in &args.args {
                 let arg = match arg {
-                    hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
+                    // See `path_ty`: nominal substitutions contain only
+                    // parameter kinds represented by `hir::Generics`.
+                    hir::GenericArg::Lifetime(_) => continue,
                     hir::GenericArg::Type(ty) => GenericArg::Type(self.check_type_expr(ty).await?),
                     hir::GenericArg::Const(expr) => GenericArg::Const(self.const_arg_kind(expr)),
                     hir::GenericArg::Infer(infer) => match infer.kind {
