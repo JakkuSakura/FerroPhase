@@ -4847,6 +4847,62 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn method_generic_body_uses_method_not_impl_parameter() {
+        let (package, diagnostics) = lower(
+            "struct Holder<T>(T); impl<T> Holder<T> { fn convert<U>(value: U) -> U { value } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "method-generic body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let impl_block = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl item");
+        let impl_generic = &impl_block.generics.params[0].def_id;
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "convert" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("convert method");
+        let output = type_path(&method.sig.output);
+        let hir::Res::Generic(method_generic) = &output.res else {
+            panic!("expected method generic output path: {output:?}");
+        };
+        assert_ne!(
+            method_generic, impl_generic,
+            "method generic reused the enclosing impl generic identity"
+        );
+    }
+
+    #[test]
+    fn resolves_const_generic_in_nested_impl_header_and_body() {
+        let (package, diagnostics) = lower(
+            "struct MaybeUninit<T>(T); trait AsRef<T> {} impl<T, const N: usize> AsRef<[MaybeUninit<T>; N]> for MaybeUninit<[T; N]> { fn as_ref(&self) -> &[MaybeUninit<T>; N] { self } }",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `N`")),
+            "nested impl const-generic resolution emitted diagnostics: {diagnostics:?}"
+        );
+        assert!(
+            package.items.iter().any(|item| matches!(item.kind, hir::ItemKind::Impl(_))),
+            "nested const-generic impl should be lowered"
+        );
+    }
+
+    #[test]
     fn resolves_const_generic_in_array_body_expression() {
         let (package, diagnostics) = lower(
             "fn make<const N: usize>() -> [u8; N] { [0; N] }",

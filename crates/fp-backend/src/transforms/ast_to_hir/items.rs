@@ -469,18 +469,11 @@ impl AstToHirLowerer {
                 }
                 match item.kind() {
                     ast::ItemKind::DefFunction(func) => {
-                        let mut method = self.transform_function_with_body(
-                            func,
-                            Some(self_ty.clone()),
-                            !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
-                        )?;
-                        // See `function_body_is_compiler_intrinsic_marker`'s
-                        // doc comment: a real, hand-written method's body
-                        // must survive; only a bare `compile_error!(...)`
-                        // marker body gets dropped back to a stub.
-                        if function_body_is_compiler_intrinsic_marker(&method) {
-                            method.body = None;
-                        }
+                        // A method is its own HIR owner.  Lower its signature
+                        // and body under the predeclared method `DefId`, so
+                        // method generic parameters are children of the
+                        // method rather than accidentally reusing the
+                        // enclosing impl's generic identities.
                         let method_def_id = impl_key
                             .as_ref()
                             .and_then(|key| {
@@ -488,7 +481,26 @@ impl AstToHirLowerer {
                                     .get(&(key.clone(), func.name.name.clone().into()))
                                     .cloned()
                             })
-                            .unwrap_or_else(|| self.next_def_id());
+                            .unwrap_or_else(|| {
+                                self.member_def_id(
+                                    func.name.name.clone(),
+                                    fp_core::hir::resolve::Namespace::Value,
+                                )
+                            });
+                        let mut method = self.with_owner(method_def_id.clone(), |this| {
+                            this.transform_function_with_body(
+                                func,
+                                Some(self_ty.clone()),
+                                !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
+                            )
+                        })?;
+                        // See `function_body_is_compiler_intrinsic_marker`'s
+                        // doc comment: a real, hand-written method's body
+                        // must survive; only a bare `compile_error!(...)`
+                        // marker body gets dropped back to a stub.
+                        if function_body_is_compiler_intrinsic_marker(&method) {
+                            method.body = None;
+                        }
                         if let Some(key) = impl_key.clone() {
                             self.impl_items.insert(
                                 (key, func.name.name.clone().into()),
@@ -666,24 +678,21 @@ impl AstToHirLowerer {
                             if method_names.contains(&func.name.name) {
                                 continue;
                             }
-                            let method = self.transform_function_with_body(
-                                func,
-                                Some(self_ty.clone()),
-                                !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
-                            )?;
+                            let method_def_id = self.member_def_id(
+                                func.name.name.clone(),
+                                fp_core::hir::resolve::Namespace::Value,
+                            );
+                            let method = self.with_owner(method_def_id.clone(), |this| {
+                                this.transform_function_with_body(
+                                    func,
+                                    Some(self_ty.clone()),
+                                    !stub_methods
+                                        && !attrs_has_name(&func.attrs, "unimplemented"),
+                                )
+                            })?;
                             method_names.insert(method.sig.name.as_str().to_string());
-                            let trait_method_def_id = trait_items.iter().find_map(|item| {
-                                let ast::ItemKind::DefFunction(trait_func) = item.kind() else {
-                                    return None;
-                                };
-                                (trait_func.name.name == func.name.name).then(|| self.next_def_id())
-                            });
-                            if let Some(trait_method_def_id) = trait_method_def_id {}
                             items.push(hir::ImplItem {
-                                def_id: self.member_def_id(
-                                    method.sig.name.clone(),
-                                    fp_core::hir::resolve::Namespace::Value,
-                                ),
+                                def_id: method_def_id,
                                 hir_id: self.next_id(),
                                 name: method.sig.name.clone(),
                                 kind: hir::ImplItemKind::Method(method),
@@ -750,12 +759,13 @@ impl AstToHirLowerer {
                         // A default-provided method (has a real body) —
                         // the fallback signature source `method_output`
                         // reads when a concrete impl doesn't redeclare it.
-                        let function =
-                            self.transform_function_with_body(func, Some(self_ty.clone()), true)?;
                         let method_def_id = self.member_def_id(
                             func.name.name.clone(),
                             fp_core::hir::resolve::Namespace::Value,
                         );
+                        let function = self.with_owner(method_def_id.clone(), |this| {
+                            this.transform_function_with_body(func, Some(self_ty.clone()), true)
+                        })?;
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),
@@ -767,12 +777,13 @@ impl AstToHirLowerer {
                         // An abstract method (no body) — every concrete
                         // impl must supply its own; never used as a
                         // fallback signature source.
-                        let function =
-                            self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
                         let method_def_id = self.member_def_id(
                             func_decl.name.name.clone(),
                             fp_core::hir::resolve::Namespace::Value,
                         );
+                        let function = self.with_owner(method_def_id.clone(), |this| {
+                            this.transform_decl_function_sig(func_decl, Some(self_ty.clone()))
+                        })?;
                         items.push(hir::TraitItem {
                             def_id: method_def_id,
                             hir_id: self.next_id(),
