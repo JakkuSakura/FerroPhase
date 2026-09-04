@@ -150,7 +150,7 @@ async fn async_main() -> Result<()> {
 
     // Execute command
     let result = match cli.command {
-        Commands::Compile(args) => commands::compile_command(args, &config).await,
+        Commands::Compile(args) => commands::compile_command(args, &config),
         Commands::Interpret(args) => commands::interpret_command(args, &config).await,
         Commands::Inspect(args) => commands::inspect_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,

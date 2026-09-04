@@ -864,7 +864,7 @@ impl HirToMirLowerer {
             let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
             Some(MethodContext {
                 def_id: def.self_def.clone(),
-                path: path.segments.clone(),
+                path: path.segments().to_vec(),
                 mir_self_ty,
                 assoc_types: def.assoc_types.clone(),
             })
@@ -1304,7 +1304,7 @@ impl HirToMirLowerer {
         if substs.len() != generics.len() {
             if let Some(return_ty) = return_ty {
                 if let hir::TypeExprKind::Path(path) = &return_ty.kind {
-                    if self.is_result_path(path) {
+                    if path.path().is_some_and(|path| self.is_result_path(path)) {
                         let fallback = self.lower_type_expr(return_ty);
                         // JUSTIFY: best-effort inference from Result path;
                         // a separate fallback below uses explicit_args_from_expected_result_ty.
@@ -1343,7 +1343,7 @@ impl HirToMirLowerer {
             if let Some(return_ty) = return_ty {
                 if let hir::TypeExprKind::Path(path) = &return_ty.kind {
                     if path
-                        .segments
+                        .segments()
                         .last()
                         .map(|seg| seg.name.as_str() == "Self")
                         .unwrap_or(false)
@@ -1423,8 +1423,12 @@ impl HirToMirLowerer {
                     output_ty = inner;
                 }
                 if let hir::TypeExprKind::Path(path) = &output_ty.kind {
-                    if self.is_result_path(path) {
-                        if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                    if path.path().is_some_and(|path| self.is_result_path(path)) {
+                        if let Some(args) = path.path().and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        }) {
                             let mut output_args = Vec::new();
                             for arg in &args.args {
                                 let hir::GenericArg::Type(type_arg) = arg else {
@@ -1455,8 +1459,12 @@ impl HirToMirLowerer {
         if substs.len() != generics.len() {
             if let Some(return_ty) = return_ty {
                 if let hir::TypeExprKind::Path(path) = &return_ty.kind {
-                    if self.is_result_path(path) {
-                        if let Some(args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                    if path.path().is_some_and(|path| self.is_result_path(path)) {
+                        if let Some(args) = path.path().and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        }) {
                             let mut output_args = Vec::new();
                             for arg in &args.args {
                                 let hir::GenericArg::Type(type_arg) = arg else {
@@ -1486,7 +1494,7 @@ impl HirToMirLowerer {
                     output_ty = inner;
                 }
                 if let hir::TypeExprKind::Path(path) = &output_ty.kind {
-                    if self.is_result_path(path) {
+                    if path.path().is_some_and(|path| self.is_result_path(path)) {
                         let fallback = self.lower_type_expr(return_ty);
                         if let Some(fallback_args) =
                             self.explicit_args_from_expected_result_ty(&fallback)

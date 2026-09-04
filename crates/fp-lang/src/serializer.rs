@@ -41,7 +41,7 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
         // A single-type reference (`Option<PathBuf>`, `PathBuf`, ...) —
         // `Name`'s own `Display` already renders per-segment generics
         // (`Ident<Arg1, Arg2>`), recursing back into this function for each
-        // generic argument (`PathSegment::args: Vec<Ty>`).
+        // generic arguments (`PathSegment::arguments`).
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Name(name) => name.to_string(),
             ExprKind::Reference(reference) => match reference.referee.kind() {

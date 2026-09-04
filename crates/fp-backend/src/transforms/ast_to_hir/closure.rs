@@ -227,7 +227,14 @@ impl ClosureLowering {
         let ast::ExprKind::Name(ast::Name { path, .. }) = expr.kind() else {
             return None;
         };
-        path.segments.last()?.args.get(index).cloned()
+        let fp_core::ast::PathArguments::AngleBracketed(args) = &path.segments.last()?.arguments
+        else {
+            return None;
+        };
+        let ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) = args.get(index)? else {
+            return None;
+        };
+        Some((**ty).clone())
     }
 
     /// Resolves a call receiver's static type, peeling through at most one

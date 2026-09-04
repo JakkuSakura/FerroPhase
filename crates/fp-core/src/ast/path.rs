@@ -90,6 +90,10 @@ impl InPackagePath {
         self.segments.len()
     }
 
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
+
     pub fn head(&self) -> Option<&str> {
         self.segments.first().map(|seg| seg.as_str())
     }

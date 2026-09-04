@@ -209,6 +209,16 @@ enum PathResolutionScope {
     Trait,
 }
 
+/// Controls whether omitted generic arguments may be inferred while lowering
+/// a path. This is independent of the namespace used for name resolution:
+/// the `Vec` in the expression path `Vec::new`, for example, resolves in the
+/// type namespace but uses optional generic arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParamMode {
+    Explicit,
+    Optional,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum ImplSelfKey {
     Adt {
@@ -238,6 +248,7 @@ enum ImplSelfKey {
 enum ImplGenericArgKey {
     Type(Box<ImplSelfKey>),
     Const(hir::HirId),
+    Infer,
 }
 
 impl PathResolutionScope {
@@ -566,38 +577,40 @@ impl AstToHirLowerer {
             }
             hir::TypeExprKind::Path(path) => {
                 let args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
+                    .path()
+                    .and_then(|path| {
+                        path.segments
+                            .iter()
+                            .find_map(|segment| segment.args.as_ref())
+                    })
                     .map(|args| {
                         args.args
                             .iter()
-                            .map(|arg| match arg {
-                                hir::GenericArg::Type(ty) => self
-                                    .impl_self_key(ty)
-                                    .map(|key| ImplGenericArgKey::Type(Box::new(key))),
+                            .filter_map(|arg| match arg {
+                                hir::GenericArg::Lifetime(_) => None,
+                                hir::GenericArg::Type(ty) => Some(
+                                    self.impl_self_key(ty)
+                                        .map(|key| ImplGenericArgKey::Type(Box::new(key))),
+                                ),
                                 hir::GenericArg::Const(expr) => {
-                                    Ok(ImplGenericArgKey::Const(expr.hir_id.clone()))
+                                    Some(Ok(ImplGenericArgKey::Const(expr.hir_id.clone())))
                                 }
+                                hir::GenericArg::Infer => Some(Ok(ImplGenericArgKey::Infer)),
                             })
                             .collect::<Result<Vec<_>>>()
                     })
                     .transpose()?
                     .unwrap_or_default();
-                match path.res.as_ref() {
-                    Some(hir::Res::Def(def_id)) => Ok(ImplSelfKey::Adt {
+                match path.res_ref() {
+                    hir::Res::Def(def_id) => Ok(ImplSelfKey::Adt {
                         def_id: def_id.clone(),
                         args,
                     }),
-                    Some(hir::Res::Generic(def_id)) => Ok(ImplSelfKey::Param(def_id.clone())),
-                    Some(hir::Res::Builtin(kind)) => Ok(ImplSelfKey::Builtin(kind.clone())),
-                    Some(hir::Res::BuiltinName(name)) => {
-                        ast::TypePrimitive::from_name(name.as_str())
-                            .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
-                            .ok_or_else(|| {
-                                fp_core::Error::from("unresolved builtin impl self type")
-                            })
-                    }
+                    hir::Res::Generic(def_id) => Ok(ImplSelfKey::Param(def_id.clone())),
+                    hir::Res::Builtin(kind) => Ok(ImplSelfKey::Builtin(kind.clone())),
+                    hir::Res::BuiltinName(name) => ast::TypePrimitive::from_name(name.as_str())
+                        .map(|primitive| ImplSelfKey::Primitive(format!("{primitive:?}")))
+                        .ok_or_else(|| fp_core::Error::from("unresolved builtin impl self type")),
                     _ => Err(fp_core::Error::from("unresolved impl self type")),
                 }
             }
@@ -1263,13 +1276,15 @@ impl AstToHirLowerer {
                     let type_param = |this: &mut Self, name: &str, def_id: hir::DefId| {
                         hir::TypeExpr::new(
                             this.next_id(),
-                            hir::TypeExprKind::Path(hir::Path {
+                            hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                                 segments: vec![hir::PathSegment {
                                     name: hir::Symbol::new(name),
                                     args: None,
+                                    infer_args: true,
+                                    res: hir::Res::Def(def_id.clone()),
                                 }],
                                 res: hir::Res::Def(def_id),
-                            }),
+                            })),
                             span,
                         )
                     };
@@ -2394,7 +2409,11 @@ impl AstToHirLowerer {
                 let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_ty.name.clone(),
                 )));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Explicit,
+                )?;
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(path),
@@ -2472,8 +2491,13 @@ impl AstToHirLowerer {
                         {
                             return None;
                         }
-                        self.ast_expr_to_hir_path(bound, PathResolutionScope::Trait)
+                        self.ast_expr_to_hir_path(
+                            bound,
+                            PathResolutionScope::Trait,
+                            ParamMode::Explicit,
+                        )
                             .ok()
+                            .and_then(|path| path.into_path())
                     })
                     .collect::<Vec<_>>();
                 if dynamic_bounds.is_empty() {
@@ -2528,6 +2552,8 @@ impl AstToHirLowerer {
                 let elem = Box::new(self.transform_type_to_hir(&vec_ty.ty)?);
                 let args = hir::GenericArgs {
                     args: vec![hir::GenericArg::Type(elem)],
+                    constraints: Vec::new(),
+                    parenthesized: hir::GenericArgsParentheses::No,
                 };
                 // `Vec<T>` is a nominal ADT type, even though the parser has
                 // a dedicated AST variant for its surface spelling. Resolve
@@ -2539,9 +2565,24 @@ impl AstToHirLowerer {
                 let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ast::Ident::new(
                     "Vec",
                 ))));
-                let mut path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
-                if let Some(last) = path.segments.last_mut() {
-                    last.args = Some(args);
+                let mut path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Explicit,
+                )?;
+                if let Some(segment) = path.segments_mut().first_mut() {
+                    segment.infer_args = false;
+                    segment.args = Some(args);
+                } else {
+                    path = hir::QPath::resolved(hir::Path::new(
+                        path.res(),
+                        vec![hir::PathSegment {
+                            name: "Vec".into(),
+                            args: Some(args),
+                            infer_args: false,
+                            res: path.res(),
+                        }],
+                    ));
                 }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
@@ -2590,7 +2631,10 @@ impl AstToHirLowerer {
             ast::Ty::Projection(projection) => {
                 let self_ty = Box::new(self.transform_type_to_hir(&projection.self_ty)?);
                 let trait_ty = self.transform_type_to_hir(&projection.trait_ty)?;
-                let hir::TypeExprKind::Path(trait_path) = trait_ty.kind else {
+                let hir::TypeExprKind::Path(trait_qpath) = trait_ty.kind else {
+                    return Ok(self.error_type_expr(ty.span()));
+                };
+                let Some(trait_path) = trait_qpath.into_path() else {
                     return Ok(self.error_type_expr(ty.span()));
                 };
                 Ok(hir::TypeExpr::new(
@@ -2666,7 +2710,11 @@ impl AstToHirLowerer {
                     ast::ExprKind::Name(_) | ast::ExprKind::FieldAccess(_)
                 ) {
                     if let Ok(path) =
-                        self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)
+                        self.ast_expr_to_hir_path(
+                            block.expr.as_ref(),
+                            PathResolutionScope::Type,
+                            ParamMode::Explicit,
+                        )
                     {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
@@ -2757,7 +2805,11 @@ impl AstToHirLowerer {
                         }
                         ast::Value::Expr(inner) => {
                             if let Ok(path) =
-                                self.ast_expr_to_hir_path(inner, PathResolutionScope::Type)
+                                self.ast_expr_to_hir_path(
+                                    inner,
+                                    PathResolutionScope::Type,
+                                    ParamMode::Explicit,
+                                )
                             {
                                 return Ok(hir::TypeExpr::new(
                                     self.next_id(),
@@ -2798,7 +2850,11 @@ impl AstToHirLowerer {
                         ));
                     }
                 }
-                if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
+                if let Ok(path) = self.ast_expr_to_hir_path(
+                    expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Explicit,
+                ) {
                     return Ok(hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Path(path),
@@ -2845,7 +2901,11 @@ impl AstToHirLowerer {
                             ));
                         }
                     }
-                    if let Ok(path) = self.ast_expr_to_hir_path(bound, PathResolutionScope::Trait) {
+                    if let Ok(path) = self.ast_expr_to_hir_path(
+                        bound,
+                        PathResolutionScope::Trait,
+                        ParamMode::Explicit,
+                    ) {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
                             hir::TypeExprKind::Path(path),
@@ -2909,13 +2969,15 @@ impl AstToHirLowerer {
     pub fn create_simple_type(&mut self, type_name: &str) -> hir::TypeExpr {
         hir::TypeExpr::new(
             self.next_id(),
-            hir::TypeExprKind::Path(hir::Path {
+            hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: hir::Symbol::new(type_name),
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Error,
                 }],
                 res: hir::Res::Error,
-            }),
+            })),
             Span::new(0, 0, 0),
         )
     }
@@ -2935,13 +2997,15 @@ impl AstToHirLowerer {
     fn create_null_type(&mut self) -> hir::TypeExpr {
         hir::TypeExpr::new(
             self.next_id(),
-            hir::TypeExprKind::Path(hir::Path {
+            hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: hir::Symbol::new("null"),
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Error,
                 }],
                 res: hir::Res::Error,
-            }),
+            })),
             Span::new(self.current_file, 0, 0),
         )
     }
@@ -3164,12 +3228,14 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 name: hir::Symbol::new(name.clone()),
                 args: None,
+                infer_args: true,
+                res: hir::Res::Def(def_id.clone()),
             }],
             res: hir::Res::Def(def_id),
         };
         Ok(hir::TypeExpr::new(
             self.next_id(),
-            hir::TypeExprKind::Path(path),
+            hir::TypeExprKind::Path(hir::QPath::resolved(path)),
             Span::new(self.current_file, 0, 0),
         ))
     }
@@ -3236,6 +3302,8 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 name: hir::Symbol::new(def.name.clone()),
                 args: None,
+                infer_args: true,
+                res: hir::Res::Def(def.def_id.clone()),
             }],
             res: hir::Res::Def(def.def_id.clone()),
         }
@@ -3270,13 +3338,21 @@ impl AstToHirLowerer {
                 let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_val.ty.name.clone(),
                 )));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Explicit,
+                )?;
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
             }
             ast::Value::Structural(structural) => {
                 let def = self.materialize_structural_value_def(structural)?;
                 let path = self.path_for_structural_def(&def);
-                hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
+                hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Path(hir::QPath::resolved(path)),
+                    span,
+                )
             }
             ast::Value::Type(ty) => return self.transform_type_to_hir(ty),
             other => {

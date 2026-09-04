@@ -198,16 +198,18 @@ use fp_core::ast::{
     ExprRangeLimit, ExprReference, ExprReturn, ExprSplice, ExprStringTemplate, ExprStruct,
     ExprStructural, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith, FormatArgRef,
     FormatPlaceholder, FormatSpec, FormatTemplatePart, FunctionParam, FunctionParamReceiver,
-    FunctionSignature, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic, ItemDeclType,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
-    ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter, MacroGroup,
-    MacroInvocation, MacroToken, MacroTokenTree, Module, Name, Path, PathSegment, Pattern,
-    PatternBox, PatternIdent, PatternKind, PatternOr, PatternQuote, PatternStruct,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
-    PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer,
-    StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum,
-    TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStruct, Value,
-    ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
+    AngleBracketedArg, AssocItemConstraint, AssocItemConstraintKind, FunctionSignature, GenericArg,
+    Ident, Item,
+    ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
+    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
+    MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, Path, PathArguments,
+    PathSegment, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr, PatternQuote,
+    PatternStruct, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
+    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock,
+    StmtDefer, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
+    TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
+    TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -444,22 +446,122 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         .parse_next(input)?
         .is_some();
     let first = ident_like(input)?;
-    let first_args = parse_optional_type_args(input)?;
-    let mut segments = vec![PathSegment::new(first, first_args)];
+    let first_args = parse_optional_path_arguments(input)?;
+    let mut segments = vec![PathSegment::with_arguments(first, first_args)];
     loop {
         let mut probe = *input;
         if skip_symbol(&mut probe, "::").is_err() {
             break;
         }
+        if peek_symbol(probe) == Some("<") {
+            let args = parse_optional_path_arguments(&mut probe)?;
+            if let Some(segment) = segments.last_mut() {
+                segment.arguments = args;
+            }
+            *input = probe;
+            continue;
+        }
         let Ok(next) = ident_like(&mut probe) else {
             break;
         };
-        let args = parse_optional_type_args(&mut probe)?;
+        let args = parse_optional_path_arguments(&mut probe)?;
         *input = probe;
-        segments.push(PathSegment::new(next, args));
+        segments.push(PathSegment::with_arguments(next, args));
     }
     let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
     Ok(Name::path(Path::new(prefix, segments)))
+}
+
+fn parse_optional_path_arguments(input: &mut &[Token]) -> ModalResult<PathArguments> {
+    let mut probe = *input;
+    match parse_path_arguments_inner(&mut probe) {
+        Ok(arguments) => {
+            *input = probe;
+            Ok(arguments)
+        }
+        Err(_) => Ok(PathArguments::None),
+    }
+}
+
+fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments> {
+    let mut probe = *input;
+    if !try_eat_symbol(&mut probe, "<") {
+        return Ok(PathArguments::None);
+    }
+    let mut args = Vec::new();
+    if peek_symbol(probe) != Some(">") {
+        loop {
+            let mut item_probe = probe;
+            if let Some(name) = peek_ident_like(item_probe) {
+                let ident = ident_like(&mut item_probe)?;
+                if name.starts_with('\'') {
+                    probe = item_probe;
+                    args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(name.to_owned())));
+                } else {
+                    // Rustc's `AssocItemConstraint` retains generic arguments
+                    // on the constrained item (`Item<'a> = T` and
+                    // `Item<'a>: Bound`). Probe the arguments together with
+                    // the constraint marker; if neither marker follows, this
+                    // is an ordinary positional type argument and the outer
+                    // type parser handles the complete path expression.
+                    let mut constraint_probe = item_probe;
+                    let gen_args = parse_optional_path_arguments(&mut constraint_probe)?;
+                    let gen_args = (!gen_args.is_none()).then_some(gen_args);
+                    if skip_symbol(&mut constraint_probe, "=").is_ok() {
+                        let ty = parse_type_expr(&mut constraint_probe)?;
+                        probe = constraint_probe;
+                        args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
+                            name: ident,
+                            gen_args,
+                            kind: AssocItemConstraintKind::Equality { ty: Box::new(ty) },
+                        }));
+                    } else if skip_symbol(&mut constraint_probe, ":").is_ok() {
+                        let bounds = parse_type_bounds(&mut constraint_probe)?;
+                        probe = constraint_probe;
+                        args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
+                            name: ident,
+                            gen_args,
+                            kind: AssocItemConstraintKind::Bound {
+                                bounds: bounds
+                                    .bounds
+                                    .into_iter()
+                                    .map(|bound| Ty::Expr(Box::new(bound)))
+                                    .collect(),
+                            },
+                        }));
+                    } else {
+                        let ty = parse_type_expr(&mut probe)?;
+                        args.push(AngleBracketedArg::Arg(GenericArg::from_ty(ty)));
+                    }
+                }
+            } else if input_is_const_argument(probe) {
+                let expr = parse_cast_no_struct(&mut probe, 0)?;
+                args.push(AngleBracketedArg::Arg(GenericArg::Const(Box::new(expr))));
+            } else {
+                let ty = parse_type_expr(&mut probe)?;
+                args.push(AngleBracketedArg::Arg(GenericArg::from_ty(ty)));
+            }
+            let mut comma_probe = probe;
+            if skip_symbol(&mut comma_probe, ",").is_err() {
+                break;
+            }
+            if peek_symbol(comma_probe) == Some(">") {
+                probe = comma_probe;
+                break;
+            }
+            probe = comma_probe;
+        }
+    }
+    skip_symbol(&mut probe, ">")?;
+    *input = probe;
+    Ok(PathArguments::AngleBracketed(args))
+}
+
+fn input_is_const_argument(input: &[Token]) -> bool {
+    input.first().is_some_and(|token| {
+        token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral
+    }) || matches!(peek_ident_like(input), Some("true" | "false" | "null"))
+        || peek_symbol(input) == Some("{")
 }
 
 pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {

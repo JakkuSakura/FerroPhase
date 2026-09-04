@@ -112,7 +112,12 @@ impl ModuleData {
         match matches.as_slice() {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
                 res: resolution.clone(),
-                segments: Vec::new(),
+                segments: vec![crate::hir::PathSegment {
+                    name: name.into(),
+                    args: None,
+                    infer_args: true,
+                    res: resolution.clone(),
+                }],
             }),
             [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
                 module: InPackagePath::new(Vec::new()),
@@ -164,7 +169,12 @@ impl ModuleData {
         match matches.as_slice() {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
                 res: resolution.clone(),
-                segments: Vec::new(),
+                segments: vec![crate::hir::PathSegment {
+                    name: last.as_str().into(),
+                    args: None,
+                    infer_args: true,
+                    res: resolution.clone(),
+                }],
             }),
             [] => ResolutionResult::NotFound(ResolutionNotFound::Symbol {
                 module: InPackagePath::new(parents.to_vec()),

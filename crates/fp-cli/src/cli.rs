@@ -192,15 +192,26 @@ impl CliConfig {
         let manifest = Path::new("Magnet.toml");
         if manifest.is_file() {
             let content = std::fs::read_to_string(manifest).map_err(|e| {
-                CliError::Config(format!("Failed to read config file {}: {}", manifest.display(), e))
+                CliError::Config(format!(
+                    "Failed to read config file {}: {}",
+                    manifest.display(),
+                    e
+                ))
             })?;
             let document = toml::from_str::<toml::Value>(&content).map_err(|e| {
-                CliError::Config(format!("Failed to parse config file {}: {}", manifest.display(), e))
+                CliError::Config(format!(
+                    "Failed to parse config file {}: {}",
+                    manifest.display(),
+                    e
+                ))
             })?;
             if let Some(kotlin) = document.get("transpile").and_then(|v| v.get("kotlin")) {
-                config.transpile.kotlin = Some(toml::from_str(
-                    &toml::to_string(kotlin).map_err(|e| CliError::Config(e.to_string()))?,
-                ).map_err(|e| CliError::Config(e.to_string()))?);
+                config.transpile.kotlin = Some(
+                    toml::from_str(
+                        &toml::to_string(kotlin).map_err(|e| CliError::Config(e.to_string()))?,
+                    )
+                    .map_err(|e| CliError::Config(e.to_string()))?,
+                );
             }
         }
         Ok(config)

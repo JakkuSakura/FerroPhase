@@ -79,7 +79,7 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                 let path = &name.path;
                 (
                     path.last().ident.as_str().to_owned(),
-                    path.last().args.clone(),
+                    path.last().arguments.legacy_types(),
                 )
             };
             let replacement = match last.as_str() {
@@ -168,11 +168,52 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
         Name { path, .. } => {
             let last = path.last().as_str().to_owned();
             for segment in &mut path.segments {
-                for arg in &mut segment.args {
-                    *arg = materialize_jvm_type(arg.clone());
+                match &mut segment.arguments {
+                    fp_core::ast::PathArguments::AngleBracketed(args) => {
+                        for arg in args {
+                            match arg {
+                                fp_core::ast::AngleBracketedArg::Arg(
+                                    fp_core::ast::GenericArg::Type(ty),
+                                ) => {
+                                    **ty = materialize_jvm_type((**ty).clone());
+                                }
+                                fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
+                                    match &mut constraint.kind {
+                                        fp_core::ast::AssocItemConstraintKind::Equality { ty } => {
+                                            **ty = materialize_jvm_type((**ty).clone());
+                                        }
+                                        fp_core::ast::AssocItemConstraintKind::Bound { bounds } => {
+                                            for bound in bounds {
+                                                *bound = materialize_jvm_type(bound.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                fp_core::ast::AngleBracketedArg::Arg(
+                                    fp_core::ast::GenericArg::Lifetime(_)
+                                    | fp_core::ast::GenericArg::Const(_),
+                                ) => {}
+                            }
+                        }
+                    }
+                    fp_core::ast::PathArguments::Parenthesized { inputs, output } => {
+                        for input in inputs {
+                            *input = materialize_jvm_type(input.clone());
+                        }
+                        if let Some(output) = output {
+                            **output = materialize_jvm_type((**output).clone());
+                        }
+                    }
+                    fp_core::ast::PathArguments::None => {}
                 }
-                if segment.ident.as_str() == "Result" && segment.args.len() > 1 {
-                    segment.args.truncate(1);
+                if segment.ident.as_str() == "Result" {
+                    if let fp_core::ast::PathArguments::AngleBracketed(args) =
+                        &mut segment.arguments
+                    {
+                        if args.len() > 1 {
+                            args.truncate(1);
+                        }
+                    }
                 }
             }
             last

@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ast::path::PathPrefix;
+use crate::ast::{Expr, ExprKind, Value};
 use crate::span::Span;
 
 /// A simple identifier - a single name like `foo` or `MyStruct`
@@ -152,13 +153,23 @@ impl Path {
     pub fn span(&self) -> Span {
         Span::null()
     }
+
+    pub fn segments(&self) -> &[PathSegment] {
+        &self.segments
+    }
 }
 
 /// Type qualification on a path, matching rustc's AST representation.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct QSelf {
     pub ty: Box<Ty>,
+    /// Span of the trait portion in an explicit `as Trait` qualification.
+    /// For trait-less `<T>::Assoc` paths this is left dummy, as in the
+    /// parser's representation.
     pub path_span: Span,
+    /// Insertion index of the qualified self in the complete path. For
+    /// `<T as Trait>::Assoc`, whose path is `Trait::Assoc`, this is `1`;
+    /// for trait-less `<T>::Assoc` it is `0`.
     pub position: usize,
 }
 
@@ -169,21 +180,45 @@ impl std::fmt::Display for Path {
                 if self.segments.is_empty() {
                     write!(f, "::")
                 } else {
-                    write!(f, "::{}", self.join("::"))
+                    write!(
+                        f,
+                        "::{}",
+                        self.segments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    )
                 }
             }
             PathPrefix::Crate => {
                 if self.segments.is_empty() {
                     write!(f, "crate")
                 } else {
-                    write!(f, "crate::{}", self.join("::"))
+                    write!(
+                        f,
+                        "crate::{}",
+                        self.segments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    )
                 }
             }
             PathPrefix::SelfMod => {
                 if self.segments.is_empty() {
                     write!(f, "self")
                 } else {
-                    write!(f, "self::{}", self.join("::"))
+                    write!(
+                        f,
+                        "self::{}",
+                        self.segments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    )
                 }
             }
             PathPrefix::Super(depth) => {
@@ -194,10 +229,27 @@ impl std::fmt::Display for Path {
                 if self.segments.is_empty() {
                     write!(f, "{}", prefix)
                 } else {
-                    write!(f, "{}::{}", prefix, self.join("::"))
+                    write!(
+                        f,
+                        "{}::{}",
+                        prefix,
+                        self.segments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    )
                 }
             }
-            PathPrefix::Plain => write!(f, "{}", self.join("::")),
+            PathPrefix::Plain => write!(
+                f,
+                "{}",
+                self.segments
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("::")
+            ),
         }
     }
 }
@@ -225,24 +277,162 @@ impl From<&Path> for Path {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct PathSegment {
     pub ident: Ident,
-    pub args: Vec<Ty>,
+    #[serde(default)]
+    pub arguments: PathArguments,
 }
 
 impl PathSegment {
     pub fn new(ident: Ident, args: Vec<Ty>) -> Self {
-        Self { ident, args }
+        Self {
+            ident,
+            arguments: PathArguments::from_types(&args),
+        }
+    }
+
+    pub fn with_arguments(ident: Ident, arguments: PathArguments) -> Self {
+        Self { ident, arguments }
     }
 
     pub fn from_ident(ident: Ident) -> Self {
         Self {
             ident,
-            args: Vec::new(),
+            arguments: PathArguments::None,
         }
     }
 
     pub fn as_str(&self) -> &str {
         self.ident.as_str()
     }
+}
+
+/// Generic arguments attached to one AST path segment.
+///
+/// The structured representation preserves the distinction between types,
+/// constants, lifetimes, and associated-item constraints instead of forcing
+/// every argument through a type-only list.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum PathArguments {
+    None,
+    AngleBracketed(Vec<AngleBracketedArg>),
+    Parenthesized {
+        inputs: Vec<Ty>,
+        output: Option<Box<Ty>>,
+    },
+}
+
+impl Default for PathArguments {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl PathArguments {
+    pub fn from_types(types: &[Ty]) -> Self {
+        if types.is_empty() {
+            Self::None
+        } else {
+            Self::AngleBracketed(
+                types
+                    .iter()
+                    .cloned()
+                    .map(ast_ty_to_generic_arg)
+                    .map(AngleBracketedArg::Arg)
+                    .collect(),
+            )
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub fn legacy_types(&self) -> Vec<Ty> {
+        match self {
+            Self::None => Vec::new(),
+            Self::AngleBracketed(args) => args
+                .iter()
+                .filter_map(|arg| match arg {
+                    AngleBracketedArg::Arg(GenericArg::Type(ty)) => Some((**ty).clone()),
+                    _ => None,
+                })
+                .collect(),
+            Self::Parenthesized { inputs, .. } => inputs.clone(),
+        }
+    }
+}
+
+impl GenericArg {
+    pub fn from_ty(ty: Ty) -> Self {
+        ast_ty_to_generic_arg(ty)
+    }
+}
+
+fn ast_ty_to_generic_arg(ty: Ty) -> GenericArg {
+    match ty {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(name)
+                if name.path.segments.len() == 1
+                    && name.path.segments[0].as_str().starts_with('\'') =>
+            {
+                GenericArg::Lifetime(name.path.segments[0].as_str().to_owned())
+            }
+            ExprKind::Value(value)
+                if matches!(
+                    value.as_ref(),
+                    Value::Int(_)
+                        | Value::UInt(_)
+                        | Value::BigInt(_)
+                        | Value::Bool(_)
+                        | Value::Decimal(_)
+                        | Value::BigDecimal(_)
+                        | Value::Char(_)
+                        | Value::String(_)
+                        | Value::Bytes(_)
+                        | Value::Unit(_)
+                        | Value::Null(_)
+                        | Value::None(_)
+                ) =>
+            {
+                GenericArg::Const(expr.clone())
+            }
+            _ => GenericArg::Type(Box::new(Ty::Expr(expr))),
+        },
+        other => GenericArg::Type(Box::new(other)),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum GenericArg {
+    Lifetime(String),
+    Type(Box<Ty>),
+    Const(Box<Expr>),
+}
+
+/// An angle-bracketed argument in rustc's AST is either a positional generic
+/// argument or an associated-item constraint. Keeping constraints outside
+/// `GenericArg` preserves the distinction used by HIR lowering.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum AngleBracketedArg {
+    Arg(GenericArg),
+    Constraint(AssocItemConstraint),
+}
+
+/// A constraint on an associated item in an angle-bracketed argument list.
+///
+/// Rustc keeps generic arguments attached to the constrained item itself, so
+/// `Trait<Item<'a> = T>` is represented differently from `Trait<Item = T>`.
+/// Keep that distinction here instead of throwing away the `<...>` portion.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub struct AssocItemConstraint {
+    pub name: Ident,
+    pub gen_args: Option<PathArguments>,
+    pub kind: AssocItemConstraintKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum AssocItemConstraintKind {
+    Equality { ty: Box<Ty> },
+    Bound { bounds: Vec<Ty> },
 }
 
 impl From<Ident> for PathSegment {
@@ -265,6 +455,121 @@ impl From<String> for PathSegment {
 
 impl Eq for PathSegment {}
 impl Eq for Path {}
+
+impl std::fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.ident)?;
+        match &self.arguments {
+            PathArguments::None => {
+                return Ok(());
+            }
+            PathArguments::AngleBracketed(args) => {
+                write!(
+                    f,
+                    "<{}>",
+                    args.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )?;
+            }
+            PathArguments::Parenthesized { inputs, output } => {
+                write!(
+                    f,
+                    "({})",
+                    inputs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )?;
+                if let Some(output) = output {
+                    write!(f, " -> {}", output)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for GenericArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lifetime(name) => write!(f, "{name}"),
+            Self::Type(ty) => write!(f, "{ty}"),
+            Self::Const(expr) => write!(f, "{{ {expr} }}"),
+        }
+    }
+}
+
+impl std::fmt::Display for AngleBracketedArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Arg(arg) => arg.fmt(f),
+            Self::Constraint(AssocItemConstraint {
+                name,
+                gen_args,
+                kind: AssocItemConstraintKind::Equality { ty },
+            }) => {
+                write!(f, "{name}")?;
+                if let Some(args) = gen_args {
+                    write!(f, "{args}")?;
+                }
+                write!(f, " = {ty}")
+            }
+            Self::Constraint(AssocItemConstraint {
+                name,
+                gen_args,
+                kind: AssocItemConstraintKind::Bound { bounds },
+            }) => {
+                write!(f, "{name}")?;
+                if let Some(args) = gen_args {
+                    write!(f, "{args}")?;
+                }
+                write!(
+                    f,
+                    ": {}",
+                    bounds
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                )
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for PathArguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => Ok(()),
+            Self::AngleBracketed(args) => write!(
+                f,
+                "<{}>",
+                args.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Parenthesized { inputs, output } => {
+                write!(
+                    f,
+                    "({})",
+                    inputs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )?;
+                if let Some(output) = output {
+                    write!(f, " -> {output}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
 
 /// A name use carries an optional qualified self type and its path.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
@@ -299,7 +604,7 @@ impl Name {
     pub fn as_ident(&self) -> Option<&Ident> {
         (self.path.prefix == PathPrefix::Plain
             && self.path.segments.len() == 1
-            && self.path.segments[0].args.is_empty())
+            && self.path.segments[0].arguments.is_none())
         .then_some(&self.path.segments[0].ident)
     }
 
@@ -310,7 +615,40 @@ impl Name {
 
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.path)
+        let Some(qself) = &self.qself else {
+            return write!(f, "{}", self.path);
+        };
+        let render_segments = |segments: &[PathSegment]| {
+            segments
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("::")
+        };
+        // `position` is the insertion point of the qself in the complete
+        // path.  A non-zero position therefore denotes an explicit
+        // `<T as Trait>` qualification; zero is the trait-less `<T>::Assoc`
+        // form, even when the associated tail has multiple segments.
+        let explicit_trait = qself.position > 0;
+        if !explicit_trait {
+            write!(f, "<{}>", qself.ty)?;
+            let associated = render_segments(&self.path.segments);
+            if !associated.is_empty() {
+                write!(f, "::{associated}")?;
+            }
+            return Ok(());
+        }
+        if self.path.segments.is_empty() {
+            return write!(f, "<{}>", qself.ty);
+        }
+        let position = qself.position.min(self.path.segments.len());
+        let trait_path = render_segments(&self.path.segments[..position]);
+        write!(f, "<{} as {}>", qself.ty, trait_path)?;
+        let associated = render_segments(&self.path.segments[position..]);
+        if !associated.is_empty() {
+            write!(f, "::{associated}")?;
+        }
+        Ok(())
     }
 }
 
@@ -329,14 +667,12 @@ mod tests {
         );
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].ident.as_str(), "Vec");
-        assert!(path.segments[0].args.is_empty());
+        assert!(path.segments[0].arguments.is_none());
     }
 
     #[test]
     fn qualified_path_keeps_qself_outside_path_segments() {
-        let ty = Ty::Expr(Box::new(crate::ast::Expr::new(crate::ast::ExprKind::Name(
-            Name::ident("Vec"),
-        ))));
+        let ty = Ty::ident(Ident::new("Vec"));
         let path = Path::new(
             PathPrefix::Plain,
             vec![PathSegment::from("Trait"), PathSegment::from("Item")],
@@ -345,11 +681,27 @@ mod tests {
             qself: Some(QSelf {
                 ty: Box::new(ty),
                 path_span: Span::null(),
-                position: 0,
+                position: 1,
             }),
             path,
         };
         assert_eq!(qualified.path.join("::"), "Trait::Item");
-        assert_eq!(qualified.qself.as_ref().unwrap().position, 0);
+        assert_eq!(qualified.qself.as_ref().unwrap().position, 1);
+    }
+
+    #[test]
+    fn path_segment_retains_structured_generic_arguments() {
+        let segment = PathSegment::with_arguments(
+            Ident::new("Array"),
+            PathArguments::AngleBracketed(vec![
+                AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),
+                AngleBracketedArg::Arg(GenericArg::Const(Box::new(Expr::ident(Ident::new("N"))))),
+            ]),
+        );
+        let PathArguments::AngleBracketed(args) = segment.arguments else {
+            panic!("expected angle-bracketed arguments");
+        };
+        assert!(matches!(args[0], AngleBracketedArg::Arg(GenericArg::Type(_))));
+        assert!(matches!(args[1], AngleBracketedArg::Arg(GenericArg::Const(_))));
     }
 }

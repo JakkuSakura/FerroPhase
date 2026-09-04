@@ -58,13 +58,15 @@ pub fn implicit_hypotheses(base: &Ty, binder: &hir::Symbol) -> Vec<hir::Expr> {
 fn path_expr(name: &str) -> hir::Expr {
     hir::Expr::new(
         hir::HirId::new(hir::OwnerId::root(hir::PackageId::new("test")), 0),
-        hir::ExprKind::Path(hir::Path {
+        hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
             segments: vec![hir::PathSegment {
                 name: name.into(),
                 args: None,
+                infer_args: true,
+                res: fp_core::hir::Res::Error,
             }],
             res: fp_core::hir::Res::Error,
-        }),
+        })),
         fp_core::span::Span::default(),
     )
 }
@@ -140,7 +142,7 @@ pub fn discharge(
 #[cfg(test)]
 pub(crate) mod test_support {
     use fp_core::hir::{
-        BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, Res,
+        BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, QPath, Res,
     };
     use fp_core::span::Span;
 
@@ -155,13 +157,15 @@ pub(crate) mod test_support {
     pub fn path(name: &str) -> Expr {
         Expr::new(
             HirId::new(OwnerId::root(PackageId::new("test")), 0),
-            ExprKind::Path(Path {
+            ExprKind::Path(QPath::resolved(Path {
                 segments: vec![PathSegment {
                     name: name.into(),
                     args: None,
+                    infer_args: true,
+                    res: Res::Error,
                 }],
                 res: Res::Error,
-            }),
+            })),
             Span::default(),
         )
     }

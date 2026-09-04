@@ -10,8 +10,15 @@ impl AstToHirLowerer {
     /// result before HIR construction.  This is the AST-to-HIR equivalent of
     /// rustc carrying the resolved `Res` on the path node rather than
     /// reconstructing it from the spelling later.
-    pub(super) fn resolved_type_path(&mut self, expr: &ast::Expr) -> Result<Option<hir::Path>> {
+    pub(super) fn resolved_type_path(&mut self, expr: &ast::Expr) -> Result<Option<hir::QPath>> {
         match expr.kind() {
+            ast::ExprKind::Name(name) if name.qself.is_some() => Ok(Some(
+                self.ast_expr_to_hir_path(
+                    expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Explicit,
+                )?,
+            )),
             ast::ExprKind::Name(name) => {
                 let result = self.local_resolver.resolve_parsed_path(
                     &self.package_id,
@@ -19,15 +26,23 @@ impl AstToHirLowerer {
                     &name.path,
                     fp_core::hir::resolve::Namespace::Type,
                 );
-                let fp_core::hir::resolve::ResolutionResult::Found(mut path) = result else {
+                if !matches!(result, fp_core::hir::resolve::ResolutionResult::Found(_))
+                    && !(name.path.prefix == fp_core::ast::path::PathPrefix::Plain
+                        && name
+                            .path
+                            .segments
+                            .first()
+                            .is_some_and(|segment| is_primitive_type_name(segment.as_str())))
+                {
                     return Ok(None);
-                };
-                let args = self.name_segment_args(name)?;
-                let skip = args.len().saturating_sub(path.segments.len());
-                for (segment, args) in path.segments.iter_mut().zip(args.into_iter().skip(skip)) {
-                    segment.args = args;
                 }
-                Ok(Some(path))
+                Ok(Some(
+                    self.ast_expr_to_hir_path(
+                        expr,
+                        PathResolutionScope::Type,
+                        ParamMode::Explicit,
+                    )?,
+                ))
             }
             ast::ExprKind::Value(value) => match value.as_ref() {
                 ast::Value::Expr(inner) => self.resolved_type_path(inner),
@@ -43,19 +58,163 @@ impl AstToHirLowerer {
                 .segments
                 .iter()
                 .map(|segment| {
-                    if segment.args.is_empty() {
-                        Ok(None)
+                    if !segment.arguments.is_none() {
+                        self.convert_path_arguments(&segment.arguments).map(Some)
                     } else {
-                        self.convert_generic_args(&segment.args).map(Some)
+                        Ok(None)
                     }
                 })
                 .collect(),
         }
     }
 
+    fn convert_path_arguments(
+        &mut self,
+        arguments: &ast::PathArguments,
+    ) -> Result<hir::GenericArgs> {
+        let mut parenthesized = hir::GenericArgsParentheses::No;
+        let mut hir_args = Vec::new();
+        let mut constraints = Vec::new();
+        let args: &[ast::AngleBracketedArg] = match arguments {
+            ast::PathArguments::None => &[],
+            ast::PathArguments::AngleBracketed(args) => args,
+            ast::PathArguments::Parenthesized { inputs, output } => {
+                let input_types = inputs
+                    .iter()
+                    .map(|input| self.transform_type_to_hir(input))
+                    .collect::<Result<Vec<_>>>()?;
+                let output = output
+                    .as_ref()
+                    .map(|output| self.transform_type_to_hir(output))
+                    .transpose()?;
+                let input_tuple = hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Tuple(
+                        input_types.into_iter().map(Box::new).collect(),
+                    ),
+                    Span::null(),
+                );
+                hir_args.push(hir::GenericArg::Type(Box::new(input_tuple)));
+                constraints.push(hir::AssocItemConstraint {
+                    name: hir::Symbol::new("Output"),
+                    gen_args: None,
+                    kind: hir::AssocItemConstraintKind::Equality {
+                        ty: Box::new(output.unwrap_or_else(|| {
+                            hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::Tuple(Vec::new()),
+                                Span::null(),
+                            )
+                        })),
+                    },
+                });
+                parenthesized = hir::GenericArgsParentheses::ParenSugar;
+                &[]
+            }
+        };
+        for arg in args {
+            let ast::AngleBracketedArg::Arg(arg) = arg else {
+                let ast::AngleBracketedArg::Constraint(constraint) = arg else {
+                    continue;
+                };
+                match constraint {
+                    ast::AssocItemConstraint {
+                        name,
+                        gen_args,
+                        kind: ast::AssocItemConstraintKind::Equality { ty },
+                    } => {
+                        constraints.push(hir::AssocItemConstraint {
+                            name: name.clone().into(),
+                            gen_args: gen_args
+                                .as_ref()
+                                .map(|args| self.convert_path_arguments(args))
+                                .transpose()?,
+                            kind: hir::AssocItemConstraintKind::Equality {
+                                ty: Box::new(self.transform_type_to_hir(ty.as_ref())?),
+                            },
+                        });
+                    }
+                    ast::AssocItemConstraint {
+                        name,
+                        gen_args,
+                        kind: ast::AssocItemConstraintKind::Bound { bounds },
+                    } => {
+                        constraints.push(hir::AssocItemConstraint {
+                            name: name.clone().into(),
+                            gen_args: gen_args
+                                .as_ref()
+                                .map(|args| self.convert_path_arguments(args))
+                                .transpose()?,
+                            kind: hir::AssocItemConstraintKind::Bound {
+                                bounds: bounds
+                                    .iter()
+                                    .map(|bound| self.transform_type_to_hir(bound))
+                                    .collect::<Result<Vec<_>>>()?,
+                            },
+                        });
+                    }
+                }
+                continue;
+            };
+            match arg {
+                ast::GenericArg::Lifetime(name) => {
+                    hir_args.push(hir::GenericArg::Lifetime(name.as_str().into()))
+                }
+                ast::GenericArg::Type(ty) => {
+                    if matches!(ty.as_ref(), ast::Ty::Wildcard(_)) {
+                        hir_args.push(hir::GenericArg::Infer);
+                        continue;
+                    }
+                    // Rust keeps a path-shaped generic argument ambiguous in
+                    // the AST and disambiguates it against the declaration's
+                    // generic parameter.  Our HIR has separate type/const
+                    // variants, so use the value namespace only for this
+                    // generic-argument disambiguation step; ordinary path
+                    // resolution remains the resolver's responsibility.
+                    if let ast::Ty::Expr(expr) = ty.as_ref()
+                        && let ast::ExprKind::Name(name) = expr.kind()
+                        && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
+                        && name.path.segments.len() == 1
+                        && matches!(
+                            self.local_resolver.resolve_parsed_path(
+                                &self.package_id,
+                                &self.module_path,
+                                &name.path,
+                                fp_core::hir::resolve::Namespace::Value,
+                            ),
+                            fp_core::hir::resolve::ResolutionResult::Found(_)
+                        )
+                    {
+                        hir_args.push(hir::GenericArg::Const(Box::new(
+                            self.transform_expr_to_hir(expr)?,
+                        )));
+                    } else {
+                        hir_args.push(hir::GenericArg::Type(Box::new(
+                            self.transform_type_to_hir(ty.as_ref())?,
+                        )));
+                    }
+                }
+                ast::GenericArg::Const(expr) => {
+                    hir_args.push(hir::GenericArg::Const(Box::new(
+                        self.transform_expr_to_hir(expr.as_ref())?,
+                    )));
+                }
+            }
+        }
+        Ok(hir::GenericArgs {
+            args: hir_args,
+            constraints,
+            parenthesized,
+        })
+    }
+
     pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
         let mut hir_args = Vec::new();
         for arg in args {
+            if matches!(arg, ast::Ty::Wildcard(_)) {
+                hir_args.push(hir::GenericArg::Infer);
+                continue;
+            }
             // An explicit associated-type binding (`Iterator<Item = U>` —
             // fp-lang's `parse_type_arg` turns `Item = U` into a
             // `Ty::Expr(Assign { target: Item, value: U })` entry among a
@@ -107,11 +266,6 @@ impl AstToHirLowerer {
                     hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
                     continue;
                 }
-                // An identifier in generic-argument position can denote a
-                // const parameter (`Array<T, N>`). Classify it from the
-                // value namespace before treating it as a type path; this
-                // avoids turning a valid const generic into an unresolved
-                // type named `N`.
                 if let ast::ExprKind::Name(name) = expr.kind()
                     && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
                     && name.path.segments.len() == 1
@@ -134,16 +288,83 @@ impl AstToHirLowerer {
             hir_args.push(hir::GenericArg::Type(Box::new(ty)));
         }
 
-        Ok(hir::GenericArgs { args: hir_args })
+        Ok(hir::GenericArgs {
+            args: hir_args,
+            constraints: Vec::new(),
+            parenthesized: hir::GenericArgsParentheses::No,
+        })
     }
 
     pub(super) fn ast_expr_to_hir_path(
         &mut self,
         expr: &ast::Expr,
         scope: PathResolutionScope,
-    ) -> Result<hir::Path> {
+        param_mode: ParamMode,
+    ) -> Result<hir::QPath> {
         match expr.kind() {
             ast::ExprKind::Name(name) => {
+                if let Some(qself) = &name.qself {
+                    let base_ty = self.transform_type_to_hir(&qself.ty)?;
+                    let args = self.name_segment_args(name)?;
+                    // Rustc resolves only the ordinary trait prefix here.
+                    // Every associated suffix becomes a nested
+                    // `QPath::TypeRelative`, so associated type/value lookup
+                    // remains type-directed until type checking.
+                    let trait_count = qself.position;
+                    let mut receiver = if trait_count == 0 {
+                        base_ty.clone()
+                    } else {
+                        let trait_path = ast::Path::new(
+                            name.path.prefix,
+                            name.path
+                                .segments
+                                .iter()
+                                .take(trait_count)
+                                .cloned()
+                                .collect(),
+                        );
+                        let trait_expr = ast::Expr::new(ast::ExprKind::Name(ast::Name {
+                            qself: None,
+                            path: trait_path,
+                        }));
+                        let trait_qpath = self.ast_expr_to_hir_path(
+                            &trait_expr,
+                            PathResolutionScope::Type,
+                            ParamMode::Explicit,
+                        )?;
+                        let hir::QPath::Resolved(_, trait_path) = trait_qpath else {
+                            return Err(
+                                "trait qualification did not resolve to an ordinary path".into(),
+                            );
+                        };
+                        hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Path(hir::QPath::qualified(
+                                base_ty.clone(),
+                                trait_path,
+                            )),
+                            expr.span(),
+                        )
+                    };
+                    let mut qpath = None;
+                    for (segment, args) in name
+                        .path
+                        .segments
+                        .iter()
+                        .skip(trait_count)
+                        .zip(args.into_iter().skip(trait_count))
+                    {
+                        let segment = self.make_path_segment(segment.as_str(), args, param_mode);
+                        let path = hir::QPath::type_relative(receiver, segment);
+                        qpath = Some(path.clone());
+                        receiver = hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Path(path),
+                            expr.span(),
+                        );
+                    }
+                    return qpath.ok_or_else(|| "qualified path has no associated segment".into());
+                }
                 let namespace = match scope {
                     PathResolutionScope::Type => fp_core::hir::resolve::Namespace::Type,
                     PathResolutionScope::Value => fp_core::hir::resolve::Namespace::Value,
@@ -160,13 +381,36 @@ impl AstToHirLowerer {
                     fp_core::hir::resolve::ResolutionResult::Found(path) => {
                         let mut path = path;
                         let args = self.name_segment_args(name)?;
-                        let skip = args.len().saturating_sub(path.segments.len());
-                        for (segment, args) in
-                            path.segments.iter_mut().zip(args.into_iter().skip(skip))
-                        {
-                            segment.args = args;
+                        for (segment, args) in path.segments.iter_mut().zip(args.iter()) {
+                            segment.infer_args = Self::infer_path_segment_args(args, param_mode);
+                            segment.args = args.clone();
                         }
-                        return Ok(path);
+                        // The resolver returns only the resolved base path.
+                        // The remaining source segments are associated
+                        // extensions and must become nested TypeRelative
+                        // nodes rather than Error-bearing ordinary segments.
+                        let consumed = path.segments.len();
+                        if consumed < parsed.segments.len() {
+                            let mut qpath = hir::QPath::resolved(path);
+                            for (segment, args) in parsed
+                                .segments
+                                .iter()
+                                .skip(consumed)
+                                .zip(args.into_iter().skip(consumed))
+                            {
+                                let receiver = hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(qpath),
+                                    expr.span(),
+                                );
+                                qpath = hir::QPath::type_relative(
+                                    receiver,
+                                    self.make_path_segment(segment.as_str(), args, param_mode),
+                                );
+                            }
+                            return Ok(qpath);
+                        }
+                        return Ok(hir::QPath::resolved(path));
                     }
                     fp_core::hir::resolve::ResolutionResult::NotFound(reason) => {
                         // Primitive names are language items rather than
@@ -185,19 +429,36 @@ impl AstToHirLowerer {
                             // remain for type checking as associated items.
                             let primitive = parsed.segments[0].as_str().to_owned();
                             let args = self.name_segment_args(name)?;
-                            let segments = parsed
+                            let mut segments: Vec<_> = parsed
                                 .segments
                                 .iter()
-                                .skip(1)
-                                .zip(args.into_iter().skip(1))
+                                .zip(args.into_iter())
                                 .map(|(segment, args)| {
-                                    self.make_path_segment(segment.as_str(), args)
+                                    self.make_path_segment(segment.as_str(), args, param_mode)
                                 })
                                 .collect();
-                            return Ok(hir::Path {
+                            if segments.len() > 1 {
+                                let base = segments.remove(0);
+                                let mut qpath = hir::QPath::resolved(hir::Path {
+                                    res: Res::Builtin(hir::BuiltinSelfType::Primitive(
+                                        primitive.clone(),
+                                    )),
+                                    segments: vec![base],
+                                });
+                                for segment in segments {
+                                    let receiver = hir::TypeExpr::new(
+                                        self.next_id(),
+                                        hir::TypeExprKind::Path(qpath),
+                                        expr.span(),
+                                    );
+                                    qpath = hir::QPath::type_relative(receiver, segment);
+                                }
+                                return Ok(qpath);
+                            }
+                            return Ok(hir::QPath::resolved(hir::Path {
                                 res: Res::Builtin(hir::BuiltinSelfType::Primitive(primitive)),
                                 segments,
-                            });
+                            }));
                         }
                         if std::env::var_os("FP_TRACE_PATHS").is_some() {
                             eprintln!(
@@ -236,14 +497,14 @@ impl AstToHirLowerer {
                     .iter()
                     .map(|segment| segment.as_str())
                     .collect();
-                Ok(hir::Path {
+                Ok(hir::QPath::resolved(hir::Path {
                     res: resolved,
                     segments: names
                         .into_iter()
                         .zip(segment_args)
-                        .map(|(name, args)| self.make_path_segment(name, args))
+                        .map(|(name, args)| self.make_path_segment(name, args, param_mode))
                         .collect(),
-                })
+                }))
             }
             ast::ExprKind::FieldAccess(select) => {
                 // `T::ASSOC` is a type-relative path. Resolve its base in
@@ -257,41 +518,76 @@ impl AstToHirLowerer {
                     ast::ExprKind::Name(name)
                         if matches!(name.path.prefix, fp_core::ast::path::PathPrefix::Plain) =>
                     {
-                        match self.local_resolver.resolve_local(
-                            name.path
-                                .segments
-                                .first()
-                                .map(|segment| segment.as_str())
-                                .unwrap_or_default(),
-                            fp_core::hir::resolve::Namespace::Value,
-                        ) {
-                            fp_core::hir::resolve::ResolutionResult::Found(_) => {
-                                PathResolutionScope::Value
+                        let symbol = name
+                            .path
+                            .segments
+                            .first()
+                            .map(|segment| segment.as_str())
+                            .unwrap_or_default();
+                        match self
+                            .local_resolver
+                            .resolve_local(symbol, fp_core::hir::resolve::Namespace::Type)
+                        {
+                            fp_core::hir::resolve::ResolutionResult::Found(path)
+                                if matches!(
+                                    path.res,
+                                    hir::Res::Def(_)
+                                        | hir::Res::Generic(_)
+                                        | hir::Res::SelfTy
+                                        | hir::Res::Builtin(_)
+                                ) =>
+                            {
+                                PathResolutionScope::Type
                             }
-                            _ => PathResolutionScope::Type,
+                            _ => match self
+                                .local_resolver
+                                .resolve_local(symbol, fp_core::hir::resolve::Namespace::Value)
+                            {
+                                fp_core::hir::resolve::ResolutionResult::Found(_) => {
+                                    PathResolutionScope::Value
+                                }
+                                _ => PathResolutionScope::Type,
+                            },
                         }
                     }
                     _ => PathResolutionScope::Type,
                 };
-                let type_base = self.ast_expr_to_hir_path(&select.obj, base_scope)?;
-                let mut base = type_base;
+                let type_base =
+                    self.ast_expr_to_hir_path(&select.obj, base_scope, param_mode)?;
                 let member_args = if select.generic_args.is_empty() {
                     None
                 } else {
                     Some(self.convert_generic_args(&select.generic_args)?)
                 };
-                let seg = self.make_path_segment(&select.field.name, member_args);
-                base.segments.push(seg);
-                Ok(base)
+                let seg = self.make_path_segment(&select.field.name, member_args, param_mode);
+                if matches!(base_scope, PathResolutionScope::Type) {
+                    let receiver =
+                        self.transform_type_to_hir(&ast::Ty::expr((*select.obj).clone()))?;
+                    return Ok(hir::QPath::type_relative(receiver, seg));
+                }
+                match type_base {
+                    hir::QPath::Resolved(qself, mut path) => {
+                        path.segments.push(seg);
+                        Ok(hir::QPath::Resolved(qself, path))
+                    }
+                    hir::QPath::TypeRelative(receiver, previous) => {
+                        let base = hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Path(hir::QPath::type_relative(*receiver, previous)),
+                            select.obj.span(),
+                        );
+                        Ok(hir::QPath::type_relative(base, seg))
+                    }
+                }
             }
             ast::ExprKind::Invoke(invoke) => {
                 let mut base = match &invoke.target {
                     ast::ExprInvokeTarget::Function(name) => {
                         let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                        self.ast_expr_to_hir_path(&expr, scope)?
+                        self.ast_expr_to_hir_path(&expr, scope, param_mode)?
                     }
                     ast::ExprInvokeTarget::Expr(expr) => {
-                        self.ast_expr_to_hir_path(expr.as_ref(), scope)?
+                        self.ast_expr_to_hir_path(expr.as_ref(), scope, param_mode)?
                     }
                     // A generic-argumented reference to a *type* target
                     // (e.g. a qualified path's base type, or a bare type
@@ -315,11 +611,19 @@ impl AstToHirLowerer {
                             let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                                 struct_ty.name.clone(),
                             )));
-                            self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
+                            self.ast_expr_to_hir_path(
+                                &expr,
+                                PathResolutionScope::Type,
+                                param_mode,
+                            )?
                         }
                         ast::Ty::Expr(type_expr) => match type_expr.kind() {
                             ast::ExprKind::Name(name) => {
-                                self.ast_expr_to_hir_path(type_expr, PathResolutionScope::Type)?
+                                self.ast_expr_to_hir_path(
+                                    type_expr,
+                                    PathResolutionScope::Type,
+                                    param_mode,
+                                )?
                             }
                             ast::ExprKind::Value(value) => match value.as_ref() {
                                 ast::Value::Type(inner) => match inner {
@@ -327,12 +631,17 @@ impl AstToHirLowerer {
                                         let expr = ast::Expr::new(ast::ExprKind::Name(
                                             ast::Name::ident(struct_ty.name.clone()),
                                         ));
-                                        self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?
+                                        self.ast_expr_to_hir_path(
+                                            &expr,
+                                            PathResolutionScope::Type,
+                                            param_mode,
+                                        )?
                                     }
                                     ast::Ty::Expr(inner_expr) => match inner_expr.kind() {
                                         ast::ExprKind::Name(name) => self.ast_expr_to_hir_path(
                                             inner_expr,
                                             PathResolutionScope::Type,
+                                            param_mode,
                                         )?,
                                         _ => {
                                             self.add_error(
@@ -342,12 +651,16 @@ impl AstToHirLowerer {
                                                 .with_source_context(DIAGNOSTIC_CONTEXT)
                                                 .with_span(expr.span()),
                                             );
-                                            hir::Path {
+                                            hir::QPath::resolved(hir::Path {
                                                 segments: vec![
-                                                    self.make_path_segment("__fp_error", None),
+                                                    self.make_path_segment(
+                                                        "__fp_error",
+                                                        None,
+                                                        param_mode,
+                                                    ),
                                                 ],
                                                 res: Res::Error,
-                                            }
+                                            })
                                         }
                                     },
                                     _ => {
@@ -358,12 +671,16 @@ impl AstToHirLowerer {
                                             .with_source_context(DIAGNOSTIC_CONTEXT)
                                             .with_span(expr.span()),
                                         );
-                                        hir::Path {
+                                        hir::QPath::resolved(hir::Path {
                                             segments: vec![
-                                                self.make_path_segment("__fp_error", None),
+                                                self.make_path_segment(
+                                                    "__fp_error",
+                                                    None,
+                                                    param_mode,
+                                                ),
                                             ],
                                             res: Res::Error,
-                                        }
+                                        })
                                     }
                                 },
                                 _ => {
@@ -374,10 +691,14 @@ impl AstToHirLowerer {
                                         .with_source_context(DIAGNOSTIC_CONTEXT)
                                         .with_span(expr.span()),
                                     );
-                                    hir::Path {
-                                        segments: vec![self.make_path_segment("__fp_error", None)],
+                                    hir::QPath::resolved(hir::Path {
+                                        segments: vec![self.make_path_segment(
+                                            "__fp_error",
+                                            None,
+                                            param_mode,
+                                        )],
                                         res: Res::Error,
-                                    }
+                                    })
                                 }
                             },
                             _ => {
@@ -388,10 +709,14 @@ impl AstToHirLowerer {
                                     .with_source_context(DIAGNOSTIC_CONTEXT)
                                     .with_span(expr.span()),
                                 );
-                                hir::Path {
-                                    segments: vec![self.make_path_segment("__fp_error", None)],
+                                hir::QPath::resolved(hir::Path {
+                                    segments: vec![self.make_path_segment(
+                                        "__fp_error",
+                                        None,
+                                        param_mode,
+                                    )],
                                     res: Res::Error,
-                                }
+                                })
                             }
                         },
                         _ => {
@@ -400,17 +725,37 @@ impl AstToHirLowerer {
                                     .with_source_context(DIAGNOSTIC_CONTEXT)
                                     .with_span(expr.span()),
                             );
-                            hir::Path {
-                                segments: vec![self.make_path_segment("__fp_error", None)],
+                            hir::QPath::resolved(hir::Path {
+                                segments: vec![self.make_path_segment(
+                                    "__fp_error",
+                                    None,
+                                    param_mode,
+                                )],
                                 res: Res::Error,
-                            }
+                            })
                         }
                     },
                     ast::ExprInvokeTarget::Method(select) => {
-                        let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
-                        let seg = self.make_path_segment(&select.field.name, None);
-                        base.segments.push(seg);
-                        base
+                        let base =
+                            self.ast_expr_to_hir_path(&select.obj, scope, param_mode)?;
+                        let seg =
+                            self.make_path_segment(&select.field.name, None, param_mode);
+                        match base {
+                            hir::QPath::Resolved(qself, mut path) => {
+                                path.segments.push(seg);
+                                hir::QPath::Resolved(qself, path)
+                            }
+                            hir::QPath::TypeRelative(receiver, previous) => {
+                                let base = hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(hir::QPath::type_relative(
+                                        *receiver, previous,
+                                    )),
+                                    select.obj.span(),
+                                );
+                                hir::QPath::type_relative(base, seg)
+                            }
+                        }
                     }
                     other => {
                         self.add_error(
@@ -421,10 +766,14 @@ impl AstToHirLowerer {
                             .with_source_context(DIAGNOSTIC_CONTEXT)
                             .with_span(expr.span()),
                         );
-                        hir::Path {
-                            segments: vec![self.make_path_segment("__fp_error", None)],
+                        hir::QPath::resolved(hir::Path {
+                            segments: vec![self.make_path_segment(
+                                "__fp_error",
+                                None,
+                                param_mode,
+                            )],
                             res: Res::Error,
-                        }
+                        })
                     }
                 };
 
@@ -441,10 +790,14 @@ impl AstToHirLowerer {
                         })
                         .collect();
                     let hir_args = self.convert_generic_args(&args)?;
-                    if let Some(last) = base.segments.last_mut() {
+                    if let Some(last) = base.segments_mut().last_mut() {
                         if last.args.is_none() {
+                            last.infer_args = false;
                             last.args = Some(hir_args);
                         }
+                    } else if let Some(first) = base.segments_mut().first_mut() {
+                        first.infer_args = false;
+                        first.args = Some(hir_args);
                     }
                 }
 
@@ -465,61 +818,93 @@ impl AstToHirLowerer {
                     let kind = hir::BuiltinSelfType::Reference {
                         mutable: reference.mutability.unwrap_or(false),
                     };
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Slice(_)) => {
                     let kind = hir::BuiltinSelfType::Slice;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Array(_)) => {
                     let kind = hir::BuiltinSelfType::Array;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::RawPtr(ptr)) => {
                     let kind = hir::BuiltinSelfType::RawPtr {
                         mutable: ptr.mutability.unwrap_or(false),
                     };
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Nothing(_)) => {
                     let kind = hir::BuiltinSelfType::Never;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Unit(_)) => {
                     let kind = hir::BuiltinSelfType::Unit;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Tuple(_)) => {
                     let kind = hir::BuiltinSelfType::Tuple;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 ast::Value::Type(ast::Ty::Function(_)) => {
                     let kind = hir::BuiltinSelfType::Function;
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            kind.bucket_key(),
+                            None,
+                            param_mode,
+                        )],
                         res: hir::Res::Builtin(kind),
-                    })
+                    }))
                 }
                 // A multi-bound trait-object/`impl` type used in
                 // expression position (`Box<dyn Fn(..) -> X + Send>`,
@@ -537,7 +922,7 @@ impl AstToHirLowerer {
                     if op.kind == fp_core::ast::TypeBinaryOpKind::Add =>
                 {
                     let lhs = ast::Expr::value(ast::Value::Type((*op.lhs).clone()));
-                    self.ast_expr_to_hir_path(&lhs, scope)
+                    self.ast_expr_to_hir_path(&lhs, scope, param_mode)
                 }
                 _ => {
                     self.add_error(
@@ -548,10 +933,14 @@ impl AstToHirLowerer {
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(expr.span()),
                     );
-                    Ok(hir::Path {
-                        segments: vec![self.make_path_segment("__fp_error", None)],
+                    Ok(hir::QPath::resolved(hir::Path {
+                        segments: vec![self.make_path_segment(
+                            "__fp_error",
+                            None,
+                            param_mode,
+                        )],
                         res: Res::Error,
-                    })
+                    }))
                 }
             },
             other => {
@@ -563,10 +952,14 @@ impl AstToHirLowerer {
                     .with_source_context(DIAGNOSTIC_CONTEXT)
                     .with_span(expr.span()),
                 );
-                Ok(hir::Path {
-                    segments: vec![self.make_path_segment("__fp_error", None)],
+                Ok(hir::QPath::resolved(hir::Path {
+                    segments: vec![self.make_path_segment(
+                        "__fp_error",
+                        None,
+                        param_mode,
+                    )],
                     res: Res::Error,
-                })
+                }))
             }
         }
     }
@@ -575,11 +968,26 @@ impl AstToHirLowerer {
         &self,
         name: &str,
         args: Option<hir::GenericArgs>,
+        param_mode: ParamMode,
     ) -> hir::PathSegment {
+        let infer_args = Self::infer_path_segment_args(&args, param_mode);
         hir::PathSegment {
             name: hir::Symbol::new(name),
             args,
+            infer_args,
+            res: hir::Res::Error,
         }
+    }
+
+    fn infer_path_segment_args(args: &Option<hir::GenericArgs>, param_mode: ParamMode) -> bool {
+        param_mode == ParamMode::Optional
+            && args.as_ref().is_none_or(|args| {
+                    matches!(args.parenthesized, hir::GenericArgsParentheses::No)
+                    && args
+                        .args
+                        .iter()
+                        .all(|arg| matches!(arg, hir::GenericArg::Lifetime(_)))
+            })
     }
 }
 

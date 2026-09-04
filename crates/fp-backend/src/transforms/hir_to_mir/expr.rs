@@ -526,8 +526,8 @@ impl HirToMirLowerer {
                 }
                 .into(),
             )),
-            hir::TypeExprKind::Path(path) if path.segments.len() == 1 => Some(
-                fp_core::ast::Ty::ident(fp_core::ast::Ident::new(path.segments[0].name.as_str())),
+            hir::TypeExprKind::Path(path) if path.segments().len() == 1 => Some(
+                fp_core::ast::Ty::ident(fp_core::ast::Ident::new(path.segments()[0].name.as_str())),
             ),
             _ => None,
         }
@@ -1504,7 +1504,7 @@ impl HirToMirLowerer {
             TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
             _ => expected_return,
         };
-        if self.is_result_path(path) {
+        if path.path().is_some_and(|path| self.is_result_path(path)) {
             if let Some(actual_args) = self.explicit_args_from_expected_result_ty(expected_return) {
                 if actual_args.len() == generics.len() {
                     for (name, actual_arg) in generics.iter().zip(actual_args) {
@@ -1533,7 +1533,7 @@ impl HirToMirLowerer {
             })
             .collect::<Vec<_>>();
         let path_args = path
-            .segments
+            .segments()
             .iter()
             .rev()
             .find_map(|segment| segment.args.as_ref());
@@ -1584,10 +1584,10 @@ impl HirToMirLowerer {
             let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
                 continue;
             };
-            if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
+            if type_path.segments().len() != 1 || type_path.segments()[0].args.is_some() {
                 continue;
             }
-            let name = type_path.segments[0].name.as_str();
+            let name = type_path.segments()[0].name.as_str();
             if !generics.iter().any(|generic| generic == name) || substs.contains_key(name) {
                 continue;
             }
@@ -1626,7 +1626,7 @@ impl HirToMirLowerer {
     }
 
     pub(crate) fn is_result_path(&self, path: &hir::Path) -> bool {
-        path.segments
+        path.segments()
             .last()
             .map(|segment| segment.name.as_str() == "Result")
             .unwrap_or(false)
@@ -1832,7 +1832,7 @@ impl HirToMirLowerer {
         let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
             return None;
         };
-        let segment = path.segments.last()?;
+        let segment = path.segments().last()?;
         if segment.name.as_str() != "Expr" {
             return None;
         }
@@ -1944,7 +1944,7 @@ impl HirToMirLowerer {
         // Keep inference conservative: only bind direct generic parameters.
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
-                let variant_enum_def = path.res.as_ref().and_then(|res| {
+                let variant_enum_def = path.res_ref().as_ref().and_then(|res| {
                     if let hir::Res::Def(def_id) = res {
                         self.mir_package
                             .borrow()
@@ -1963,13 +1963,14 @@ impl HirToMirLowerer {
                     _ => None,
                 } {
                     let mut matches_def = false;
-                    if let hir::Res::Def(def_id) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res_ref() {
                         if let Some(ref actual_def_id) = actual_def_id {
                             matches_def = *def_id == *actual_def_id
                                 || variant_enum_def == Some(actual_def_id.clone());
                         }
                         if !matches_def {
-                            if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
+                            if let Some(name) = path.segments().last().map(|seg| seg.name.as_str())
+                            {
                                 if let Some(actual_def_id) = actual_def_id {
                                     matches_def = self
                                         .mir_package
@@ -2000,7 +2001,7 @@ impl HirToMirLowerer {
                                 }
                             }
                         }
-                    } else if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
+                    } else if let Some(name) = path.segments().last().map(|seg| seg.name.as_str()) {
                         if let Some(actual_def_id) = actual_def_id {
                             matches_def = self
                                 .mir_package
@@ -2026,9 +2027,11 @@ impl HirToMirLowerer {
                     }
 
                     if matches_def {
-                        if let Some(path_args) =
-                            path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
-                        {
+                        if let Some(path_args) = path.path().and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        }) {
                             let path_type_args = path_args
                                 .args
                                 .iter()
@@ -2058,9 +2061,11 @@ impl HirToMirLowerer {
                             }
                         }
                     } else if actual_is_opaque {
-                        if let Some(path_args) =
-                            path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
-                        {
+                        if let Some(path_args) = path.path().and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        }) {
                             let path_type_args = path_args
                                 .args
                                 .iter()
@@ -2091,10 +2096,12 @@ impl HirToMirLowerer {
                         }
                     }
                 }
-                if let Some(path_args) =
-                    path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
-                {
-                    let def_id = path.res.as_ref().and_then(|res| match res {
+                if let Some(path_args) = path.path().and_then(|path| {
+                    path.segments
+                        .iter()
+                        .find_map(|segment| segment.args.as_ref())
+                }) {
+                    let def_id = path.res_ref().as_ref().and_then(|res| match res {
                         hir::Res::Def(def_id) => Some(def_id.clone()),
                         _ => None,
                     });
@@ -2139,11 +2146,11 @@ impl HirToMirLowerer {
                     }
                 }
                 let name = path
-                    .segments
+                    .segments()
                     .last()
                     .map(|seg| seg.name.as_str())
                     .unwrap_or("");
-                let is_generic = path.segments.iter().all(|seg| seg.args.is_none())
+                let is_generic = path.segments().iter().all(|seg| seg.args.is_none())
                     && generics.iter().any(|g| g == name);
                 if is_generic {
                     let actual_is_opaque = self.is_opaque_ty(actual_ty);
@@ -2181,7 +2188,11 @@ impl HirToMirLowerer {
                     return Ok(());
                 }
 
-                let path_args = path.segments.last().and_then(|seg| seg.args.as_ref());
+                let path_args = path.path().and_then(|path| {
+                    path.segments
+                        .iter()
+                        .find_map(|segment| segment.args.as_ref())
+                });
                 if let Some(path_args) = path_args {
                     if let Some(adt_substs) = match &actual_ty.kind {
                         TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => Some(substs),
@@ -2205,7 +2216,7 @@ impl HirToMirLowerer {
                 }
 
                 if let (Some(path_args), Some(hir::Res::Def(def_id))) =
-                    (path_args, path.res.as_ref())
+                    (path_args, path.res_ref().as_ref())
                 {
                     let enum_def_id = if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
                         Some(def_id.clone())
@@ -2245,10 +2256,10 @@ impl HirToMirLowerer {
                                             break;
                                         };
                                         if let hir::TypeExprKind::Path(type_path) = &type_arg.kind {
-                                            if type_path.segments.len() == 1
-                                                && type_path.segments[0].args.is_none()
+                                            if type_path.segments().len() == 1
+                                                && type_path.segments()[0].args.is_none()
                                             {
-                                                let name = type_path.segments[0].name.as_str();
+                                                let name = type_path.segments()[0].name.as_str();
                                                 if let Some(existing) = substs.get(name) {
                                                     if existing != actual_arg_ty
                                                         && !matches!(
@@ -2293,7 +2304,7 @@ impl HirToMirLowerer {
                     }
                 }
 
-                if let hir::Res::Def(def_id) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res_ref() {
                     if let Some(struct_def) = self.struct_def(def_id) {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
@@ -2507,7 +2518,7 @@ impl HirToMirLowerer {
         for variant in &enm.variants {
             let payload_def = variant.payload.as_ref().and_then(|payload| {
                 if let hir::TypeExprKind::Path(path) = &payload.kind {
-                    if let hir::Res::Def(def_id) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res_ref() {
                         return Some(def_id.clone());
                     }
                 }
@@ -3131,12 +3142,18 @@ impl HirToMirLowerer {
             return Vec::new();
         };
         let mut lowered = Vec::new();
-        for arg in &args.args {
+        for (index, arg) in args.args.iter().enumerate() {
             match arg {
+                hir::GenericArg::Lifetime(_) => {}
                 hir::GenericArg::Type(ty) => lowered.push(self.lower_type_expr(ty)),
                 hir::GenericArg::Const(_) => {
                     self.emit_warning(span, "const generics are ignored during MIR lowering");
                 }
+                // Preserve an elided type argument as an inference variable so
+                // downstream specialization can still resolve it from context.
+                hir::GenericArg::Infer => lowered.push(Ty {
+                    kind: TyKind::Infer(mir::ty::InferTy::FreshTy(index as u32)),
+                }),
             }
         }
         lowered
@@ -3213,24 +3230,28 @@ impl HirToMirLowerer {
                 }
             }
             hir::TypeExprKind::Path(path) => {
-                if let Some(first) = path.segments.first() {
-                    if path.segments.len() == 1 && first.args.is_none() {
+                if let Some(first) = path.segments().first() {
+                    if path.segments().len() == 1 && first.args.is_none() {
                         if let Some(subst) = substs.get(first.name.as_str()) {
                             return subst.clone();
                         }
                     }
                 }
 
-                if let hir::Res::Def(def_id) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res_ref() {
                     if self.mir_package.borrow().enum_defs.contains_key(def_id) {
                         let args = path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
+                            .path()
+                            .and_then(|path| {
+                                path.segments
+                                    .iter()
+                                    .find_map(|segment| segment.args.as_ref())
+                            })
                             .map(|args| {
                                 args.args
                                     .iter()
                                     .filter_map(|arg| match arg {
+                                        hir::GenericArg::Lifetime(_) => None,
                                         hir::GenericArg::Type(ty) => {
                                             Some(self.lower_generic_type_arg(ty, substs))
                                         }
@@ -3241,6 +3262,7 @@ impl HirToMirLowerer {
                                             );
                                             None
                                         }
+                                        hir::GenericArg::Infer => None,
                                     })
                                     .collect::<Vec<_>>()
                             })
@@ -3254,13 +3276,17 @@ impl HirToMirLowerer {
                     }
                     if self.mir_package.borrow().struct_defs.contains_key(def_id) {
                         let args = path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
+                            .path()
+                            .and_then(|path| {
+                                path.segments
+                                    .iter()
+                                    .find_map(|segment| segment.args.as_ref())
+                            })
                             .map(|args| {
                                 args.args
                                     .iter()
                                     .filter_map(|arg| match arg {
+                                        hir::GenericArg::Lifetime(_) => None,
                                         hir::GenericArg::Type(ty) => {
                                             Some(self.lower_generic_type_arg(ty, substs))
                                         }
@@ -3271,6 +3297,7 @@ impl HirToMirLowerer {
                                             );
                                             None
                                         }
+                                        hir::GenericArg::Infer => None,
                                     })
                                     .collect::<Vec<_>>()
                             })
@@ -3284,7 +3311,11 @@ impl HirToMirLowerer {
                     }
                 }
 
-                self.lower_path_type(path, ty_expr.span)
+                if let Some(path) = path.path() {
+                    self.lower_path_type(path, ty_expr.span)
+                } else {
+                    self.error_ty()
+                }
             }
             hir::TypeExprKind::FnPtr(fn_ptr) => {
                 let inputs = fn_ptr
@@ -3361,7 +3392,7 @@ impl HirToMirLowerer {
         match &inner.kind {
             hir::TypeExprKind::Primitive(TypePrimitive::String) => true,
             hir::TypeExprKind::Path(path) => path
-                .segments
+                .segments()
                 .last()
                 .map(|seg| seg.name.as_str() == "str")
                 .unwrap_or(false),
@@ -3403,7 +3434,7 @@ impl HirToMirLowerer {
                 }
             }
             hir::ExprKind::Path(path) => {
-                if let hir::Res::Def(def_id) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res_ref() {
                     if let Some(info) = self.ensure_const_info(def_id.clone()) {
                         match &info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value),
@@ -3439,7 +3470,7 @@ impl HirToMirLowerer {
     pub(super) fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
         match &ty.kind {
             hir::TypeExprKind::Path(path) => path
-                .segments
+                .segments()
                 .last()
                 .map(|seg| String::from(seg.name.clone())),
             hir::TypeExprKind::Ref(inner) | hir::TypeExprKind::Ptr { inner: inner, .. } => {
@@ -3957,14 +3988,14 @@ impl HirToMirLowerer {
         assoc_types: &HashMap<String, hir::TypeExpr>,
     ) -> Option<MethodContext> {
         if let hir::TypeExprKind::Path(path) = &self_ty.kind {
-            let def_id = match &path.res {
+            let def_id = match &path.res_ref() {
                 hir::Res::Def(def_id) => Some(def_id.clone()),
                 _ => None,
             };
             let mir_self_ty = self.lower_type_expr(self_ty);
             Some(MethodContext {
                 def_id,
-                path: path.segments.clone(),
+                path: path.segments().to_vec(),
                 mir_self_ty,
                 assoc_types: assoc_types.clone(),
             })
@@ -4513,22 +4544,27 @@ impl HirToMirLowerer {
         substs: &HashMap<String, Ty>,
     ) -> Ty {
         if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-            if let hir::Res::Def(def_id) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res_ref() {
                 if self.mir_package.borrow().struct_defs.contains_key(def_id)
                     || self.mir_package.borrow().enum_defs.contains_key(def_id)
                 {
                     let nested_args: Vec<Ty> = path
-                        .segments
-                        .last()
-                        .and_then(|segment| segment.args.as_ref())
+                        .path()
+                        .and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        })
                         .map(|args| {
                             args.args
                                 .iter()
                                 .filter_map(|arg| match arg {
+                                    hir::GenericArg::Lifetime(_) => None,
                                     hir::GenericArg::Type(ty) => {
                                         Some(self.lower_generic_type_arg(ty, substs))
                                     }
                                     hir::GenericArg::Const(_) => None,
+                                    hir::GenericArg::Infer => None,
                                 })
                                 .collect()
                         })

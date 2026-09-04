@@ -4,9 +4,11 @@ use std::fmt::{self, Formatter};
 
 use super::{
     AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
-    Function, GenericArg, GenericParamKind, Generics, HirPackage, Impl, ImplItemKind, Item,
-    ItemKind, Lit, Pat, PatKind, Path, Query, Stmt, StmtKind, Struct, Trait, TraitItemKind,
-    TypeExpr, TypeExprKind, UnOp, Visibility,
+    AssocItemConstraint, Function, GenericArg, GenericArgs, GenericArgsParentheses,
+    GenericParamKind,
+    Generics, HirPackage, Impl,
+    ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Query, Stmt, StmtKind, Struct, Trait,
+    TraitItemKind, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
@@ -558,7 +560,7 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
 fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
     match &expr.kind {
         ExprKind::Literal(lit) => format_lit(lit),
-        ExprKind::Path(path) => fmt_path(path, ctx),
+        ExprKind::Path(path) => fmt_qpath(path, ctx),
         ExprKind::Query(query) => {
             let name = query.ir.name.as_deref().unwrap_or("<anonymous>");
             format!("query({name})")
@@ -639,7 +641,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .map(|field| format!("{}: {}", field.name, format_expr_inline(&field.expr, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{} {{ {} }}", fmt_path(path, ctx), fields)
+            format!("{} {{ {} }}", fmt_qpath(path, ctx), fields)
         }
         ExprKind::Array(elements) => {
             let elems = elements
@@ -879,25 +881,200 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
     }
 }
 
+fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
+    let mut rendered = args
+        .args
+        .iter()
+        .map(|arg| match arg {
+            GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
+            GenericArg::Type(ty) => fmt_type_expr(ty.as_ref(), ctx),
+            GenericArg::Const(expr) => format_expr_inline(expr.as_ref(), ctx),
+            GenericArg::Infer => "_".to_owned(),
+        })
+        .collect::<Vec<_>>();
+    rendered.extend(args.constraints.iter().map(|constraint| match constraint {
+        AssocItemConstraint {
+            name,
+            gen_args,
+            kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+        } => format!(
+            "{}{} = {}",
+            name,
+            gen_args
+                .as_ref()
+                .map(|nested| fmt_generic_args(nested, ctx))
+                .unwrap_or_default(),
+            fmt_type_expr(ty.as_ref(), ctx)
+        ),
+        AssocItemConstraint {
+            name,
+            gen_args,
+            kind: crate::hir::AssocItemConstraintKind::Bound { bounds },
+        } => format!(
+            "{}{}: {}",
+            name,
+            gen_args
+                .as_ref()
+                .map(|nested| fmt_generic_args(nested, ctx))
+                .unwrap_or_default(),
+            bounds
+                .iter()
+                .map(|bound| fmt_type_expr(bound, ctx))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        ),
+    }));
+    if matches!(args.parenthesized, GenericArgsParentheses::ParenSugar) {
+        let inputs = match args.args.first() {
+            Some(GenericArg::Type(ty)) => match &ty.kind {
+                TypeExprKind::Tuple(inputs) => inputs
+                    .iter()
+                    .map(|input| fmt_type_expr(input, ctx))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                _ => fmt_type_expr(ty.as_ref(), ctx),
+            },
+            _ => String::new(),
+        };
+        let mut text = format!("({inputs})");
+        if let Some(AssocItemConstraint {
+            kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+            ..
+        }) = args.constraints.iter().find(|constraint| {
+            matches!(
+                constraint,
+                AssocItemConstraint {
+                    name,
+                    kind: crate::hir::AssocItemConstraintKind::Equality { .. },
+                    ..
+                } if name.as_str() == "Output"
+            )
+        }) {
+            if !matches!(&ty.kind, TypeExprKind::Tuple(inputs) if inputs.is_empty()) {
+                text.push_str(&format!(" -> {}", fmt_type_expr(ty.as_ref(), ctx)));
+            }
+        }
+        text
+    } else {
+        format!("<{}>", rendered.join(", "))
+    }
+}
+
 fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
     let mut segments = Vec::new();
     for segment in &path.segments {
         let mut text = String::from(segment.name.clone());
-        if let Some(args) = &segment.args {
-            let args = args
+        if let Some(generic_args) = &segment.args {
+            let mut args = generic_args
                 .args
                 .iter()
                 .map(|arg| match arg {
+                    GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
                     GenericArg::Type(ty) => fmt_type_expr(ty, ctx),
                     GenericArg::Const(expr) => format_expr_inline(expr, ctx),
+                    GenericArg::Infer => "_".to_owned(),
                 })
-                .collect::<Vec<_>>()
-                .join(", ");
-            text.push_str(&format!("<{}>", args));
+                .collect::<Vec<_>>();
+            args.extend(generic_args.constraints.iter().map(|binding| match binding {
+                AssocItemConstraint {
+                    name,
+                    gen_args,
+                    kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+                } => {
+                    format!(
+                        "{}{} = {}",
+                        name,
+                        gen_args
+                            .as_ref()
+                            .map(|args| fmt_generic_args(args, ctx))
+                            .unwrap_or_default(),
+                        fmt_type_expr(ty, ctx)
+                    )
+                }
+                AssocItemConstraint {
+                    name,
+                    gen_args,
+                    kind: crate::hir::AssocItemConstraintKind::Bound { bounds },
+                } => format!(
+                    "{}{}: {}",
+                    name,
+                    gen_args
+                        .as_ref()
+                        .map(|args| fmt_generic_args(args, ctx))
+                        .unwrap_or_default(),
+                    bounds
+                        .iter()
+                        .map(|bound| fmt_type_expr(bound, ctx))
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                ),
+            }));
+            let args = args.join(", ");
+            if matches!(
+                generic_args.parenthesized,
+                GenericArgsParentheses::ParenSugar
+            ) {
+                let inputs = match generic_args.args.first() {
+                    Some(GenericArg::Type(ty)) => match &ty.kind {
+                        TypeExprKind::Tuple(inputs) => inputs
+                            .iter()
+                            .map(|input| fmt_type_expr(input, ctx))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        _ => fmt_type_expr(ty, ctx),
+                    },
+                    _ => String::new(),
+                };
+                text.push_str(&format!("({inputs})"));
+                if let Some(AssocItemConstraint {
+                    kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+                    ..
+                }) = generic_args
+                    .constraints
+                    .iter()
+                    .find(|constraint| {
+                        matches!(
+                            constraint,
+                            AssocItemConstraint {
+                                name,
+                                kind: crate::hir::AssocItemConstraintKind::Equality { .. },
+                                ..
+                            }
+                                if name.as_str() == "Output"
+                        )
+                    })
+                {
+                    if !matches!(&ty.kind, TypeExprKind::Tuple(inputs) if inputs.is_empty()) {
+                        text.push_str(&format!(" -> {}", fmt_type_expr(ty, ctx)));
+                    }
+                }
+            } else {
+                text.push_str(&format!("<{}>", args));
+            }
         }
         segments.push(text);
     }
     segments.join("::")
+}
+
+fn fmt_qpath(path: &super::QPath, ctx: &PrettyCtx<'_>) -> String {
+    match path {
+        super::QPath::Resolved(qself, path) => {
+            let rendered = fmt_path(path, ctx);
+            qself
+                .as_ref()
+                .map(|ty| format!("<{} as {}>", fmt_type_expr(ty, ctx), rendered))
+                .unwrap_or(rendered)
+        }
+        super::QPath::TypeRelative(receiver, segment) => {
+            let segment_path = Path::new(segment.res.clone(), vec![segment.clone()]);
+            format!(
+                "{}::{}",
+                fmt_type_expr(receiver, ctx),
+                fmt_path(&segment_path, ctx)
+            )
+        }
+    }
 }
 
 fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
@@ -920,9 +1097,18 @@ fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
                     String::from(param.name.clone())
                 }
             }
-            GenericParamKind::Const { ty } => {
+            GenericParamKind::Const { ty, default } => {
                 if ctx.options.show_types {
-                    format!("const {}: {}", param.name, fmt_type_expr(ty, ctx))
+                    let default = default
+                        .as_ref()
+                        .map(|default| format!(" = {}", format_expr_inline(default, ctx)))
+                        .unwrap_or_default();
+                    format!(
+                        "const {}: {}{}",
+                        param.name,
+                        fmt_type_expr(ty, ctx),
+                        default
+                    )
                 } else {
                     format!("const {}", param.name)
                 }
@@ -953,7 +1139,7 @@ fn format_param(param: &super::Param, ctx: &PrettyCtx<'_>) -> String {
 fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
     match &ty.kind {
         TypeExprKind::Primitive(prim) => fmt_type_primitive(prim),
-        TypeExprKind::Path(path) => fmt_path(path, ctx),
+        TypeExprKind::Path(path) => fmt_qpath(path, ctx),
         TypeExprKind::Projection(projection) => format!(
             "<{} as {}>::{}",
             fmt_type_expr(&projection.self_ty, ctx),

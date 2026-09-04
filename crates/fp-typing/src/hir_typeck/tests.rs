@@ -99,13 +99,15 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
                         hir::BinOp::Add,
                         Box::new(hir::Expr {
                             hir_id: hid(24),
-                            kind: hir::ExprKind::Path(hir::Path {
+                            kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                                 segments: vec![hir::PathSegment {
                                     name: "B".into(),
                                     args: None,
+                                    infer_args: true,
+                                    res: hir::Res::Def(b_def_id.clone()),
                                 }],
                                 res: hir::Res::Def(b_def_id.clone()),
-                            }),
+                            })),
                             span: fp_core::span::Span::null(),
                         }),
                         Box::new(hir::Expr {
@@ -418,13 +420,15 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
                 pattern,
                 Box::new(hir::TypeExpr {
                     hir_id: hid(hir_id_base + 3),
-                    kind: hir::TypeExprKind::Path(hir::Path {
+                    kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![hir::PathSegment {
                             name: path_name.into(),
                             args: None,
+                            infer_args: true,
+                            res: hir::Res::Error,
                         }],
                         res: hir::Res::Error,
-                    }),
+                    })),
                     span: fp_core::span::Span::null(),
                 }),
                 None,
@@ -479,13 +483,15 @@ fn typed_command_helper_local_preserves_method_def_identity() {
     let output_call_hir_id = hid(50);
     let command_path = || hir::TypeExpr {
         hir_id: hid(60),
-        kind: hir::TypeExprKind::Path(hir::Path {
+        kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
             segments: vec![hir::PathSegment {
                 name: "Command".into(),
                 args: None,
+                infer_args: true,
+                res: hir::Res::Def(command_id.clone()),
             }],
             res: hir::Res::Def(command_id.clone()),
-        }),
+        })),
         span: fp_core::span::Span::null(),
     };
     let unit_ty = || hir::TypeExpr {
@@ -532,13 +538,15 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                 expr: Some(Box::new(hir::Expr {
                     hir_id: hid(21),
                     kind: hir::ExprKind::Struct(
-                        hir::Path {
+                        hir::QPath::resolved(hir::Path {
                             segments: vec![hir::PathSegment {
                                 name: "Command".into(),
                                 args: None,
+                                infer_args: true,
+                                res: hir::Res::Def(command_id.clone()),
                             }],
                             res: hir::Res::Def(command_id.clone()),
-                        },
+                        }),
                         Vec::new(),
                     ),
                     span: fp_core::span::Span::null(),
@@ -609,13 +617,15 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                             expr: Some(Box::new(hir::Expr {
                                 hir_id: hid(38),
                                 kind: hir::ExprKind::Struct(
-                                    hir::Path {
+                                    hir::QPath::resolved(hir::Path {
                                         segments: vec![hir::PathSegment {
                                             name: "Command".into(),
                                             args: None,
+                                            infer_args: true,
+                                            res: hir::Res::Def(command_id.clone()),
                                         }],
                                         res: hir::Res::Def(command_id.clone()),
-                                    },
+                                    }),
                                     Vec::new(),
                                 ),
                                 span: fp_core::span::Span::null(),
@@ -654,13 +664,17 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                 kind: hir::ExprKind::Call(
                                     Box::new(hir::Expr {
                                         hir_id: hid(45),
-                                        kind: hir::ExprKind::Path(hir::Path {
-                                            segments: vec![hir::PathSegment {
-                                                name: "helper".into(),
-                                                args: None,
-                                            }],
-                                            res: hir::Res::Def(helper_id),
-                                        }),
+                                        kind: hir::ExprKind::Path(hir::QPath::resolved(
+                                            hir::Path {
+                                                segments: vec![hir::PathSegment {
+                                                    name: "helper".into(),
+                                                    args: None,
+                                                    infer_args: true,
+                                                    res: hir::Res::Def(helper_id.clone()),
+                                                }],
+                                                res: hir::Res::Def(helper_id),
+                                            },
+                                        )),
                                         span: fp_core::span::Span::null(),
                                     }),
                                     Vec::new(),
@@ -686,21 +700,27 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                 kind: hir::ExprKind::Call(
                                     Box::new(hir::Expr {
                                         hir_id: hid(52),
-                                        kind: hir::ExprKind::Path(hir::Path {
-                                            segments: vec![
-                                                hir::PathSegment {
-                                                    name: "Command".into(),
-                                                    args: None,
-                                                },
-                                                hir::PathSegment {
-                                                    name: "new".into(),
-                                                    args: None,
-                                                },
-                                            ],
-                                            // Type-relative resolution is deliberately the type;
-                                            // typeck must record `new_id` on the enclosing call.
-                                            res: hir::Res::Def(command_id.clone()),
-                                        }),
+                                        kind: hir::ExprKind::Path(hir::QPath::resolved(
+                                            hir::Path {
+                                                segments: vec![
+                                                    hir::PathSegment {
+                                                        name: "Command".into(),
+                                                        args: None,
+                                                        infer_args: true,
+                                                        res: hir::Res::Def(command_id.clone()),
+                                                    },
+                                                    hir::PathSegment {
+                                                        name: "new".into(),
+                                                        args: None,
+                                                        infer_args: true,
+                                                        res: hir::Res::Error,
+                                                    },
+                                                ],
+                                                // Type-relative resolution is deliberately the type;
+                                                // typeck must record `new_id` on the enclosing call.
+                                                res: hir::Res::Def(command_id.clone()),
+                                            },
+                                        )),
                                         span: fp_core::span::Span::null(),
                                     }),
                                     Vec::new(),
@@ -715,13 +735,15 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                     kind: hir::ExprKind::MethodCall(
                         Box::new(hir::Expr {
                             hir_id: hid(51),
-                            kind: hir::ExprKind::Path(hir::Path {
+                            kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                                 segments: vec![hir::PathSegment {
                                     name: "cmd".into(),
                                     args: None,
+                                    infer_args: true,
+                                    res: hir::Res::Local(hid(43)),
                                 }],
                                 res: hir::Res::Local(hid(43)),
-                            }),
+                            })),
                             span: fp_core::span::Span::null(),
                         }),
                         "output".into(),

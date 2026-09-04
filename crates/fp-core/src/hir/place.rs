@@ -27,7 +27,12 @@ pub fn project_hir_assign_target(expr: &Expr) -> Option<HirProjectedAssignTarget
     let mut projections = Vec::new();
     let base = loop {
         match &current.kind {
-            ExprKind::Path(path) => break HirAssignTargetBase::Name(path.clone()),
+            ExprKind::Path(hir::QPath::Resolved(_, path)) => {
+                break HirAssignTargetBase::Name(path.clone());
+            }
+            ExprKind::Path(hir::QPath::TypeRelative(_, _)) => {
+                break HirAssignTargetBase::Expr(Box::new(current.clone()));
+            }
             ExprKind::FieldAccess(base, field) => {
                 projections.push(HirAssignTargetProjection::Field(field.clone()));
                 current = base.as_ref();

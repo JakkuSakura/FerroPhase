@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 impl<'a> BodyBuilder<'a> {
     pub(super) fn enum_variant_info_from_path(&self, path: &hir::Path) -> Option<EnumVariantInfo> {
-        if let hir::Res::Def(def_id) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res_ref() {
             if let Some(info) = self
                 .lowering
                 .mir_package
@@ -31,12 +31,12 @@ impl<'a> BodyBuilder<'a> {
                 return None;
             }
         }
-        if matches!(path.res, hir::Res::Local(_) | hir::Res::SelfTy) {
+        if matches!(path.res_ref(), hir::Res::Local(_) | hir::Res::SelfTy) {
             return None;
         }
 
         let name = path
-            .segments
+            .segments()
             .iter()
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
@@ -48,7 +48,7 @@ impl<'a> BodyBuilder<'a> {
             .get(&name)
             .cloned()
             .or_else(|| {
-                path.segments.last().and_then(|seg| {
+                path.segments().last().and_then(|seg| {
                     self.lowering
                         .mir_package
                         .borrow()
@@ -68,7 +68,7 @@ impl<'a> BodyBuilder<'a> {
         let expected_ty = self.lowering.unwrap_expr_actual_ty(expected_ty?);
 
         let name = path
-            .segments
+            .segments()
             .iter()
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
@@ -81,7 +81,7 @@ impl<'a> BodyBuilder<'a> {
             .get(&name)
             .cloned()
             .or_else(|| {
-                path.segments.last().and_then(|seg| {
+                path.segments().last().and_then(|seg| {
                     self.lowering
                         .mir_package
                         .borrow()
@@ -141,7 +141,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         }
-        let tail = path.segments.last()?.name.as_str();
+        let tail = path.segments().last()?.name.as_str();
 
         self.enum_variant_from_expected_ty_by_name(expected_ty, tail)
     }
@@ -783,7 +783,7 @@ impl<'a> BodyBuilder<'a> {
         let mut resolved_path = path.clone();
         self.resolve_self_path(&mut resolved_path);
         let mut generic_args = resolved_path
-            .segments
+            .segments()
             .iter()
             .find_map(|segment| segment.args.as_ref())
             .map(|args| self.lowering.lower_generic_args(Some(args), span))
@@ -1365,11 +1365,11 @@ impl<'a> BodyBuilder<'a> {
                 _ => return None,
             };
             if let (Some(hir::Res::Def(def_id)), Some(expected_def_id)) =
-                (path.res.as_ref(), expected_def_id)
+                (path.res_ref().as_ref(), expected_def_id)
             {
                 if def_id != &expected_def_id {
                     let matches_name = path
-                        .segments
+                        .segments()
                         .last()
                         .map(|seg| seg.name.as_str())
                         .map(|name| {
@@ -1402,7 +1402,11 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
 
-            let path_args = path.segments.last().and_then(|seg| seg.args.as_ref());
+            let path_args = path.path().and_then(|path| {
+                path.segments
+                    .iter()
+                    .find_map(|segment| segment.args.as_ref())
+            });
             if path_args.map(|args| args.args.is_empty()).unwrap_or(true) {
                 if expected_type_args.len() != function.sig.generics.params.len() {
                     return None;
@@ -1437,10 +1441,10 @@ impl<'a> BodyBuilder<'a> {
                 let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
                     return None;
                 };
-                if type_path.segments.len() != 1 || type_path.segments[0].args.is_some() {
+                if type_path.segments().len() != 1 || type_path.segments()[0].args.is_some() {
                     return None;
                 }
-                let name = type_path.segments[0].name.as_str();
+                let name = type_path.segments()[0].name.as_str();
                 if !function
                     .sig
                     .generics

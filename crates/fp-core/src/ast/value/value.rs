@@ -882,6 +882,11 @@ common_struct! {
         pub bounds: TypeBounds,
         #[serde(default)]
         pub kind: GenericParamKind,
+        /// Optional default type for a type parameter. Const parameter
+        /// defaults remain expressions in the declaration parser's source
+        /// representation and are intentionally not conflated with this.
+        #[serde(default)]
+        pub default: Option<Box<Ty>>,
         /// Bounds on an associated type projection rooted at this parameter,
         /// such as `T::Item: Clone` from a `where` clause.
         #[serde(default)]

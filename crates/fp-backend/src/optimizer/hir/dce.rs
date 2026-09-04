@@ -111,7 +111,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
 
 fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
     match &expr.kind {
-        hir::ExprKind::Path(path) => path_has_unresolved_segments(path),
+        hir::ExprKind::Path(path) => path.path().is_some_and(path_has_unresolved_segments),
         hir::ExprKind::Query(_) => false,
         hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
             expr_has_unresolved_paths(lhs) || expr_has_unresolved_paths(rhs)
@@ -145,7 +145,7 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
                     .is_some_and(|expr| expr_has_unresolved_paths(expr))
         }
         hir::ExprKind::Struct(path, fields) => {
-            path_has_unresolved_segments(path)
+            path.path().is_some_and(path_has_unresolved_segments)
                 || fields
                     .iter()
                     .any(|field| expr_has_unresolved_paths(&field.expr))
@@ -247,7 +247,7 @@ fn stmt_has_unresolved_paths(stmt: &hir::Stmt) -> bool {
 
 fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
     match &ty.kind {
-        hir::TypeExprKind::Path(path) => path_has_unresolved_segments(path),
+        hir::TypeExprKind::Path(path) => path.path().is_some_and(path_has_unresolved_segments),
         hir::TypeExprKind::Projection(projection) => {
             type_has_unresolved_paths(&projection.self_ty)
                 || path_has_unresolved_segments(&projection.trait_path)
@@ -379,7 +379,7 @@ fn collect_expr_refs(
     work: &mut VecDeque<hir::DefId>,
 ) {
     match &expr.kind {
-        hir::ExprKind::Path(path) => collect_path_refs(path, tail_map, work),
+        hir::ExprKind::Path(path) => collect_qpath_refs(path, tail_map, work),
         hir::ExprKind::Query(_) => {}
         hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
             collect_expr_refs(lhs, tail_map, work);
@@ -417,7 +417,7 @@ fn collect_expr_refs(
             }
         }
         hir::ExprKind::Struct(path, fields) => {
-            collect_path_refs(path, tail_map, work);
+            collect_qpath_refs(path, tail_map, work);
             for field in fields {
                 collect_expr_refs(&field.expr, tail_map, work);
             }
@@ -528,7 +528,7 @@ fn collect_type_refs(
     work: &mut VecDeque<hir::DefId>,
 ) {
     match &ty.kind {
-        hir::TypeExprKind::Path(path) => collect_path_refs(path, tail_map, work),
+        hir::TypeExprKind::Path(path) => collect_qpath_refs(path, tail_map, work),
         hir::TypeExprKind::Projection(projection) => {
             collect_type_refs(&projection.self_ty, tail_map, work);
             collect_path_refs(&projection.trait_path, tail_map, work);
@@ -606,6 +606,18 @@ fn collect_path_refs(
     }
 }
 
+fn collect_qpath_refs(
+    path: &hir::QPath,
+    tail_map: &HashMap<String, hir::DefId>,
+    work: &mut VecDeque<hir::DefId>,
+) {
+    if let Some(path) = path.path() {
+        collect_path_refs(path, tail_map, work);
+    } else if let hir::Res::Def(def_id) = path.res_ref() {
+        work.push_back(def_id.clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,16 +658,18 @@ mod tests {
     fn path_expr(hir_id: u32, segments: &[&str], res: Option<hir::Res>) -> Expr {
         Expr {
             hir_id: hid(hir_id),
-            kind: ExprKind::Path(Path {
+            kind: ExprKind::Path(hir::QPath::resolved(Path {
                 segments: segments
                     .iter()
                     .map(|segment| PathSegment {
                         name: symbol(segment),
                         args: None,
+                        infer_args: true,
+                        res: res.clone().unwrap_or(hir::Res::Error),
                     })
                     .collect(),
                 res: res.unwrap_or(hir::Res::Error),
-            }),
+            })),
             span: Span::null(),
         }
     }

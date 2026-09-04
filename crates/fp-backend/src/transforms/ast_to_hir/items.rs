@@ -54,9 +54,10 @@ impl AstToHirLowerer {
                         if let Ok(path) = self.ast_expr_to_hir_path(
                             struct_expr.name.as_ref(),
                             PathResolutionScope::Type,
+                            ParamMode::Optional,
                         ) {
                             if path
-                                .segments
+                                .segments()
                                 .last()
                                 .map(|seg| seg.name.as_str().starts_with("__Closure"))
                                 .unwrap_or(false)
@@ -250,7 +251,7 @@ impl AstToHirLowerer {
                         }
                     }
                     let path = self
-                        .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                        .ast_expr_to_hir_path(bound, PathResolutionScope::Type, ParamMode::Explicit)
                         .ok()?;
                     Some(hir::TypeExpr::new(
                         self.next_id(),
@@ -261,14 +262,7 @@ impl AstToHirLowerer {
                 .collect();
             // Explicit associated-type bindings on one of this
             // parameter's own trait bounds (`I: Iterator<Item = U>`) —
-            // extracted straight from the original AST bound expression
-            // (a path-based Name, per-segment `args: Vec<Ty>`,
-            // fp-lang's own `parse_type_arg` already turning `Item = U`
-            // into a `Ty::Expr(Assign { target: Item, value: U })` entry
-            // there) rather than re-derived from the just-lowered `Path`
-            // above, whose ordinary `GenericArgs` has nowhere to carry a
-            // binding as such. See `GenericParam::explicit_bindings`'s
-            // own doc comment for why this needs its own field.
+            // extracted straight from the original AST bound expression.
             let explicit_bindings = param
                 .bounds
                 .bounds
@@ -284,34 +278,35 @@ impl AstToHirLowerer {
                     let Some(last_segment) = parameter_path.segments.last() else {
                         return Vec::new();
                     };
-                    last_segment
-                        .args
-                        .iter()
+                    let ast::PathArguments::AngleBracketed(args) = &last_segment.arguments else {
+                        return Vec::new();
+                    };
+                    args.iter()
                         .filter_map(|arg| {
-                            let ast::Ty::Expr(arg_expr) = arg else {
-                                return None;
-                            };
-                            let ast::ExprKind::Assign(assign) = arg_expr.kind() else {
-                                return None;
-                            };
-                            let ast::ExprKind::Name(fp_core::ast::Name {
-                                path: binding_path, ..
-                            }) = assign.target.kind()
+                            let ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
+                                name,
+                                kind: ast::AssocItemConstraintKind::Equality { ty },
+                                ..
+                            }) = arg
                             else {
                                 return None;
                             };
-                            let Some(binding_name) = binding_path.clone().try_into_ident() else {
+                            let ast::Ty::Expr(value_expr) = ty.as_ref() else {
                                 return None;
                             };
                             let value_path = self
-                                .ast_expr_to_hir_path(&assign.value, PathResolutionScope::Type)
+                                .ast_expr_to_hir_path(
+                                    value_expr.as_ref(),
+                                    PathResolutionScope::Type,
+                                    ParamMode::Explicit,
+                                )
                                 .ok()?;
                             Some((
-                                binding_name.name.clone().into(),
+                                name.as_str().into(),
                                 hir::TypeExpr::new(
                                     self.next_id(),
                                     hir::TypeExprKind::Path(value_path),
-                                    assign.value.span(),
+                                    ty.span(),
                                 ),
                             ))
                         })
@@ -327,7 +322,7 @@ impl AstToHirLowerer {
                         .iter()
                         .filter_map(|bound| {
                             let path = self
-                                .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                        .ast_expr_to_hir_path(bound, PathResolutionScope::Type, ParamMode::Explicit)
                                 .ok()?;
                             Some(hir::TypeExpr::new(
                                 self.next_id(),
@@ -340,9 +335,25 @@ impl AstToHirLowerer {
                 })
                 .collect();
             let kind = match &param.kind {
-                ast::GenericParamKind::Type => hir::GenericParamKind::Type { default: None },
+                ast::GenericParamKind::Type => hir::GenericParamKind::Type {
+                    default: param
+                        .default
+                        .as_ref()
+                        .map(|default| self.transform_type_to_hir(default))
+                        .transpose()?
+                        .map(Box::new),
+                },
                 ast::GenericParamKind::Const { ty } => hir::GenericParamKind::Const {
                     ty: Box::new(self.transform_type_to_hir(ty)?),
+                    default: param
+                        .default
+                        .as_ref()
+                        .and_then(|default| match default.as_ref() {
+                            ast::Ty::Expr(expr) => Some(self.transform_expr_to_hir(expr)),
+                            _ => None,
+                        })
+                        .transpose()?
+                        .map(Box::new),
                 },
             };
             hir_params.push(hir::GenericParam {
@@ -405,7 +416,7 @@ impl AstToHirLowerer {
         let hir::TypeExprKind::Path(path) = &ty.kind else {
             return false;
         };
-        let hir::Res::Def(ref def_id) = path.res else {
+        let hir::Res::Def(def_id) = path.res_ref() else {
             return false;
         };
         self.unimplemented_type_def_ids.contains(&def_id)
@@ -449,7 +460,11 @@ impl AstToHirLowerer {
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 let trait_expr = ast::Expr::new(ast::ExprKind::Name(trait_name.clone()));
                 let trait_path =
-                    self.ast_expr_to_hir_path(&trait_expr, PathResolutionScope::Trait)?;
+                    self.ast_expr_to_hir_path(
+                        &trait_expr,
+                        PathResolutionScope::Trait,
+                        ParamMode::Explicit,
+                    )?;
                 Some(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(trait_path),
@@ -584,11 +599,23 @@ impl AstToHirLowerer {
             }
 
             if let Some(trait_name) = &impl_block.trait_ty {
-                let trait_generic_args: &[ast::Ty] = match trait_name {
+                let trait_generic_args: Vec<ast::Ty> = match trait_name {
                     ast::Name { path, .. } => path
                         .segments
                         .last()
-                        .map(|seg| seg.args.as_slice())
+                        .and_then(|seg| match &seg.arguments {
+                            ast::PathArguments::AngleBracketed(args) => Some(
+                                args.iter()
+                                    .filter_map(|arg| match arg {
+                                        ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) => {
+                                            Some((**ty).clone())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect(),
+                            ),
+                            _ => None,
+                        })
                         .unwrap_or_default(),
                 };
                 let trait_name = match trait_name {
@@ -634,8 +661,12 @@ impl AstToHirLowerer {
                             Some(ast::Ty::Expr(expr))
                                 if matches!(expr.kind(), ast::ExprKind::Name(_)) =>
                             {
-                                self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)
-                                    .map(|path| path.res)?
+                                self.ast_expr_to_hir_path(
+                                    expr.as_ref(),
+                                    PathResolutionScope::Type,
+                                    ParamMode::Explicit,
+                                )
+                                    .map(|path| path.res())?
                             }
                             // Trait type arguments are parsed as type
                             // expressions.  Keep the default `Self` target
@@ -759,13 +790,15 @@ impl AstToHirLowerer {
             let generics = self.transform_generics(&def_trait.generics_params)?;
             let self_ty = hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Path(hir::Path {
+                hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
                         name: hir::Symbol::new("Self"),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::SelfTy,
                     }],
                     res: hir::Res::SelfTy,
-                }),
+                })),
                 Span::new(self.current_file, 0, 0),
             );
 
@@ -821,7 +854,11 @@ impl AstToHirLowerer {
                                     return None;
                                 }
                                 let path = self
-                                    .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                                    .ast_expr_to_hir_path(
+                                        bound,
+                                        PathResolutionScope::Type,
+                                        ParamMode::Explicit,
+                                    )
                                     .ok()?;
                                 Some(hir::TypeExpr::new(
                                     self.next_id(),
@@ -890,9 +927,14 @@ impl AstToHirLowerer {
                 .bounds
                 .iter()
                 .filter_map(|bound| {
-                    self.ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                    self.ast_expr_to_hir_path(
+                        bound,
+                        PathResolutionScope::Type,
+                        ParamMode::Explicit,
+                    )
                         .ok()
                 })
+                .filter_map(|path| path.into_path())
                 .collect();
 
             Ok(hir::Trait {

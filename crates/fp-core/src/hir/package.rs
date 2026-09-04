@@ -401,18 +401,21 @@ fn classify_type_shape(
         }),
         TypeExprKind::FnPtr(_) => ImplShapeClass::Shape("fn(..)".to_string()),
         TypeExprKind::Never => ImplShapeClass::Shape("!".to_string()),
-        TypeExprKind::Path(path) => match &path.res {
-            Res::Builtin(builtin) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
-            Res::Def(did) if generics.params.iter().any(|param| param.def_id == *did) => {
-                ImplShapeClass::Blanket
-            }
-            Res::Def(did) => ImplShapeClass::Nominal(did.clone()),
-            _ if path.segments.len() == 1
-                && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
-            {
-                ImplShapeClass::Shape(path.segments[0].name.as_str().to_string())
-            }
-            _ => ImplShapeClass::Unclassified,
+        TypeExprKind::Path(qpath) => match qpath {
+            QPath::TypeRelative(_, _) => ImplShapeClass::Unclassified,
+            QPath::Resolved(_, path) => match &path.res {
+                Res::Builtin(builtin) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
+                Res::Def(did) if generics.params.iter().any(|param| param.def_id == *did) => {
+                    ImplShapeClass::Blanket
+                }
+                Res::Def(did) => ImplShapeClass::Nominal(did.clone()),
+                _ if path.segments.len() == 1
+                    && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
+                {
+                    ImplShapeClass::Shape(path.segments[0].name.as_str().to_string())
+                }
+                _ => ImplShapeClass::Unclassified,
+            },
         },
         _ => ImplShapeClass::Unclassified,
     }
@@ -1020,13 +1023,15 @@ mod tests {
     fn path_type(res: Res, name: &str) -> TypeExpr {
         TypeExpr::new(
             HirId::new(OwnerId::root(PackageId::new("test")), 1),
-            TypeExprKind::Path(Path {
+            TypeExprKind::Path(QPath::resolved(Path {
                 segments: vec![PathSegment {
                     name: name.into(),
                     args: None,
+                    infer_args: true,
+                    res: res.clone(),
                 }],
                 res,
-            }),
+            })),
             Span::null(),
         )
     }

@@ -178,10 +178,10 @@ impl HirTypeChecker {
                     size: 8,
                 })))
             }
-            hir::ExprKind::Path(path) if path.segments.len() == 1 => {
+            hir::ExprKind::Path(path) if path.segments().len() == 1 => {
                 ty::ConstKind::Param(ty::ParamConst {
                     index: u32::MAX,
-                    name: path.segments[0].name.clone(),
+                    name: path.segments()[0].name.clone(),
                 })
             }
             _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.local_id())),
@@ -417,7 +417,7 @@ impl HirTypeChecker {
                         pending_bounds.push(&op.lhs);
                         pending_bounds.push(&op.rhs);
                     } else if let hir::TypeExprKind::Path(path) = &bound.kind
-                        && let hir::Res::Def(trait_id) = &path.res
+                        && let hir::Res::Def(trait_id) = path.res_ref()
                     {
                         trait_ids.push(trait_id.clone());
                     }
@@ -917,13 +917,15 @@ impl HirTypeChecker {
             .or_default()
             .push(hir::TypeExpr {
                 hir_id: self_bound_hir_id,
-                kind: hir::TypeExprKind::Path(hir::Path {
+                kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
                         name: hir::Symbol::new("Self"),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(trait_def_id.clone()),
                     }],
                     res: hir::Res::Def(trait_def_id),
-                }),
+                })),
                 span: fp_core::span::Span::new(0, 0, 0),
             });
 
@@ -1079,16 +1081,18 @@ impl HirTypeChecker {
                 // checking the callee: a constructor path denotes the
                 // variant's callable identity, never the enum ADT itself.
                 if let hir::ExprKind::Path(path) = &mut callee.kind {
-                    if path.segments.len() > 1 {
-                        if let hir::Res::Def(owner_id) = path.res.clone() {
+                    if path.segments().len() > 1 {
+                        if let hir::Res::Def(owner_id) = path.res() {
                             if let Some(item) = self.program_rc().item(owner_id) {
                                 if let hir::ItemKind::Enum(def) = &item.kind {
                                     if let Some(variant) = def.variants.iter().find(|variant| {
-                                        path.segments
+                                        path.segments()
                                             .last()
                                             .is_some_and(|segment| variant.name == segment.name)
                                     }) {
-                                        path.res = hir::Res::Def(variant.def_id.clone());
+                                        if let hir::QPath::Resolved(_, resolved) = path {
+                                            resolved.res = hir::Res::Def(variant.def_id.clone());
+                                        }
                                     }
                                 }
                             }
@@ -1168,7 +1172,7 @@ impl HirTypeChecker {
                 // a call through a function pointer/closure value
                 // simply has no hints to discharge, same as today.
                 let callee_refinement_cache_key = if let hir::ExprKind::Path(path) = &callee.kind {
-                    path.res.as_ref().and_then(|res| match res {
+                    match path.res_ref() {
                         hir::Res::Def(def_id) => match self.program_rc().item(def_id.clone()) {
                             Some(item) => match &item.kind {
                                 hir::ItemKind::Function(function) => {
@@ -1179,7 +1183,7 @@ impl HirTypeChecker {
                             None => None,
                         },
                         _ => None,
-                    })
+                    }
                 } else {
                     None
                 };
@@ -1255,9 +1259,9 @@ impl HirTypeChecker {
                         // segment as the method name the same way,
                         // not assume the trait is always exactly
                         // `segments[0]`.
-                        if path.segments.len() >= 2 {
+                        if path.segments().len() >= 2 {
                             if let Some(receiver_ty) = arg_types.first().cloned() {
-                                let method_name = path.segments.last().unwrap().name.clone();
+                                let method_name = path.segments().last().unwrap().name.clone();
                                 // The receiver may itself still be a
                                 // generic type parameter (`fn max<T:
                                 // Ord>(a: T, b: T) -> T { Ord::max(a,
@@ -1269,7 +1273,7 @@ impl HirTypeChecker {
                                 // instead, exactly like `T::method(..)`
                                 // does when the base segment itself
                                 // names the parameter.
-                                let sig = if let Some(hir::Res::Def(trait_id)) = path.res.as_ref() {
+                                let sig = if let hir::Res::Def(trait_id) = path.res_ref() {
                                     self.trait_qualified_method_signature(
                                         trait_id,
                                         &method_name,
@@ -1312,7 +1316,7 @@ impl HirTypeChecker {
                 // priority when one exists.
                 if matches!(callee_ty.kind, TyKind::Error(_)) {
                     if let hir::ExprKind::Path(path) = &callee.kind {
-                        if path.segments.len() >= 2 {
+                        if path.segments().len() >= 2 {
                             // The ambient expected type is itself only
                             // a real receiver to search with when it's
                             // an actual type — if it's `TyKind::Error`
@@ -1326,8 +1330,8 @@ impl HirTypeChecker {
                                 .clone()
                                 .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
                             if let Some(receiver_ty) = expected {
-                                let method_name = path.segments.last().unwrap().name.clone();
-                                let sig = if let Some(hir::Res::Def(trait_id)) = path.res.as_ref() {
+                                let method_name = path.segments().last().unwrap().name.clone();
+                                let sig = if let hir::Res::Def(trait_id) = path.res_ref() {
                                     self.trait_qualified_method_signature(
                                         trait_id,
                                         &method_name,
@@ -1388,7 +1392,7 @@ impl HirTypeChecker {
                     (&callee.kind, &callee_ty.kind)
                 {
                     if signature.binder.value.inputs.len() == arg_types.len() + 1
-                        && path.segments.len() >= 2
+                        && path.segments().len() >= 2
                     {
                         let receiver = &signature.binder.value.inputs[0];
                         let receiver_adt = match &receiver.kind {
@@ -1439,8 +1443,8 @@ impl HirTypeChecker {
                 // spelling. This is the associated-call counterpart to the
                 // `MethodCall` arm's method-resolution recording.
                 if let hir::ExprKind::Path(path) = &callee.kind {
-                    if path.segments.len() > 1 {
-                        if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                    if path.segments().len() > 1 {
+                        if let hir::Res::Def(def_id) = path.res_ref() {
                             let is_nominal =
                                 self.program_rc().item(def_id.clone()).is_some_and(|item| {
                                     matches!(
@@ -1449,9 +1453,16 @@ impl HirTypeChecker {
                                     )
                                 });
                             if is_nominal {
-                                let receiver_ty = self.path_ty(path).await?;
+                                let receiver_ty = match path {
+                                    hir::QPath::Resolved(_, resolved) => {
+                                        self.path_ty(resolved).await?
+                                    }
+                                    hir::QPath::TypeRelative(receiver, _) => {
+                                        self.check_type_expr(receiver).await?
+                                    }
+                                };
                                 let method = &path
-                                    .segments
+                                    .segments()
                                     .last()
                                     .expect("type-relative path has a tail")
                                     .name;
@@ -1470,7 +1481,7 @@ impl HirTypeChecker {
                     }
                 }
                 if let hir::ExprKind::Path(path) = &callee.kind {
-                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                    if let hir::Res::Def(def_id) = path.res_ref() {
                         let args = self
                             .generic_call_args(def_id.clone(), &substitutions)?
                             .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
@@ -1594,11 +1605,21 @@ impl HirTypeChecker {
                 self.check_type_expr(target).await
             }),
             hir::ExprKind::Struct(path, fields) => Box::pin(async move {
-                let ty = match self.enum_variant_ty(path).await? {
-                    Some(ty) => ty,
-                    None => self.path_ty(path).await?,
+                let ty = match path {
+                    hir::QPath::Resolved(_, resolved) => {
+                        match self.enum_variant_ty(resolved).await? {
+                            Some(ty) => ty,
+                            None => self.path_ty(resolved).await?,
+                        }
+                    }
+                    hir::QPath::TypeRelative(receiver, _) => self.check_type_expr(receiver).await?,
                 };
-                let payload_ty = self.enum_struct_payload_type(path, &ty).await?;
+                let payload_ty = match path {
+                    hir::QPath::Resolved(_, resolved) => {
+                        self.enum_struct_payload_type(resolved, &ty).await?
+                    }
+                    hir::QPath::TypeRelative(_, _) => None,
+                };
                 // When the literal's path has no explicit `<T>` args,
                 // `path_ty`/`enum_variant_ty` leave the ADT's generic
                 // args as raw, unsubstituted `TyKind::Param`s (see
@@ -2604,7 +2625,84 @@ impl HirTypeChecker {
         Box::pin(async move {
             let ty = match &expr.kind {
                 hir::TypeExprKind::Primitive(primitive) => primitive_ty(*primitive),
-                hir::TypeExprKind::Path(path) => self.path_ty(path).await?,
+                hir::TypeExprKind::Path(path) => match path {
+                    hir::QPath::Resolved(Some(qself), resolved) => {
+                        // An explicit QSelf path (`<T as Trait>::Assoc`) is
+                        // represented by rustc as a resolved QPath whose
+                        // ordinary path retains the trait and associated
+                        // segments. Resolve the owner and trait here, while
+                        // leaving impl selection/deeper projections to the
+                        // type checker.
+                        let owner_ty = self.check_type_expr(qself).await?;
+                        let Some((trait_index, trait_def_id)) = resolved
+                            .segments
+                            .iter()
+                            .enumerate()
+                            .find_map(|(index, segment)| match &segment.res {
+                                hir::Res::Def(def_id)
+                                    if self.program_rc().item(def_id.clone()).is_some_and(
+                                        |item| matches!(&item.kind, hir::ItemKind::Trait(_)),
+                                    ) =>
+                                {
+                                    Some((index, def_id.clone()))
+                                }
+                                _ => None,
+                            })
+                        else {
+                            return Ok(self.error_ty("qualified projection trait is unresolved"));
+                        };
+                        let Some(assoc_segment) = resolved.segments.get(trait_index + 1) else {
+                            return Ok(self.error_ty("qualified path has no associated item"));
+                        };
+                        let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
+                            return Ok(self.error_ty("qualified projection trait was not found"));
+                        };
+                        let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                            return Ok(self.error_ty("qualified projection target is not a trait"));
+                        };
+                        let mut seen = HashSet::new();
+                        let Some(assoc_type) =
+                            self.trait_assoc_type(trait_def, &assoc_segment.name, &mut seen)
+                        else {
+                            return Ok(self.error_ty(format!(
+                                "trait does not declare associated type `{}`",
+                                assoc_segment.name
+                            )));
+                        };
+                        let name = hir::Symbol::new(format!(
+                            "<{} as {}>::{}",
+                            owner_ty, trait_def_id, assoc_segment.name
+                        ));
+                        let projection_ty = Ty {
+                            kind: TyKind::Param(ty::ParamTy {
+                                index: u32::MAX,
+                                name: name.clone(),
+                            }),
+                        };
+                        if !assoc_type.bounds.is_empty() {
+                            self.projection_param_bounds
+                                .entry(ty::ParamTy {
+                                    index: u32::MAX,
+                                    name,
+                                })
+                                .or_default()
+                                .extend(assoc_type.bounds);
+                        }
+                        projection_ty
+                    }
+                    hir::QPath::Resolved(None, resolved) => self.path_ty(resolved).await?,
+                    hir::QPath::TypeRelative(receiver, segment) => {
+                        let receiver_ty = self.check_type_expr(receiver).await?;
+                        self.assoc_type_for_self(&receiver_ty, &segment.name)
+                            .await?
+                            .unwrap_or_else(|| {
+                                self.error_ty(format!(
+                                    "associated type `{}` is not defined for `{}`",
+                                    segment.name, receiver_ty
+                                ))
+                            })
+                    }
+                },
                 hir::TypeExprKind::Projection(projection) => {
                     let owner_ty = self.check_type_expr(&projection.self_ty).await?;
                     let hir::Res::Def(trait_def_id) = &projection.trait_path.res else {
@@ -3039,17 +3137,12 @@ impl HirTypeChecker {
                     return Ok(primitive);
                 }
             }
-            // `<usize as Add>::Output`-style UFCS paths lower to a flat
-            // `usize::Output` (`parse_qualified_path_type` in fp-lang
-            // intentionally drops the `as Trait` disambiguator — its own
-            // doc comment explains why), which `ast_to_hir` never
-            // resolves (`usize` is a primitive, not a module/item, so no
-            // `Res` exists for it) — real rustc resolves an unqualified
-            // `T::AssocName` the same way, by searching `T`'s own trait
-            // impls for the one that declares `AssocName`. Reuse the
-            // same impl-matching machinery `method_output_at` already
-            // uses for `.method()` calls, just for an associated type
-            // instead of a method.
+            // `<usize as Add>::Output`-style UFCS paths whose base is a
+            // primitive still have no nominal `DefId` (`usize` is a builtin,
+            // not a module/item). Resolve them through the same
+            // impl-matching machinery `method_output_at` already uses for
+            // `.method()` calls, just for an associated type instead of a
+            // method.
             //
             if path.segments.len() >= 2 {
                 // A nominal base must have been resolved by AST->HIR.  Do
@@ -3141,21 +3234,29 @@ impl HirTypeChecker {
             }
             _ => return Ok(self.error_ty(format!("definition `{def_id}` is not a type"))),
         };
+        // Generic arguments belong to their rustc-style path segment.  A
+        // nominal type path may have module prefixes, so select the first
+        // parameterized segment rather than treating the path as one flat
+        // argument list.
         let args = match path
             .segments
-            .last()
-            .and_then(|segment| segment.args.as_ref())
+            .iter()
+            .find_map(|segment| segment.args.as_ref())
         {
             Some(args) => {
                 let mut checked = Vec::with_capacity(args.args.len());
-                for arg in &args.args {
+                for (index, arg) in args.args.iter().enumerate() {
                     let arg = match arg {
+                        hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
                         hir::GenericArg::Type(ty) => {
                             GenericArg::Type(self.check_type_expr(ty).await?)
                         }
                         hir::GenericArg::Const(expr) => {
                             GenericArg::Const(self.const_arg_kind(expr))
                         }
+                        hir::GenericArg::Infer => GenericArg::Type(Ty {
+                            kind: TyKind::Infer(ty::InferTy::FreshTy(index as u32)),
+                        }),
                     };
                     checked.push(arg);
                 }
@@ -3181,18 +3282,33 @@ impl HirTypeChecker {
                 if let Some(declared_params) = declared_params {
                     for (index, parameter) in declared_params.iter().enumerate().skip(checked.len())
                     {
-                        let default_ty = match &parameter.kind {
-                            hir::GenericParamKind::Type {
-                                default: Some(default),
-                            } => Some(self.check_type_expr(default).await?),
-                            _ => None,
+                        let argument = match &parameter.kind {
+                            hir::GenericParamKind::Type { default } => {
+                                let default_ty = match default.as_ref() {
+                                    Some(default) => Some(self.check_type_expr(default).await?),
+                                    None => None,
+                                };
+                                GenericArg::Type(default_ty.unwrap_or_else(|| Ty {
+                                    kind: TyKind::Param(ty::ParamTy {
+                                        index: parameter.def_id.index,
+                                        name: parameter.name.clone(),
+                                    }),
+                                }))
+                            }
+                            hir::GenericParamKind::Const { default, .. } => {
+                                let default = default
+                                    .as_ref()
+                                    .map(|default| self.const_arg_kind(default))
+                                    .unwrap_or_else(|| {
+                                        ty::ConstKind::Param(ty::ParamConst {
+                                            index: parameter.def_id.index,
+                                            name: parameter.name.clone(),
+                                        })
+                                    });
+                                GenericArg::Const(default)
+                            }
                         };
-                        checked.push(GenericArg::Type(default_ty.unwrap_or_else(|| Ty {
-                            kind: TyKind::Param(ty::ParamTy {
-                                index: parameter.def_id.index,
-                                name: parameter.name.clone(),
-                            }),
-                        })));
+                        checked.push(argument);
                     }
                 }
                 checked
@@ -3203,13 +3319,24 @@ impl HirTypeChecker {
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(_index, parameter)| {
-                        GenericArg::Type(Ty {
+                    .map(|(_index, parameter)| match &parameter.kind {
+                        hir::GenericParamKind::Type { .. } => GenericArg::Type(Ty {
                             kind: TyKind::Param(ty::ParamTy {
                                 index: parameter.def_id.index,
                                 name: parameter.name.clone(),
                             }),
-                        })
+                        }),
+                        hir::GenericParamKind::Const { default, .. } => {
+                            GenericArg::Const(default.as_ref().map_or_else(
+                                || {
+                                    ty::ConstKind::Param(ty::ParamConst {
+                                        index: parameter.def_id.index,
+                                        name: parameter.name.clone(),
+                                    })
+                                },
+                                |default| self.const_arg_kind(default),
+                            ))
+                        }
                     })
                     .collect(),
                 hir::ItemKind::Enum(def) => def
@@ -3217,13 +3344,24 @@ impl HirTypeChecker {
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(_index, parameter)| {
-                        GenericArg::Type(Ty {
+                    .map(|(_index, parameter)| match &parameter.kind {
+                        hir::GenericParamKind::Type { .. } => GenericArg::Type(Ty {
                             kind: TyKind::Param(ty::ParamTy {
                                 index: parameter.def_id.index,
                                 name: parameter.name.clone(),
                             }),
-                        })
+                        }),
+                        hir::GenericParamKind::Const { default, .. } => {
+                            GenericArg::Const(default.as_ref().map_or_else(
+                                || {
+                                    ty::ConstKind::Param(ty::ParamConst {
+                                        index: parameter.def_id.index,
+                                        name: parameter.name.clone(),
+                                    })
+                                },
+                                |default| self.const_arg_kind(default),
+                            ))
+                        }
                     })
                     .collect(),
                 _ => Vec::new(),
@@ -3428,7 +3566,34 @@ impl HirTypeChecker {
         })
     }
 
-    async fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
+    async fn expr_path_ty(&mut self, qpath: &hir::QPath) -> Result<Ty> {
+        let owned_type_relative_path = match qpath {
+            hir::QPath::Resolved(_, _) => None,
+            hir::QPath::TypeRelative(receiver, segment) => {
+                let mut deferred = vec![segment.clone()];
+                let mut receiver = receiver.as_ref();
+                let mut path = loop {
+                    let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
+                        return Ok(
+                            self.error_ty("type-relative path receiver is not a resolved path")
+                        );
+                    };
+                    match receiver_path {
+                        hir::QPath::Resolved(_, path) => break path.clone(),
+                        hir::QPath::TypeRelative(next_receiver, next_segment) => {
+                            deferred.push(next_segment.clone());
+                            receiver = next_receiver.as_ref();
+                        }
+                    }
+                };
+                path.segments.extend(deferred.into_iter().rev());
+                Some(path)
+            }
+        };
+        let path = owned_type_relative_path
+            .as_ref()
+            .or_else(|| qpath.path())
+            .expect("resolved QPath always carries an ordinary path");
         tracing::debug!(?path, "expr_path_ty");
         // A multi-segment `Self::` value path is an associated
         // function/method called via `Self::name(..)` (e.g. `Self::new()`,
@@ -4095,10 +4260,14 @@ impl HirTypeChecker {
             .find_map(|segment| segment.args.as_ref());
         let args = if let Some(args) = explicit_args {
             let mut checked = Vec::with_capacity(args.args.len());
-            for arg in &args.args {
+            for (index, arg) in args.args.iter().enumerate() {
                 let arg = match arg {
+                    hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
                     hir::GenericArg::Type(ty) => GenericArg::Type(self.check_type_expr(ty).await?),
                     hir::GenericArg::Const(expr) => GenericArg::Const(self.const_arg_kind(expr)),
+                    hir::GenericArg::Infer => GenericArg::Type(Ty {
+                        kind: TyKind::Infer(ty::InferTy::FreshTy(index as u32)),
+                    }),
                 };
                 checked.push(arg);
             }
@@ -4344,7 +4513,7 @@ impl HirTypeChecker {
                 let hir::TypeExprKind::Path(path) = &bound.kind else {
                     continue;
                 };
-                let hir::Res::Def(trait_def_id) = &path.res else {
+                let hir::Res::Def(trait_def_id) = path.res_ref() else {
                     continue;
                 };
                 let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
@@ -4410,7 +4579,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
                 continue;
             };
-            let hir::Res::Def(trait_id) = &path.res else {
+            let hir::Res::Def(trait_id) = path.res_ref() else {
                 continue;
             };
             trait_ids.push(trait_id.clone());
@@ -4449,21 +4618,24 @@ impl HirTypeChecker {
                 let arguments = flattened
                     .iter()
                     .find(|bound| {
-                        matches!(&bound.kind, hir::TypeExprKind::Path(path) if path.res
+                        matches!(&bound.kind, hir::TypeExprKind::Path(path) if *path.res_ref()
                             == hir::Res::Def(trait_id.clone()))
                     })
                     .and_then(|bound| match &bound.kind {
-                        hir::TypeExprKind::Path(path) => path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref()),
+                        hir::TypeExprKind::Path(path) => path.path().and_then(|path| {
+                            path.segments
+                                .iter()
+                                .find_map(|segment| segment.args.as_ref())
+                        }),
                         _ => None,
                     })
                     .into_iter()
                     .flat_map(|args| &args.args)
                     .filter_map(|arg| match arg {
+                        hir::GenericArg::Lifetime(_) => None,
                         hir::GenericArg::Type(ty) => Some(ty.as_ref()),
                         hir::GenericArg::Const(_) => None,
+                        hir::GenericArg::Infer => None,
                     });
                 for (parameter, argument) in trait_def
                     .generics
@@ -4586,7 +4758,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
                 continue;
             };
-            let hir::Res::Def(trait_def_id) = &path.res else {
+            let hir::Res::Def(trait_def_id) = path.res_ref() else {
                 continue;
             };
             let mut trait_ids = vec![trait_def_id.clone()];
@@ -4612,14 +4784,19 @@ impl HirTypeChecker {
                         let signature = scope.function_signature(function).await?;
                         let mut substitutions = HashMap::new();
                         let arguments = path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
+                            .path()
+                            .and_then(|path| {
+                                path.segments
+                                    .iter()
+                                    .find_map(|segment| segment.args.as_ref())
+                            })
                             .into_iter()
                             .flat_map(|args| &args.args)
                             .filter_map(|arg| match arg {
+                                hir::GenericArg::Lifetime(_) => None,
                                 hir::GenericArg::Type(ty) => Some(ty.as_ref()),
                                 hir::GenericArg::Const(_) => None,
+                                hir::GenericArg::Infer => None,
                             });
                         for (parameter, argument) in trait_def
                             .generics
@@ -5085,7 +5262,7 @@ impl HirTypeChecker {
                 let hir::TypeExprKind::Path(path) = &bound.kind else {
                     continue;
                 };
-                let hir::Res::Def(trait_def_id) = &path.res else {
+                let hir::Res::Def(trait_def_id) = path.res_ref() else {
                     continue;
                 };
                 let mut trait_ids = vec![trait_def_id.clone()];
@@ -5164,7 +5341,7 @@ impl HirTypeChecker {
                     .trait_ty
                     .as_ref()
                     .and_then(|trait_ty| match &trait_ty.kind {
-                        hir::TypeExprKind::Path(path) => match path.res.as_ref()? {
+                        hir::TypeExprKind::Path(path) => match path.res_ref() {
                             hir::Res::Def(def_id) => {
                                 let item = program.item(def_id.clone());
                                 item
@@ -5310,7 +5487,7 @@ impl HirTypeChecker {
                     let hir::TypeExprKind::Path(path) = &current_trait_ty.kind else {
                         continue;
                     };
-                    let hir::Res::Def(trait_id) = &path.res else {
+                    let hir::Res::Def(trait_id) = path.res_ref() else {
                         continue;
                     };
                     if !seen_traits.insert(trait_id.clone()) {
@@ -5362,7 +5539,7 @@ impl HirTypeChecker {
                         trait_work.extend(trait_def.supertraits.iter().cloned().map(|path| {
                             hir::TypeExpr {
                                 hir_id: current_trait_ty.hir_id.clone(),
-                                kind: hir::TypeExprKind::Path(path),
+                                kind: hir::TypeExprKind::Path(hir::QPath::resolved(path)),
                                 span: current_trait_ty.span,
                             }
                         }));
@@ -5382,7 +5559,7 @@ impl HirTypeChecker {
         let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
             return None;
         };
-        let hir::Res::Def(def_id) = path.res.clone() else {
+        let hir::Res::Def(def_id) = path.res() else {
             return None;
         };
         if let Some(cached) = self.program_rc().resolved_trait_def(def_id.clone()) {
@@ -5428,7 +5605,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
                 continue;
             };
-            if path.segments.last().map(|seg| seg.name.as_str()) != Some("Deref") {
+            if path.segments().last().map(|seg| seg.name.as_str()) != Some("Deref") {
                 continue;
             }
             let mut scope = self.with_generics(&impl_item.generics);
@@ -6139,7 +6316,7 @@ impl HirTypeChecker {
                         }
                         for bound in flattened {
                             if let hir::TypeExprKind::Path(path) = &bound.kind {
-                                if let hir::Res::Def(trait_id) = &path.res {
+                                if let hir::Res::Def(trait_id) = path.res_ref() {
                                     trait_ids.push(trait_id.clone());
                                 }
                             }
@@ -6185,15 +6362,15 @@ impl HirTypeChecker {
                         else {
                             continue;
                         };
-                        if trait_path.res != hir::Res::Def(principal.def_id.clone()) {
+                        if *trait_path.res_ref() != hir::Res::Def(principal.def_id.clone()) {
                             continue;
                         }
                         if matches!(
                             &impl_item.self_ty.kind,
-                            hir::TypeExprKind::Path(hir::Path {
+                            hir::TypeExprKind::Path(hir::QPath::Resolved(_, hir::Path {
                                 res: hir::Res::Def(self_id),
                                 ..
-                            }) if *self_id == actual_adt.did
+                            })) if *self_id == actual_adt.did
                         ) {
                             found = true;
                             break;

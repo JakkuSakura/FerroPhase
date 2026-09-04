@@ -150,7 +150,7 @@ impl<'a> BodyBuilder<'a> {
                 // so check `type_substs` by name before falling through to
                 // the struct-only path below.
                 if let hir::ExprKind::Path(path) = &target_expr.kind {
-                    if let [segment] = path.segments.as_slice() {
+                    if let [segment] = path.segments() {
                         if let Some(resolved_ty) =
                             self.type_substs.get(segment.name.as_str()).cloned()
                         {
@@ -940,7 +940,7 @@ impl<'a> BodyBuilder<'a> {
         let callee = arg_values[0];
         let mut call_args: Vec<mir::Operand> = Vec::new();
         let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
-            let struct_name = path.segments.last().map(|seg| seg.name.as_str());
+            let struct_name = path.segments().last().map(|seg| seg.name.as_str());
             let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
             if let Some(suffix) = closure_suffix {
                 let env = self.lower_operand(callee, None)?;
@@ -949,12 +949,14 @@ impl<'a> BodyBuilder<'a> {
                     segments: vec![hir::PathSegment {
                         name: hir::Symbol::new(call_name),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::Error,
                     }],
                     res: hir::Res::Error,
                 };
                 let call_expr = hir::Expr {
                     hir_id: expr.hir_id.clone(),
-                    kind: hir::ExprKind::Path(path),
+                    kind: hir::ExprKind::Path(hir::QPath::resolved(path)),
                     span: expr.span,
                 };
                 call_args.push(env.operand);
@@ -1080,7 +1082,7 @@ impl<'a> BodyBuilder<'a> {
         let callee = arg_values[0];
         let mut call_args: Vec<mir::Operand> = Vec::new();
         let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
-            let struct_name = path.segments.last().map(|seg| seg.name.as_str());
+            let struct_name = path.segments().last().map(|seg| seg.name.as_str());
             let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
             if let Some(suffix) = closure_suffix {
                 let env = self.lower_operand(callee, None)?;
@@ -1089,12 +1091,14 @@ impl<'a> BodyBuilder<'a> {
                     segments: vec![hir::PathSegment {
                         name: hir::Symbol::new(call_name),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::Error,
                     }],
                     res: hir::Res::Error,
                 };
                 let call_expr = hir::Expr {
                     hir_id: expr.hir_id.clone(),
-                    kind: hir::ExprKind::Path(path),
+                    kind: hir::ExprKind::Path(hir::QPath::resolved(path)),
                     span: expr.span,
                 };
                 call_args.push(env.operand);
@@ -1482,7 +1486,7 @@ impl<'a> BodyBuilder<'a> {
         let hir::ExprKind::Path(path) = &expr.kind else {
             return None;
         };
-        let hir::Res::Def(def_id) = &path.res else {
+        let hir::Res::Def(def_id) = &path.res_ref() else {
             return None;
         };
         let const_info = self.lowering.ensure_const_info(def_id.clone())?;
@@ -1622,13 +1626,13 @@ impl<'a> BodyBuilder<'a> {
         };
 
         let args = path
-            .segments
+            .segments()
             .iter()
             .find_map(|segment| segment.args.as_ref())
             .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
             .unwrap_or_default();
 
-        if let hir::Res::Def(def_id) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res_ref() {
             let resolved_def_id = def_id.clone();
             self.lowering
                 .try_lazily_register_adt(resolved_def_id.clone(), expr.span);
@@ -1638,7 +1642,7 @@ impl<'a> BodyBuilder<'a> {
             });
         }
 
-        if let Some(segment) = path.segments.last() {
+        if let Some(segment) = path.segments().last() {
             let name = segment.name.as_str();
             let mut matches = self
                 .lowering

@@ -61,7 +61,7 @@ impl PortableOpAstConverter {
         );
         if call.op.arity.receiver {
             let (receiver, args) = call.args.split_first()?;
-            let field = path.segments.last()?.ident.clone();
+            let field = path.segments().last()?.ident.clone();
             let node = Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                 span: call.span,
                 target: ast::ExprInvokeTarget::Method(ast::ExprFieldAccess {
@@ -289,7 +289,7 @@ impl<'a> HirToAstLifter<'a> {
         }
         let path = self.hir_program.source_path(def_id.clone())?;
         let segments = path
-            .segments
+            .segments()
             .iter()
             .map(|segment| segment.as_str())
             .collect::<Vec<_>>();
@@ -317,7 +317,7 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn portable_op_for_path(&self, path: &hir::Path) -> Option<fp_core::intrinsics::PortableOp> {
-        let hir::Res::Def(def_id) = path.res.as_ref()? else {
+        let hir::Res::Def(def_id) = path.res_ref() else {
             return None;
         };
         self.portable_op_for_def(def_id)
@@ -651,7 +651,7 @@ impl<'a> HirToAstLifter<'a> {
         let trait_name = self
             .hir_program
             .source_path(item.def_id.clone())
-            .and_then(|path| path.segments.last().cloned().map(hir::Symbol::new))
+            .and_then(|path| path.segments().last().cloned().map(hir::Symbol::new))
             .unwrap_or_else(|| hir::Symbol::new("Trait"));
         let mut items = Vec::new();
         for trait_item in &trait_def.items {
@@ -773,7 +773,7 @@ impl<'a> HirToAstLifter<'a> {
                 }
             }),
             hir::ExprKind::Path(path) => {
-                let portable_op = match path.res {
+                let portable_op = match path.res() {
                     hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                     _ => None,
                 };
@@ -786,7 +786,7 @@ impl<'a> HirToAstLifter<'a> {
                         &expr.hir_id,
                     )?
                 } else {
-                    Expr::name(Name::path(self.lift_path(path)))
+                    Expr::name(self.lift_qpath(path)?)
                 }
             }
             hir::ExprKind::Query(_) => {
@@ -827,7 +827,7 @@ impl<'a> HirToAstLifter<'a> {
                     .as_ref()
                     .and_then(|def_id| self.portable_op_for_def(def_id))
                     .or_else(|| match &callee.kind {
-                        hir::ExprKind::Path(path) => match path.res {
+                        hir::ExprKind::Path(path) => match path.res() {
                             hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                             _ => None,
                         },
@@ -845,7 +845,7 @@ impl<'a> HirToAstLifter<'a> {
                     .as_ref()
                     .and_then(|def_id| self.intrinsic_call_for_def(def_id))
                     .or_else(|| match &callee.kind {
-                        hir::ExprKind::Path(path) => match path.res {
+                        hir::ExprKind::Path(path) => match path.res() {
                             hir::Res::Def(ref def_id) => self.intrinsic_call_for_def(def_id),
                             _ => None,
                         },
@@ -909,8 +909,12 @@ impl<'a> HirToAstLifter<'a> {
                                     args.args
                                         .iter()
                                         .filter_map(|arg| match arg {
+                                            hir::GenericArg::Lifetime(_) => None,
                                             hir::GenericArg::Type(ty) => self.lift_type(ty).ok(),
                                             hir::GenericArg::Const(_) => None,
+                                            hir::GenericArg::Infer => {
+                                                Some(ast::Ty::Wildcard(fp_core::ast::TypeWildcard))
+                                            }
                                         })
                                         .collect()
                                 })
@@ -966,7 +970,7 @@ impl<'a> HirToAstLifter<'a> {
                 ty: self.lift_type(ty)?,
             })),
             hir::ExprKind::Struct(path, fields) => {
-                let portable_op = match path.res {
+                let portable_op = match path.res() {
                     hir::Res::Def(ref def_id) => self.portable_op_for_def(def_id),
                     _ => None,
                 };
@@ -984,7 +988,7 @@ impl<'a> HirToAstLifter<'a> {
                 } else {
                     Expr::new(ast::ExprKind::Struct(ExprStruct {
                         span: expr.span,
-                        name: Box::new(Expr::path(self.lift_path(path))),
+                        name: Box::new(Expr::name(self.lift_qpath(path)?)),
                         fields: fields
                             .iter()
                             .map(|field| {
@@ -1479,7 +1483,7 @@ impl<'a> HirToAstLifter<'a> {
             hir::PatKind::Struct(path, fields, has_rest) => {
                 Pattern::new(PatternKind::Struct(PatternStruct {
                     name: Ident::new(
-                        path.segments
+                        path.segments()
                             .last()
                             .map(|seg| seg.name.as_str())
                             .unwrap_or("_"),
@@ -1532,9 +1536,9 @@ impl<'a> HirToAstLifter<'a> {
             // source string: flattening drops arguments that do not have a
             // printable name (notably `()`), silently changing generic
             // parameter order before a target backend can materialize it.
-            hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty(path)? {
+            hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty_qpath(path)? {
                 Some(ty) => ty,
-                None => Ty::expr(Expr::name(Name::path(self.lift_ast_path(path)?))),
+                None => Ty::expr(Expr::name(self.lift_qpath(path)?)),
             },
             hir::TypeExprKind::Projection(projection) => {
                 Ty::Projection(Box::new(ast::TypeProjection {
@@ -1645,7 +1649,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `fp-kotlin`'s `emit_enum` already expands inline for a struct-
     /// shaped variant) instead of referencing it by a name nothing defines.
     fn inline_synthetic_struct_ty(&self, path: &hir::Path) -> Result<Option<Ty>> {
-        let hir::Res::Def(def_id) = &path.res else {
+        let hir::Res::Def(def_id) = path.res_ref() else {
             return Ok(None);
         };
         let Some(item) = self.hir_program.item(def_id.clone()) else {
@@ -1672,26 +1676,200 @@ impl<'a> HirToAstLifter<'a> {
         Ok(Some(Ty::Structural(ast::TypeStructural { fields })))
     }
 
+    fn inline_synthetic_struct_ty_qpath(&self, path: &hir::QPath) -> Result<Option<Ty>> {
+        path.path()
+            .map_or(Ok(None), |path| self.inline_synthetic_struct_ty(path))
+    }
+
+    fn lift_qpath(&self, path: &hir::QPath) -> Result<Name> {
+        match path {
+            hir::QPath::Resolved(qself, path) => Ok(Name {
+                qself: qself
+                    .as_ref()
+                    .map(|ty| {
+                        Ok::<ast::QSelf, fp_core::error::Error>(ast::QSelf {
+                            ty: Box::new(self.lift_type(ty)?),
+                            path_span: Span::null(),
+                            // HIR's resolved qualified path contains only
+                            // the ordinary trait path; associated suffixes
+                            // are represented by enclosing `TypeRelative`
+                            // nodes. Reinsert the qself after that complete
+                            // trait prefix, as in rustc's AST.
+                            position: path.segments.len(),
+                        })
+                    })
+                    .transpose()?,
+                path: self.lift_ast_path(path)?,
+            }),
+            hir::QPath::TypeRelative(receiver, segment) => {
+                let mut associated = vec![segment.clone()];
+                let mut base = receiver.as_ref();
+                while let hir::TypeExprKind::Path(hir::QPath::TypeRelative(
+                    nested_receiver,
+                    nested_segment,
+                )) = &base.kind
+                {
+                    associated.push(nested_segment.clone());
+                    base = nested_receiver.as_ref();
+                }
+                associated.reverse();
+                if let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(qself), trait_path)) =
+                    &base.kind
+                {
+                    let mut path = trait_path.segments.clone();
+                    path.extend(associated);
+                    return Ok(Name {
+                        qself: Some(ast::QSelf {
+                            ty: Box::new(self.lift_type(qself)?),
+                            path_span: Span::null(),
+                            position: trait_path.segments.len(),
+                        }),
+                        path: self.lift_ast_path(&hir::Path::new(trait_path.res.clone(), path))?,
+                    });
+                }
+                Ok(Name {
+                    qself: Some(ast::QSelf {
+                        ty: Box::new(self.lift_type(base)?),
+                        path_span: Span::null(),
+                        position: 0,
+                    }),
+                    path: self.lift_ast_path(&hir::Path::new(segment.res.clone(), associated))?,
+                })
+            }
+        }
+    }
+
     fn lift_ast_path(&self, path: &hir::Path) -> Result<Path> {
         let segments = path
-            .segments
+            .segments()
             .iter()
             .map(|segment| {
-                let args = segment
+                let arguments = segment
                     .args
                     .as_ref()
                     .map(|args| {
-                        args.args
+                        if matches!(
+                            args.parenthesized,
+                            hir::GenericArgsParentheses::ParenSugar
+                        ) {
+                            let inputs = match args.args.first() {
+                                Some(hir::GenericArg::Type(ty)) => match &ty.kind {
+                                    hir::TypeExprKind::Tuple(inputs) => inputs
+                                        .iter()
+                                        .map(|input| self.lift_type(input))
+                                        .collect::<Result<Vec<_>>>()?,
+                                    _ => vec![self.lift_type(ty.as_ref())?],
+                                },
+                                _ => Vec::new(),
+                            };
+                            let output = args.constraints.iter().find_map(|constraint| {
+                                let hir::AssocItemConstraint {
+                                    name,
+                                    kind: hir::AssocItemConstraintKind::Equality { ty },
+                                    ..
+                                } = constraint
+                                else {
+                                    return None;
+                                };
+                                (name.as_str() == "Output")
+                                    .then(|| self.lift_type(ty).map(Box::new))
+                            }).transpose()?;
+                            return Ok::<_, fp_core::error::Error>(
+                                ast::PathArguments::Parenthesized {
+                                    inputs,
+                                    output,
+                                },
+                            );
+                        }
+                        let mut lifted = args
+                            .args
                             .iter()
-                            .filter_map(|arg| match arg {
-                                hir::GenericArg::Type(ty) => Some(self.lift_type(ty)),
-                                hir::GenericArg::Const(_) => None,
+                            .map(|arg| match arg {
+                                hir::GenericArg::Lifetime(lifetime) => {
+                                    Ok(ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(
+                                        lifetime.as_str().to_owned(),
+                                    )))
+                                }
+                                hir::GenericArg::Type(ty) => self
+                                    .lift_type(ty)
+                                    .map(|ty| {
+                                        ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
+                                            Box::new(ty),
+                                        ))
+                                    }),
+                                hir::GenericArg::Const(expr) => self
+                                    .lift_expr(expr)
+                                    .map(|expr| {
+                                        ast::AngleBracketedArg::Arg(ast::GenericArg::Const(
+                                            Box::new(expr),
+                                        ))
+                                    }),
+                                hir::GenericArg::Infer => Ok(ast::AngleBracketedArg::Arg(
+                                    ast::GenericArg::Type(Box::new(
+                                        ast::Ty::Wildcard(fp_core::ast::TypeWildcard),
+                                    )),
+                                )),
                             })
-                            .collect::<Result<Vec<_>>>()
+                            .collect::<Result<Vec<_>>>()?;
+                        for binding in &args.constraints {
+                            let gen_args = binding
+                                .gen_args
+                                .as_ref()
+                                .map(|gen_args| {
+                                    let path = hir::Path::new(
+                                        hir::Res::Error,
+                                        vec![hir::PathSegment {
+                                            name: "__constraint_args__".into(),
+                                            args: Some(gen_args.clone()),
+                                            infer_args: false,
+                                            res: hir::Res::Error,
+                                        }],
+                                    );
+                                    self.lift_ast_path(&path).map(|path| {
+                                        path.segments
+                                            .into_iter()
+                                            .next()
+                                            .expect("synthetic constraint segment")
+                                            .arguments
+                                    })
+                                })
+                                .transpose()?;
+                            lifted.push(match binding {
+                                hir::AssocItemConstraint {
+                                    name,
+                                    kind: hir::AssocItemConstraintKind::Equality { ty },
+                                    ..
+                                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
+                                    name: Ident::new(name.as_str()),
+                                    gen_args,
+                                    kind: ast::AssocItemConstraintKind::Equality {
+                                        ty: Box::new(self.lift_type(ty)?),
+                                    },
+                                }),
+                                hir::AssocItemConstraint {
+                                    name,
+                                    kind: hir::AssocItemConstraintKind::Bound { bounds },
+                                    ..
+                                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
+                                    name: Ident::new(name.as_str()),
+                                    gen_args,
+                                    kind: ast::AssocItemConstraintKind::Bound {
+                                        bounds: bounds
+                                            .iter()
+                                            .map(|bound| self.lift_type(bound))
+                                            .collect::<Result<Vec<_>>>()?,
+                                    },
+                                }),
+                            });
+                        }
+                        Ok::<_, fp_core::error::Error>(ast::PathArguments::AngleBracketed(lifted))
                     })
                     .transpose()?
-                    .unwrap_or_default();
-                Ok(PathSegment::new(Ident::new(segment.name.as_str()), args))
+                    .unwrap_or(ast::PathArguments::None);
+                Ok(PathSegment::with_arguments(
+                    Ident::new(segment.name.as_str()),
+                    arguments,
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Path::new(PathPrefix::Plain, segments))
@@ -1807,7 +1985,7 @@ impl<'a> HirToAstLifter<'a> {
                     self.def_id_to_ty(&adt.did)
                 } else {
                     let path = self.source_path_for(&adt.did)?;
-                    let name = path.segments.last()?.as_str().to_owned();
+                    let name = path.segments().last()?.as_str().to_owned();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![
                         Ident::new(format!("{}<{}>", name, args.join(", "))),
                     ])))))
@@ -1851,7 +2029,7 @@ impl<'a> HirToAstLifter<'a> {
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
                 let path = self.source_path_for(&adt.did)?;
-                let name = path.segments.last()?.as_str().to_owned();
+                let name = path.segments().last()?.as_str().to_owned();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1900,7 +2078,7 @@ impl<'a> HirToAstLifter<'a> {
             TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
                 hir::ty::ExistentialPredicate::Trait(trait_ref) => {
                     self.source_path_for(&trait_ref.def_id).and_then(|path| {
-                        path.segments
+                        path.segments()
                             .last()
                             .map(|segment| segment.as_str().to_owned())
                     })
@@ -1913,7 +2091,7 @@ impl<'a> HirToAstLifter<'a> {
 
     fn def_id_to_ty(&self, def_id: &DefId) -> Option<ast::Ty> {
         let path = self.source_path_for(def_id)?;
-        if path.segments.is_empty() {
+        if path.segments().is_empty() {
             return None;
         }
         Some(Ty::path(path.to_ast_path()))
@@ -1938,7 +2116,7 @@ impl<'a> HirToAstLifter<'a> {
         let Some(path) = self.source_path_for(&adt.did) else {
             return false;
         };
-        path.segments
+        path.segments()
             .iter()
             .map(|segment| segment.as_str())
             .eq(["core", "result", "Result"])
@@ -1991,7 +2169,7 @@ impl<'a> HirToAstLifter<'a> {
     fn lift_path_verbatim(path: &hir::Path) -> Path {
         Path::new(
             PathPrefix::Plain,
-            path.segments
+            path.segments()
                 .iter()
                 .map(|segment| PathSegment::new(Ident::new(segment.name.as_str()), Vec::new()))
                 .collect(),
@@ -2013,12 +2191,12 @@ impl<'a> HirToAstLifter<'a> {
     /// through to the plain conversion below, which is simply correct for
     /// those, not a guess.
     fn lift_path(&self, path: &hir::Path) -> Path {
-        if let hir::Res::Local(hir_id) = &path.res {
+        if let hir::Res::Local(hir_id) = &path.res() {
             if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
                 return Path::plain(vec![Ident::new(renamed.clone())]);
             }
         }
-        if let hir::Res::Def(def_id) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res() {
             let enum_name = self
                 .hir_program
                 .member_owner(def_id.clone())
@@ -2028,7 +2206,7 @@ impl<'a> HirToAstLifter<'a> {
                     _ => None,
                 });
             if let Some(enum_name) = enum_name {
-                if let Some(variant_name) = path.segments.last() {
+                if let Some(variant_name) = path.segments().last() {
                     return Path::plain(vec![
                         Ident::new(enum_name),
                         Ident::new(variant_name.name.as_str()),
@@ -2055,11 +2233,13 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
         hir::TypeExprKind::Ptr { inner, .. } | hir::TypeExprKind::Ref(inner) => {
             type_expr_contains_infer(inner)
         }
-        hir::TypeExprKind::Path(path) => path.segments.iter().any(|seg| {
+        hir::TypeExprKind::Path(path) => path.segments().iter().any(|seg| {
             seg.args.as_ref().is_some_and(|args| {
                 args.args.iter().any(|arg| match arg {
+                    hir::GenericArg::Lifetime(_) => false,
                     hir::GenericArg::Type(t) => type_expr_contains_infer(t),
                     hir::GenericArg::Const(_) => false,
+                    hir::GenericArg::Infer => true,
                 })
             })
         }),
@@ -2101,7 +2281,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::Assign(lhs, rhs) => {
             let assigns_target = matches!(
                 &lhs.kind,
-                hir::ExprKind::Path(path) if matches!(path.res, hir::Res::Local(ref id) if *id == target)
+                hir::ExprKind::Path(path) if matches!(path.res_ref(), hir::Res::Local(id) if *id == target)
             );
             assigns_target
                 || expr_assigns_local(lhs, target.clone())
@@ -2135,7 +2315,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
                 && args.is_empty()
                 && matches!(
                     &recv.kind,
-                    hir::ExprKind::Path(path) if matches!(path.res, hir::Res::Local(ref id) if *id == target)
+                    hir::ExprKind::Path(path) if matches!(path.res_ref(), hir::Res::Local(id) if *id == target)
                 );
             resets_target
                 || expr_assigns_local(recv, target.clone())
@@ -2427,8 +2607,8 @@ mod tests {
         let ast::ExprKind::Name(ast::Name { path: path, .. }) = &expr.kind else {
             panic!("expected a path-shaped AST expression");
         };
-        assert_eq!(path.segments[0].ident.name, "dependency");
-        assert_eq!(path.segments[1].ident.name, "Widget");
+        assert_eq!(path.segments()[0].ident.name, "dependency");
+        assert_eq!(path.segments()[1].ident.name, "Widget");
     }
 
     #[test]
@@ -2450,22 +2630,26 @@ mod tests {
             kind: hir::ExprKind::Call(
                 Box::new(hir::Expr {
                     hir_id: callee_id,
-                    kind: hir::ExprKind::Path(hir::Path {
+                    kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![
                             hir::PathSegment {
                                 name: "String".into(),
                                 args: None,
+                                infer_args: true,
+                                res: hir::Res::Def(receiver_id.clone()),
                             },
                             hir::PathSegment {
                                 name: "from_utf8_lossy".into(),
                                 args: None,
+                                infer_args: true,
+                                res: hir::Res::Error,
                             },
                         ],
                         // This deliberately remains the nominal type DefId:
                         // the selected associated member comes only from
                         // type checking's call-resolution table.
                         res: hir::Res::Def(receiver_id),
-                    }),
+                    })),
                     span: Span::null(),
                 }),
                 Vec::new(),
@@ -2517,13 +2701,15 @@ mod tests {
             kind: hir::ExprKind::Call(
                 Box::new(hir::Expr {
                     hir_id: callee_id,
-                    kind: hir::ExprKind::Path(hir::Path {
+                    kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![hir::PathSegment {
                             name: "from_utf8_lossy".into(),
                             args: None,
+                            infer_args: true,
+                            res: hir::Res::Def(function_id.clone()),
                         }],
                         res: hir::Res::Def(function_id),
-                    }),
+                    })),
                     span: Span::null(),
                 }),
                 Vec::new(),
@@ -2557,13 +2743,15 @@ mod tests {
             kind: hir::ExprKind::MethodCall(
                 Box::new(hir::Expr {
                     hir_id: receiver_hir_id,
-                    kind: hir::ExprKind::Path(hir::Path {
+                    kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![hir::PathSegment {
                             name: "path".into(),
                             args: None,
+                            infer_args: true,
+                            res: hir::Res::Def(receiver_id.clone()),
                         }],
                         res: hir::Res::Def(receiver_id),
-                    }),
+                    })),
                     span: Span::null(),
                 }),
                 hir::Symbol::new("exists"),
@@ -2602,13 +2790,15 @@ mod tests {
         let receiver = |index: u32, name: &str, def_id: hir::DefId| {
             hir::Expr::new(
                 hir::HirId::new(owner.clone(), index),
-                hir::ExprKind::Path(hir::Path {
+                hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
                         name: name.into(),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(def_id.clone()),
                     }],
                     res: hir::Res::Def(def_id),
-                }),
+                })),
                 Span::null(),
             )
         };
@@ -2625,13 +2815,15 @@ mod tests {
         let spawn_call = method(24, receiver(25, "command", command_id.clone()), "spawn");
         let output_local = hir::Expr::new(
             hir::HirId::new(owner.clone(), 26),
-            hir::ExprKind::Path(hir::Path {
+            hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: "output".into(),
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
                 }],
                 res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
-            }),
+            })),
             Span::null(),
         );
         let output_status = hir::Expr::new(
@@ -2739,24 +2931,28 @@ mod tests {
 
         let vec_ty = hir::TypeExpr::new(
             vec_ty_id.clone(),
-            hir::TypeExprKind::Path(hir::Path {
+            hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: "ListAlias".into(),
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Def(vec_def_id.clone()),
                 }],
                 res: hir::Res::Def(vec_def_id.clone()),
-            }),
+            })),
             Span::null(),
         );
         let command_ty = hir::TypeExpr::new(
             command_ty_id.clone(),
-            hir::TypeExprKind::Path(hir::Path {
+            hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: "FileAlias".into(),
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Def(command_def_id.clone()),
                 }],
                 res: hir::Res::Def(command_def_id.clone()),
-            }),
+            })),
             Span::null(),
         );
         let local = |pat_id: hir::HirId, name: &str, ty: hir::TypeExpr| hir::Stmt {

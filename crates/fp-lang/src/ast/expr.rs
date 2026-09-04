@@ -744,23 +744,57 @@ fn parse_primary(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 /// A UFCS-disambiguated qualified path (`<Type as Trait>::assoc_item`,
 /// or the trait-less `<Type>::assoc_item`) — real `alloc::boxed`'s own
 /// `<T as SizedTypeProperties>::method(..)` needs this. This checker has
-/// no notion of picking a specific trait impl over an inherent one when
-/// both exist (same simplification `Self::Target` already makes — see
-/// its own doc comment), so the `as Trait` disambiguator is parsed and
-/// dropped; the result is exactly the same as if `Type::assoc_item` had
-/// been written directly, and the ordinary postfix chain (`::field`,
-/// calls, ...) continues from there unchanged.
+/// The parsed `as Trait` disambiguator is retained in `Name::qself` and the
+/// trait path is kept in the ordinary path segments, matching rustc's AST
+/// shape. Selection of a concrete impl remains a type-checking concern, and
+/// the ordinary postfix chain (`::field`, calls, ...) continues from there.
 fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut probe = *input;
     if !try_eat_symbol(&mut probe, "<") {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
     let ty = parse_type_expr(&mut probe)?;
-    if skip_keyword(&mut probe, Keyword::As).is_ok() {
-        let _trait_ty = parse_type_expr(&mut probe)?;
-    }
+    let trait_ty = if skip_keyword(&mut probe, Keyword::As).is_ok() {
+        Some(parse_type_expr(&mut probe)?)
+    } else {
+        None
+    };
     skip_symbol(&mut probe, ">")?;
     let _ = file;
+    let mut assoc_probe = probe;
+    if skip_symbol(&mut assoc_probe, "::").is_ok() {
+        let assoc = parse_name(&mut assoc_probe)?;
+        let (mut prefix, mut segments) = match assoc {
+            Name { path, .. } => (path.prefix, path.segments),
+        };
+        let trait_path = trait_ty.as_ref().and_then(|trait_ty| match trait_ty {
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Name(Name { qself: None, path }) => Some(path),
+                _ => None,
+            },
+            _ => None,
+        });
+        // `position` is where the qself is inserted in the complete path,
+        // i.e. immediately after the trait path and before its associated
+        // item.  This is the rustc AST convention (`<T as Trait>::Item`
+        // has position 1 for the `Trait::Item` path).
+        let position = trait_path.map_or(0, |path| path.segments.len());
+        if let Some(trait_path) = trait_path {
+            prefix = trait_path.prefix;
+            let mut qualified = trait_path.segments.clone();
+            qualified.append(&mut segments);
+            segments = qualified;
+        }
+        *input = assoc_probe;
+        return Ok(Expr::name(Name {
+            qself: Some(fp_core::ast::QSelf {
+                ty: Box::new(ty),
+                path_span: trait_ty.as_ref().map(Ty::span).unwrap_or_else(Span::null),
+                position,
+            }),
+            path: Path::new(prefix, segments),
+        }));
+    }
     *input = probe;
     Ok(type_to_expr(&ty))
 }
@@ -1037,9 +1071,9 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 let span = span_from_expr(&expr);
                 match expr.kind {
                     ExprKind::Name(name) => {
-                        let mut path = name.to_path();
-                        path.segments.push(field.into());
-                        Expr::new(ExprKind::Name(Name::path(path))).with_span(span)
+                        let mut name = name;
+                        name.path.segments.push(field.into());
+                        Expr::new(ExprKind::Name(name)).with_span(span)
                     }
                     _ => ExprKind::FieldAccess(ExprFieldAccess {
                         span,

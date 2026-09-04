@@ -362,7 +362,7 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Lit),
-    Path(Path),
+    Path(QPath),
     Query(Query),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
@@ -373,7 +373,7 @@ pub enum ExprKind {
     Index(Box<Expr>, Box<Expr>),
     Slice(SliceExpr),
     Cast(Box<Expr>, Box<TypeExpr>),
-    Struct(Path, Vec<StructExprField>),
+    Struct(QPath, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Match(Box<Expr>, Vec<MatchArm>),
     Try(TryExpr),
@@ -614,7 +614,7 @@ pub struct TypeProjection {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExprKind {
     Primitive(TypePrimitive),
-    Path(Path),
+    Path(QPath),
     Structural(TypeStructural),
     TypeBinaryOp(TypeBinaryOp),
     Projection(TypeProjection),
@@ -678,7 +678,14 @@ pub struct FnPtrType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path {
+    /// Resolution of the path's terminal item for an ordinary `QPath::Resolved`
+    /// path. A `Path` always owns the complete sequence of ordinary segments;
+    /// an associated-item tail is represented by `QPath::TypeRelative`
+    /// instead of being encoded as a truncated `Path`.
     pub res: Res,
+    /// Complete path segments, matching rustc HIR's `Path`: module/type
+    /// prefixes and the terminal item are retained in order. Generic
+    /// arguments stay attached to their corresponding segment.
     pub segments: Vec<PathSegment>,
 }
 
@@ -690,19 +697,120 @@ impl Path {
     pub fn base(res: Res) -> Self {
         Self::new(res, Vec::new())
     }
+
+    /// Uniform accessors shared with `QPath` consumers.
+    pub fn segments(&self) -> &[PathSegment] {
+        &self.segments
+    }
+
+    pub fn segments_mut(&mut self) -> &mut [PathSegment] {
+        &mut self.segments
+    }
+
+    pub fn res_ref(&self) -> &Res {
+        &self.res
+    }
+
+    pub fn res(&self) -> Res {
+        self.res.clone()
+    }
+}
+
+/// A qualified HIR path, matching rustc's split between ordinary resolved
+/// paths and type-relative associated-item paths.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QPath {
+    /// An ordinary path, optionally explicitly qualified by a `Self` type:
+    /// `Trait::Item` or `<T as Trait>::Item`.
+    Resolved(Option<Box<TypeExpr>>, Path),
+    /// An associated item whose receiver is a type and whose single item
+    /// segment is resolved during type checking: `<T>::Assoc` or `T::Assoc`.
+    /// The receiver's own path (when path-shaped) remains a complete
+    /// `QPath::Resolved` path; it is not folded into this segment.
+    TypeRelative(Box<TypeExpr>, PathSegment),
+}
+
+impl QPath {
+    pub fn resolved(path: Path) -> Self {
+        Self::Resolved(None, path)
+    }
+
+    pub fn qualified(receiver: TypeExpr, path: Path) -> Self {
+        Self::Resolved(Some(Box::new(receiver)), path)
+    }
+
+    pub fn type_relative(receiver: TypeExpr, segment: PathSegment) -> Self {
+        Self::TypeRelative(Box::new(receiver), segment)
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Resolved(_, path) => Some(path),
+            Self::TypeRelative(_, _) => None,
+        }
+    }
+
+    pub fn into_path(self) -> Option<Path> {
+        match self {
+            Self::Resolved(_, path) => Some(path),
+            Self::TypeRelative(_, _) => None,
+        }
+    }
+
+    pub fn segments(&self) -> &[PathSegment] {
+        match self {
+            Self::Resolved(_, path) => &path.segments,
+            Self::TypeRelative(_, segment) => std::slice::from_ref(segment),
+        }
+    }
+
+    pub fn segments_mut(&mut self) -> &mut [PathSegment] {
+        match self {
+            Self::Resolved(_, path) => &mut path.segments,
+            Self::TypeRelative(_, segment) => std::slice::from_mut(segment),
+        }
+    }
+
+    pub fn res_ref(&self) -> &Res {
+        match self {
+            Self::Resolved(_, path) => &path.res,
+            Self::TypeRelative(_, segment) => &segment.res,
+        }
+    }
+
+    pub fn res(&self) -> Res {
+        match self {
+            Self::Resolved(_, path) => path.res.clone(),
+            Self::TypeRelative(_, segment) => segment.res.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSegment {
+    /// Source spelling of this ordinary path component. In
+    /// `QPath::Resolved`, every component remains in `Path::segments`;
+    /// `QPath::TypeRelative` owns exactly one deferred associated component.
     pub name: Symbol,
     pub args: Option<GenericArgs>,
+    /// Whether generic arguments were omitted and should be inferred. This
+    /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
+    /// represented by `args = Some(...)` with an `Infer` generic argument.
+    pub infer_args: bool,
+    /// Resolution of this component. A type-relative associated component
+    /// uses `Res::Error` here and is resolved by type checking, matching
+    /// rustc HIR.
+    pub res: Res,
 }
 
 impl PathSegment {
     pub fn new(name: impl Into<Symbol>, args: Option<GenericArgs>) -> Self {
+        let infer_args = args.is_none();
         Self {
             name: name.into(),
             args,
+            infer_args,
+            res: Res::Error,
         }
     }
 }
@@ -710,12 +818,51 @@ impl PathSegment {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArgs {
     pub args: Vec<GenericArg>,
+    /// Associated-item constraints attached to this segment, matching
+    /// rustc HIR's `GenericArgs::constraints`.
+    pub constraints: Vec<AssocItemConstraint>,
+    /// Whether these arguments originated from parenthesized trait syntax.
+    /// Rustc stores the input tuple as the first generic argument and the
+    /// return type as an `Output` associated constraint; this marker preserves
+    /// the syntax distinction without duplicating those semantic values.
+    pub parenthesized: GenericArgsParentheses,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericArgsParentheses {
+    No,
+    ReturnTypeNotation,
+    ParenSugar,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericArg {
+    Lifetime(Symbol),
     Type(Box<TypeExpr>),
     Const(Box<Expr>),
+    /// An inferred generic argument (`_`), matching rustc HIR's dedicated
+    /// `GenericArg::Infer` variant rather than encoding it as a type node.
+    Infer,
+}
+
+/// A constraint on an associated item of a path segment.
+///
+/// The constrained item can itself be generic (`Item<'a> = T`). Rustc keeps
+/// those arguments in `AssocItemConstraint::gen_args`, separate from the
+/// equality/bound payload, so HIR does the same.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocItemConstraint {
+    pub name: Symbol,
+    pub gen_args: Option<GenericArgs>,
+    pub kind: AssocItemConstraintKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssocItemConstraintKind {
+    Equality { ty: Box<TypeExpr> },
+    /// A bound constraint such as `Item: Trait`, matching rustc's
+    /// `AssocItemConstraintKind::Bound` terminology.
+    Bound { bounds: Vec<TypeExpr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -764,8 +911,13 @@ pub struct GenericParam {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
-    Type { default: Option<Box<TypeExpr>> },
-    Const { ty: Box<TypeExpr> },
+    Type {
+        default: Option<Box<TypeExpr>>,
+    },
+    Const {
+        ty: Box<TypeExpr>,
+        default: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1485,6 +1637,15 @@ impl Path {
     }
 }
 
+impl QPath {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Resolved(_, path) => path.span(),
+            Self::TypeRelative(receiver, segment) => Span::union([receiver.span(), segment.span()]),
+        }
+    }
+}
+
 impl PathSegment {
     pub fn span(&self) -> Span {
         self.args
@@ -1496,16 +1657,38 @@ impl PathSegment {
 
 impl GenericArgs {
     pub fn span(&self) -> Span {
-        Span::union(self.args.iter().map(GenericArg::span))
+        Span::union(
+            self.args
+                .iter()
+                .map(GenericArg::span)
+                .chain(self.constraints.iter().map(AssocItemConstraint::span)),
+        )
     }
 }
 
 impl GenericArg {
     pub fn span(&self) -> Span {
         match self {
+            GenericArg::Lifetime(_) => Span::null(),
             GenericArg::Type(ty) => ty.span(),
             GenericArg::Const(expr) => expr.span(),
+            GenericArg::Infer => Span::null(),
         }
+    }
+}
+
+impl AssocItemConstraint {
+    pub fn span(&self) -> Span {
+        let payload = match &self.kind {
+            AssocItemConstraintKind::Equality { ty } => ty.span(),
+            AssocItemConstraintKind::Bound { bounds } => {
+                Span::union(bounds.iter().map(TypeExpr::span))
+            }
+        };
+        self.gen_args
+            .as_ref()
+            .map(GenericArgs::span)
+            .map_or(payload, |args| Span::union([args, payload]))
     }
 }
 
@@ -1533,7 +1716,11 @@ impl GenericParamKind {
                 .as_ref()
                 .map(|ty| ty.span())
                 .unwrap_or_else(Span::null),
-            GenericParamKind::Const { ty } => ty.span(),
+            GenericParamKind::Const { ty, default } => Span::union(
+                [Some(ty.span()), default.as_ref().map(|expr| expr.span)]
+                    .into_iter()
+                    .flatten(),
+            ),
         }
     }
 }

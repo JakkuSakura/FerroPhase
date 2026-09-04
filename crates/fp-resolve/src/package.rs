@@ -322,7 +322,29 @@ impl InPackageResolver {
                 self.declare_definition(module, &def.name, Namespace::Type, span);
             }
             ItemKind::DefTrait(def) => {
-                self.declare_definition(module, &def.name, Namespace::Type, span);
+                let trait_id = self.declare_definition(module, &def.name, Namespace::Type, span);
+                for member in &def.items {
+                    let (name, namespace) = match member.kind() {
+                        ItemKind::DefFunction(function) => (&function.name, Namespace::Value),
+                        ItemKind::DeclFunction(function) => (&function.name, Namespace::Value),
+                        ItemKind::DefType(ty) => (&ty.name, Namespace::Type),
+                        ItemKind::DeclType(ty) => (&ty.name, Namespace::Type),
+                        ItemKind::DefConst(konst) => (&konst.name, Namespace::Value),
+                        ItemKind::DeclConst(konst) => (&konst.name, Namespace::Value),
+                        _ => continue,
+                    };
+                    let member_id = self.hir_package.borrow_mut().member_def_id(
+                        &trait_id,
+                        name.clone(),
+                        namespace,
+                    );
+                    self.module_data_mut().add_child(
+                        trait_id.clone(),
+                        name.clone(),
+                        namespace,
+                        hir::Res::Def(member_id),
+                    );
+                }
             }
             ItemKind::DefConst(def) => {
                 self.declare_definition(module, &def.name, Namespace::Value, span);
@@ -677,8 +699,13 @@ mod tests {
                 Namespace::Type
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(target),
-                segments: Vec::new()
+                res: hir::Res::Def(target.clone()),
+                segments: vec![hir::PathSegment {
+                    name: "Alias".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Def(target),
+                }]
             }),
         );
     }
@@ -784,8 +811,13 @@ mod tests {
                 Namespace::Type
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(target),
-                segments: Vec::new()
+                res: hir::Res::Def(target.clone()),
+                segments: vec![hir::PathSegment {
+                    name: "Item".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Def(target),
+                }]
             }),
         );
     }
@@ -828,7 +860,12 @@ mod tests {
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
                 res: hir::Res::Module(hir::DefId::local(1)),
-                segments: Vec::new()
+                segments: vec![hir::PathSegment {
+                    name: "alias".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Module(hir::DefId::local(1)),
+                }]
             }),
         );
     }

@@ -90,7 +90,7 @@ pub fn normalize(expr: &Expr) -> Result<LinearTerm, NotLinear> {
         ExprKind::Literal(Lit::Integer(v)) => Ok(LinearTerm::constant(*v as f64)),
         ExprKind::Path(path) => {
             let name = path
-                .segments
+                .segments()
                 .last()
                 .map(|s| s.name.as_str())
                 .unwrap_or_default();

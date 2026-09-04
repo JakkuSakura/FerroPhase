@@ -302,7 +302,10 @@ fn run_named_target(
             .list_packages()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
         let kotlin_config = if target_name == "kotlin" && input.join("Magnet.toml").is_file() {
-            Some(kotlin_transpile_config(config, discovered_packages.clone())?)
+            Some(kotlin_transpile_config(
+                config,
+                discovered_packages.clone(),
+            )?)
         } else {
             None
         };
@@ -434,7 +437,8 @@ fn kotlin_transpile_config(
         .into_iter()
         .map(|id| (id.as_str().to_string(), id))
         .collect::<std::collections::HashMap<_, _>>();
-    let packages = kotlin.packages
+    let packages = kotlin
+        .packages
         .iter()
         .map(|name| {
             discovered.get(name).cloned().ok_or_else(|| {

@@ -97,23 +97,24 @@ impl LocalResolver {
             // whose base is a generic/type binding.
             let mut local = self.resolve_local(path.segments[0].as_str(), namespace);
             if path.segments.len() > 1 && namespace != Namespace::Type {
-                if matches!(local, ResolutionResult::NotFound(_)) {
-                    local = self.resolve_local(path.segments[0].as_str(), Namespace::Type);
+                let type_local = self.resolve_local(path.segments[0].as_str(), Namespace::Type);
+                if matches!(
+                    type_local,
+                    ResolutionResult::Found(ref path)
+                        if matches!(path.res, Res::Generic(_) | Res::SelfTy | Res::Builtin(_))
+                ) {
+                    local = type_local;
                 }
             }
             if let ResolutionResult::Found(mut resolved) = local {
-                // Preserve the unresolved projection tail for type checking
-                // instead of asking the package resolver to look up the base
-                // as a module.
                 if !matches!(resolved.res, Res::Module(_)) {
-                    resolved
-                        .segments
-                        .extend(path.segments.iter().skip(1).map(|segment| {
-                            fp_core::hir::PathSegment {
-                                name: segment.as_str().into(),
-                                args: None,
-                            }
-                        }));
+                    let base_res = resolved.res.clone();
+                    resolved.segments = vec![fp_core::hir::PathSegment {
+                        name: path.segments[0].as_str().into(),
+                        args: None,
+                        infer_args: true,
+                        res: base_res,
+                    }];
                     return ResolutionResult::Found(resolved);
                 }
             }
@@ -154,7 +155,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn lexical_binding_preserves_projection_tail() {
+    fn lexical_binding_returns_resolved_base_path() {
         let package_id = PackageId::new("test");
         let package = Rc::new(RefCell::new(HirPackage::new(package_id.clone())));
         let program = Rc::new(RefCell::new(HirProgram::new()));
@@ -188,17 +189,13 @@ mod tests {
                 Namespace::Type,
             ),
             ResolutionResult::Found(hir::Path {
-                res: Res::Generic(generic),
-                segments: vec![
-                    hir::PathSegment {
-                        name: "Assoc".into(),
-                        args: None
-                    },
-                    hir::PathSegment {
-                        name: "Field".into(),
-                        args: None
-                    },
-                ],
+                res: Res::Generic(generic.clone()),
+                segments: vec![fp_core::hir::PathSegment {
+                    name: "T".into(),
+                    args: None,
+                    infer_args: true,
+                    res: Res::Generic(generic.clone()),
+                },],
             })
         );
     }

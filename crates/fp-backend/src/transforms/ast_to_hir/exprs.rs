@@ -118,7 +118,7 @@ impl AstToHirLowerer {
                 _ => self.transform_value_to_hir(value)?,
             },
             ExprKind::Name(_) => hir::ExprKind::Path(
-                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
+                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value, ParamMode::Optional)?,
             ),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
@@ -502,7 +502,7 @@ impl AstToHirLowerer {
             Value::Struct(struct_val) => {
                 let struct_name = struct_val.ty.name.name.as_str();
                 let mut segments = Vec::new();
-                segments.push(self.make_path_segment(struct_name, None));
+                segments.push(self.make_path_segment(struct_name, None, ParamMode::Optional));
                 let res = self.resolve_type_symbol(struct_name);
 
                 let path = hir::Path {
@@ -527,7 +527,7 @@ impl AstToHirLowerer {
                     });
                 }
 
-                Ok(hir::ExprKind::Struct(path, fields))
+                Ok(hir::ExprKind::Struct(hir::QPath::resolved(path), fields))
             }
             Value::Structural(structural) => {
                 let def = self.materialize_structural_value_def(structural)?;
@@ -550,7 +550,7 @@ impl AstToHirLowerer {
                     });
                 }
 
-                Ok(hir::ExprKind::Struct(path, fields))
+                Ok(hir::ExprKind::Struct(hir::QPath::resolved(path), fields))
             }
             Value::List(list) => {
                 let mut elements = Vec::with_capacity(list.values.len());
@@ -595,10 +595,12 @@ impl AstToHirLowerer {
                     segments: vec![hir::PathSegment {
                         name: hir::Symbol::new("__fp_escaped"),
                         args: None,
+                        infer_args: true,
+                        res: hir::Res::Error,
                     }],
                     res: hir::Res::Error,
                 };
-                Ok(hir::ExprKind::Path(path))
+                Ok(hir::ExprKind::Path(hir::QPath::resolved(path)))
             }
             // A type value the *parser* already constant-folded (e.g. a
             // call argument like `&'static str` that fails plain-
@@ -638,7 +640,8 @@ impl AstToHirLowerer {
                 });
                 let name = Name::ident(name);
                 let expr = ast::Expr::new(ast::ExprKind::Name(name));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?;
+                let path =
+                    self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value, ParamMode::Optional)?;
                 Ok(hir::ExprKind::Path(path))
             }
             _ => Ok(self.error_placeholder_expr_kind(
@@ -751,9 +754,13 @@ impl AstToHirLowerer {
                         // and type-directed associated-item lookup needs them
                         // for `Vec::<T>::from`, `Arc::<T>::new`, and the like.
                         let base_path =
-                            self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Type)?;
+                            self.ast_expr_to_hir_path(
+                                &select.obj,
+                                PathResolutionScope::Type,
+                                ParamMode::Optional,
+                            )?;
                         if matches!(
-                            base_path.res,
+                            base_path.res(),
                             hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy
                         ) {
                             // This is rustc's `QPath::TypeRelative` shape:
@@ -764,14 +771,24 @@ impl AstToHirLowerer {
                             // `Res` (or bind a same-named module), which then
                             // makes the type checker report an unresolved
                             // value path instead of selecting the impl item.
-                            let mut path = base_path;
                             let member_args = if select.generic_args.is_empty() {
                                 None
                             } else {
                                 Some(self.convert_generic_args(&select.generic_args)?)
                             };
-                            path.segments
-                                .push(self.make_path_segment(&select.field.name, member_args));
+                            let receiver = hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::Path(base_path),
+                                select.obj.span(),
+                            );
+                            let path = hir::QPath::type_relative(
+                                receiver,
+                                self.make_path_segment(
+                                    &select.field.name,
+                                    member_args,
+                                    ParamMode::Optional,
+                                ),
+                            );
                             let func_expr = hir::Expr {
                                 hir_id: self.next_id(),
                                 kind: hir::ExprKind::Path(path),
@@ -795,6 +812,8 @@ impl AstToHirLowerer {
                                     .map(|ty| hir::GenericArg::Type(Box::new(ty)))
                             })
                             .collect::<Result<Vec<_>>>()?,
+                        constraints: Vec::new(),
+                        parenthesized: hir::GenericArgsParentheses::No,
                     })
                 };
                 let args = self.transform_call_args_strict(&invoke.args)?;
@@ -842,7 +861,11 @@ impl AstToHirLowerer {
                 }
 
                 let name_expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                let mut path = self.ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)?;
+                let mut path = self.ast_expr_to_hir_path(
+                    &name_expr,
+                    PathResolutionScope::Value,
+                    ParamMode::Optional,
+                )?;
                 // A call's callee is only ever a compiler intrinsic/portable
                 // op because its *own resolved declaration* was tagged
                 // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
@@ -904,7 +927,11 @@ impl AstToHirLowerer {
         // of a type-relative base at all.
         if let ast::ExprKind::Name(_) = select.obj.kind() {
             let path_expr = ast::Expr::new(ast::ExprKind::FieldAccess(select.clone()));
-            let path = self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Value)?;
+            let path = self.ast_expr_to_hir_path(
+                &path_expr,
+                PathResolutionScope::Value,
+                ParamMode::Optional,
+            )?;
             return Ok(hir::ExprKind::Path(path));
         }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
@@ -919,7 +946,11 @@ impl AstToHirLowerer {
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::ExprKind> {
         let path =
-            self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Value)?;
+            self.ast_expr_to_hir_path(
+                struct_expr.name.as_ref(),
+                PathResolutionScope::Value,
+                ParamMode::Optional,
+            )?;
         let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();
@@ -934,10 +965,20 @@ impl AstToHirLowerer {
                     let name_expr =
                         ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(field.name.clone())));
                     let path = self
-                        .ast_expr_to_hir_path(&name_expr, PathResolutionScope::Value)
-                        .unwrap_or_else(|_| hir::Path {
-                            res: hir::Res::Error,
-                            segments: vec![self.make_path_segment(&field.name.name, None)],
+                        .ast_expr_to_hir_path(
+                            &name_expr,
+                            PathResolutionScope::Value,
+                            ParamMode::Optional,
+                        )
+                        .unwrap_or_else(|_| {
+                            hir::QPath::resolved(hir::Path {
+                                res: hir::Res::Error,
+                                segments: vec![self.make_path_segment(
+                                    &field.name.name,
+                                    None,
+                                    ParamMode::Optional,
+                                )],
+                            })
                         });
                     hir::Expr {
                         hir_id: self.next_id(),
@@ -962,7 +1003,7 @@ impl AstToHirLowerer {
         // Lower `Foo { ..base, field: value }` into a block that binds `base`
         // once and then fills missing fields from it, so later MIR lowering
         // only sees a plain struct literal.
-        let struct_fields = match path.res {
+        let struct_fields = match path.res() {
             hir::Res::Def(ref def_id) => {
                 if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
                     fields
@@ -1013,13 +1054,15 @@ impl AstToHirLowerer {
 
         let base_path = hir::Expr {
             hir_id: self.next_id(),
-            kind: hir::ExprKind::Path(hir::Path {
+            kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: base_symbol,
                     args: None,
+                    infer_args: true,
+                    res: hir::Res::Local(base_pat_id.clone()),
                 }],
                 res: hir::Res::Local(base_pat_id),
-            }),
+            })),
             span: self.create_span(1),
         };
 
@@ -1097,7 +1140,11 @@ impl AstToHirLowerer {
         };
         let path_expr =
             ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ast::Ident::new(name))));
-        let path = self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Type)?;
+        let path = self.ast_expr_to_hir_path(
+            &path_expr,
+            PathResolutionScope::Type,
+            ParamMode::Explicit,
+        )?;
         let fields = fields
             .into_iter()
             .map(|(name, expr)| hir::StructExprField {
@@ -1372,13 +1419,15 @@ impl AstToHirLowerer {
 
         let loop_var = hir::Expr {
             hir_id: self.next_id(),
-            kind: hir::ExprKind::Path(hir::Path {
+            kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: loop_name.clone(),
                     args: None,
+                    infer_args: true,
+                    res: loop_res.clone(),
                 }],
                 res: loop_res,
-            }),
+            })),
             span: Span::new(self.current_file, 0, 0),
         };
 
@@ -1781,7 +1830,11 @@ impl AstToHirLowerer {
                 let captured = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     ast::Ident::new(name.clone()),
                 )));
-                let path = self.ast_expr_to_hir_path(&captured, PathResolutionScope::Value)?;
+                let path = self.ast_expr_to_hir_path(
+                    &captured,
+                    PathResolutionScope::Value,
+                    ParamMode::Optional,
+                )?;
                 let value = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),
@@ -1823,7 +1876,7 @@ impl AstToHirLowerer {
         }
         let Some((param_names, is_variadic)) = callee
             .and_then(|expr| match &expr.kind {
-                hir::ExprKind::Path(path) => path.res.as_ref(),
+                hir::ExprKind::Path(path) => Some(path.res_ref()),
                 _ => None,
             })
             .and_then(|res| match res {

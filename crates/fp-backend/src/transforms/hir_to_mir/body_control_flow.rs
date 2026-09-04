@@ -252,7 +252,7 @@ impl<'a> BodyBuilder<'a> {
         let annotated_enum_def = if ty_is_infer {
             None
         } else if let hir::TypeExprKind::Path(path) = &ty.kind {
-            if let hir::Res::Def(def_id) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res_ref() {
                 if self
                     .lowering
                     .mir_package
@@ -265,7 +265,7 @@ impl<'a> BodyBuilder<'a> {
                     None
                 }
             } else {
-                if let Some(seg) = path.segments.last() {
+                if let Some(seg) = path.segments().last() {
                     let name = seg.name.as_str();
                     self.lowering
                         .mir_package
@@ -282,7 +282,7 @@ impl<'a> BodyBuilder<'a> {
         };
         if !ty_is_infer {
             if let hir::TypeExprKind::Path(path) = &ty.kind {
-                if let hir::Res::Def(def_id) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res_ref() {
                     if self
                         .lowering
                         .mir_package
@@ -291,9 +291,12 @@ impl<'a> BodyBuilder<'a> {
                         .contains_key(def_id)
                     {
                         let args = path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
+                            .path()
+                            .and_then(|path| {
+                                path.segments
+                                    .iter()
+                                    .find_map(|segment| segment.args.as_ref())
+                            })
                             .map(|args| self.lowering.lower_generic_args(Some(args), init_span))
                             .unwrap_or_default();
                         let layout = if args.is_empty() {

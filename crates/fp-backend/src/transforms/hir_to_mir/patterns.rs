@@ -442,7 +442,7 @@ impl<'a> BodyBuilder<'a> {
                 } else {
                     let expr = hir::Expr {
                         hir_id: pat.hir_id.clone(),
-                        kind: hir::ExprKind::Path(path.clone()),
+                        kind: hir::ExprKind::Path(hir::QPath::resolved(path.clone())),
                         span,
                     };
                     let operand = self.lower_operand(&expr, None)?;

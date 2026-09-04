@@ -239,10 +239,10 @@ impl HirTypeChecker {
                     let hir::TypeExprKind::Path(path) = &output_path.kind else {
                         continue;
                     };
-                    if path.segments.len() != 1 {
+                    if path.segments().len() != 1 {
                         continue;
                     }
-                    if let Some(target) = params.get(&path.segments[0].name) {
+                    if let Some(target) = params.get(&path.segments()[0].name) {
                         let replace = match substitutions.get(target) {
                             None => true,
                             Some(existing) => {
@@ -1380,7 +1380,7 @@ impl HirTypeChecker {
                     .trait_ty
                     .as_ref()
                     .and_then(|trait_ty| match &trait_ty.kind {
-                        hir::TypeExprKind::Path(path) => match &path.res {
+                        hir::TypeExprKind::Path(path) => match path.res_ref() {
                             hir::Res::Def(def_id) => program.item(def_id.clone()),
                             _ => None,
                         },

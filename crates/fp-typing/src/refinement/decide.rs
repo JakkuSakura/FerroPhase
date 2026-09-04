@@ -39,7 +39,7 @@ pub fn try_decide(expr: &Expr, env: &HashMap<String, i64>) -> Option<ConstVal> {
         ExprKind::Literal(Lit::Integer(v)) => Some(ConstVal::Int(*v)),
         ExprKind::Literal(Lit::Bool(b)) => Some(ConstVal::Bool(*b)),
         ExprKind::Path(path) => {
-            let name = path.segments.last()?.name.as_str();
+            let name = path.segments().last()?.name.as_str();
             env.get(name).copied().map(ConstVal::Int)
         }
         ExprKind::Unary(UnOp::Neg, inner) => {

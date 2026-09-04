@@ -62,8 +62,12 @@ fn is_byte_vector_ty(ty: &Ty) -> bool {
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Name(Name { path: path, .. }) => {
                 path.last().ident.as_str() == "Vec"
-                    && path.last().args.len() == 1
-                    && is_u8_type(&path.last().args[0])
+                    && matches!(
+                        &path.last().arguments,
+                        fp_core::ast::PathArguments::AngleBracketed(args)
+                            if matches!(args.as_slice(), [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty))]
+                                if is_u8_type(ty))
+                    )
             }
             _ => false,
         },

@@ -105,7 +105,7 @@ impl HirToMirLowerer {
                 })
             }
             hir::ExprKind::Path(path) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                let hir::Res::Def(def_id) = path.res_ref().as_ref()? else {
                     return None;
                 };
                 if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
@@ -301,7 +301,7 @@ impl HirToMirLowerer {
                 Some(mir::ConstValue::Array(lowered))
             }
             hir::ExprKind::Struct(path, fields) => {
-                let def_id = self.resolve_path_def_id(path)?;
+                let def_id = self.resolve_path_def_id(path.path()?)?;
                 let struct_def = self
                     .mir_package
                     .borrow()
@@ -310,9 +310,12 @@ impl HirToMirLowerer {
                     .cloned()?
                     .clone();
                 let mut args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
+                    .path()
+                    .and_then(|path| {
+                        path.segments
+                            .iter()
+                            .find_map(|segment| segment.args.as_ref())
+                    })
                     .map(|args| self.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
                 if args.is_empty() && !struct_def.generics.is_empty() {
@@ -397,7 +400,7 @@ impl HirToMirLowerer {
                 self.lower_const_method_value(receiver, method_name.as_str(), args, expr.span)
             }
             hir::ExprKind::Path(path) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
+                let hir::Res::Def(def_id) = path.res_ref().as_ref()? else {
                     return None;
                 };
 
@@ -551,7 +554,7 @@ impl HirToMirLowerer {
                             else {
                                 return None;
                             };
-                            let hir::Res::Def(def_id) = type_path.res.as_ref()? else {
+                            let hir::Res::Def(def_id) = type_path.res_ref().as_ref()? else {
                                 return None;
                             };
                             let field_name = self.const_string_from_expr(&args[0].value)?;
@@ -600,11 +603,11 @@ impl HirToMirLowerer {
         let hir::ExprKind::Path(path) = &type_arg.kind else {
             return None;
         };
-        let hir::Res::Def(def_id) = path.res.as_ref()? else {
+        let hir::Res::Def(def_id) = path.res_ref().as_ref()? else {
             return None;
         };
         let reflected_name = path
-            .segments
+            .segments()
             .last()
             .map(|segment| format!("struct {}", segment.name));
         let struct_def_id = def_id.clone();
@@ -987,7 +990,7 @@ impl HirToMirLowerer {
     ) -> Option<ConstContainerArgs> {
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
-                let tail = path.segments.last()?;
+                let tail = path.segments().last()?;
                 let args = tail.args.as_ref()?;
                 match tail.name.as_str() {
                     "Vec" if args.args.len() == 1 => {
@@ -1028,7 +1031,7 @@ impl HirToMirLowerer {
                 let mut entry_ty_expr: Option<&hir::TypeExpr> = None;
                 match &entries_ty.kind {
                     hir::TypeExprKind::Path(path) => {
-                        let tail = path.segments.last()?;
+                        let tail = path.segments().last()?;
                         if tail.name.as_str() == "Vec" {
                             let args = tail.args.as_ref()?;
                             if args.args.len() == 1 {
@@ -1048,7 +1051,7 @@ impl HirToMirLowerer {
                     return None;
                 };
                 if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
-                    let tail = path.segments.last()?;
+                    let tail = path.segments().last()?;
                     if tail.name.as_str() == "Expr" {
                         let args = tail.args.as_ref()?;
                         if args.args.len() == 1 {
@@ -1061,7 +1064,7 @@ impl HirToMirLowerer {
 
                 match &entry_ty_expr.kind {
                     hir::TypeExprKind::Path(path) => {
-                        let tail = path.segments.last()?;
+                        let tail = path.segments().last()?;
                         if tail.name.as_str() == "HashMapEntry" {
                             let args = tail.args.as_ref()?;
                             if args.args.len() == 2 {

@@ -284,7 +284,8 @@ mod tests {
     use fp_core::ast::path::PathPrefix;
     use fp_core::ast::{
         Expr, ExprBlock, ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, Path,
-        PathSegment, StmtLet, Ty, TypeArray, TypeInt, TypePrimitive, TypeSlice, TypeVec,
+        PathArguments, PathSegment, StmtLet, Ty, TypeArray, TypeInt, TypePrimitive, TypeSlice,
+        TypeVec,
     };
 
     use super::{
@@ -448,7 +449,10 @@ mod tests {
         let ExprKind::Name(Name { path, .. }) = expr.kind() else {
             panic!("expected parameterized Result type");
         };
-        assert_eq!(path.segments.last().expect("Result segment").args.len(), 1);
+        assert!(matches!(
+            path.segments.last().expect("Result segment").arguments,
+            PathArguments::AngleBracketed(ref args) if args.len() == 1
+        ));
     }
 
     #[test]
@@ -653,8 +657,14 @@ mod tests {
         };
         let segment = path.last();
         assert_eq!(segment.ident.as_str(), "MutableList");
-        let [Ty::Expr(element)] = segment.args.as_slice() else {
+        let fp_core::ast::PathArguments::AngleBracketed(args) = &segment.arguments else {
             panic!("expected one element type");
+        };
+        let [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(element))] = args.as_slice() else {
+            panic!("expected one element type");
+        };
+        let Ty::Expr(element) = element.as_ref() else {
+            panic!("expected Entry element type");
         };
         let ExprKind::Name(Name { path, .. }) = element.kind() else {
             panic!("expected Entry element type");
@@ -1650,8 +1660,41 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
         return;
     };
     for segment in &mut path.segments {
-        for arg in &mut segment.args {
-            materialize_kotlin_ty(arg);
+        match &mut segment.arguments {
+            fp_core::ast::PathArguments::AngleBracketed(args) => {
+                for arg in args {
+                    match arg {
+                        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty)) => {
+                            materialize_kotlin_ty(ty);
+                        }
+                        fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
+                            match &mut constraint.kind {
+                                fp_core::ast::AssocItemConstraintKind::Equality { ty } => {
+                                    materialize_kotlin_ty(ty);
+                                }
+                                fp_core::ast::AssocItemConstraintKind::Bound { bounds } => {
+                                    for bound in bounds {
+                                        materialize_kotlin_ty(bound);
+                                    }
+                                }
+                            }
+                        }
+                        fp_core::ast::AngleBracketedArg::Arg(
+                            fp_core::ast::GenericArg::Lifetime(_)
+                            | fp_core::ast::GenericArg::Const(_),
+                        ) => {}
+                    }
+                }
+            }
+            fp_core::ast::PathArguments::Parenthesized { inputs, output } => {
+                for input in inputs {
+                    materialize_kotlin_ty(input);
+                }
+                if let Some(output) = output {
+                    materialize_kotlin_ty(output);
+                }
+            }
+            fp_core::ast::PathArguments::None => {}
         }
     }
 }
@@ -1665,7 +1708,7 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
 fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     let segment = name.path.last();
     let last = segment.ident.as_str();
-    let args = segment.args.clone();
+    let args = segment.arguments.legacy_types();
 
     match last {
         "str" => Some(Ty::ident(Ident::new("String"))),

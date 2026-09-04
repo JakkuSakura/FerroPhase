@@ -20,7 +20,10 @@ impl AstToHirLowerer {
             }
             PatternKind::Name(name) => {
                 let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value)?;
+                let path = self
+                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Value, ParamMode::Optional)?
+                    .into_path()
+                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
                 Ok((
                     hir::Pat {
                         hir_id: self.next_id(),
@@ -97,7 +100,10 @@ impl AstToHirLowerer {
             }
             PatternKind::TupleStruct(tuple_struct) => {
                 let expr = ast::Expr::new(ast::ExprKind::Name(tuple_struct.name.clone()));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+                let path = self
+                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Optional)?
+                    .into_path()
+                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
                 let parts = tuple_struct
                     .patterns
                     .iter()
@@ -125,7 +131,10 @@ impl AstToHirLowerer {
                 let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_pat.name.clone(),
                 )));
-                let path = self.ast_expr_to_hir_path(&expr, PathResolutionScope::Type)?;
+                let path = self
+                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Optional)?
+                    .into_path()
+                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
                 let fields = struct_pat
                     .fields
                     .iter()
@@ -252,7 +261,10 @@ impl AstToHirLowerer {
             }
         }
 
-        let path = self.ast_expr_to_hir_path(name, PathResolutionScope::Value)?;
+        let path = self
+            .ast_expr_to_hir_path(name, PathResolutionScope::Value, ParamMode::Optional)?
+            .into_path()
+            .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
 
         if let Some(pattern) = nested {
             match pattern.kind() {

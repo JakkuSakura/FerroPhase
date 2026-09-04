@@ -255,7 +255,7 @@ impl<'a> BodyBuilder<'a> {
         let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
             return false;
         };
-        let Some(segment) = path.segments.last() else {
+        let Some(segment) = path.segments().last() else {
             return false;
         };
         matches!(
@@ -285,7 +285,7 @@ impl<'a> BodyBuilder<'a> {
     pub(super) fn type_expr_mentions_self(ty_expr: &hir::TypeExpr) -> bool {
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => path
-                .segments
+                .segments()
                 .first()
                 .map(|segment| segment.name.as_str() == "Self")
                 .unwrap_or(false),
@@ -940,10 +940,10 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn resolve_self_path(&self, path: &mut hir::Path) {
         if let Some(context) = &self.method_context {
-            if let Some(first) = path.segments.first() {
+            if let Some(first) = path.segments().first() {
                 if first.name.as_str() == "Self" {
                     let mut new_segments = context.path.clone();
-                    new_segments.extend(path.segments.iter().skip(1).cloned());
+                    new_segments.extend(path.segments().iter().skip(1).cloned());
                     path.segments = new_segments;
                     if let Some(ref def_id) = context.def_id {
                         path.res = hir::Res::Def(def_id.clone());
@@ -962,7 +962,10 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<Option<PlaceInfo>> {
         let mut reordered_args = None;
         if let hir::ExprKind::Path(path) = &callee.kind {
-            if let Some(param_names) = self.param_names_for_callee(path) {
+            if let Some(param_names) = path
+                .path()
+                .and_then(|path| self.param_names_for_callee(path))
+            {
                 let ordered = self.reorder_named_call_args(args, &param_names, expr.span)?;
                 reordered_args = Some(ordered);
             }
@@ -998,7 +1001,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
-            if let hir::Res::Def(def_id) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res_ref() {
                 if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
                     if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                         self.lower_resolved_print_call(expr, kind, args, destination.clone())?;
@@ -1016,7 +1019,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
-            let segments = &path.segments;
+            let segments = &path.segments();
             if segments.len() >= 2
                 && segments[segments.len() - 2].name.as_str() == "HashMap"
                 && segments[segments.len() - 1].name.as_str() == "from"
@@ -1052,7 +1055,7 @@ impl<'a> BodyBuilder<'a> {
 
                     for element in elements {
                         if let hir::ExprKind::Struct(path, fields) = &element.kind {
-                            let tail = path.segments.last().map(|seg| seg.name.as_str());
+                            let tail = path.segments().last().map(|seg| seg.name.as_str());
                             if tail == Some("HashMapEntry") {
                                 let mut key_expr = None;
                                 let mut value_expr = None;
@@ -1156,7 +1159,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
-            let tail = path.segments.last().map(|seg| seg.name.as_str());
+            let tail = path.segments().last().map(|seg| seg.name.as_str());
             if tail == Some("get_unchecked") || tail == Some("::get_unchecked") {
                 let (place, expected_ty) = match destination.as_ref() {
                     Some((place, expected_ty)) => (place.clone(), expected_ty.clone()),
@@ -1180,10 +1183,12 @@ impl<'a> BodyBuilder<'a> {
 
                 if let hir::ExprKind::Path(path) = &arg_values[0].kind {
                     let mut resolved_path = path.clone();
-                    self.resolve_self_path(&mut resolved_path);
+                    if let hir::QPath::Resolved(_, inner) = &mut resolved_path {
+                        self.resolve_self_path(inner);
+                    }
                     let mut const_info = None;
                     let mut const_body_len = None;
-                    if let hir::Res::Def(def_id) = &resolved_path.res {
+                    if let hir::Res::Def(def_id) = &resolved_path.res_ref() {
                         if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                             const_info = Some(info.clone());
                         } else if let Some(konst) =
@@ -1202,8 +1207,8 @@ impl<'a> BodyBuilder<'a> {
                                 const_info = Some(info.clone());
                             }
                         }
-                    } else if resolved_path.segments.len() == 1 {
-                        let name = resolved_path.segments[0].name.as_str();
+                    } else if resolved_path.segments().len() == 1 {
+                        let name = resolved_path.segments()[0].name.as_str();
                         let matching_const =
                             self.lowering
                                 .hir_all_items()
@@ -1467,10 +1472,14 @@ impl<'a> BodyBuilder<'a> {
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
             let expected_ty = destination.as_ref().map(|(_, ty)| ty);
-            let tail = path.segments.last().map(|seg| seg.name.as_str());
-            let variant = self
-                .enum_variant_info_from_path(path)
-                .or_else(|| self.enum_variant_info_from_expected(path, expected_ty))
+            let tail = path.segments().last().map(|seg| seg.name.as_str());
+            let variant = path
+                .path()
+                .and_then(|path| self.enum_variant_info_from_path(path))
+                .or_else(|| {
+                    path.path()
+                        .and_then(|path| self.enum_variant_info_from_expected(path, expected_ty))
+                })
                 .or_else(|| {
                     tail.and_then(|name| {
                         expected_ty.and_then(|ty| self.result_variant_from_expected(ty, name))
@@ -1478,9 +1487,12 @@ impl<'a> BodyBuilder<'a> {
                 });
             if let Some(variant) = variant {
                 let explicit_enum_args = path
-                    .segments
-                    .last()
-                    .and_then(|segment| segment.args.as_ref())
+                    .path()
+                    .and_then(|path| {
+                        path.segments
+                            .iter()
+                            .find_map(|segment| segment.args.as_ref())
+                    })
                     .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
                 let mut layout = destination.as_ref().and_then(|(_, ty)| {
@@ -1581,9 +1593,9 @@ impl<'a> BodyBuilder<'a> {
         let mut explicit_args: Vec<Ty> = Vec::new();
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(args) = path
-                .segments
-                .iter()
-                .find_map(|segment| segment.args.as_ref())
+                .segments()
+                .last()
+                .and_then(|segment| segment.args.as_ref())
             {
                 explicit_args = self.lowering.lower_generic_args(Some(args), expr.span);
             }
@@ -1623,7 +1635,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
             }
-            if let hir::Res::Def(def_id) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res_ref() {
                 if self
                     .lowering
                     .mir_package
@@ -1643,7 +1655,7 @@ impl<'a> BodyBuilder<'a> {
                 });
             if let Some(def_id) = resolved_method_def_id.as_ref() {
                 generic_method_def = self.lowering.ensure_generic_method_def(def_id.clone());
-            } else if let hir::Res::Def(def_id) = &path.res {
+            } else if let hir::Res::Def(def_id) = &path.res_ref() {
                 // `ensure_generic_method_def` is the uniform lookup —
                 // resolves a generic method (`Vec::from`, etc.) in this
                 // package or any dependency's the same way, lazily
@@ -1714,7 +1726,7 @@ impl<'a> BodyBuilder<'a> {
                     self.lowering
                         .typeck_method_resolution(callee.hir_id.clone())
                 })
-                .or_else(|| match path.res.as_ref() {
+                .or_else(|| match path.res_ref().as_ref() {
                     Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
                     _ => None,
                 })
@@ -1723,14 +1735,16 @@ impl<'a> BodyBuilder<'a> {
             _ => None,
         };
         let callee_tail = if let hir::ExprKind::Path(path) = &callee.kind {
-            path.segments.last().map(|seg| seg.name.as_str())
+            path.segments().last().map(|seg| seg.name.as_str())
         } else {
             None
         };
         let mut callee_abi = None;
         let mut callee_is_extern = false;
         if let hir::ExprKind::Path(path) = &callee.kind {
-            if let Some((abi, is_extern)) = self.callee_abi_from_path(path) {
+            if let Some((abi, is_extern)) =
+                path.path().and_then(|path| self.callee_abi_from_path(path))
+            {
                 callee_abi = Some(abi);
                 callee_is_extern = is_extern;
             }
@@ -2096,12 +2110,12 @@ impl<'a> BodyBuilder<'a> {
                 if let TyKind::Ref(_region, _inner, mutability) = &expected_ty.kind {
                     let local_id = match &arg.value.kind {
                         hir::ExprKind::Path(path) => {
-                            if let hir::Res::Local(hir_id) = &path.res {
+                            if let hir::Res::Local(hir_id) = &path.res_ref() {
                                 self.local_map.get(hir_id).copied()
                             } else {
-                                path.segments
+                                path.segments()
                                     .first()
-                                    .filter(|_| path.segments.len() == 1)
+                                    .filter(|_| path.segments().len() == 1)
                                     .and_then(|seg| {
                                         self.fallback_locals.get(seg.name.as_str()).copied()
                                     })
@@ -2192,10 +2206,15 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if inferred_args.is_none() {
                         if let hir::TypeExprKind::Path(path) = &self.function.sig.output.kind {
-                            if self.lowering.is_result_path(path) {
-                                if let Some(args) =
-                                    path.segments.last().and_then(|seg| seg.args.as_ref())
-                                {
+                            if path
+                                .path()
+                                .is_some_and(|path| self.lowering.is_result_path(path))
+                            {
+                                if let Some(args) = path.path().and_then(|path| {
+                                    path.segments
+                                        .last()
+                                        .and_then(|segment| segment.args.as_ref())
+                                }) {
                                     let mut output_args = Vec::new();
                                     for arg in &args.args {
                                         let hir::GenericArg::Type(type_arg) = arg else {
@@ -2283,10 +2302,15 @@ impl<'a> BodyBuilder<'a> {
                             output_ty = inner;
                         }
                         if let hir::TypeExprKind::Path(path) = &output_ty.kind {
-                            if self.lowering.is_result_path(path) {
-                                if let Some(args) =
-                                    path.segments.last().and_then(|seg| seg.args.as_ref())
-                                {
+                            if path
+                                .path()
+                                .is_some_and(|path| self.lowering.is_result_path(path))
+                            {
+                                if let Some(args) = path.path().and_then(|path| {
+                                    path.segments
+                                        .last()
+                                        .and_then(|segment| segment.args.as_ref())
+                                }) {
                                     let mut output_args = Vec::new();
                                     for arg in &args.args {
                                         let hir::GenericArg::Type(type_arg) = arg else {
@@ -2673,7 +2697,7 @@ impl<'a> BodyBuilder<'a> {
         for arg in args {
             if kind == IntrinsicKind::CloneStruct {
                 if let hir::ExprKind::Path(path) = &arg.kind {
-                    if let hir::Res::Def(def_id) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res_ref() {
                         if let Some(Value::Type(value)) =
                             self.lowering.typeck_const_block_value(def_id.clone())
                         {
@@ -2752,7 +2776,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     pub(super) fn param_names_for_callee(&mut self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
-        match &path.res {
+        match &path.res_ref() {
             hir::Res::Def(def_id) => self.param_names_for_def_id(def_id.clone()).or_else(|| {
                 self.lowering
                     .ensure_generic_method_def(def_id.clone())
@@ -2793,7 +2817,7 @@ impl<'a> BodyBuilder<'a> {
     /// which used to always pay that second scan regardless of whether
     /// this fast path already succeeded).
     pub(super) fn callee_abi_from_path(&self, path: &hir::Path) -> Option<(hir::Abi, bool)> {
-        if let hir::Res::Def(def_id) = &path.res {
+        if let hir::Res::Def(def_id) = &path.res_ref() {
             if let Some(item) = self.lowering.hir_item(def_id.clone()) {
                 if let hir::ItemKind::Function(func) = &item.kind {
                     return Some((func.sig.abi.clone(), func.is_extern));
@@ -2803,7 +2827,7 @@ impl<'a> BodyBuilder<'a> {
         let mut resolved_path = path.clone();
         self.resolve_self_path(&mut resolved_path);
         let qualified = resolved_path
-            .segments
+            .segments()
             .iter()
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
@@ -2818,7 +2842,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         }
-        let tail = resolved_path.segments.last().map(|seg| seg.name.as_str());
+        let tail = resolved_path.segments().last().map(|seg| seg.name.as_str());
         if let Some(tail) = tail {
             let mut candidate: Option<(hir::Abi, bool)> = None;
             for item in self.lowering.hir_all_items() {
@@ -2915,7 +2939,10 @@ impl<'a> BodyBuilder<'a> {
         callee: &hir::Expr,
     ) -> Result<(mir::Operand, mir::FunctionSig, Option<String>)> {
         match &callee.kind {
-            hir::ExprKind::Path(path) => self.resolve_callee_path(call_hir_id, callee, path),
+            hir::ExprKind::Path(path) => path.path().map_or_else(
+                || Err(fp_core::Error::from("type-relative callee unsupported")),
+                |path| self.resolve_callee_path(call_hir_id, callee, path),
+            ),
             hir::ExprKind::FieldAccess(_, _) => {
                 let operand = self.lower_operand(callee, None)?;
                 if let TyKind::FnPtr(poly_fn_sig) = &operand.ty.kind {
@@ -2985,7 +3012,7 @@ impl<'a> BodyBuilder<'a> {
         self.resolve_self_path(&mut resolved_path);
 
         // Handle local variables (e.g., function parameters) as indirect calls
-        if let hir::Res::Local(hir_id) = &resolved_path.res {
+        if let hir::Res::Local(hir_id) = &resolved_path.res_ref() {
             if let Some(local_id) = self.local_map.get(hir_id) {
                 let local_id = *local_id;
                 let ty = self.locals[local_id as usize].ty.clone();
@@ -3043,7 +3070,7 @@ impl<'a> BodyBuilder<'a> {
             );
         }
 
-        if let hir::Res::Def(def_id) = &resolved_path.res {
+        if let hir::Res::Def(def_id) = &resolved_path.res_ref() {
             if let Some(info) = self.lowering.ensure_method_info(def_id.clone()) {
                 self.lowering.ensure_method_lowered(def_id.clone())?;
                 let literal = info
@@ -3110,14 +3137,14 @@ impl<'a> BodyBuilder<'a> {
         }
 
         let path = resolved_path
-            .segments
+            .segments()
             .iter()
             .map(|segment| segment.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
         Err(crate::error::optimization_error(format!(
             "unresolved call target `{path}` with resolution {:?}: no HIR-resolved definition",
-            resolved_path.res
+            resolved_path.res_ref()
         )))
     }
 
@@ -3351,11 +3378,13 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Path(path) => {
                 let mut resolved_path = path.clone();
-                self.resolve_self_path(&mut resolved_path);
+                if let hir::QPath::Resolved(_, inner) = &mut resolved_path {
+                    self.resolve_self_path(inner);
+                }
                 let explicit_args = resolved_path
-                    .segments
-                    .iter()
-                    .find_map(|segment| segment.args.as_ref())
+                    .segments()
+                    .last()
+                    .and_then(|segment| segment.args.as_ref())
                     .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
                 let has_explicit_args = !explicit_args.is_empty();
@@ -3370,7 +3399,7 @@ impl<'a> BodyBuilder<'a> {
                         None
                     }
                 });
-                if let hir::Res::Def(def_id) = &resolved_path.res {
+                if let hir::Res::Def(def_id) = &resolved_path.res_ref() {
                     // A type alias can be named in value position only for
                     // a comptime intrinsic argument. Its target's completed
                     // const-block result is the authoritative type handle;
@@ -3392,7 +3421,7 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if resolved_path.segments.len() == 1
+                    if resolved_path.segments().len() == 1
                         && let Some(Value::Type(value)) =
                             self.lowering.type_value_for_def(def_id.clone())
                     {
@@ -3610,9 +3639,12 @@ impl<'a> BodyBuilder<'a> {
                         });
                         if layout.is_none() {
                             let args = resolved_path
-                                .segments
-                                .last()
-                                .and_then(|segment| segment.args.as_ref())
+                                .path()
+                                .and_then(|path| {
+                                    path.segments
+                                        .iter()
+                                        .find_map(|segment| segment.args.as_ref())
+                                })
                                 .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                                 .unwrap_or_default();
                             if !args.is_empty() {
@@ -3681,16 +3713,22 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if resolved_path.res.is_none() {
-                    if let Some(variant) = self.enum_variant_info_from_path(&resolved_path) {
+                if resolved_path.res_ref().is_none() {
+                    if let Some(variant) = resolved_path
+                        .path()
+                        .and_then(|path| self.enum_variant_info_from_path(path))
+                    {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)
                         });
                         if layout.is_none() {
                             let args = resolved_path
-                                .segments
-                                .last()
-                                .and_then(|segment| segment.args.as_ref())
+                                .path()
+                                .and_then(|path| {
+                                    path.segments
+                                        .iter()
+                                        .find_map(|segment| segment.args.as_ref())
+                                })
                                 .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                                 .unwrap_or_default();
                             if !args.is_empty() {
@@ -3741,7 +3779,7 @@ impl<'a> BodyBuilder<'a> {
                     let method_def = self
                         .lowering
                         .typeck_method_resolution(expr.hir_id.clone())
-                        .or_else(|| match resolved_path.res.as_ref() {
+                        .or_else(|| match resolved_path.res_ref().as_ref() {
                             Some(hir::Res::Def(def_id)) => Some(def_id.clone()),
                             _ => None,
                         })
@@ -3774,7 +3812,7 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 let name = resolved_path
-                    .segments
+                    .segments()
                     .iter()
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
@@ -3813,7 +3851,7 @@ impl<'a> BodyBuilder<'a> {
                 }
                 Err(fp_core::error::Error::from(format!(
                     "unresolved value path during MIR lowering: `{name}` (resolution: {:?})",
-                    resolved_path.res
+                    resolved_path.res_ref()
                 )))
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
@@ -3859,7 +3897,7 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Index(base, index) => {
                 let mut resolved_const_base = None;
                 if let hir::ExprKind::Path(path) = &base.kind {
-                    if let hir::Res::Def(def_id) = &path.res {
+                    if let hir::Res::Def(def_id) = &path.res_ref() {
                         if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                             if let Some((constant, ty)) = self.lowering.const_index_value(
                                 expr.span,
@@ -5228,12 +5266,12 @@ impl<'a> BodyBuilder<'a> {
         let hir::ExprKind::Path(path) = &expr.kind else {
             return None;
         };
-        if let hir::Res::Local(hir_id) = &path.res {
+        if let hir::Res::Local(hir_id) = &path.res_ref() {
             return self.local_map.get(hir_id).copied();
         }
-        path.segments
+        path.segments()
             .first()
-            .filter(|_| path.segments.len() == 1)
+            .filter(|_| path.segments().len() == 1)
             .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
     }
 
@@ -5246,7 +5284,7 @@ impl<'a> BodyBuilder<'a> {
                 .as_deref()
                 .and_then(|inner| self.evaluate_array_length(inner)),
             hir::ExprKind::Path(path) => {
-                if let hir::Res::Def(ref def_id) = path.res {
+                if let hir::Res::Def(def_id) = path.res_ref() {
                     if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                         match &const_info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value as u64),

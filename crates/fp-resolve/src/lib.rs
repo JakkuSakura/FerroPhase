@@ -96,8 +96,21 @@ mod tests {
                 Namespace::Type
             ),
             ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(alloc),
-                segments: Vec::new()
+                res: hir::Res::Def(alloc.clone()),
+                segments: vec![
+                    hir::PathSegment {
+                        name: "std".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Module(std_root),
+                    },
+                    hir::PathSegment {
+                        name: "alloc".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(alloc),
+                    },
+                ]
             })
         );
         let plain = Path::new(PathPrefix::Plain, vec!["std".into(), "alloc".into()]);
@@ -140,7 +153,7 @@ mod tests {
             root.clone(),
             "m",
             Namespace::Type,
-            hir::Res::Module(module),
+            hir::Res::Module(module.clone()),
         );
         let location = InPackagePath::new(vec!["m".into()]);
         let crate_path = Path::new(PathPrefix::Crate, vec!["m".into(), "Item".into()]);
@@ -167,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_projection_tail_for_non_module_base() {
+    fn returns_resolved_base_for_non_module_path() {
         let (resolver, program, app, root) = setup();
         let ty = hir::DefId::local(4);
         let package = program.borrow().package_rc(&app).unwrap();
@@ -186,11 +199,13 @@ mod tests {
                 Namespace::Type
             ),
             ResolutionResult::Found(hir::Path {
-                res: hir::Res::Generic(ty),
+                res: hir::Res::Generic(ty.clone()),
                 segments: vec![hir::PathSegment {
-                    name: "Assoc".into(),
-                    args: None
-                }]
+                    name: "T".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Generic(ty),
+                },]
             })
         );
     }
@@ -244,29 +259,68 @@ mod tests {
             root,
             "nested",
             Namespace::Type,
-            hir::Res::Module(module),
+            hir::Res::Module(module.clone()),
         );
         let location = InPackagePath::new(Vec::new());
         let path = Path::new(PathPrefix::Plain, vec!["nested".into(), "Thing".into()]);
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Value),
             ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(value),
-                segments: Vec::new()
+                res: hir::Res::Def(value.clone()),
+                segments: vec![
+                    hir::PathSegment {
+                        name: "nested".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Module(module.clone()),
+                    },
+                    hir::PathSegment {
+                        name: "Thing".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(value),
+                    },
+                ]
             })
         );
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Type),
             ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(ty),
-                segments: Vec::new()
+                res: hir::Res::Def(ty.clone()),
+                segments: vec![
+                    hir::PathSegment {
+                        name: "nested".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Module(module.clone()),
+                    },
+                    hir::PathSegment {
+                        name: "Thing".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(ty),
+                    },
+                ]
             })
         );
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Macro),
             ResolutionResult::Found(hir::Path {
-                res: hir::Res::Def(mac),
-                segments: Vec::new()
+                res: hir::Res::Def(mac.clone()),
+                segments: vec![
+                    hir::PathSegment {
+                        name: "nested".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Module(module),
+                    },
+                    hir::PathSegment {
+                        name: "Thing".into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Def(mac),
+                    },
+                ]
             })
         );
     }
@@ -318,7 +372,10 @@ impl Resolver {
 
     /// Read-only lookup of a parsed source path at its lexical location.
     /// `resolve_package` populates the HIR; this method only computes the
-    /// absolute in-package path and queries it, returning the terminal `Res`.
+    /// absolute in-package path and queries it. For a path whose suffix is
+    /// type-relative, the returned HIR path contains only the resolved base;
+    /// lowering represents the suffix with nested `QPath::TypeRelative`
+    /// nodes.
     pub fn resolve_parsed_path(
         &self,
         current_package_id: &PackageId,
@@ -366,8 +423,18 @@ impl Resolver {
         let count = parsed.segments.len().saturating_sub(first);
         if count == 0 {
             return ResolutionResult::Found(hir::Path {
-                res: hir::Res::Module(root),
-                segments: Vec::new(),
+                res: hir::Res::Module(root.clone()),
+                segments: parsed
+                    .segments
+                    .iter()
+                    .take(first)
+                    .map(|segment| hir::PathSegment {
+                        name: segment.ident.name.clone().into(),
+                        args: None,
+                        infer_args: true,
+                        res: hir::Res::Module(root.clone()),
+                    })
+                    .collect(),
             });
         }
 
@@ -393,6 +460,17 @@ impl Resolver {
                 }
             }
 
+            let mut resolved_segments: Vec<hir::PathSegment> = parsed
+                .segments
+                .iter()
+                .take(first)
+                .map(|segment| hir::PathSegment {
+                    name: segment.ident.name.clone().into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Module(root.clone()),
+                })
+                .collect();
             for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
                 let segment_namespace = if offset + 1 == count {
                     namespace
@@ -404,33 +482,33 @@ impl Resolver {
                     segment.ident.as_str(),
                     segment_namespace,
                 );
-                if offset + 1 == count {
-                    return result;
-                }
                 match result {
-                    ResolutionResult::Found(path)
-                        if let hir::Res::Module(next) = path.res.clone() =>
-                    {
-                        module = next;
-                    }
-                    ResolutionResult::Found(found) => {
-                        // A non-module segment is the resolved base (for
-                        // example `Vec` in `Vec::new` or `Trait::Assoc`). Keep
-                        // the remaining path segments for type checking to
-                        // resolve as associated items instead of treating it
-                        // as an invalid module traversal.
-                        return ResolutionResult::Found(hir::Path {
-                            res: found.res,
-                            segments: parsed
-                                .segments
-                                .iter()
-                                .skip(first + offset + 1)
-                                .map(|segment| hir::PathSegment {
-                                    name: segment.ident.name.clone().into(),
-                                    args: None,
-                                })
-                                .collect(),
+                    ResolutionResult::Found(path) => {
+                        let resolved = path.res.clone();
+                        resolved_segments.push(hir::PathSegment {
+                            name: segment.ident.name.clone().into(),
+                            args: None,
+                            infer_args: true,
+                            res: resolved.clone(),
                         });
+                        if offset + 1 == count {
+                            return ResolutionResult::Found(hir::Path {
+                                res: resolved,
+                                segments: resolved_segments,
+                            });
+                        }
+                        if let hir::Res::Module(next) = path.res {
+                            module = next;
+                        } else {
+                            // Keep only the resolved base in the ordinary
+                            // path. Rustc represents every remaining
+                            // associated-item segment as a nested
+                            // `QPath::TypeRelative` node during lowering.
+                            return ResolutionResult::Found(hir::Path {
+                                res: resolved,
+                                segments: resolved_segments,
+                            });
+                        }
                     }
                     result => {
                         if search_ancestors && offset == 0 && start_len > 0 {

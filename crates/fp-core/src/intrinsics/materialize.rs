@@ -151,11 +151,42 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
         ast::Ty::Expr(mut expr) => {
             if let ast::ExprKind::Name(name) = expr.kind_mut() {
                 for segment in &mut name.path.segments {
-                    let args = std::mem::take(&mut segment.args);
-                    segment.args = args
-                        .into_iter()
-                        .map(|arg| materialize_ty(arg, strategy))
-                        .collect::<CoreResult<Vec<_>>>()?;
+                    match &mut segment.arguments {
+                        ast::PathArguments::AngleBracketed(args) => {
+                            for arg in args {
+                                match arg {
+                                    ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) => {
+                                        **ty = materialize_ty((**ty).clone(), strategy)?;
+                                    }
+                                    ast::AngleBracketedArg::Constraint(constraint) => {
+                                        match &mut constraint.kind {
+                                            ast::AssocItemConstraintKind::Equality { ty } => {
+                                                **ty = materialize_ty((**ty).clone(), strategy)?;
+                                            }
+                                            ast::AssocItemConstraintKind::Bound { bounds } => {
+                                                for bound in bounds {
+                                                    *bound = materialize_ty(bound.clone(), strategy)?;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    ast::AngleBracketedArg::Arg(
+                                        ast::GenericArg::Lifetime(_)
+                                        | ast::GenericArg::Const(_),
+                                    ) => {}
+                                }
+                            }
+                        }
+                        ast::PathArguments::Parenthesized { inputs, output } => {
+                            for input in inputs {
+                                *input = materialize_ty(input.clone(), strategy)?;
+                            }
+                            if let Some(output) = output {
+                                **output = materialize_ty((**output).clone(), strategy)?;
+                            }
+                        }
+                        ast::PathArguments::None => {}
+                    }
                 }
             }
             Ok(ast::Ty::Expr(expr))

@@ -28,7 +28,7 @@ impl<'a> BodyBuilder<'a> {
             let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
                 return None;
             };
-            if let hir::Res::Def(def_id) = &path.res {
+            if let hir::Res::Def(def_id) = &path.res_ref() {
                 if self
                     .lowering
                     .mir_package
@@ -39,7 +39,7 @@ impl<'a> BodyBuilder<'a> {
                     return Some(def_id.clone());
                 }
             }
-            let name = path.segments.last()?.name.as_str();
+            let name = path.segments().last()?.name.as_str();
             self.lowering
                 .mir_package
                 .borrow()
@@ -50,7 +50,7 @@ impl<'a> BodyBuilder<'a> {
         });
         if let Some(ty_expr) = local.ty.as_ref() {
             if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
-                if let hir::Res::Def(def_id) = &path.res {
+                if let hir::Res::Def(def_id) = &path.res_ref() {
                     if self
                         .lowering
                         .mir_package
@@ -59,9 +59,12 @@ impl<'a> BodyBuilder<'a> {
                         .contains_key(def_id)
                     {
                         let args = path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
+                            .path()
+                            .and_then(|path| {
+                                path.segments
+                                    .iter()
+                                    .find_map(|segment| segment.args.as_ref())
+                            })
                             .map(|args| self.lowering.lower_generic_args(Some(args), init_span))
                             .unwrap_or_default();
                         let layout = if args.is_empty() {
@@ -488,7 +491,8 @@ impl<'a> BodyBuilder<'a> {
                 local_id,
                 annotated_ty,
                 expr.hir_id.clone(),
-                path,
+                path.path()
+                    .ok_or_else(|| fp_core::Error::from("type-relative struct path unsupported"))?,
                 fields,
                 expr.span,
             )

@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::ImplTraits;
+use fp_core::ast::QSelf;
 use fp_core::ast::TypeNothing;
-use fp_core::ast::TypeProjection;
 use fp_core::ast::TypeType;
 use fp_core::ast::TypeWildcard;
 
@@ -15,57 +15,72 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if !try_eat_symbol(&mut probe, "<") {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    let mut ty = parse_type_expr(&mut probe)?;
+    let ty = parse_type_expr(&mut probe)?;
     let trait_ty = if skip_keyword(&mut probe, Keyword::As).is_ok() {
         Some(parse_type_expr(&mut probe)?)
     } else {
         None
     };
     skip_symbol(&mut probe, ">")?;
-    let mut extra_segments = Vec::new();
-    loop {
-        let mut seg_probe = probe;
-        if skip_symbol(&mut seg_probe, "::").is_err() {
-            break;
+    // `parse_name` owns path-segment parsing, including per-segment generic
+    // and parenthesized arguments. Keeping that representation intact is
+    // important for QPath lowering: `<T as Trait>::Assoc::Nested` must retain
+    // every segment rather than collapsing the first associated item into a
+    // legacy `TypeProjection` node.
+    if skip_symbol(&mut probe, "::").is_err() {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    let assoc = parse_name(&mut probe)?;
+    let Name {
+        qself: assoc_qself,
+        path: assoc_path,
+    } = assoc;
+    if assoc_qself.is_some() || assoc_path.segments.is_empty() {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+
+    let (prefix, segments, position, path_span) = if let Some(trait_ty) = trait_ty {
+        let Ty::Expr(trait_expr) = &trait_ty else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        let ExprKind::Name(Name {
+            qself: None,
+            path: trait_path,
+        }) = trait_expr.kind()
+        else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        if trait_path.segments.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
         }
-        let Ok(next) = ident_like(&mut seg_probe) else {
-            break;
-        };
-        let args = parse_optional_type_args(&mut seg_probe)?;
-        probe = seg_probe;
-        extra_segments.push(PathSegment::new(next, args));
-    }
-    if let Some(trait_ty) = trait_ty {
-        let Some(first) = extra_segments.first() else {
-            return Err(ErrMode::Backtrack(ContextError::new()));
-        };
-        ty = Ty::Projection(Box::new(TypeProjection {
-            self_ty: Box::new(ty),
-            trait_ty: Box::new(trait_ty),
-            assoc: first.ident.clone(),
-        }));
-        extra_segments.remove(0);
-    }
+        // `QSelf::position` is the insertion index of the qualified self in
+        // the complete path.  For `<T as Trait>::Item`, the path is
+        // `Trait::Item` and the qself is inserted before `Item`, so the
+        // position is `1` (the number of trait-path segments), matching
+        // rustc's AST representation.
+        let position = trait_path.segments.len();
+        let prefix = trait_path.prefix;
+        let segments = trait_path
+            .segments
+            .iter()
+            .cloned()
+            .chain(assoc_path.segments)
+            .collect();
+        let path_span = trait_ty.span();
+        (prefix, segments, position, path_span)
+    } else {
+        (assoc_path.prefix, assoc_path.segments, 0, Span::null())
+    };
+
     *input = probe;
-    if extra_segments.is_empty() {
-        return Ok(ty);
-    }
-    let Ty::Expr(expr) = &ty else {
-        return Ok(ty);
-    };
-    let name = match expr.kind() {
-        // Preserve all path segments when extending a qualified type path.
-        ExprKind::Name(Name { path, .. }) => Name::path(Path::new(
-            path.prefix,
-            path.segments
-                .iter()
-                .cloned()
-                .chain(extra_segments)
-                .collect(),
-        )),
-        _ => return Ok(ty),
-    };
-    Ok(Ty::Expr(Box::new(Expr::name(name))))
+    Ok(Ty::Expr(Box::new(Expr::name(Name {
+        qself: Some(QSelf {
+            ty: Box::new(ty),
+            path_span,
+            position,
+        }),
+        path: Path::new(prefix, segments),
+    }))))
 }
 
 /// True for an ordinary double-quoted string lexeme (`"foo"`) with no
@@ -380,24 +395,46 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         } else {
             None
         };
-        let _ = name;
-        return Ok(Ty::Function(
-            TypeFunction {
-                params,
-                generics_params: Vec::new(),
-                ret_ty,
-            }
-            .into(),
-        ));
+        if ret_ty.is_none() {
+            return Ok(Ty::Function(
+                TypeFunction {
+                    params,
+                    generics_params: Vec::new(),
+                    ret_ty,
+                }
+                .into(),
+            ));
+        }
+        let Name { mut path, qself } = name;
+        if qself.is_some() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        let Some(segment) = path.segments.last_mut() else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        segment.arguments = PathArguments::Parenthesized {
+            inputs: params,
+            output: ret_ty,
+        };
+        return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
     }
     {
         let parameter_path = &name.path;
         if parameter_path.prefix == PathPrefix::Plain
             && parameter_path.segments.len() == 1
             && parameter_path.segments[0].ident.as_str() == "quote"
-            && parameter_path.segments[0].args.len() == 1
+            && matches!(
+                &parameter_path.segments[0].arguments,
+                PathArguments::AngleBracketed(args) if args.len() == 1
+            )
         {
-            let (kind, inner_ty) = match &parameter_path.segments[0].args[0] {
+            let PathArguments::AngleBracketed(args) = &parameter_path.segments[0].arguments else {
+                unreachable!("quote arguments checked above");
+            };
+            let AngleBracketedArg::Arg(GenericArg::Type(argument)) = &args[0] else {
+                return Err(ErrMode::Cut(ContextError::new()));
+            };
+            let (kind, inner_ty) = match argument.as_ref() {
                 Ty::Expr(expr) => match expr.kind() {
                     ExprKind::Name(name) => {
                         let k = match name.as_ident().map(Ident::as_str) {
@@ -494,12 +531,20 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     };
     if type_name == "type" {
         if let Some(ppath) = bare_path {
-            let args = &ppath.segments[0].args;
+            let PathArguments::AngleBracketed(args) = &ppath.segments[0].arguments else {
+                return Ok(Ty::Type(TypeType {
+                    span: Span::null(),
+                    inner: None,
+                }));
+            };
             if args.len() == 1 {
-                let inner = if is_path_ident(&args[0], "_") {
+                let AngleBracketedArg::Arg(GenericArg::Type(arg)) = &args[0] else {
+                    return Err(ErrMode::Cut(ContextError::new()));
+                };
+                let inner = if is_path_ident(arg, "_") {
                     Some(Box::new(Ty::Wildcard(TypeWildcard)))
                 } else {
-                    Some(Box::new(args[0].clone()))
+                    Some(Box::new((**arg).clone()))
                 };
                 return Ok(Ty::Type(TypeType {
                     span: Span::null(),
@@ -838,32 +883,6 @@ pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<
     let mut args = Vec::new();
     if peek_symbol(probe) != Some(">") {
         loop {
-            // A lifetime argument (real `alloc::borrow`'s own `Cow<'a, B>`)
-            // — this checker doesn't model borrow-checking, so lifetime
-            // arguments are dropped here rather than falling through to
-            // `parse_type_arg`, which would otherwise reparse the
-            // lifetime's own ident-like token as if it were an ordinary
-            // type name (producing a bogus type literally named `'a`
-            // that can never resolve). Dropping it here — never
-            // constructing a `Ty` for it, never pushing anything into
-            // `args` — also keeps the remaining argument list's
-            // positions exactly aligned with the type-arg list a
-            // consuming type declares (lifetime args always precede type
-            // args in real Rust source), matching how rustc's own
-            // `GenericArgs` already separates the two.
-            if matches!(peek_ident_like(probe), Some(name) if name.starts_with('\'')) {
-                let _ = ident_like(&mut probe);
-                let mut comma_probe = probe;
-                if skip_symbol(&mut comma_probe, ",").is_err() {
-                    break;
-                }
-                if peek_symbol(comma_probe) == Some(">") {
-                    probe = comma_probe;
-                    break;
-                }
-                probe = comma_probe;
-                continue;
-            }
             let Ok(arg) = parse_type_arg(&mut probe) else {
                 return Ok(Vec::new());
             };
@@ -1201,6 +1220,7 @@ pub(crate) fn parse_optional_generic_params(
             } else {
                 fp_core::ast::TypeBounds::any()
             };
+            let mut default = None;
             if skip_symbol(&mut probe, "=").is_ok() {
                 if is_const {
                     // Same reasoning as `parse_type_arg`'s own
@@ -1213,9 +1233,10 @@ pub(crate) fn parse_optional_generic_params(
                     // `parse_cast_no_struct` sits below every binary
                     // operator, so it naturally stops right after the
                     // default value.
-                    let _ = parse_cast_no_struct(&mut probe, 0)?;
+                    let value = parse_cast_no_struct(&mut probe, 0)?;
+                    default = Some(Box::new(Ty::Expr(Box::new(value))));
                 } else {
-                    let _ = parse_type_expr(&mut probe)?;
+                    default = Some(Box::new(parse_type_expr(&mut probe)?));
                 }
             }
             params.push(fp_core::ast::GenericParam {
@@ -1226,6 +1247,7 @@ pub(crate) fn parse_optional_generic_params(
                 } else {
                     fp_core::ast::GenericParamKind::Type
                 },
+                default,
                 projection_bounds: Vec::new(),
             });
             if skip_symbol(&mut probe, ",").is_err() {

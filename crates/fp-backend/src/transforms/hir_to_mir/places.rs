@@ -25,11 +25,11 @@ impl<'a> BodyBuilder<'a> {
         path: &hir::Path,
     ) -> Result<Option<PlaceInfo>> {
         let fallback_local = path
-            .segments
+            .segments()
             .first()
-            .filter(|_| path.segments.len() == 1)
+            .filter(|_| path.segments().len() == 1)
             .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
-        match &path.res {
+        match &path.res_ref() {
             hir::Res::Local(hir_id) => {
                 if let Some(local_id) = self.local_map.get(hir_id) {
                     let local_id = *local_id;
@@ -566,7 +566,9 @@ impl<'a> BodyBuilder<'a> {
                     local_id,
                     Some(expected_ty),
                     expr.hir_id.clone(),
-                    path,
+                    path.path().ok_or_else(|| {
+                        fp_core::Error::from("type-relative struct path unsupported")
+                    })?,
                     fields,
                     expr.span,
                 )?;
@@ -1174,10 +1176,12 @@ impl<'a> BodyBuilder<'a> {
                 {
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         let mut resolved_path = path.clone();
-                        self.resolve_self_path(&mut resolved_path);
+                        if let hir::QPath::Resolved(_, inner) = &mut resolved_path {
+                            self.resolve_self_path(inner);
+                        }
                         let mut const_info = None;
                         let mut const_body_len = None;
-                        if let hir::Res::Def(def_id) = &resolved_path.res {
+                        if let hir::Res::Def(def_id) = &resolved_path.res_ref() {
                             if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 const_info = Some(info.clone());
                             } else if let Some(konst) = self
@@ -1197,8 +1201,8 @@ impl<'a> BodyBuilder<'a> {
                                     const_info = Some(info.clone());
                                 }
                             }
-                        } else if resolved_path.segments.len() == 1 {
-                            let name = resolved_path.segments[0].name.as_str();
+                        } else if resolved_path.segments().len() == 1 {
+                            let name = resolved_path.segments()[0].name.as_str();
                             let matching_const =
                                 self.lowering
                                     .hir_all_items()
@@ -1972,7 +1976,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let hir::ExprKind::Path(path) = &receiver.kind {
-                        if let hir::Res::Def(def_id) = &path.res {
+                        if let hir::Res::Def(def_id) = &path.res_ref() {
                             if let Some(const_info) =
                                 self.lowering.ensure_const_info(def_id.clone())
                             {

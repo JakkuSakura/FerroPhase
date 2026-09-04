@@ -20,13 +20,15 @@ fn hid(index: u32) -> fp_core::hir::HirId {
 fn path_expr(hir_id: u32, name: &str) -> Expr {
     Expr::new(
         hid(hir_id),
-        ExprKind::Path(Path {
+        ExprKind::Path(fp_core::hir::QPath::resolved(Path {
             segments: vec![PathSegment {
                 name: Symbol::new(name),
                 args: None,
+                infer_args: true,
+                res: Res::Error,
             }],
             res: Res::Error,
-        }),
+        })),
         span(),
     )
 }
