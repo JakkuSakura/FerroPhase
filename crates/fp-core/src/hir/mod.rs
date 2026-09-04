@@ -1226,14 +1226,38 @@ pub struct GenericParam {
     pub projection_bounds: Vec<(Symbol, Vec<TypeExpr>)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingLifetimeKind {
+    /// An explicitly written `'_` lifetime.
+    Underscore,
+    /// A lifetime elided after `&`.
+    Ampersand,
+    /// A lifetime elided in a bracketed generic argument list.
+    Comma,
+    /// A lifetime elided in a list without written brackets.
+    Brackets,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifetimeParamKind {
+    /// A named lifetime declared explicitly, such as `'a`.
+    Explicit,
+    /// An anonymous lifetime synthesized from an elided source lifetime.
+    Elided(MissingLifetimeKind),
+    /// A lifetime declaration whose source was invalid.
+    Error,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
     /// A named lifetime parameter. Region checking is not implemented yet,
     /// but retaining the declaration preserves rustc's generic parameter
     /// ordering and keeps lifetime arguments aligned with their source.
-    Lifetime,
+    Lifetime { kind: LifetimeParamKind },
     Type {
         default: Option<Box<TypeExpr>>,
+        /// Whether this parameter was synthesized while lowering `impl Trait`.
+        synthetic: bool,
     },
     Const {
         ty: Box<TypeExpr>,
@@ -2098,6 +2122,29 @@ impl Generics {
 }
 
 impl GenericParam {
+    pub fn is_impl_trait(&self) -> bool {
+        matches!(
+            self.kind,
+            GenericParamKind::Type {
+                synthetic: true,
+                ..
+            }
+        )
+    }
+
+    pub fn is_elided_lifetime(&self) -> bool {
+        matches!(
+            self.kind,
+            GenericParamKind::Lifetime {
+                kind: LifetimeParamKind::Elided(_)
+            }
+        )
+    }
+
+    pub fn is_lifetime(&self) -> bool {
+        matches!(self.kind, GenericParamKind::Lifetime { .. })
+    }
+
     pub fn span(&self) -> Span {
         self.kind.span()
     }
@@ -2106,8 +2153,8 @@ impl GenericParam {
 impl GenericParamKind {
     pub fn span(&self) -> Span {
         match self {
-            GenericParamKind::Lifetime => Span::null(),
-            GenericParamKind::Type { default } => default
+            GenericParamKind::Lifetime { .. } => Span::null(),
+            GenericParamKind::Type { default, .. } => default
                 .as_ref()
                 .map(|ty| ty.span())
                 .unwrap_or_else(Span::null),

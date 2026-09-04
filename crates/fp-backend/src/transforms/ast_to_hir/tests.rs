@@ -1925,9 +1925,25 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
             _ => None,
         })
         .expect("Wrapper should be lowered");
+    let lifetime = wrapper
+        .generics
+        .params
+        .first()
+        .expect("Wrapper should retain its lifetime parameter");
     assert!(matches!(
-        wrapper.generics.params.first().map(|param| &param.kind),
-        Some(hir::GenericParamKind::Lifetime)
+        lifetime.kind,
+        hir::GenericParamKind::Lifetime {
+            kind: hir::LifetimeParamKind::Explicit,
+        }
+    ));
+    assert!(lifetime.is_lifetime());
+    assert!(!lifetime.is_elided_lifetime());
+    assert!(matches!(
+        wrapper.generics.params.get(1).map(|param| &param.kind),
+        Some(hir::GenericParamKind::Type {
+            synthetic: false,
+            ..
+        })
     ));
     let read = lowered
         .items

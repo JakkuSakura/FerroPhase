@@ -3307,16 +3307,14 @@ impl HirTypeChecker {
                 if let Some(declared_params) = declared_params {
                     for parameter in declared_params
                         .iter()
-                        .filter(|parameter| {
-                            !matches!(parameter.kind, hir::GenericParamKind::Lifetime)
-                        })
+                        .filter(|parameter| !parameter.is_lifetime())
                         .skip(checked.len())
                     {
                         let argument = match &parameter.kind {
-                            hir::GenericParamKind::Lifetime => {
+                            hir::GenericParamKind::Lifetime { .. } => {
                                 unreachable!("lifetime parameters are filtered before substitution")
                             }
-                            hir::GenericParamKind::Type { default } => {
+                            hir::GenericParamKind::Type { default, .. } => {
                                 let default_ty = match default.as_ref() {
                                     Some(default) => Some(self.check_type_expr(default).await?),
                                     None => None,
@@ -3351,11 +3349,9 @@ impl HirTypeChecker {
                         .generics
                         .params
                         .iter()
-                        .filter(|parameter| {
-                            !matches!(parameter.kind, hir::GenericParamKind::Lifetime)
-                        })
+                        .filter(|parameter| !parameter.is_lifetime())
                         .map(|parameter| match &parameter.kind {
-                        hir::GenericParamKind::Lifetime => {
+                        hir::GenericParamKind::Lifetime { .. } => {
                             unreachable!("lifetime parameters are filtered before substitution")
                         }
                         hir::GenericParamKind::Type { .. } => GenericArg::Type(Ty {
@@ -3381,11 +3377,9 @@ impl HirTypeChecker {
                     .generics
                     .params
                     .iter()
-                    .filter(|parameter| {
-                        !matches!(parameter.kind, hir::GenericParamKind::Lifetime)
-                    })
+                    .filter(|parameter| !parameter.is_lifetime())
                     .map(|parameter| match &parameter.kind {
-                        hir::GenericParamKind::Lifetime => {
+                        hir::GenericParamKind::Lifetime { .. } => {
                             unreachable!("lifetime parameters are filtered before substitution")
                         }
                         hir::GenericParamKind::Type { .. } => GenericArg::Type(Ty {
@@ -4325,14 +4319,14 @@ impl HirTypeChecker {
                 .generics
                 .params
                 .iter()
-                .filter(|parameter| !matches!(parameter.kind, hir::GenericParamKind::Lifetime))
+                .filter(|parameter| !parameter.is_lifetime())
                 .skip(checked.len())
             {
                 let argument = match &parameter.kind {
-                    hir::GenericParamKind::Lifetime => {
+                    hir::GenericParamKind::Lifetime { .. } => {
                         unreachable!("lifetime parameters are filtered before substitution")
                     }
-                    hir::GenericParamKind::Type { default } => {
+                    hir::GenericParamKind::Type { default, .. } => {
                         let default_ty = match default.as_ref() {
                             Some(default) => Some(self.check_type_expr(default).await?),
                             None => None,
@@ -4366,13 +4360,13 @@ impl HirTypeChecker {
                 .generics
                 .params
                 .iter()
-                .filter(|parameter| !matches!(parameter.kind, hir::GenericParamKind::Lifetime))
+                .filter(|parameter| !parameter.is_lifetime())
             {
                 let argument = match &parameter.kind {
-                    hir::GenericParamKind::Lifetime => {
+                    hir::GenericParamKind::Lifetime { .. } => {
                         unreachable!("lifetime parameters are filtered before substitution")
                     }
-                    hir::GenericParamKind::Type { default } => {
+                    hir::GenericParamKind::Type { default, .. } => {
                         let ty = match default.as_ref() {
                             Some(default) => self.check_type_expr(default).await?,
                             None => Ty {

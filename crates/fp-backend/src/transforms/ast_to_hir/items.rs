@@ -347,7 +347,9 @@ impl AstToHirLowerer {
                 })
                 .collect();
             let kind = match &param.kind {
-                ast::GenericParamKind::Lifetime => hir::GenericParamKind::Lifetime,
+                ast::GenericParamKind::Lifetime => hir::GenericParamKind::Lifetime {
+                    kind: hir::LifetimeParamKind::Explicit,
+                },
                 ast::GenericParamKind::Type => hir::GenericParamKind::Type {
                     default: param
                         .default
@@ -355,6 +357,7 @@ impl AstToHirLowerer {
                         .map(|default| self.transform_type_to_hir(default))
                         .transpose()?
                         .map(Box::new),
+                    synthetic: false,
                 },
                 ast::GenericParamKind::Const { ty } => hir::GenericParamKind::Const {
                     ty: Box::new(self.transform_type_to_hir(ty)?),

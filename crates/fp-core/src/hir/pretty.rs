@@ -1189,8 +1189,8 @@ fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
         .params
         .iter()
         .map(|param| match &param.kind {
-            GenericParamKind::Lifetime => param.name.to_string(),
-            GenericParamKind::Type { default } => {
+            GenericParamKind::Lifetime { .. } => param.name.to_string(),
+            GenericParamKind::Type { default, .. } => {
                 if ctx.options.show_types {
                     if let Some(default) = default {
                         format!("{} = {}", param.name, fmt_type_expr(default, ctx))
