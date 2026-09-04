@@ -803,18 +803,7 @@ impl AstToHirLowerer {
                 let generic_args = if select.generic_args.is_empty() {
                     None
                 } else {
-                    Some(hir::GenericArgs {
-                        args: select
-                            .generic_args
-                            .iter()
-                            .map(|ty| {
-                                self.transform_type_to_hir(ty)
-                                    .map(|ty| hir::GenericArg::Type(Box::new(ty)))
-                            })
-                            .collect::<Result<Vec<_>>>()?,
-                        constraints: Vec::new(),
-                        parenthesized: hir::GenericArgsParentheses::No,
-                    })
+                    Some(self.convert_generic_args(&select.generic_args)?)
                 };
                 let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(

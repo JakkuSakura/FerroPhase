@@ -243,15 +243,17 @@ impl AstToHirLowerer {
                 if matches!(expr.kind(), ast::ExprKind::Assign(_)) {
                     continue;
                 }
-                // Lifetimes are part of Rust's syntax, but this compiler
-                // does not carry them into HIR types. A lifetime supplied as
-                // a path argument (for example `Cow<'a, B>`) must therefore
-                // be erased here rather than sent through type-path
-                // resolution as the ordinary name `'a`.
+                // Lifetimes are not type expressions, but HIR keeps them as
+                // first-class generic arguments just like rustc. Preserve a
+                // lifetime supplied to a method turbofish instead of sending
+                // it through ordinary type-path resolution as the name `'a`.
                 if let ast::ExprKind::Name(name) = expr.kind()
                     && name.path.segments.len() == 1
                     && name.path.segments[0].as_str().starts_with('\'')
                 {
+                    hir_args.push(hir::GenericArg::Lifetime(
+                        name.path.segments[0].as_str().into(),
+                    ));
                     continue;
                 }
                 // A const generic argument (`Simd<f32, 4>`, `[T; N]`'s own

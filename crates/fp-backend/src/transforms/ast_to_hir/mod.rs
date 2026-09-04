@@ -738,9 +738,15 @@ impl AstToHirLowerer {
             .resolve_local(name, fp_core::hir::resolve::Namespace::Value)
         {
             fp_core::hir::resolve::ResolutionResult::Found(path)
-                if let hir::Res::Def(id) = path.res.clone() =>
+                if matches!(
+                    path.res,
+                    hir::Res::Def(_)
+                        | hir::Res::Local(_)
+                        | hir::Res::Parameter(_)
+                        | hir::Res::Generic(_)
+                ) =>
             {
-                Some(hir::Res::Def(id))
+                Some(path.res)
             }
             _ => None,
         }

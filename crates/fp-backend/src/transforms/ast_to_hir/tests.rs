@@ -4555,6 +4555,28 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn preserves_lifetime_and_const_arguments_on_runtime_method_calls() {
+        let (package, diagnostics) =
+            lower("fn call(value: i64) -> i64 { value.method::<'a, 3>() }");
+        assert!(
+            diagnostics.is_empty(),
+            "method generic arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::MethodCall(_, _, Some(args), _) =
+            &body_expr(function(&package, "call")).kind
+        else {
+            panic!("expected runtime method call with generic arguments");
+        };
+        assert!(matches!(
+            args.args.as_slice(),
+            [
+                hir::GenericArg::Lifetime(lifetime),
+                hir::GenericArg::Const(_),
+            ] if lifetime.as_str() == "'a"
+        ));
+    }
+
+    #[test]
     fn resolves_const_generic_parameter_in_body() {
         let (package, diagnostics) = lower("fn constant<const N: usize>() -> usize { N }");
         let hir::ExprKind::Path(path) = &body_expr(function(&package, "constant")).kind else {
