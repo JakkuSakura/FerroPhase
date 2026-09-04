@@ -179,7 +179,10 @@ impl AstToHirLowerer {
             };
             match arg {
                 ast::GenericArg::Lifetime(name) => {
-                    hir_args.push(hir::GenericArg::Lifetime(name.as_str().into()))
+                    hir_args.push(hir::GenericArg::Lifetime(hir::Lifetime::from_name(
+                        name.as_str(),
+                        self.next_id(),
+                    )))
                 }
                 ast::GenericArg::Type(ty) => {
                     if matches!(ty.as_ref(), ast::Ty::Wildcard(_)) {
@@ -294,9 +297,10 @@ impl AstToHirLowerer {
                     && name.path.segments.len() == 1
                     && name.path.segments[0].as_str().starts_with('\'')
                 {
-                    hir_args.push(hir::GenericArg::Lifetime(
-                        name.path.segments[0].as_str().into(),
-                    ));
+                    hir_args.push(hir::GenericArg::Lifetime(hir::Lifetime::from_name(
+                        name.path.segments[0].as_str(),
+                        self.next_id(),
+                    )));
                     continue;
                 }
                 // A const generic argument (`Simd<f32, 4>`, `[T; N]`'s own

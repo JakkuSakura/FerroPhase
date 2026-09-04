@@ -868,6 +868,114 @@ impl PathSegment {
     }
 }
 
+/// A lifetime argument in HIR.
+///
+/// Rustc keeps a lifetime as a first-class HIR node rather than reducing it
+/// to its spelling.  The type checker currently erases regions, but retaining
+/// the identity and source metadata here keeps path generic arguments
+/// lossless for diagnostics and later lowering stages.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lifetime {
+    pub hir_id: HirId,
+    pub ident: Symbol,
+    pub kind: LifetimeKind,
+    pub source: LifetimeSource,
+    pub syntax: LifetimeSyntax,
+    pub span: Span,
+}
+
+impl Lifetime {
+    pub fn new(
+        hir_id: HirId,
+        ident: impl Into<Symbol>,
+        kind: LifetimeKind,
+        source: LifetimeSource,
+        syntax: LifetimeSyntax,
+        span: Span,
+    ) -> Self {
+        Self {
+            hir_id,
+            ident: ident.into(),
+            kind,
+            source,
+            syntax,
+            span,
+        }
+    }
+
+    /// Construct a lifetime from a parsed spelling when no dedicated lifetime
+    /// declaration is available. Named lifetimes carry their HIR identity as
+    /// the parameter identity; unlike rustc, this compiler does not allocate a
+    /// separate `LocalDefId` for erased regions.
+    pub fn from_name(name: impl Into<Symbol>, hir_id: HirId) -> Self {
+        let ident = name.into();
+        let (kind, syntax) = match ident.as_str() {
+            "'static" => (LifetimeKind::Static, LifetimeSyntax::ExplicitBound),
+            "'_" => (LifetimeKind::Infer, LifetimeSyntax::ExplicitAnonymous),
+            _ => (LifetimeKind::Param(hir_id.clone()), LifetimeSyntax::ExplicitBound),
+        };
+        Self::new(
+            hir_id,
+            ident,
+            kind,
+            LifetimeSource::Path,
+            syntax,
+            Span::null(),
+        )
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.ident.as_str()
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl From<&str> for Lifetime {
+    fn from(name: &str) -> Self {
+        Self::from_name(name, HirId::default())
+    }
+}
+
+impl From<String> for Lifetime {
+    fn from(name: String) -> Self {
+        Self::from_name(name, HirId::default())
+    }
+}
+
+impl fmt::Display for Lifetime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.ident.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LifetimeKind {
+    Param(HirId),
+    ImplicitObjectLifetimeDefault,
+    Error,
+    Infer,
+    Static,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifetimeSource {
+    Reference,
+    Path,
+    OutlivesBound,
+    PreciseCapturing,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifetimeSyntax {
+    Implicit,
+    ExplicitAnonymous,
+    ExplicitBound,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericArgs {
     pub args: Vec<GenericArg>,
@@ -979,7 +1087,7 @@ pub struct InferArg {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericArg {
-    Lifetime(Symbol),
+    Lifetime(Lifetime),
     Type(Box<TypeExpr>),
     Const(Box<Expr>),
     /// An inferred generic argument (`_`), matching rustc HIR's dedicated
@@ -1830,10 +1938,21 @@ impl GenericArgs {
 impl GenericArg {
     pub fn span(&self) -> Span {
         match self {
-            GenericArg::Lifetime(_) => Span::null(),
+            GenericArg::Lifetime(lifetime) => lifetime.span(),
             GenericArg::Type(ty) => ty.span(),
             GenericArg::Const(expr) => expr.span(),
             GenericArg::Infer(infer) => infer.span,
+        }
+    }
+
+    /// Return the HIR identity carried by this generic argument, matching
+    /// rustc's uniform `GenericArg::hir_id` accessor.
+    pub fn hir_id(&self) -> HirId {
+        match self {
+            GenericArg::Lifetime(lifetime) => lifetime.hir_id.clone(),
+            GenericArg::Type(ty) => ty.hir_id.clone(),
+            GenericArg::Const(expr) => expr.hir_id.clone(),
+            GenericArg::Infer(infer) => infer.hir_id.clone(),
         }
     }
 }
@@ -1851,6 +1970,27 @@ impl AssocItemConstraint {
         };
         self.span
             .or(Span::union([self.gen_args.span(), payload]))
+    }
+
+    /// Obtain the right-hand side of an associated type equality constraint.
+    pub fn ty(&self) -> Option<&TypeExpr> {
+        match &self.kind {
+            AssocItemConstraintKind::Equality {
+                term: Term::Ty(ty),
+            } => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// Obtain the right-hand side of an associated constant equality
+    /// constraint.
+    pub fn ct(&self) -> Option<&Expr> {
+        match &self.kind {
+            AssocItemConstraintKind::Equality {
+                term: Term::Const(expr),
+            } => Some(expr),
+            _ => None,
+        }
     }
 }
 
@@ -1891,7 +2031,8 @@ impl GenericParamKind {
 mod path_tests {
     use super::{
         AssocItemConstraint, AssocItemConstraintKind, GenericArg, GenericArgs,
-        GenericArgsParentheses, PathSegment, Term, TypeExpr, TypeExprKind,
+        GenericArgsParentheses, HirId, Lifetime, LifetimeKind, OwnerId, PackageId, PathSegment,
+        Term, TypeExpr, TypeExprKind,
     };
 
     #[test]
@@ -1944,6 +2085,37 @@ mod path_tests {
         assert_eq!(inputs.len(), 1);
         assert!(matches!(output.kind, TypeExprKind::Never));
         assert!(args.paren_sugar_output().is_some());
+    }
+
+    #[test]
+    fn lifetime_arguments_keep_hir_identity_and_kind() {
+        let lifetime = Lifetime::from_name("'a", HirId::new(OwnerId::root(PackageId::new("p")), 7));
+        let arg = GenericArg::Lifetime(lifetime.clone());
+
+        assert_eq!(lifetime.as_str(), "'a");
+        assert!(matches!(&lifetime.kind, LifetimeKind::Param(_)));
+        assert_eq!(arg.hir_id(), lifetime.hir_id.clone());
+        assert_eq!(arg.span(), lifetime.span);
+    }
+
+    #[test]
+    fn associated_constraints_expose_typed_rhs() {
+        let ty = TypeExpr::new(
+            Default::default(),
+            TypeExprKind::Never,
+            Default::default(),
+        );
+        let type_constraint = AssocItemConstraint {
+            hir_id: Default::default(),
+            ident: "Item".into(),
+            gen_args: GenericArgs::default(),
+            kind: AssocItemConstraintKind::Equality {
+                term: Term::Ty(Box::new(ty)),
+            },
+            span: Default::default(),
+        };
+        assert!(type_constraint.ty().is_some());
+        assert!(type_constraint.ct().is_none());
     }
 }
 
