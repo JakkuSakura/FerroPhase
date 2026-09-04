@@ -1274,7 +1274,10 @@ impl AstToHirLowerer {
                             hir_id: this.next_id(),
                             def_id,
                             name: hir::Symbol::new(name),
-                            kind: hir::GenericParamKind::Type { default: None },
+                            kind: hir::GenericParamKind::Type {
+                                default: None,
+                                synthetic: false,
+                            },
                             bounds: Vec::new(),
                             explicit_bindings: Vec::new(),
                             projection_bounds: Vec::new(),

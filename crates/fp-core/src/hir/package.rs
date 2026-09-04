@@ -1072,7 +1072,10 @@ mod tests {
                 hir_id: HirId::new(OwnerId::root(PackageId::new("test")), 2),
                 def_id: param.clone(),
                 name: "T".into(),
-                kind: GenericParamKind::Type { default: None },
+                kind: GenericParamKind::Type {
+                    default: None,
+                    synthetic: false,
+                },
                 bounds: Vec::new(),
                 explicit_bindings: Vec::new(),
                 projection_bounds: Vec::new(),
