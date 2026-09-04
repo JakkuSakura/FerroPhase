@@ -1748,7 +1748,11 @@ impl<'a> HirToAstLifter<'a> {
                             path_span: Span::null(),
                             position,
                         }),
-                        path: self.lift_ast_path(&hir::Path::new(trait_path.res.clone(), path))?,
+                        path: self.lift_ast_path(&hir::Path::with_span(
+                            trait_path.span(),
+                            trait_path.res.clone(),
+                            path,
+                        ))?,
                     });
                 }
                 Ok(Name {

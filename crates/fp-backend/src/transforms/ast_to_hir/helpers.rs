@@ -408,7 +408,7 @@ impl AstToHirLowerer {
                         let mut qpath = hir::QPath::Resolved(
                             Some(Box::new(base_ty)),
                             hir::Path {
-                                span: Default::default(),
+                                span: name.path.span(),
                                 res: trait_res,
                                 segments: resolved_segments,
                             },
