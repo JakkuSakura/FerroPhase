@@ -495,6 +495,19 @@ pub enum AngleBracketedArg {
     Constraint(AssocItemConstraint),
 }
 
+impl AngleBracketedArg {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Arg(arg) => match arg {
+                GenericArg::Lifetime(_) => Span::null(),
+                GenericArg::Type(ty) => ty.span(),
+                GenericArg::Const(expr) => expr.span(),
+            },
+            Self::Constraint(constraint) => constraint.span,
+        }
+    }
+}
+
 /// A constraint on an associated item in an angle-bracketed argument list.
 ///
 /// Rustc keeps generic arguments attached to the constrained item itself, so
@@ -502,6 +515,9 @@ pub enum AngleBracketedArg {
 /// Keep that distinction here instead of throwing away the `<...>` portion.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct AssocItemConstraint {
+    /// Source span covering the complete associated-item constraint.
+    #[serde(default)]
+    pub span: Span,
     /// The constrained associated item identifier, matching rustc AST.
     pub ident: Ident,
     pub gen_args: Option<GenericArgs>,
@@ -593,6 +609,7 @@ impl std::fmt::Display for AngleBracketedArg {
                 ident,
                 gen_args,
                 kind: AssocItemConstraintKind::Equality { term },
+                ..
             }) => {
                 write!(f, "{ident}")?;
                 if let Some(args) = gen_args {
@@ -604,6 +621,7 @@ impl std::fmt::Display for AngleBracketedArg {
                 ident,
                 gen_args,
                 kind: AssocItemConstraintKind::Bound { bounds },
+                ..
             }) => {
                 write!(f, "{ident}")?;
                 if let Some(args) = gen_args {

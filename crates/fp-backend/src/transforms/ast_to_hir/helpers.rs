@@ -122,17 +122,12 @@ impl AstToHirLowerer {
                 let ast::AngleBracketedArg::Constraint(constraint) = arg else {
                     continue;
                 };
-                let constraint_span = match &constraint.kind {
-                    ast::AssocItemConstraintKind::Equality { term } => term.span(),
-                    ast::AssocItemConstraintKind::Bound { bounds } => {
-                        Span::union(bounds.iter().map(ast::Ty::span))
-                    }
-                };
                 match constraint {
                     ast::AssocItemConstraint {
                         ident,
                         gen_args,
                         kind: ast::AssocItemConstraintKind::Equality { term },
+                        span: constraint_span,
                     } => {
                         let term = match term {
                             ast::Term::Ty(ty) => {
@@ -152,13 +147,14 @@ impl AstToHirLowerer {
                             ident: ident.clone().into(),
                             gen_args,
                             kind: hir::AssocItemConstraintKind::Equality { term },
-                            span: constraint_span,
+                            span: *constraint_span,
                         });
                     }
                     ast::AssocItemConstraint {
                         ident,
                         gen_args,
                         kind: ast::AssocItemConstraintKind::Bound { bounds },
+                        span: constraint_span,
                     } => {
                         let gen_args = gen_args
                             .as_ref()
@@ -175,7 +171,7 @@ impl AstToHirLowerer {
                                     .map(|bound| self.transform_type_to_hir(bound))
                                     .collect::<Result<Vec<_>>>()?,
                             },
-                            span: constraint_span,
+                            span: *constraint_span,
                         });
                     }
                 }

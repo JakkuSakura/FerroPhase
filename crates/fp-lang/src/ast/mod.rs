@@ -504,6 +504,10 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<GenericArgs> 
         loop {
             let mut item_probe = probe;
             if let Some(name) = peek_ident_like(item_probe) {
+                let ident_span = item_probe
+                    .first()
+                    .map(token_span_to_span)
+                    .unwrap_or_else(Span::null);
                 let ident = ident_like(&mut item_probe)?;
                 if name.starts_with('\'') {
                     probe = item_probe;
@@ -521,16 +525,34 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<GenericArgs> 
                     let gen_args = parse_optional_path_arguments(&mut constraint_probe)?;
                     if skip_symbol(&mut constraint_probe, "=").is_ok() {
                         let term = parse_assoc_item_term(&mut constraint_probe)?;
+                        let span = Span::union([
+                            ident_span,
+                            gen_args
+                                .as_ref()
+                                .map(GenericArgs::span)
+                                .unwrap_or_else(Span::null),
+                            term.span(),
+                        ]);
                         probe = constraint_probe;
                         args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
+                            span,
                             ident,
                             gen_args,
                             kind: AssocItemConstraintKind::Equality { term },
                         }));
                     } else if skip_symbol(&mut constraint_probe, ":").is_ok() {
                         let bounds = parse_type_bounds(&mut constraint_probe)?;
+                        let span = Span::union([
+                            ident_span,
+                            gen_args
+                                .as_ref()
+                                .map(GenericArgs::span)
+                                .unwrap_or_else(Span::null),
+                            Span::union(bounds.bounds.iter().map(Expr::span)),
+                        ]);
                         probe = constraint_probe;
                         args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
+                            span,
                             ident,
                             gen_args,
                             kind: AssocItemConstraintKind::Bound {
