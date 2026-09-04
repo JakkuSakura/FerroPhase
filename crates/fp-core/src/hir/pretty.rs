@@ -926,33 +926,20 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
     ) {
         "(..)".to_owned()
     } else if matches!(args.parenthesized, GenericArgsParentheses::ParenSugar) {
-        let inputs = match args.args.first() {
-            Some(GenericArg::Type(ty)) => match &ty.kind {
-                TypeExprKind::Tuple(inputs) => inputs
+        let inputs = args
+            .paren_sugar_inputs_output()
+            .map(|(inputs, _)| {
+                inputs
                     .iter()
                     .map(|input| fmt_type_expr(input, ctx))
                     .collect::<Vec<_>>()
-                    .join(", "),
-                _ => fmt_type_expr(ty.as_ref(), ctx),
-            },
-            _ => String::new(),
-        };
+                    .join(", ")
+            })
+            .unwrap_or_default();
         let mut text = format!("({inputs})");
-        if let Some(AssocItemConstraint {
-            kind: crate::hir::AssocItemConstraintKind::Equality { term: Term::Ty(ty) },
-            ..
-        }) = args.constraints.iter().find(|constraint| {
-            matches!(
-                constraint,
-                AssocItemConstraint {
-                    ident,
-                    kind: crate::hir::AssocItemConstraintKind::Equality { .. },
-                    ..
-                } if ident.as_str() == "Output"
-            )
-        }) {
+        if let Some((_, ty)) = args.paren_sugar_inputs_output() {
             if !matches!(&ty.kind, TypeExprKind::Tuple(inputs) if inputs.is_empty()) {
-                text.push_str(&format!(" -> {}", fmt_type_expr(ty.as_ref(), ctx)));
+                text.push_str(&format!(" -> {}", fmt_type_expr(ty, ctx)));
             }
         }
         text
@@ -1016,36 +1003,18 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                 generic_args.parenthesized,
                 GenericArgsParentheses::ParenSugar
             ) {
-                let inputs = match generic_args.args.first() {
-                    Some(GenericArg::Type(ty)) => match &ty.kind {
-                        TypeExprKind::Tuple(inputs) => inputs
+                let inputs = generic_args
+                    .paren_sugar_inputs_output()
+                    .map(|(inputs, _)| {
+                        inputs
                             .iter()
                             .map(|input| fmt_type_expr(input, ctx))
                             .collect::<Vec<_>>()
-                            .join(", "),
-                        _ => fmt_type_expr(ty, ctx),
-                    },
-                    _ => String::new(),
-                };
-                text.push_str(&format!("({inputs})"));
-                if let Some(AssocItemConstraint {
-                    kind: crate::hir::AssocItemConstraintKind::Equality { term: Term::Ty(ty) },
-                    ..
-                }) = generic_args
-                    .constraints
-                    .iter()
-                    .find(|constraint| {
-                        matches!(
-                            constraint,
-                            AssocItemConstraint {
-                                ident,
-                                kind: crate::hir::AssocItemConstraintKind::Equality { .. },
-                                ..
-                            }
-                                if ident.as_str() == "Output"
-                        )
+                            .join(", ")
                     })
-                {
+                    .unwrap_or_default();
+                text.push_str(&format!("({inputs})"));
+                if let Some((_, ty)) = generic_args.paren_sugar_inputs_output() {
                     if !matches!(&ty.kind, TypeExprKind::Tuple(inputs) if inputs.is_empty()) {
                         text.push_str(&format!(" -> {}", fmt_type_expr(ty, ctx)));
                     }
@@ -1157,6 +1126,55 @@ mod tests {
             Path::new(Res::Error, vec![path_segment("Trait")]),
         );
         assert_eq!(fmt_qpath(&trait_only, &ctx), "<Value as Trait>");
+    }
+
+    #[test]
+    fn formats_parenthesized_args_with_implicit_lifetime() {
+        let input = TypeExpr::new(
+            HirId::new(OwnerId::root(PackageId::new("test")), 3),
+            TypeExprKind::Tuple(vec![Box::new(TypeExpr::new(
+                HirId::new(OwnerId::root(PackageId::new("test")), 4),
+                TypeExprKind::Never,
+                Span::null(),
+            ))]),
+            Span::null(),
+        );
+        let output = TypeExpr::new(
+            HirId::new(OwnerId::root(PackageId::new("test")), 5),
+            TypeExprKind::Never,
+            Span::null(),
+        );
+        let args = GenericArgs {
+            args: vec![
+                GenericArg::Lifetime("'a".into()),
+                GenericArg::Type(Box::new(input)),
+            ],
+            constraints: vec![AssocItemConstraint {
+                hir_id: HirId::new(OwnerId::root(PackageId::new("test")), 6),
+                ident: "Output".into(),
+                gen_args: GenericArgs::default(),
+                kind: crate::hir::AssocItemConstraintKind::Equality {
+                    term: Term::Ty(Box::new(output)),
+                },
+                span: Span::null(),
+            }],
+            parenthesized: GenericArgsParentheses::ParenSugar,
+            span_ext: Span::null(),
+        };
+        let path = Path::new(
+            Res::Error,
+            vec![PathSegment {
+                ident: "Fn".into(),
+                hir_id: Default::default(),
+                args: Some(args),
+                infer_args: false,
+                res: Res::Error,
+            }],
+        );
+        let options = PrettyOptions::default();
+        let ctx = PrettyCtx::new(&options);
+
+        assert_eq!(fmt_path(&path, &ctx), "Fn(!) -> !");
     }
 }
 
