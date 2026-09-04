@@ -899,105 +899,6 @@ fn type_binary_op(symbol: &str) -> Option<(u8, TypeBinaryOpKind)> {
     })
 }
 
-pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<Ty>> {
-    let mut probe = *input;
-    if !try_eat_symbol(&mut probe, "<") {
-        return Ok(Vec::new());
-    }
-    let mut args = Vec::new();
-    if peek_symbol(probe) != Some(">") {
-        loop {
-            let Ok(arg) = parse_type_arg(&mut probe) else {
-                return Ok(Vec::new());
-            };
-            args.push(arg);
-            let mut comma_probe = probe;
-            if skip_symbol(&mut comma_probe, ",").is_err() {
-                break;
-            }
-            if peek_symbol(comma_probe) == Some(">") {
-                probe = comma_probe;
-                break;
-            }
-            probe = comma_probe;
-        }
-    }
-    if skip_symbol(&mut probe, ">").is_err() {
-        return Ok(Vec::new());
-    }
-    *input = probe;
-    Ok(args)
-}
-
-fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
-    let mut probe = *input;
-    if let Ok(ident) = ident_like(&mut probe) {
-        let mut assign_probe = probe;
-        if skip_symbol(&mut assign_probe, "=").is_ok() {
-            let value = parse_type_expr(&mut assign_probe)?;
-            *input = assign_probe;
-            return Ok(Ty::Expr(Box::new(
-                ExprKind::Assign(ExprAssign {
-                    span: Span::null(),
-                    target: Box::new(Expr::name(Name::path(Path::plain(vec![ident])))),
-                    value: Box::new(type_to_expr(&value)),
-                })
-                .into(),
-            )));
-        }
-        // An associated-type *bound* generic arg (real `alloc::collections
-        // ::vec_deque`'s own `IntoIterator<Item = T, IntoIter:
-        // DoubleEndedIterator>`) — as opposed to the `Ident = Type` binding
-        // above, this constrains the associated type without naming it
-        // concretely. This checker has no separate slot for it, so it's
-        // parsed and dropped, same treatment already given to any other
-        // bound this checker doesn't act on further. The associated type
-        // itself can carry its own generic/lifetime args before the `:`
-        // (real `core::str::pattern`'s own `Pattern<Searcher<'a>: fmt::
-        // Debug>>` — bounding `Searcher<'a>` specifically, not a bare
-        // `Searcher`) — `parse_optional_type_args` already knows how to
-        // skip a lifetime-only argument list like this.
-        let mut bound_probe = probe;
-        let _ = parse_optional_type_args(&mut bound_probe)?;
-        if skip_symbol(&mut bound_probe, ":").is_ok() && parse_type_bounds(&mut bound_probe).is_ok()
-        {
-            *input = bound_probe;
-            return Ok(Ty::Expr(Box::new(Expr::name(Name::path(Path::plain(
-                vec![ident],
-            ))))));
-        }
-    }
-    // A const-generic argument's own *value* (real `core::array`'s own
-    // `IntoIter<char, 3>`, a plain integer, as opposed to `N` naming a
-    // const-generic *parameter*, which the ordinary `parse_type_expr`
-    // fallback below already handles as a ident-shaped type path) needs
-    // `parse_cast_no_struct`, not the full `parse_type_expr` → ... →
-    // `parse_simple_type`'s own const-literal branch: that branch parses
-    // via `parse_expr_winnow_no_struct` at full expression precedence,
-    // which happily continues past the literal looking for a binary
-    // operator — and mistakes the generic-argument list's own closing
-    // `>` for the start of a `3 > ..` comparison, consuming it and
-    // leaving the parser looking for a right-hand side at whatever
-    // follows (usually `)`/`;`), which then fails far downstream with a
-    // confusing "expected expression" error with no trace back to this
-    // `<...>` list at all. `parse_cast_no_struct` sits below every
-    // binary operator in the precedence chain, so it naturally stops
-    // right after the literal.
-    // A braced const-generic argument (real `alloc::vec::mod`'s own
-    // `TransmuteFrom<&'a MaybeUninit<From>, { Assume::SAFETY }>`) is a
-    // block expression, not a bare literal — same value-position as the
-    // literal case just below, just wrapped in `{ .. }`.
-    if input.first().is_some_and(|token| {
-        token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral
-    }) || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
-        || peek_symbol(*input) == Some("{")
-    {
-        let expr = parse_cast_no_struct(input, 0)?;
-        return Ok(Ty::Expr(Box::new(expr)));
-    }
-    parse_type_expr(input)
-}
-
 pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
     let mut bounds = Vec::new();
     loop {
@@ -1247,8 +1148,8 @@ pub(crate) fn parse_optional_generic_params(
             let mut default = None;
             if skip_symbol(&mut probe, "=").is_ok() {
                 if is_const {
-                    // Same reasoning as `parse_type_arg`'s own
-                    // const-generic-argument case (`Foo<char, 3>`): full
+                    // The same reasoning as path-argument parsing's
+                    // const-generic case (`Foo<char, 3>`): full
                     // expression precedence keeps going past a literal
                     // hunting for a binary operator, and mistakes this
                     // list's own closing `>` for a `{ 1 } > ..`

@@ -472,7 +472,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
     Ok(Name::path(Path::new(prefix, segments)))
 }
 
-fn parse_optional_path_arguments(input: &mut &[Token]) -> ModalResult<PathArguments> {
+pub(crate) fn parse_optional_path_arguments(input: &mut &[Token]) -> ModalResult<PathArguments> {
     let mut probe = *input;
     match parse_path_arguments_inner(&mut probe) {
         Ok(arguments) => {

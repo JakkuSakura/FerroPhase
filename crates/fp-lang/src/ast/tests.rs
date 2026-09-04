@@ -1934,7 +1934,36 @@ fn parse_expr_ast_supports_turbofish_method_call() {
     let ExprInvokeTarget::Method(select) = &invoke.target else {
         panic!("expected method invocation, got {:?}", invoke.target);
     };
-    assert_eq!(select.generic_args.len(), 1);
+    let fp_core::ast::PathArguments::AngleBracketed(args) = &select.generic_args else {
+        panic!("expected angle-bracketed method arguments");
+    };
+    assert_eq!(args.len(), 1);
+}
+
+#[test]
+fn parse_expr_ast_preserves_structured_method_arguments() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("ap.arg::<'a, 3, _>()")
+        .unwrap();
+    let ExprKind::Invoke(invoke) = expr.kind() else {
+        panic!("expected invocation, got {:?}", expr.kind());
+    };
+    let ExprInvokeTarget::Method(select) = &invoke.target else {
+        panic!("expected method invocation, got {:?}", invoke.target);
+    };
+    let fp_core::ast::PathArguments::AngleBracketed(args) = &select.generic_args else {
+        panic!("expected angle-bracketed method arguments");
+    };
+    assert!(matches!(
+        args.as_slice(),
+        [
+            fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(lifetime)),
+            fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_)),
+            fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(infer)),
+        ] if lifetime == "'a" && matches!(infer.as_ref(), fp_core::ast::Ty::Wildcard(_))
+    ));
 }
 
 #[test]

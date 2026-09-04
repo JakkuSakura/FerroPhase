@@ -68,7 +68,7 @@ impl AstToHirLowerer {
         }
     }
 
-    fn convert_path_arguments(
+    pub(super) fn convert_path_arguments(
         &mut self,
         arguments: &ast::PathArguments,
     ) -> Result<hir::GenericArgs> {
@@ -226,7 +226,7 @@ impl AstToHirLowerer {
                 continue;
             }
             // An explicit associated-type binding (`Iterator<Item = U>` —
-            // fp-lang's `parse_type_arg` turns `Item = U` into a
+            // fp-lang's path-argument parser turns `Item = U` into a
             // `Ty::Expr(Assign { target: Item, value: U })` entry among a
             // `Path` segment's own `args`, per this same crate's
             // `items.rs`' `explicit_bindings` extraction, which already
@@ -591,10 +591,10 @@ impl AstToHirLowerer {
                 };
                 let type_base =
                     self.ast_expr_to_hir_path(&select.obj, base_scope, param_mode)?;
-                let member_args = if select.generic_args.is_empty() {
+                let member_args = if select.generic_args.is_none() {
                     None
                 } else {
-                    Some(self.convert_generic_args(&select.generic_args)?)
+                    Some(self.convert_path_arguments(&select.generic_args)?)
                 };
                 let seg = self.make_path_segment(&select.field.name, member_args, param_mode);
                 if matches!(base_scope, PathResolutionScope::Type) {

@@ -1127,7 +1127,7 @@ fn transform_generic_function_and_method() -> Result<()> {
                 span: Span::null(),
                 obj: Box::new(ast::Expr::ident(ident("self"))),
                 field: ident("value"),
-                generic_args: Vec::new(),
+                generic_args: ast::PathArguments::None,
             },
         ))),
     );
@@ -3322,7 +3322,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
                 span: Span::null(),
                 obj: Box::new(ast::Expr::ident(ident("self"))),
                 field: ident("value"),
-                generic_args: Vec::new(),
+                generic_args: ast::PathArguments::None,
             },
         ))),
     );

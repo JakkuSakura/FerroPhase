@@ -1,8 +1,8 @@
 use fp_core::ast::{
     BlockStmt, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprFieldAccess,
     ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, Ident, Name,
-    Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt, TypePrimitive,
-    Value,
+    Path, PathArguments, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt,
+    TypePrimitive, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome, PortableOpCall};
@@ -161,7 +161,7 @@ fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Exp
                     .collect(),
             )))),
             field: Ident::new(method),
-            generic_args: Vec::new(),
+            generic_args: PathArguments::None,
         }),
         args,
         kwargs: Vec::new(),
@@ -300,7 +300,7 @@ fn invoke_method(receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {
             span: Default::default(),
             obj: Box::new(receiver),
             field: Ident::new(method),
-            generic_args: Vec::new(),
+            generic_args: PathArguments::None,
         }),
         args,
         kwargs: Vec::new(),
@@ -312,6 +312,6 @@ fn select_property(receiver: Expr, property: &str) -> Expr {
         span: Default::default(),
         obj: Box::new(receiver),
         field: Ident::new(property),
-        generic_args: Vec::new(),
+        generic_args: PathArguments::None,
     }))
 }

@@ -277,7 +277,7 @@ fn lower_traversal(traversal: &Traversal) -> CoreResult<Expr> {
                     span: Span::null(),
                     obj: Box::new(current),
                     field: Ident::new(ident.as_str()),
-                    generic_args: Vec::new(),
+                    generic_args: fp_core::ast::PathArguments::None,
                 }))
             }
             TraversalOperator::Index(expr) => Expr::new(ExprKind::Index(ExprIndex {

@@ -1,6 +1,7 @@
 use fp_core::ast::{
     BlockStmt, ExprBlock, ExprFieldAccess, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, PatternKind, Ty, Value,
+    ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, PathArguments, PatternKind, Ty,
+    Value,
 };
 use fp_core::intrinsics::{PortableOpCall, materialize_file};
 use fp_core::lang::LangItemRegistry;
@@ -391,7 +392,7 @@ fn materializes_kotlin_result_status_properties_through_the_runtime() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new(field),
-            generic_args: Vec::new(),
+            generic_args: PathArguments::None,
         };
         let materialized = materializer
             .lower_select(&mut select, &None)
@@ -413,7 +414,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("map_err"),
-            generic_args: Vec::new(),
+            generic_args: PathArguments::None,
         }),
         args: vec![Expr::name(Name::ident("convert_error"))],
         kwargs: Vec::new(),
@@ -422,7 +423,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
         span: Default::default(),
         obj: Box::new(Expr::name(Name::ident("result"))),
         field: Ident::new("isSuccess"),
-        generic_args: Vec::new(),
+        generic_args: PathArguments::None,
     }));
     let ok = Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
@@ -430,7 +431,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("ok"),
-            generic_args: Vec::new(),
+            generic_args: PathArguments::None,
         }),
         args: Vec::new(),
         kwargs: Vec::new(),

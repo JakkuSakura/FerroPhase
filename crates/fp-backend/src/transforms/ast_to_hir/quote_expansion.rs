@@ -135,7 +135,7 @@ fn rewrite_expr(expr: &mut ast::Expr, quotes: &HashMap<String, ast::ExprQuote>) 
         ast::ExprKind::Invoke(invoke) => {
             if let ast::ExprInvokeTarget::Method(select) = &mut invoke.target {
                 if select.field.name == "len"
-                    && select.generic_args.is_empty()
+                    && select.generic_args.is_none()
                     && invoke.args.is_empty()
                     && let Some(name) = quote_value_name(select.obj.as_ref())
                     && let Some(quote) = quotes.get(name)

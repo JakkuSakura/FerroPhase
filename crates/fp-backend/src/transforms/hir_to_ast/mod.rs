@@ -67,7 +67,7 @@ impl PortableOpAstConverter {
                 target: ast::ExprInvokeTarget::Method(ast::ExprFieldAccess {
                     obj: Box::new(receiver.clone()),
                     field,
-                    generic_args: Vec::new(),
+                    generic_args: ast::PathArguments::None,
                     span: call.span,
                 }),
                 args: args.to_vec(),
@@ -905,20 +905,9 @@ impl<'a> HirToAstLifter<'a> {
                             field: Ident::new(name.as_str()),
                             generic_args: generic_args
                                 .as_ref()
-                                .map(|args| {
-                                    args.args
-                                        .iter()
-                                        .filter_map(|arg| match arg {
-                                            hir::GenericArg::Lifetime(_) => None,
-                                            hir::GenericArg::Type(ty) => self.lift_type(ty).ok(),
-                                            hir::GenericArg::Const(_) => None,
-                                            hir::GenericArg::Infer => {
-                                                Some(ast::Ty::Wildcard(fp_core::ast::TypeWildcard))
-                                            }
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
+                                .map(|args| self.lift_hir_generic_args(args))
+                                .transpose()?
+                                .unwrap_or(ast::PathArguments::None),
                         }),
                         args: lifted_args,
                         kwargs: lifted_kwargs,
@@ -930,7 +919,7 @@ impl<'a> HirToAstLifter<'a> {
                     span: expr.span,
                     obj: Box::new(self.lift_expr(base)?),
                     field: Ident::new(field.as_str()),
-                    generic_args: Vec::new(),
+                    generic_args: ast::PathArguments::None,
                 }))
             }
             hir::ExprKind::Index(base, index) => Expr::new(ast::ExprKind::Index(ExprIndex {
@@ -1752,6 +1741,109 @@ impl<'a> HirToAstLifter<'a> {
         }
     }
 
+    fn lift_hir_generic_args(&self, args: &hir::GenericArgs) -> Result<ast::PathArguments> {
+        if matches!(
+            args.parenthesized,
+            hir::GenericArgsParentheses::ReturnTypeNotation
+        ) {
+            return Ok(ast::PathArguments::ParenthesizedElided);
+        }
+        if matches!(
+            args.parenthesized,
+            hir::GenericArgsParentheses::ParenSugar
+        ) {
+            let inputs = match args.args.first() {
+                Some(hir::GenericArg::Type(ty)) => match &ty.kind {
+                    hir::TypeExprKind::Tuple(inputs) => inputs
+                        .iter()
+                        .map(|input| self.lift_type(input))
+                        .collect::<Result<Vec<_>>>()?,
+                    _ => vec![self.lift_type(ty.as_ref())?],
+                },
+                _ => Vec::new(),
+            };
+            let output = args
+                .constraints
+                .iter()
+                .find_map(|constraint| {
+                    let hir::AssocItemConstraint {
+                        name,
+                        kind: hir::AssocItemConstraintKind::Equality {
+                            term: hir::Term::Ty(ty),
+                        },
+                        ..
+                    } = constraint
+                    else {
+                        return None;
+                    };
+                    (name.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
+                })
+                .transpose()?;
+            return Ok(ast::PathArguments::Parenthesized { inputs, output });
+        }
+
+        let mut lifted = args
+            .args
+            .iter()
+            .map(|arg| match arg {
+                hir::GenericArg::Lifetime(lifetime) => Ok(ast::AngleBracketedArg::Arg(
+                    ast::GenericArg::Lifetime(lifetime.as_str().to_owned()),
+                )),
+                hir::GenericArg::Type(ty) => self.lift_type(ty).map(|ty| {
+                    ast::AngleBracketedArg::Arg(ast::GenericArg::Type(Box::new(ty)))
+                }),
+                hir::GenericArg::Const(expr) => self.lift_expr(expr).map(|expr| {
+                    ast::AngleBracketedArg::Arg(ast::GenericArg::Const(Box::new(expr)))
+                }),
+                hir::GenericArg::Infer => Ok(ast::AngleBracketedArg::Arg(
+                    ast::GenericArg::Type(Box::new(ast::Ty::Wildcard(
+                        fp_core::ast::TypeWildcard,
+                    ))),
+                )),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for binding in &args.constraints {
+            let gen_args = binding
+                .gen_args
+                .as_ref()
+                .map(|gen_args| self.lift_hir_generic_args(gen_args))
+                .transpose()?;
+            lifted.push(match binding {
+                hir::AssocItemConstraint {
+                    name,
+                    kind: hir::AssocItemConstraintKind::Equality { term },
+                    ..
+                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
+                    name: Ident::new(name.as_str()),
+                    gen_args,
+                    kind: ast::AssocItemConstraintKind::Equality {
+                        term: match term {
+                            hir::Term::Ty(ty) => ast::Term::Ty(Box::new(self.lift_type(ty)?)),
+                            hir::Term::Const(expr) => {
+                                ast::Term::Const(Box::new(self.lift_expr(expr)?))
+                            }
+                        },
+                    },
+                }),
+                hir::AssocItemConstraint {
+                    name,
+                    kind: hir::AssocItemConstraintKind::Bound { bounds },
+                    ..
+                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
+                    name: Ident::new(name.as_str()),
+                    gen_args,
+                    kind: ast::AssocItemConstraintKind::Bound {
+                        bounds: bounds
+                            .iter()
+                            .map(|bound| self.lift_type(bound))
+                            .collect::<Result<Vec<_>>>()?,
+                    },
+                }),
+            });
+        }
+        Ok(ast::PathArguments::AngleBracketed(lifted))
+    }
+
     fn lift_ast_path(&self, path: &hir::Path) -> Result<Path> {
         let segments = path
             .segments()
@@ -1760,140 +1852,7 @@ impl<'a> HirToAstLifter<'a> {
                 let arguments = segment
                     .args
                     .as_ref()
-                    .map(|args| {
-                        if matches!(
-                            args.parenthesized,
-                            hir::GenericArgsParentheses::ReturnTypeNotation
-                        ) {
-                            return Ok::<_, fp_core::error::Error>(
-                                ast::PathArguments::ParenthesizedElided,
-                            );
-                        }
-                        if matches!(
-                            args.parenthesized,
-                            hir::GenericArgsParentheses::ParenSugar
-                        ) {
-                            let inputs = match args.args.first() {
-                                Some(hir::GenericArg::Type(ty)) => match &ty.kind {
-                                    hir::TypeExprKind::Tuple(inputs) => inputs
-                                        .iter()
-                                        .map(|input| self.lift_type(input))
-                                        .collect::<Result<Vec<_>>>()?,
-                                    _ => vec![self.lift_type(ty.as_ref())?],
-                                },
-                                _ => Vec::new(),
-                            };
-                            let output = args.constraints.iter().find_map(|constraint| {
-                                let hir::AssocItemConstraint {
-                                    name,
-                                    kind: hir::AssocItemConstraintKind::Equality {
-                                        term: hir::Term::Ty(ty),
-                                    },
-                                    ..
-                                } = constraint
-                                else {
-                                    return None;
-                                };
-                                (name.as_str() == "Output")
-                                    .then(|| self.lift_type(ty).map(Box::new))
-                            }).transpose()?;
-                            return Ok::<_, fp_core::error::Error>(
-                                ast::PathArguments::Parenthesized {
-                                    inputs,
-                                    output,
-                                },
-                            );
-                        }
-                        let mut lifted = args
-                            .args
-                            .iter()
-                            .map(|arg| match arg {
-                                hir::GenericArg::Lifetime(lifetime) => {
-                                    Ok(ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(
-                                        lifetime.as_str().to_owned(),
-                                    )))
-                                }
-                                hir::GenericArg::Type(ty) => self
-                                    .lift_type(ty)
-                                    .map(|ty| {
-                                        ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
-                                            Box::new(ty),
-                                        ))
-                                    }),
-                                hir::GenericArg::Const(expr) => self
-                                    .lift_expr(expr)
-                                    .map(|expr| {
-                                        ast::AngleBracketedArg::Arg(ast::GenericArg::Const(
-                                            Box::new(expr),
-                                        ))
-                                    }),
-                                hir::GenericArg::Infer => Ok(ast::AngleBracketedArg::Arg(
-                                    ast::GenericArg::Type(Box::new(
-                                        ast::Ty::Wildcard(fp_core::ast::TypeWildcard),
-                                    )),
-                                )),
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        for binding in &args.constraints {
-                            let gen_args = binding
-                                .gen_args
-                                .as_ref()
-                                .map(|gen_args| {
-                                    let path = hir::Path::new(
-                                        hir::Res::Error,
-                                        vec![hir::PathSegment {
-                                            ident: "__constraint_args__".into(),
-                                            args: Some(gen_args.clone()),
-                                            infer_args: false,
-                                            res: hir::Res::Error,
-                                        }],
-                                    );
-                                    self.lift_ast_path(&path).map(|path| {
-                                        path.segments
-                                            .into_iter()
-                                            .next()
-                                            .expect("synthetic constraint segment")
-                                            .arguments
-                                    })
-                                })
-                                .transpose()?;
-                            lifted.push(match binding {
-                                hir::AssocItemConstraint {
-                                    name,
-                                    kind: hir::AssocItemConstraintKind::Equality { term },
-                                    ..
-                                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
-                                    name: Ident::new(name.as_str()),
-                                    gen_args,
-                                    kind: ast::AssocItemConstraintKind::Equality {
-                                        term: match term {
-                                            hir::Term::Ty(ty) => {
-                                                ast::Term::Ty(Box::new(self.lift_type(ty)?))
-                                            }
-                                            hir::Term::Const(expr) => {
-                                                ast::Term::Const(Box::new(self.lift_expr(expr)?))
-                                            }
-                                        },
-                                    },
-                                }),
-                                hir::AssocItemConstraint {
-                                    name,
-                                    kind: hir::AssocItemConstraintKind::Bound { bounds },
-                                    ..
-                                } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
-                                    name: Ident::new(name.as_str()),
-                                    gen_args,
-                                    kind: ast::AssocItemConstraintKind::Bound {
-                                        bounds: bounds
-                                            .iter()
-                                            .map(|bound| self.lift_type(bound))
-                                            .collect::<Result<Vec<_>>>()?,
-                                    },
-                                }),
-                            });
-                        }
-                        Ok::<_, fp_core::error::Error>(ast::PathArguments::AngleBracketed(lifted))
-                    })
+                    .map(|args| self.lift_hir_generic_args(args))
                     .transpose()?
                     .unwrap_or(ast::PathArguments::None);
                 Ok(PathSegment::with_arguments(
@@ -2597,6 +2556,75 @@ mod tests {
         };
         assert_eq!(select.field.as_str(), "unwrapOrTarget");
         assert_eq!(invoke.args.len(), 0);
+    }
+
+    #[test]
+    fn method_lifting_preserves_structured_generic_arguments() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let receiver_id = hir::HirId::new(owner.clone(), 1);
+        let call_id = hir::HirId::new(owner.clone(), 2);
+        let type_id = hir::HirId::new(owner.clone(), 3);
+        let receiver = hir::Expr::new(
+            receiver_id,
+            hir::ExprKind::Literal(hir::Lit::Integer(1)),
+            Span::null(),
+        );
+        let generic_args = hir::GenericArgs {
+            args: vec![
+                hir::GenericArg::Lifetime("'a".into()),
+                hir::GenericArg::Type(Box::new(hir::TypeExpr::new(
+                    type_id,
+                    hir::TypeExprKind::Primitive(fp_core::ast::TypePrimitive::Int(
+                        fp_core::ast::TypeInt::U8,
+                    )),
+                    Span::null(),
+                ))),
+                hir::GenericArg::Const(Box::new(hir::Expr::new(
+                    hir::HirId::new(owner.clone(), 4),
+                    hir::ExprKind::Literal(hir::Lit::Integer(3)),
+                    Span::null(),
+                ))),
+                hir::GenericArg::Infer,
+            ],
+            constraints: Vec::new(),
+            parenthesized: hir::GenericArgsParentheses::No,
+        };
+        let call = hir::Expr::new(
+            call_id,
+            hir::ExprKind::MethodCall(
+                Box::new(receiver),
+                "method".into(),
+                Some(generic_args),
+                Vec::new(),
+            ),
+            Span::null(),
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+        let lifted = lifter.lift_expr(&call).expect("lift method call");
+        let ast::ExprKind::Invoke(invoke) = lifted.kind else {
+            panic!("expected lifted method invocation");
+        };
+        let ast::ExprInvokeTarget::Method(select) = invoke.target else {
+            panic!("expected lifted method target");
+        };
+        let ast::PathArguments::AngleBracketed(args) = select.generic_args else {
+            panic!("expected lifted angle-bracketed arguments");
+        };
+        assert!(matches!(
+            args.as_slice(),
+            [
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(lifetime)),
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)),
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Const(_)),
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Type(infer)),
+            ] if lifetime == "'a"
+                && matches!(ty.as_ref(), ast::Ty::Primitive(_))
+                && matches!(infer.as_ref(), ast::Ty::Wildcard(_))
+        ));
     }
 
     impl IntrinsicMaterializer for TestMaterializer {

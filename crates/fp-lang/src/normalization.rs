@@ -2,7 +2,7 @@ use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprFieldAccess, ExprIf,
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprReference, ExprStringTemplate,
     ExprStruct, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident,
-    MacroTokenTree, Name, Path, StmtLet, Ty, Value,
+    MacroTokenTree, Name, Path, PathArguments, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -491,7 +491,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                             span: span.unwrap_or_default(),
                             obj: Box::new(args[0].clone()),
                             field: Ident::new("append"),
-                            generic_args: Vec::new(),
+                            generic_args: PathArguments::None,
                         }),
                         args: vec![formatted],
                         kwargs: Vec::new(),

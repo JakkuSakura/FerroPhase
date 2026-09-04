@@ -331,11 +331,9 @@ fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     Ok(expr)
 }
 
-/// `pub(crate)`, not module-private: `types.rs`'s `parse_type_arg` needs
-/// this exact precedence level (unary/postfix/`as`-cast, below any binary
-/// operator) to parse a const-generic type argument's value (`Foo<char,
-/// 3>`) without also trying to continue past it into a binary comparison
-/// — see that call site's own doc comment.
+/// `pub(crate)` because path-argument parsing and generic-parameter parsing
+/// share this exact precedence level (unary/postfix/`as`-cast, below any
+/// binary operator) for const values such as `Foo<char, 3>`.
 pub(crate) fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut expr = parse_prefix_no_struct(input, file)?;
     loop {
@@ -681,8 +679,8 @@ fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
     if skip_symbol(&mut probe, "::").is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    let args = parse_optional_type_args(&mut probe)?;
-    if args.is_empty() {
+    let args = parse_optional_path_arguments(&mut probe)?;
+    if args.is_none() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
     *input = probe;
@@ -1044,7 +1042,7 @@ enum Postfix {
     /// onward so `apply_postfixes`/AST-to-HIR lowering can tell them apart
     /// instead of only being able to distinguish them once resolved.
     ConstField(Ident),
-    Turbofish(Vec<Ty>),
+    Turbofish(PathArguments),
     Call(Vec<Expr>, Vec<ExprKwArg>),
     Index(Expr),
 }
@@ -1064,7 +1062,7 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 span: span_from_expr(&expr),
                 obj: Box::new(expr),
                 field,
-                generic_args: Vec::new(),
+                generic_args: PathArguments::None,
             })
             .into(),
             Postfix::ConstField(field) => {
@@ -1079,7 +1077,7 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                         span,
                         obj: Box::new(expr),
                         field,
-                        generic_args: Vec::new(),
+                        generic_args: PathArguments::None,
                     })
                     .into(),
                 }

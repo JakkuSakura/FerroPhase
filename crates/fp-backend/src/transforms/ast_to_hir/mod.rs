@@ -2788,7 +2788,7 @@ impl AstToHirLowerer {
                 // resolve. Reaches here as a bare `Name::ident("_")`
                 // expression (fp-lang parses it as an ordinary identifier,
                 // not a dedicated `ast::Ty::Wildcard` node, in every
-                // position this crate's own `parse_type_arg` builds a
+                // position this crate's own path-argument parser builds a
                 // `Ty::Expr` from) — without this check it falls all the
                 // way through to `ast_expr_to_hir_path`, which has no
                 // declaration named `_` to resolve, producing a genuine

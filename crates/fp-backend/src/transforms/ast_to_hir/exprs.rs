@@ -771,10 +771,10 @@ impl AstToHirLowerer {
                             // `Res` (or bind a same-named module), which then
                             // makes the type checker report an unresolved
                             // value path instead of selecting the impl item.
-                            let member_args = if select.generic_args.is_empty() {
+                            let member_args = if select.generic_args.is_none() {
                                 None
                             } else {
-                                Some(self.convert_generic_args(&select.generic_args)?)
+                                Some(self.convert_path_arguments(&select.generic_args)?)
                             };
                             let receiver = hir::TypeExpr::new(
                                 self.next_id(),
@@ -800,10 +800,10 @@ impl AstToHirLowerer {
                     }
                 }
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
-                let generic_args = if select.generic_args.is_empty() {
+                let generic_args = if select.generic_args.is_none() {
                     None
                 } else {
-                    Some(self.convert_generic_args(&select.generic_args)?)
+                    Some(self.convert_path_arguments(&select.generic_args)?)
                 };
                 let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(

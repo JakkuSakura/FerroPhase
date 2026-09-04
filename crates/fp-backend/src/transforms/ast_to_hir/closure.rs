@@ -1441,7 +1441,7 @@ impl CaptureReplacer {
                                 span: fp_core::span::Span::null(),
                                 obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                 field: ident.clone(),
-                                generic_args: Vec::new(),
+                                generic_args: ast::PathArguments::None,
                             }));
                         *expr = expr_struct;
                     }
@@ -1519,7 +1519,7 @@ impl CaptureReplacer {
                                         span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                         field: ident.clone(),
-                                        generic_args: Vec::new(),
+                                        generic_args: ast::PathArguments::None,
                                     },
                                 ));
                                 invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());

@@ -781,7 +781,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
     let select = ast::ExprFieldAccess {
         obj: expr_index.obj,
         field: ast::Ident::new("get_unchecked"),
-        generic_args: Vec::new(),
+        generic_args: ast::PathArguments::None,
         span: Span::null(),
     };
     let invoke = ast::ExprInvoke {
