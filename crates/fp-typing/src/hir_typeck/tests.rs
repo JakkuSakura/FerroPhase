@@ -21,7 +21,8 @@ async fn typecheck_program(
     package: hir::HirPackage,
     executor: ExecutorHandle,
 ) -> Result<Rc<RefCell<hir::HirPackage>>> {
-    let checker = HirTypeChecker::new(package, None, None, executor);
+    let package = Rc::new(RefCell::new(package));
+    let checker = HirTypeChecker::new(Rc::clone(&package), None, None, executor);
     let item_ids: Vec<_> = checker
         .borrow()
         .package()
@@ -758,8 +759,8 @@ fn typed_command_helper_local_preserves_method_def_identity() {
 #[test]
 fn comptime_request_returns_resolver_value_directly() {
     let resolver: ComptimeResolver =
-        Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
-    let package = hir::HirPackage::new(test_pkg());
+        Rc::new(|_program, _request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
+    let package = Rc::new(RefCell::new(hir::HirPackage::new(test_pkg())));
     let checker = HirTypeChecker::new(
         package,
         None,

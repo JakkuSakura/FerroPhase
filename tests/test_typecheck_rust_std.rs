@@ -91,9 +91,9 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
         let dependency_program = Rc::new(hir_program.borrow().clone());
         let executor = CompilerExecutor::new();
         let comptime_resolver: ComptimeResolver =
-            Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
+            Rc::new(|_program, _request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
         let checker = HirTypeChecker::new(
-            package.borrow().clone(),
+            Rc::clone(&package),
             Some(dependency_program),
             Some(comptime_resolver),
             executor.handle(),

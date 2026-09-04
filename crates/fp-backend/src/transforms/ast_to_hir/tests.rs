@@ -4004,7 +4004,24 @@ mod function_body_resolution {
         let items = parser
             .parse_items_ast(source)
             .expect("function-body fixture should parse");
-        let package = package_from_items(items).expect("function-body fixture package");
+        let mut package = package_from_items(items).expect("function-body fixture package");
+        fn has_module_path(module: &ast::Module, path: &[&str]) -> bool {
+            let Some((head, tail)) = path.split_first() else {
+                return true;
+            };
+            module.items.iter().any(|item| {
+                let ast::ItemKind::Module(child) = item.kind() else {
+                    return false;
+                };
+                child.name.as_str() == *head && has_module_path(child, tail)
+            })
+        }
+        if has_module_path(&package.module, &["prelude", "v1"]) {
+            package.prelude_modules.push(fp_core::ast::package::PackagePath::new(
+                PackageId::new("test"),
+                InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+            ));
+        }
         let mut lowerer = AstToHirLowerer::new(
             std::rc::Rc::new(AstProgram::new(std::sync::Arc::new(
                 fp_core::ast::package::provider::EmptyProvider,
@@ -4791,6 +4808,132 @@ mod function_body_resolution {
             path.segments.is_empty(),
             "fully resolved import path: {path:?}"
         );
+    }
+
+    #[test]
+    fn resolves_impl_const_generic_in_method_body() {
+        let (package, diagnostics) = lower(
+            "struct Array<T, const N: usize>([T; N]); impl<T, const N: usize> Array<T, N> { fn length(&self) -> usize { N } }",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `N`")),
+            "impl const-generic body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let impl_block = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl item");
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "length" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("length method");
+        let hir::ExprKind::Path(path) = &body_expr(method).kind else {
+            panic!("expected const generic path in impl body");
+        };
+        assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_const_generic_in_array_body_expression() {
+        let (package, diagnostics) = lower(
+            "fn make<const N: usize>() -> [u8; N] { [0; N] }",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved value path `N`")),
+            "array const-generic body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "make");
+        let hir::ExprKind::ArrayRepeat { len, .. } = &body_expr(function).kind else {
+            panic!("expected repeat array expression");
+        };
+        let hir::ExprKind::Path(path) = &len.kind else {
+            panic!("expected const generic repeat count path: {len:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_trait_generic_in_default_method_body() {
+        let (package, diagnostics) = lower(
+            "trait Compare<Rhs> { fn compare(&self, other: &Rhs) -> bool { true } } struct Value; impl Compare<Value> for Value {}",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved Type path `Rhs`")),
+            "trait-generic body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let trait_item = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Trait(trait_def) => Some(trait_def),
+                _ => None,
+            })
+            .expect("trait item");
+        let method = trait_item
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::TraitItemKind::Method(method) if item.name.as_str() == "compare" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("compare method");
+        let ty = type_path(&method.sig.inputs[1].ty);
+        assert!(matches!(ty.res, hir::Res::Generic(_)), "path: {ty:?}");
+    }
+
+    #[test]
+    fn resolves_prelude_type_in_function_body_signature() {
+        let (package, diagnostics) = lower(
+            "mod prelude { pub mod v1 { pub struct PhantomData<T>; } } fn marker<T>() -> PhantomData<T> { PhantomData }",
+        );
+        assert!(
+            diagnostics.iter().all(|diagnostic| !diagnostic
+                .message
+                .to_string()
+                .contains("unresolved Type path `PhantomData`")),
+            "imported prelude type resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let output = type_path(&function(&package, "marker").sig.output);
+        assert!(matches!(output.res, hir::Res::Def(_)), "path: {output:?}");
+    }
+
+    #[test]
+    fn resolves_qualified_module_type_in_function_body() {
+        let (package, diagnostics) = lower(
+            "mod types { pub struct Token; } fn make() -> types::Token { types::Token }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "qualified module body resolution emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "make");
+        let output = type_path(&function.sig.output);
+        assert!(matches!(output.res, hir::Res::Def(_)), "path: {output:?}");
+        let hir::ExprKind::Path(path) = &body_expr(function).kind else {
+            panic!("expected qualified module path body");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
     }
 }
 
