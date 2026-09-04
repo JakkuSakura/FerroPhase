@@ -1763,12 +1763,12 @@ impl<'a> HirToAstLifter<'a> {
         }
     }
 
-    fn lift_hir_generic_args(&self, args: &hir::GenericArgs) -> Result<ast::PathArguments> {
+    fn lift_hir_generic_args(&self, args: &hir::GenericArgs) -> Result<ast::GenericArgs> {
         if matches!(
             args.parenthesized,
             hir::GenericArgsParentheses::ReturnTypeNotation
         ) {
-            return Ok(ast::PathArguments::ParenthesizedElided(args.span_ext));
+            return Ok(ast::GenericArgs::ParenthesizedElided(args.span_ext));
         }
         if matches!(args.parenthesized, hir::GenericArgsParentheses::ParenSugar) {
             let inputs = match args.args.first() {
@@ -1807,7 +1807,7 @@ impl<'a> HirToAstLifter<'a> {
                     args.span_ext.hi,
                 )),
             };
-            return Ok(ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
+            return Ok(ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
                 span: args.span_ext,
                 inputs,
                 inputs_span: args.span_ext,
@@ -1885,7 +1885,7 @@ impl<'a> HirToAstLifter<'a> {
                 }),
             });
         }
-        Ok(ast::PathArguments::AngleBracketed(
+        Ok(ast::GenericArgs::AngleBracketed(
             ast::AngleBracketedArgs {
                 span: args.span_ext,
                 args: lifted,
@@ -1903,7 +1903,7 @@ impl<'a> HirToAstLifter<'a> {
                     .as_ref()
                     .map(|args| self.lift_hir_generic_args(args))
                     .transpose()?;
-                Ok(PathSegment::with_arguments(
+                Ok(PathSegment::with_args(
                     Ident::new(segment.ident.as_str()),
                     arguments,
                 ))
@@ -2658,7 +2658,7 @@ mod tests {
         let ast::ExprInvokeTarget::Method(select) = invoke.target else {
             panic!("expected lifted method target");
         };
-        let Some(ast::PathArguments::AngleBracketed(args)) = select.generic_args else {
+        let Some(ast::GenericArgs::AngleBracketed(args)) = select.generic_args else {
             panic!("expected lifted angle-bracketed arguments");
         };
         assert!(matches!(
@@ -2706,8 +2706,8 @@ mod tests {
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
         let lifted = lifter.lift_path(&path).expect("lift generic path");
-        let Some(ast::PathArguments::AngleBracketed(args)) =
-            lifted.segments[0].arguments.as_deref()
+        let Some(ast::GenericArgs::AngleBracketed(args)) =
+            lifted.segments[0].args.as_deref()
         else {
             panic!("expected lifted generic arguments");
         };
@@ -2747,8 +2747,8 @@ mod tests {
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
         let lifted = lifter.lift_path(&path).expect("lift const-infer path");
-        let Some(ast::PathArguments::AngleBracketed(args)) =
-            lifted.segments[0].arguments.as_deref()
+        let Some(ast::GenericArgs::AngleBracketed(args)) =
+            lifted.segments[0].args.as_deref()
         else {
             panic!("expected lifted generic arguments");
         };

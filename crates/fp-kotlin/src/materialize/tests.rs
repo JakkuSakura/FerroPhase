@@ -518,7 +518,7 @@ fn materializes_collection_defaults_without_rust_default_calls() {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("Vec"),
-            Some(fp_core::ast::PathArguments::from_types(&[Ty::ident(
+            Some(fp_core::ast::GenericArgs::from_types(&[Ty::ident(
                 Ident::new("u8"),
             )])),
         )],

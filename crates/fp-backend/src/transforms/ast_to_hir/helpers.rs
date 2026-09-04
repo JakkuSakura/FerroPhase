@@ -53,7 +53,7 @@ impl AstToHirLowerer {
                 .iter()
                 .map(|segment| {
                     segment
-                        .arguments
+                        .args
                         .as_deref()
                         .map(|arguments| self.convert_path_arguments(arguments))
                         .transpose()
@@ -64,15 +64,15 @@ impl AstToHirLowerer {
 
     pub(super) fn convert_path_arguments(
         &mut self,
-        arguments: &ast::PathArguments,
+        arguments: &ast::GenericArgs,
     ) -> Result<hir::GenericArgs> {
         let span_ext = arguments.span();
         let mut parenthesized = hir::GenericArgsParentheses::No;
         let mut hir_args = Vec::new();
         let mut constraints = Vec::new();
         let args: &[ast::AngleBracketedArg] = match arguments {
-            ast::PathArguments::AngleBracketed(args) => &args.args,
-            ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
+            ast::GenericArgs::AngleBracketed(args) => &args.args,
+            ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
                 inputs, output, ..
             }) => {
                 let output_span = output.span();
@@ -108,7 +108,7 @@ impl AstToHirLowerer {
                 parenthesized = hir::GenericArgsParentheses::ParenSugar;
                 &[]
             }
-            ast::PathArguments::ParenthesizedElided(_) => {
+            ast::GenericArgs::ParenthesizedElided(_) => {
                 parenthesized = hir::GenericArgsParentheses::ReturnTypeNotation;
                 &[]
             }

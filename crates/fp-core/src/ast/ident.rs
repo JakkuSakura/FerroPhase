@@ -167,7 +167,7 @@ impl Path {
     pub fn is_single_argless_ident(&self) -> bool {
         self.prefix == PathPrefix::Plain
             && self.segments.len() == 1
-            && self.segments[0].arguments.is_none()
+            && self.segments[0].args.is_none()
     }
 
     /// Return the identifier for a plain, argument-free one-segment path.
@@ -317,28 +317,28 @@ pub struct PathSegment {
     /// Type/lifetime arguments attached to this segment. `None` means the
     /// source omitted an argument list; `Some` may still hold an explicitly
     /// empty list, matching rustc's AST representation.
-    pub arguments: Option<Box<GenericArgs>>,
+    pub args: Option<Box<GenericArgs>>,
 }
 
 impl PathSegment {
-    pub fn new(ident: Ident, arguments: Option<GenericArgs>) -> Self {
+    pub fn new(ident: Ident, args: Option<GenericArgs>) -> Self {
         Self {
             ident,
-            arguments: arguments.map(Box::new),
+            args: args.map(Box::new),
         }
     }
 
-    pub fn with_arguments(ident: Ident, arguments: Option<GenericArgs>) -> Self {
+    pub fn with_args(ident: Ident, args: Option<GenericArgs>) -> Self {
         Self {
             ident,
-            arguments: arguments.map(Box::new),
+            args: args.map(Box::new),
         }
     }
 
     pub fn from_ident(ident: Ident) -> Self {
         Self {
             ident,
-            arguments: None,
+            args: None,
         }
     }
 
@@ -360,10 +360,6 @@ pub enum GenericArgs {
     /// parenthesized `Trait(Args) -> Output` form.
     ParenthesizedElided(Span),
 }
-
-/// Compatibility name for callers that still use the pre-rustc-alignment
-/// spelling. New code should use [`GenericArgs`].
-pub type PathArguments = GenericArgs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct AngleBracketedArgs {
@@ -563,7 +559,7 @@ impl Eq for Path {}
 impl std::fmt::Display for PathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ident)?;
-        if let Some(arguments) = &self.arguments {
+        if let Some(arguments) = &self.args {
             write!(f, "{arguments}")?;
         }
         Ok(())
@@ -692,7 +688,7 @@ impl Name {
     pub fn as_ident(&self) -> Option<&Ident> {
         (self.path.prefix == PathPrefix::Plain
             && self.path.segments.len() == 1
-            && self.path.segments[0].arguments.is_none())
+            && self.path.segments[0].args.is_none())
         .then_some(&self.path.segments[0].ident)
     }
 
@@ -755,7 +751,7 @@ mod tests {
         );
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].ident.as_str(), "Vec");
-        assert!(path.segments[0].arguments.is_none());
+        assert!(path.segments[0].args.is_none());
     }
 
     #[test]
@@ -781,7 +777,7 @@ mod tests {
     fn path_segment_retains_structured_generic_arguments() {
         let segment = PathSegment::new(
             Ident::new("Array"),
-            Some(PathArguments::AngleBracketed(AngleBracketedArgs {
+            Some(GenericArgs::AngleBracketed(AngleBracketedArgs {
                 span: Span::null(),
                 args: vec![
                     AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),
@@ -791,10 +787,10 @@ mod tests {
                 ],
             })),
         );
-        let Some(arguments) = segment.arguments else {
+        let Some(arguments) = segment.args else {
             panic!("expected generic arguments");
         };
-        let PathArguments::AngleBracketed(args) = *arguments else {
+        let GenericArgs::AngleBracketed(args) = *arguments else {
             panic!("expected angle-bracketed arguments");
         };
         assert!(matches!(

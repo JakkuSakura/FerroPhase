@@ -4708,7 +4708,7 @@ mod function_body_resolution {
             span: Span::null(),
             obj: Box::new(ast::Expr::name(ast::Name::ident("Receiver"))),
             field: ast::Ident::new("method"),
-            generic_args: Some(ast::PathArguments::AngleBracketed(
+            generic_args: Some(ast::GenericArgs::AngleBracketed(
                 ast::AngleBracketedArgs {
                     span: Span::null(),
                     args: vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(

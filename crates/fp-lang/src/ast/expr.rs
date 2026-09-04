@@ -1048,7 +1048,7 @@ enum Postfix {
     /// onward so `apply_postfixes`/AST-to-HIR lowering can tell them apart
     /// instead of only being able to distinguish them once resolved.
     ConstField(Ident),
-    Turbofish(PathArguments),
+    Turbofish(GenericArgs),
     Call(Vec<Expr>, Vec<ExprKwArg>),
     Index(Expr),
 }

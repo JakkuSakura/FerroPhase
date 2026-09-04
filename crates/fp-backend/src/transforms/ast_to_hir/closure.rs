@@ -227,8 +227,8 @@ impl ClosureLowering {
         let ast::ExprKind::Name(ast::Name { path, .. }) = expr.kind() else {
             return None;
         };
-        let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
-            path.segments.last()?.arguments.as_deref()
+        let Some(fp_core::ast::GenericArgs::AngleBracketed(args)) =
+            path.segments.last()?.args.as_deref()
         else {
             return None;
         };

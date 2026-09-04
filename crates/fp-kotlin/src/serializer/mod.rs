@@ -2539,9 +2539,9 @@ impl KotlinEmitter {
                         let segment = path.last();
                         if segment.ident.as_str() == "Nullable" {
                             let arg = segment
-                                .arguments
+                                .args
                                 .as_deref()
-                                .map_or_else(Vec::new, fp_core::ast::PathArguments::legacy_types)
+                                .map_or_else(Vec::new, fp_core::ast::GenericArgs::legacy_types)
                                 .into_iter()
                                 .next();
                             return arg
@@ -2556,9 +2556,9 @@ impl KotlinEmitter {
                 if let ExprKind::Name(Name { path, .. }) = expr.kind() {
                     let segment = path.last();
                     let args = segment
-                        .arguments
+                        .args
                         .as_deref()
-                        .map_or_else(Vec::new, fp_core::ast::PathArguments::legacy_types);
+                        .map_or_else(Vec::new, fp_core::ast::GenericArgs::legacy_types);
                     if !args.is_empty() {
                         let args = args
                             .iter()

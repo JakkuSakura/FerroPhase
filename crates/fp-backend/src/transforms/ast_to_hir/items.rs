@@ -278,8 +278,8 @@ impl AstToHirLowerer {
                     let Some(last_segment) = parameter_path.segments.last() else {
                         return Vec::new();
                     };
-                    let Some(ast::PathArguments::AngleBracketed(args)) =
-                        last_segment.arguments.as_deref()
+                    let Some(ast::GenericArgs::AngleBracketed(args)) =
+                        last_segment.args.as_deref()
                     else {
                         return Vec::new();
                     };
@@ -612,8 +612,8 @@ impl AstToHirLowerer {
                     ast::Name { path, .. } => path
                         .segments
                         .last()
-                        .and_then(|seg| match seg.arguments.as_deref() {
-                            Some(ast::PathArguments::AngleBracketed(args)) => Some(
+                        .and_then(|seg| match seg.args.as_deref() {
+                            Some(ast::GenericArgs::AngleBracketed(args)) => Some(
                                 args.args
                                     .iter()
                                     .filter_map(|arg| match arg {

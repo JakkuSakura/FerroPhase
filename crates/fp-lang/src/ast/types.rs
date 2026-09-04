@@ -414,7 +414,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(span)));
+            segment.args = Some(Box::new(GenericArgs::ParenthesizedElided(span)));
             return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
         }
         let mut params = Vec::new();
@@ -449,7 +449,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let Some(segment) = path.segments.last_mut() else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
-        segment.arguments = Some(Box::new(PathArguments::Parenthesized(
+        segment.args = Some(Box::new(GenericArgs::Parenthesized(
             fp_core::ast::ParenthesizedArgs {
                 span,
                 inputs: params,
@@ -465,12 +465,12 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             && parameter_path.segments.len() == 1
             && parameter_path.segments[0].ident.as_str() == "quote"
             && matches!(
-                parameter_path.segments[0].arguments.as_deref(),
-                Some(PathArguments::AngleBracketed(args)) if args.args.len() == 1
+                parameter_path.segments[0].args.as_deref(),
+                Some(GenericArgs::AngleBracketed(args)) if args.args.len() == 1
             )
         {
-            let Some(PathArguments::AngleBracketed(args)) =
-                parameter_path.segments[0].arguments.as_deref()
+            let Some(GenericArgs::AngleBracketed(args)) =
+                parameter_path.segments[0].args.as_deref()
             else {
                 unreachable!("quote arguments checked above");
             };
@@ -574,7 +574,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     };
     if type_name == "type" {
         if let Some(ppath) = bare_path {
-            let Some(PathArguments::AngleBracketed(args)) = ppath.segments[0].arguments.as_deref()
+            let Some(GenericArgs::AngleBracketed(args)) = ppath.segments[0].args.as_deref()
             else {
                 return Ok(Ty::Type(TypeType {
                     span: Span::null(),
@@ -785,7 +785,7 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(span)));
+            segment.args = Some(Box::new(GenericArgs::ParenthesizedElided(span)));
             return Ok(Expr::name(Name { qself, path }));
         }
         let mut params = Vec::new();
@@ -820,7 +820,7 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
         let Some(segment) = path.segments.last_mut() else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
-        segment.arguments = Some(Box::new(PathArguments::Parenthesized(
+        segment.args = Some(Box::new(GenericArgs::Parenthesized(
             fp_core::ast::ParenthesizedArgs {
                 span,
                 inputs: params,

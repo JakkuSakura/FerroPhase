@@ -204,7 +204,7 @@ use fp_core::ast::{
     Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic, ItemDeclType, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemKind,
     ItemMacro, ItemOpaqueType, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken,
-    MacroTokenTree, Module, Name, Path, PathArguments, PathSegment, Pattern, PatternBox,
+    MacroTokenTree, Module, Name, Path, GenericArgs, PathSegment, Pattern, PatternBox,
     PatternIdent, PatternKind, PatternOr, PatternQuote, PatternStruct, PatternStructural,
     PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
     QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet,
@@ -449,7 +449,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         .is_some();
     let first = ident_like(input)?;
     let first_args = parse_optional_path_arguments(input)?;
-    let mut segments = vec![PathSegment::with_arguments(first, first_args)];
+    let mut segments = vec![PathSegment::with_args(first, first_args)];
     loop {
         let mut probe = *input;
         if skip_symbol(&mut probe, "::").is_err() {
@@ -458,7 +458,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         if peek_symbol(probe) == Some("<") {
             let args = parse_optional_path_arguments(&mut probe)?;
             if let Some(segment) = segments.last_mut() {
-                segment.arguments = args.map(Box::new);
+                segment.args = args.map(Box::new);
             }
             *input = probe;
             continue;
@@ -468,7 +468,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         };
         let args = parse_optional_path_arguments(&mut probe)?;
         *input = probe;
-        segments.push(PathSegment::with_arguments(next, args));
+        segments.push(PathSegment::with_args(next, args));
     }
     let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
     let consumed = original.len().saturating_sub(input.len());
@@ -482,7 +482,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
 
 pub(crate) fn parse_optional_path_arguments(
     input: &mut &[Token],
-) -> ModalResult<Option<PathArguments>> {
+) -> ModalResult<Option<GenericArgs>> {
     let mut probe = *input;
     match parse_path_arguments_inner(&mut probe) {
         Ok(arguments) => {
@@ -493,7 +493,7 @@ pub(crate) fn parse_optional_path_arguments(
     }
 }
 
-fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments> {
+fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<GenericArgs> {
     let original = *input;
     let mut probe = *input;
     if !try_eat_symbol(&mut probe, "<") {
@@ -572,7 +572,7 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
         .and_then(|tokens| tokens.first().zip(tokens.last()))
         .map(|(first, last)| Span::union([token_span_to_span(first), token_span_to_span(last)]))
         .unwrap_or_else(Span::null);
-    Ok(PathArguments::AngleBracketed(AngleBracketedArgs {
+    Ok(GenericArgs::AngleBracketed(AngleBracketedArgs {
         span,
         args,
     }))

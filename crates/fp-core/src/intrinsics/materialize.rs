@@ -151,11 +151,11 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
         ast::Ty::Expr(mut expr) => {
             if let ast::ExprKind::Name(name) = expr.kind_mut() {
                 for segment in &mut name.path.segments {
-                    let Some(arguments) = &mut segment.arguments else {
+                    let Some(arguments) = &mut segment.args else {
                         continue;
                     };
                     match arguments.as_mut() {
-                        ast::PathArguments::AngleBracketed(args) => {
+                        ast::GenericArgs::AngleBracketed(args) => {
                             for arg in &mut args.args {
                                 match arg {
                                     ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) => {
@@ -183,7 +183,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                 }
                             }
                         }
-                        ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
+                        ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
                             inputs,
                             output,
                             ..
@@ -195,7 +195,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                 **output = materialize_ty((**output).clone(), strategy)?;
                             }
                         }
-                        ast::PathArguments::ParenthesizedElided(_) => {}
+                        ast::GenericArgs::ParenthesizedElided(_) => {}
                     }
                 }
             }

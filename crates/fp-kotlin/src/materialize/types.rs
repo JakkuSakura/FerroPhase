@@ -80,9 +80,9 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                 (
                     path.last().ident.as_str().to_owned(),
                     path.last()
-                        .arguments
+                        .args
                         .as_deref()
-                        .map_or_else(Vec::new, fp_core::ast::PathArguments::legacy_types),
+                        .map_or_else(Vec::new, fp_core::ast::GenericArgs::legacy_types),
                 )
             };
             let replacement = match last.as_str() {
@@ -118,7 +118,7 @@ pub(super) fn parameterized(name: &str, arg: Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new(name),
-            Some(fp_core::ast::PathArguments::from_types(&[arg])),
+            Some(fp_core::ast::GenericArgs::from_types(&[arg])),
         )],
     )))))
 }
@@ -174,11 +174,11 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
         Name { path, .. } => {
             let last = path.last().as_str().to_owned();
             for segment in &mut path.segments {
-                let Some(arguments) = &mut segment.arguments else {
+                let Some(arguments) = &mut segment.args else {
                     continue;
                 };
                 match arguments.as_mut() {
-                    fp_core::ast::PathArguments::AngleBracketed(args) => {
+                    fp_core::ast::GenericArgs::AngleBracketed(args) => {
                         for arg in &mut args.args {
                             match arg {
                                 fp_core::ast::AngleBracketedArg::Arg(
@@ -209,7 +209,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                             }
                         }
                     }
-                    fp_core::ast::PathArguments::Parenthesized(
+                    fp_core::ast::GenericArgs::Parenthesized(
                         fp_core::ast::ParenthesizedArgs { inputs, output, .. },
                     ) => {
                         for input in inputs {
@@ -219,10 +219,10 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                             **output = materialize_jvm_type((**output).clone());
                         }
                     }
-                    fp_core::ast::PathArguments::ParenthesizedElided(_) => {}
+                    fp_core::ast::GenericArgs::ParenthesizedElided(_) => {}
                 }
                 if segment.ident.as_str() == "Result" {
-                    if let fp_core::ast::PathArguments::AngleBracketed(args) = arguments.as_mut() {
+                    if let fp_core::ast::GenericArgs::AngleBracketed(args) = arguments.as_mut() {
                         if args.args.len() > 1 {
                             args.args.truncate(1);
                         }
