@@ -762,9 +762,11 @@ fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<
     let mut assoc_probe = probe;
     if skip_symbol(&mut assoc_probe, "::").is_ok() {
         let assoc = parse_name(&mut assoc_probe)?;
-        let (mut prefix, mut segments) = match assoc {
-            Name { path, .. } => (path.prefix, path.segments),
+        let assoc_path = match assoc {
+            Name { path, .. } => path,
         };
+        let mut prefix = assoc_path.prefix;
+        let mut segments = assoc_path.segments.clone();
         let trait_path = trait_ty.as_ref().and_then(|trait_ty| match trait_ty {
             Ty::Expr(expr) => match expr.kind() {
                 ExprKind::Name(Name { qself: None, path }) => Some(path),
@@ -777,20 +779,24 @@ fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<
         // item.  This is the rustc AST convention (`<T as Trait>::Item`
         // has position 1 for the `Trait::Item` path).
         let position = trait_path.map_or(0, |path| path.segments.len());
-        if let Some(trait_path) = trait_path {
+        if let Some(trait_path) = trait_path.as_ref() {
             prefix = trait_path.prefix;
             let mut qualified = trait_path.segments.clone();
             qualified.append(&mut segments);
             segments = qualified;
         }
         *input = assoc_probe;
+        let path_span = Span::union([
+            trait_path.map(Path::span).unwrap_or_else(Span::null),
+            assoc_path.span(),
+        ]);
         return Ok(Expr::name(Name {
             qself: Some(fp_core::ast::QSelf {
                 ty: Box::new(ty),
                 path_span: trait_ty.as_ref().map(Ty::span).unwrap_or_else(Span::null),
                 position,
             }),
-            path: Path::new(prefix, segments),
+            path: Path::with_span(path_span, prefix, segments),
         }));
     }
     *input = probe;

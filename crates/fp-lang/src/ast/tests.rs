@@ -187,11 +187,19 @@ fn parse_path_arguments_preserve_lifetime_const_and_binding_kinds() {
     let ExprKind::Name(Name { path, .. }) = expr.kind() else {
         panic!("expected named path");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        path.segments[0].arguments.as_deref()
+    else {
         panic!("expected angle-bracketed arguments");
     };
-    assert!(matches!(args[0], fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(_))));
-    assert!(matches!(args[1], fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_))));
+    assert!(matches!(
+        args[0],
+        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(_))
+    ));
+    assert!(matches!(
+        args[1],
+        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_))
+    ));
     assert!(matches!(
         args[2],
         fp_core::ast::AngleBracketedArg::Constraint(fp_core::ast::AssocItemConstraint {
@@ -217,27 +225,25 @@ fn parse_assoc_constraint_preserves_item_generic_arguments() {
     let ExprKind::Name(Name { path, .. }) = expr.kind() else {
         panic!("expected named path");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        path.segments[0].arguments.as_deref()
+    else {
         panic!("expected angle-bracketed arguments");
     };
-    let fp_core::ast::AngleBracketedArg::Constraint(
-        fp_core::ast::AssocItemConstraint {
-            gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
-            kind: fp_core::ast::AssocItemConstraintKind::Equality { .. },
-            ..
-        },
-    ) = &args[0]
+    let fp_core::ast::AngleBracketedArg::Constraint(fp_core::ast::AssocItemConstraint {
+        gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
+        kind: fp_core::ast::AssocItemConstraintKind::Equality { .. },
+        ..
+    }) = &args[0]
     else {
         panic!("expected generic associated-type equality constraint");
     };
     assert_eq!(item_args.len(), 1);
-    let fp_core::ast::AngleBracketedArg::Constraint(
-        fp_core::ast::AssocItemConstraint {
-            gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
-            kind: fp_core::ast::AssocItemConstraintKind::Bound { .. },
-            ..
-        },
-    ) = &args[1]
+    let fp_core::ast::AngleBracketedArg::Constraint(fp_core::ast::AssocItemConstraint {
+        gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
+        kind: fp_core::ast::AssocItemConstraintKind::Bound { .. },
+        ..
+    }) = &args[1]
     else {
         panic!("expected generic associated-type bound constraint");
     };
@@ -298,10 +304,15 @@ fn parse_turbofish_arguments_on_path_segment() {
     let ExprInvokeTarget::Function(name) = &invoke.target else {
         panic!("expected function path");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = name.path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        name.path.segments[0].arguments.as_deref()
+    else {
         panic!("expected turbofish arguments");
     };
-    assert!(matches!(args[0], fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(_))));
+    assert!(matches!(
+        args[0],
+        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(_))
+    ));
 }
 
 #[test]
@@ -315,7 +326,9 @@ fn parse_wildcard_generic_argument_as_type_variant() {
     let ExprInvokeTarget::Function(name) = &invoke.target else {
         panic!("expected function path");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = name.path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        name.path.segments[0].arguments.as_deref()
+    else {
         panic!("expected turbofish arguments");
     };
     assert!(matches!(
@@ -339,11 +352,13 @@ fn parse_turbofish_arguments_are_retained_per_path_segment() {
         panic!("expected function path");
     };
     assert_eq!(name.path.segments.len(), 2);
-    let Some(fp_core::ast::PathArguments::AngleBracketed(outer_args)) = name.path.segments[0].arguments.as_deref()
+    let Some(fp_core::ast::PathArguments::AngleBracketed(outer_args)) =
+        name.path.segments[0].arguments.as_deref()
     else {
         panic!("expected generic arguments on the receiver segment");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(method_args)) = name.path.segments[1].arguments.as_deref()
+    let Some(fp_core::ast::PathArguments::AngleBracketed(method_args)) =
+        name.path.segments[1].arguments.as_deref()
     else {
         panic!("expected generic arguments on the associated segment");
     };
@@ -357,7 +372,10 @@ fn parse_path_distinguishes_omitted_and_explicit_empty_arguments() {
     parser.clear_diagnostics();
 
     let bare = parser.parse_expr_ast("Foo").unwrap();
-    let ExprKind::Name(Name { path: bare_path, .. }) = bare.kind() else {
+    let ExprKind::Name(Name {
+        path: bare_path, ..
+    }) = bare.kind()
+    else {
         panic!("expected bare path");
     };
     assert!(bare_path.segments[0].arguments.is_none());
@@ -374,6 +392,25 @@ fn parse_path_distinguishes_omitted_and_explicit_empty_arguments() {
         explicit_path.segments[0].arguments.as_deref(),
         Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.is_empty()
     ));
+}
+
+#[test]
+fn parse_path_retains_source_span_and_rustc_shape_helpers() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+
+    let expr = parser.parse_expr_ast("Outer::<u8>::inner").unwrap();
+    let ExprKind::Name(Name { path, .. }) = expr.kind() else {
+        panic!("expected path expression");
+    };
+    assert!(!path.span().is_null());
+    assert!(!path.is_global());
+    assert!(!path.is_single_argless_ident());
+
+    let ident = fp_core::ast::Ident::new("value");
+    let bare = fp_core::ast::Path::from_ident(ident.clone());
+    assert!(bare.is_single_argless_ident());
+    assert_eq!(bare.as_single_argless_ident(), Some(ident));
 }
 
 #[test]
@@ -473,9 +510,7 @@ fn parse_parenthesized_path_arguments() {
 fn parse_return_type_notation_as_elided_path_arguments() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-    let items = parser
-        .parse_items_ast("type Alias = Trait(..);")
-        .unwrap();
+    let items = parser.parse_items_ast("type Alias = Trait(..);").unwrap();
     let ItemKind::DefType(def) = items[0].kind() else {
         panic!("expected type alias");
     };
@@ -1137,10 +1172,14 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameter path type");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        path.segments[0].arguments.as_deref()
+    else {
         panic!("expected Option type arg");
     };
-    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) = args.first() else {
+    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) =
+        args.first()
+    else {
         panic!("expected Option type arg");
     };
     let Ty::Expr(box_expr) = box_arg.as_ref() else {
@@ -1149,11 +1188,14 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
     let ExprKind::Name(Name { path: box_path, .. }) = box_expr.kind() else {
         panic!("expected parameter path type");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(box_args)) = box_path.segments[0].arguments.as_deref()
+    let Some(fp_core::ast::PathArguments::AngleBracketed(box_args)) =
+        box_path.segments[0].arguments.as_deref()
     else {
         panic!("expected dyn trait bounds");
     };
-    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) = box_args.first() else {
+    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) =
+        box_args.first()
+    else {
         panic!("expected dyn trait bounds");
     };
     let Ty::TypeBounds(bounds) = box_arg.as_ref() else {
@@ -1180,10 +1222,14 @@ fn parse_items_ast_supports_dyn_trait_object_with_multiple_bounds() {
     let ExprKind::Name(Name { path: path, .. }) = expr.kind() else {
         panic!("expected parameter path type");
     };
-    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = path.segments[0].arguments.as_deref() else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) =
+        path.segments[0].arguments.as_deref()
+    else {
         panic!("expected dyn trait bounds");
     };
-    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(arg))) = args.first() else {
+    let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(arg))) =
+        args.first()
+    else {
         panic!("expected dyn trait bounds");
     };
     let Ty::TypeBounds(bounds) = arg.as_ref() else {
@@ -1969,9 +2015,7 @@ fn parse_expr_ast_supports_turbofish_method_call() {
 fn parse_expr_ast_preserves_structured_method_arguments() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
-    let expr = parser
-        .parse_expr_ast("ap.arg::<'a, 3, _>()")
-        .unwrap();
+    let expr = parser.parse_expr_ast("ap.arg::<'a, 3, _>()").unwrap();
     let ExprKind::Invoke(invoke) = expr.kind() else {
         panic!("expected invocation, got {:?}", expr.kind());
     };

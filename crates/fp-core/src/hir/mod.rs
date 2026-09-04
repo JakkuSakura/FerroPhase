@@ -747,6 +747,18 @@ pub enum QPath {
 }
 
 impl QPath {
+    /// Return the span of the qualified receiver (`qself`) in this path.
+    ///
+    /// For `QPath::Resolved`, rustc uses the path span because the receiver
+    /// is represented separately from (and has no independent span in) the
+    /// HIR path. Type-relative paths retain the receiver's own span.
+    pub fn qself_span(&self) -> Span {
+        match self {
+            Self::Resolved(_, path) => path.span(),
+            Self::TypeRelative(receiver, _) => receiver.span(),
+        }
+    }
+
     pub fn resolved(path: Path) -> Self {
         Self::Resolved(None, path)
     }

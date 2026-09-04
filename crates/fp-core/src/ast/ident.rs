@@ -74,6 +74,8 @@ impl From<&str> for Ident {
 /// The prefix captures leading qualifiers like `::`, `crate`, `self`, or `super`.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct Path {
+    /// Source span covering the complete path.
+    pub span: Span,
     pub prefix: PathPrefix,
     pub segments: Vec<PathSegment>,
 }
@@ -84,7 +86,23 @@ impl Path {
             !segments.is_empty() || !matches!(prefix, PathPrefix::Plain),
             "Plain path must have at least one segment"
         );
-        Self { prefix, segments }
+        Self {
+            span: Span::null(),
+            prefix,
+            segments,
+        }
+    }
+
+    pub fn with_span(span: Span, prefix: PathPrefix, segments: Vec<PathSegment>) -> Self {
+        debug_assert!(
+            !segments.is_empty() || !matches!(prefix, PathPrefix::Plain),
+            "Plain path must have at least one segment"
+        );
+        Self {
+            span,
+            prefix,
+            segments,
+        }
     }
 
     pub fn plain(segments: Vec<Ident>) -> Self {
@@ -140,6 +158,24 @@ impl Path {
         self.prefix == PathPrefix::Root && self.segments.is_empty()
     }
 
+    /// Whether this path uses the global `::` prefix.
+    pub fn is_global(&self) -> bool {
+        self.prefix == PathPrefix::Root
+    }
+
+    /// Whether this path is one plain identifier without generic arguments.
+    pub fn is_single_argless_ident(&self) -> bool {
+        self.prefix == PathPrefix::Plain
+            && self.segments.len() == 1
+            && self.segments[0].arguments.is_none()
+    }
+
+    /// Return the identifier for a plain, argument-free one-segment path.
+    pub fn as_single_argless_ident(&self) -> Option<Ident> {
+        self.is_single_argless_ident()
+            .then(|| self.segments[0].ident.clone())
+    }
+
     pub fn root() -> Self {
         Self::new(PathPrefix::Root, Vec::new())
     }
@@ -147,11 +183,11 @@ impl Path {
     pub fn with_ident(&self, ident: Ident) -> Self {
         let mut segments = self.segments.clone();
         segments.push(ident.into());
-        Self::new(self.prefix, segments)
+        Self::with_span(self.span, self.prefix, segments)
     }
 
     pub fn span(&self) -> Span {
-        Span::null()
+        self.span
     }
 
     pub fn segments(&self) -> &[PathSegment] {
@@ -724,7 +760,13 @@ mod tests {
         let PathArguments::AngleBracketed(args) = *arguments else {
             panic!("expected angle-bracketed arguments");
         };
-        assert!(matches!(args[0], AngleBracketedArg::Arg(GenericArg::Type(_))));
-        assert!(matches!(args[1], AngleBracketedArg::Arg(GenericArg::Const(_))));
+        assert!(matches!(
+            args[0],
+            AngleBracketedArg::Arg(GenericArg::Type(_))
+        ));
+        assert!(matches!(
+            args[1],
+            AngleBracketedArg::Arg(GenericArg::Const(_))
+        ));
     }
 }

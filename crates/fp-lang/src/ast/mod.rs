@@ -85,6 +85,7 @@ impl FerroPhaseParser {
 
     pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
         let file = resolve_file_id(file, source, None);
+        fp_core::span::set_current_parse_file(file);
         let tokens = self.lex_expr_tokens(source, file)?;
         crate::ast::parse_expr_tokens(&tokens, file).map_err(|err| {
             if let Some(span) = err.span() {
@@ -165,6 +166,7 @@ impl FerroPhaseParser {
     /// of `parse_file_tokens` (item-or-bare-expr-only).
     pub fn parse_script_ast_with_file(&self, source: &str, file: FileId) -> Result<ScriptBlock> {
         let file_id = resolve_file_id(file, source, None);
+        fp_core::span::set_current_parse_file(file_id);
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
             if let Some(span) = err.span() {
                 let span = fp_core::span::Span::new(file_id, span.start as u32, span.end as u32);
@@ -208,8 +210,8 @@ use fp_core::ast::{
     PatternStruct, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock,
     StmtDefer, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
-    TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
-    Term, TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
+    TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice, Term,
+    TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -442,6 +444,7 @@ fn starts_unsafe_extern_block(input: &[Token]) -> bool {
 }
 
 fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
+    let original = *input;
     let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
         .parse_next(input)?
         .is_some();
@@ -473,7 +476,13 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         ));
     }
     let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
-    Ok(Name::path(Path::new(prefix, segments)))
+    let consumed = original.len().saturating_sub(input.len());
+    let span = original
+        .get(..consumed)
+        .and_then(|tokens| tokens.first().zip(tokens.last()))
+        .map(|(first, last)| Span::union([token_span_to_span(first), token_span_to_span(last)]))
+        .unwrap_or_else(Span::null);
+    Ok(Name::path(Path::with_span(span, prefix, segments)))
 }
 
 pub(crate) fn parse_optional_path_arguments(input: &mut &[Token]) -> ModalResult<PathArguments> {
@@ -623,6 +632,7 @@ fn input_is_const_argument(input: &[Token]) -> bool {
 }
 
 pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
+    let original = *input;
     let saw_root = opt(|input: &mut &[Token]| expect_symbol(input, "::"))
         .parse_next(input)?
         .is_some();
@@ -639,7 +649,14 @@ pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
         segments.push(next);
     }
     let (prefix, segments) = split_path_prefix(segments, saw_root);
-    Ok(Path::new(
+    let consumed = original.len().saturating_sub(input.len());
+    let span = original
+        .get(..consumed)
+        .and_then(|tokens| tokens.first().zip(tokens.last()))
+        .map(|(first, last)| Span::union([token_span_to_span(first), token_span_to_span(last)]))
+        .unwrap_or_else(Span::null);
+    Ok(Path::with_span(
+        span,
         prefix,
         segments.into_iter().map(Into::into).collect(),
     ))

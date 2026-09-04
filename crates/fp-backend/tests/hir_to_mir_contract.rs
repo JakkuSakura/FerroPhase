@@ -308,8 +308,10 @@ fn rejects_unresolved_value_path_in_function_body() {
     let body_expr = Expr::new(
         hid(21),
         ExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new("missing_value"),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Error,
@@ -439,8 +441,10 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
             Box::new(Expr::new(
                 hid(43),
                 ExprKind::Path(hir::QPath::resolved(Path {
+                    span: Span::null(),
                     segments: vec![PathSegment {
                         ident: Symbol::new("Some"),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: Res::Def(variant_def_id.clone()),
@@ -466,8 +470,10 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
             output: TypeExpr {
                 hir_id: hid(45),
                 kind: TypeExprKind::Path(hir::QPath::resolved(Path {
+                    span: Span::null(),
                     segments: vec![PathSegment {
                         ident: Symbol::new("MaybeInt"),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: Res::Def(enum_def_id.clone()),
@@ -543,8 +549,10 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                 payload: Some(TypeExpr {
                     hir_id: hid(54),
                     kind: TypeExprKind::Path(hir::QPath::resolved(Path {
+                        span: Span::null(),
                         segments: vec![PathSegment {
                             ident: Symbol::new("Some"),
+                            hir_id: Default::default(),
                             args: None,
                             infer_args: true,
                             res: Res::Def(payload_struct_def_id.clone()),
@@ -564,8 +572,10 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
         hid(55),
         ExprKind::Struct(
             hir::QPath::resolved(Path {
+                span: Span::null(),
                 segments: vec![PathSegment {
                     ident: Symbol::new("Some"),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: Res::Def(variant_def_id.clone()),
@@ -589,8 +599,10 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
             output: TypeExpr {
                 hir_id: hid(57),
                 kind: TypeExprKind::Path(hir::QPath::resolved(Path {
+                    span: Span::null(),
                     segments: vec![PathSegment {
                         ident: Symbol::new("MaybeInt"),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: Res::Def(enum_def_id.clone()),
@@ -749,8 +761,10 @@ fn lowers_function_local_const_before_its_declaration_without_a_global() {
     let use_before_declaration = Expr::new(
         hid(46),
         ExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new("VALUE"),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Def(local_const_id.clone()),
@@ -853,8 +867,10 @@ fn lowers_index_expression_into_place_projection() {
     let values_path = Expr::new(
         hid(26),
         ExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new("values"),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Local(values_pat.hir_id.clone()),
@@ -866,8 +882,10 @@ fn lowers_index_expression_into_place_projection() {
     let idx_path = Expr::new(
         hid(27),
         ExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new("idx"),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Local(idx_pat.hir_id.clone()),

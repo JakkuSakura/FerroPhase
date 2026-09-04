@@ -38,8 +38,9 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if assoc_qself.is_some() || assoc_path.segments.is_empty() {
         return Err(ErrMode::Cut(ContextError::new()));
     }
+    let assoc_path_span = assoc_path.span();
 
-    let (prefix, segments, position, path_span) = if let Some(trait_ty) = trait_ty {
+    let (prefix, segments, position, path_span, path_span_complete) = if let Some(trait_ty) = trait_ty {
         let Ty::Expr(trait_expr) = &trait_ty else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
@@ -67,9 +68,11 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .chain(assoc_path.segments)
             .collect();
         let path_span = trait_ty.span();
-        (prefix, segments, position, path_span)
+        let path_span_complete = Span::union([trait_path.span(), assoc_path_span]);
+        (prefix, segments, position, path_span, path_span_complete)
     } else {
-        (assoc_path.prefix, assoc_path.segments, 0, Span::null())
+        let path_span = assoc_path_span;
+        (assoc_path.prefix, assoc_path.segments, 0, Span::null(), path_span)
     };
 
     *input = probe;
@@ -79,7 +82,7 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
             path_span,
             position,
         }),
-        path: Path::new(prefix, segments),
+        path: Path::with_span(path_span_complete, prefix, segments),
     }))))
 }
 
