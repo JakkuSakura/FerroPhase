@@ -76,6 +76,12 @@ fn is_windows_target(target_triple: Option<&str>) -> bool {
     triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
 }
 
+fn disabled_feature_error(feature: &str, capability: &str) -> CliError {
+    CliError::MissingDependency(format!(
+        "Feature '{feature}' is disabled; enable it to use {capability}."
+    ))
+}
+
 /// Registers a target-backend factory so `--target <name>` resolves to
 /// it. Expected to be called by the embedding binary's `main()` before it
 /// calls `commands::compile::compile_command`.
@@ -302,27 +308,30 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         }),
     ));
 
-    entries.push((
-        "cil",
-        factory(|config: BackendConfig| {
-            Ok(Box::new(fp_cil::CilBackend {
-                output: fill_missing_extension(&config.workspace_root, "il"),
-                assemble: false,
-                save_intermediates: config.save_intermediates,
-            }) as Box<dyn TargetBackend>)
-        }),
-    ));
+    #[cfg(feature = "lang-cil")]
+    {
+        entries.push((
+            "cil",
+            factory(|config: BackendConfig| {
+                Ok(Box::new(fp_cil::CilBackend {
+                    output: fill_missing_extension(&config.workspace_root, "il"),
+                    assemble: false,
+                    save_intermediates: config.save_intermediates,
+                }) as Box<dyn TargetBackend>)
+            }),
+        ));
 
-    entries.push((
-        "dotnet",
-        factory(|config: BackendConfig| {
-            Ok(Box::new(fp_cil::CilBackend {
-                output: fill_missing_extension(&config.workspace_root, "exe"),
-                assemble: true,
-                save_intermediates: config.save_intermediates,
-            }) as Box<dyn TargetBackend>)
-        }),
-    ));
+        entries.push((
+            "dotnet",
+            factory(|config: BackendConfig| {
+                Ok(Box::new(fp_cil::CilBackend {
+                    output: fill_missing_extension(&config.workspace_root, "exe"),
+                    assemble: true,
+                    save_intermediates: config.save_intermediates,
+                }) as Box<dyn TargetBackend>)
+            }),
+        ));
+    }
 
     entries.push((
         "interpret",

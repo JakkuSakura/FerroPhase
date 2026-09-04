@@ -88,6 +88,7 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push(("goasm", factory(fp_goasm::package::file_provider)));
     entries.push(("urcl", factory(fp_urcl::package::file_provider)));
     entries.push(("jvm-bytecode", factory(fp_jvm::package::bytecode_provider)));
+    #[cfg(feature = "lang-cil")]
     entries.push(("cil", factory(fp_cil::package::provider_for_path)));
 
     #[cfg(feature = "lang-typescript")]
