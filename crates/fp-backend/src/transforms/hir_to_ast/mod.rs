@@ -1898,7 +1898,7 @@ impl<'a> HirToAstLifter<'a> {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(Path::new(PathPrefix::Plain, segments))
+        Ok(Path::with_span(path.span(), PathPrefix::Plain, segments))
     }
 
     /// Converts a *resolved* (post-typecheck) HIR type — `fp_core::hir::ty::Ty`,
@@ -2705,6 +2705,31 @@ mod tests {
             [ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty))]
                 if matches!(ty.as_ref(), ast::Ty::Primitive(_))
         ));
+    }
+
+    #[test]
+    fn path_lifting_preserves_hir_path_span() {
+        let package_id = hir::PackageId::new("root");
+        let path_span = Span::new(7, 11, 24);
+        let path = hir::Path::with_span(
+            path_span,
+            hir::Res::Error,
+            vec![hir::PathSegment::with_hir_id(
+                "Vec",
+                Default::default(),
+                None,
+                hir::Res::Error,
+                true,
+            )],
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter.lift_path(&path).expect("lift path");
+
+        assert_eq!(lifted.span(), path_span);
     }
 
     #[test]
