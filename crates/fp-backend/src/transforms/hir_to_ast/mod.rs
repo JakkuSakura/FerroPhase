@@ -1741,12 +1741,12 @@ impl<'a> HirToAstLifter<'a> {
                             let hir::Res::Def(def_id) = &segment.res else {
                                 return None;
                             };
-                            self.hir_program
-                                .item(def_id.clone())
-                                .filter(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
-                                .map(|_| index + 1)
-                        })
-                        .unwrap_or(trait_path.segments.len());
+                        self.hir_program
+                            .item(def_id.clone())
+                            .filter(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
+                            .map(|_| index + 1)
+                    })
+                    .unwrap_or_else(|| trait_path.segments.len().saturating_sub(1));
                     return Ok(Name {
                         qself: Some(ast::QSelf {
                             ty: Box::new(self.lift_type(qself)?),
@@ -3011,6 +3011,71 @@ mod tests {
         let qself = lifted.qself.expect("explicit qself");
         assert_eq!(qself.position, 2);
         assert_eq!(lifted.path.join("::"), "external::Trait::Item");
+        Ok(())
+    }
+
+    #[test]
+    fn lifts_nested_external_qself_with_associated_tail() -> Result<()> {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let receiver = hir::TypeExpr::new(
+            hir::HirId::new(owner.clone(), 1),
+            hir::TypeExprKind::Path(hir::QPath::Resolved(
+                Some(Box::new(hir::TypeExpr::new(
+                    hir::HirId::new(owner.clone(), 2),
+                    hir::TypeExprKind::Primitive(fp_core::ast::TypePrimitive::Int(
+                        fp_core::ast::TypeInt::U8,
+                    )),
+                    Span::null(),
+                ))),
+                hir::Path::new(
+                    hir::Res::Error,
+                    vec![
+                        hir::PathSegment::with_hir_id(
+                            "external",
+                            Default::default(),
+                            None,
+                            hir::Res::Error,
+                            false,
+                        ),
+                        hir::PathSegment::with_hir_id(
+                            "Trait",
+                            Default::default(),
+                            None,
+                            hir::Res::Error,
+                            false,
+                        ),
+                        hir::PathSegment::with_hir_id(
+                            "Item",
+                            Default::default(),
+                            None,
+                            hir::Res::Error,
+                            false,
+                        ),
+                    ],
+                ),
+            )),
+            Span::null(),
+        );
+        let qpath = hir::QPath::TypeRelative(
+            Box::new(receiver),
+            hir::PathSegment::with_hir_id(
+                "Nested",
+                Default::default(),
+                None,
+                hir::Res::Error,
+                false,
+            ),
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter.lift_qpath(&qpath)?;
+        let qself = lifted.qself.expect("explicit qself");
+        assert_eq!(qself.position, 2);
+        assert_eq!(lifted.path.join("::"), "external::Trait::Item::Nested");
         Ok(())
     }
 
