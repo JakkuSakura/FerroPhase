@@ -317,18 +317,18 @@ pub struct PathSegment {
     /// Type/lifetime arguments attached to this segment. `None` means the
     /// source omitted an argument list; `Some` may still hold an explicitly
     /// empty list, matching rustc's AST representation.
-    pub arguments: Option<Box<PathArguments>>,
+    pub arguments: Option<Box<GenericArgs>>,
 }
 
 impl PathSegment {
-    pub fn new(ident: Ident, arguments: Option<PathArguments>) -> Self {
+    pub fn new(ident: Ident, arguments: Option<GenericArgs>) -> Self {
         Self {
             ident,
             arguments: arguments.map(Box::new),
         }
     }
 
-    pub fn with_arguments(ident: Ident, arguments: Option<PathArguments>) -> Self {
+    pub fn with_arguments(ident: Ident, arguments: Option<GenericArgs>) -> Self {
         Self {
             ident,
             arguments: arguments.map(Box::new),
@@ -353,13 +353,17 @@ impl PathSegment {
 /// constants, lifetimes, and associated-item constraints instead of forcing
 /// every argument through a type-only list.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
-pub enum PathArguments {
+pub enum GenericArgs {
     AngleBracketed(AngleBracketedArgs),
     Parenthesized(ParenthesizedArgs),
     /// Return-type notation, `Trait(..)`, as distinct from the concrete
     /// parenthesized `Trait(Args) -> Output` form.
     ParenthesizedElided(Span),
 }
+
+/// Compatibility name for callers that still use the pre-rustc-alignment
+/// spelling. New code should use [`GenericArgs`].
+pub type PathArguments = GenericArgs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct AngleBracketedArgs {
@@ -398,7 +402,7 @@ impl FnRetTy {
     }
 }
 
-impl PathArguments {
+impl GenericArgs {
     pub fn from_types(types: &[Ty]) -> Self {
         Self::AngleBracketed(AngleBracketedArgs {
             span: Span::null(),
@@ -504,7 +508,7 @@ pub enum AngleBracketedArg {
 pub struct AssocItemConstraint {
     /// The constrained associated item identifier, matching rustc AST.
     pub ident: Ident,
-    pub gen_args: Option<PathArguments>,
+    pub gen_args: Option<GenericArgs>,
     pub kind: AssocItemConstraintKind,
 }
 
@@ -623,7 +627,7 @@ impl std::fmt::Display for AngleBracketedArg {
     }
 }
 
-impl std::fmt::Display for PathArguments {
+impl std::fmt::Display for GenericArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AngleBracketed(args) => write!(
