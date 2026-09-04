@@ -73,7 +73,7 @@ impl AstToHirLowerer {
         let args: &[ast::AngleBracketedArg] = match arguments {
             ast::GenericArgs::AngleBracketed(args) => &args.args,
             ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
-                span,
+                span: _,
                 inputs,
                 inputs_span,
                 output,
@@ -89,10 +89,15 @@ impl AstToHirLowerer {
                 );
                 let output_ty = match output {
                     ast::FnRetTy::Ty(output) => self.transform_type_to_hir(output)?,
-                    ast::FnRetTy::Default(_) => hir::TypeExpr::new(
+                    // Rustc gives the synthesized `()` output the span carried
+                    // by `FnRetTy::Default` (normally the zero-width position
+                    // immediately after `)`) rather than the full argument
+                    // list. Keeping that distinction lets HIR->AST recover
+                    // `Trait(T)` instead of inventing `Trait(T) -> ()`.
+                    ast::FnRetTy::Default(default_span) => hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Tuple(Vec::new()),
-                        *span,
+                        *default_span,
                     ),
                 };
                 hir_args.push(hir::GenericArg::Type(Box::new(input_tuple)));

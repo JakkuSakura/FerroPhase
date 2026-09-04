@@ -1786,11 +1786,15 @@ impl<'a> HirToAstLifter<'a> {
                 .iter()
                 .map(|input| self.lift_type(input))
                 .collect::<Result<Vec<_>>>()?;
-            let output = if matches!(
+            let output_span = hir_output.span();
+            let default_output = matches!(
                 &hir_output.kind,
                 hir::TypeExprKind::Tuple(inputs) if inputs.is_empty()
-            ) && hir_output.span() == args.span_ext
-            {
+            ) && (output_span.is_null()
+                || (output_span.file == args.span_ext.file
+                    && output_span.lo == args.span_ext.hi
+                    && output_span.hi == args.span_ext.hi));
+            let output = if default_output {
                 ast::FnRetTy::Default(Span::new(
                     args.span_ext.file,
                     args.span_ext.hi,
@@ -2784,6 +2788,94 @@ mod tests {
                         if name.as_ident().is_some_and(|ident| ident.as_str() == "_")
                 )
         ));
+    }
+
+    #[test]
+    fn path_lifting_preserves_default_parenthesized_return_type() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let input_span = Span::new(1, 10, 14);
+        let default_return_span = Span::new(1, 14, 14);
+        let output = hir::TypeExpr::new(
+            hir::HirId::new(owner.clone(), 1),
+            hir::TypeExprKind::Tuple(Vec::new()),
+            default_return_span,
+        );
+        let args = hir::GenericArgs {
+            args: vec![hir::GenericArg::Type(Box::new(hir::TypeExpr::new(
+                hir::HirId::new(owner.clone(), 2),
+                hir::TypeExprKind::Tuple(Vec::new()),
+                input_span,
+            )))],
+            constraints: vec![hir::AssocItemConstraint {
+                hir_id: hir::HirId::new(owner.clone(), 3),
+                ident: "Output".into(),
+                gen_args: hir::GenericArgs::default(),
+                kind: hir::AssocItemConstraintKind::Equality {
+                    term: hir::Term::Ty(Box::new(output)),
+                },
+                span: default_return_span,
+            }],
+            parenthesized: hir::GenericArgsParentheses::ParenSugar,
+            span_ext: input_span,
+        };
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter
+            .lift_hir_generic_args(&args)
+            .expect("lift parenthesized arguments");
+        let ast::GenericArgs::Parenthesized(parenthesized) = lifted else {
+            panic!("expected parenthesized arguments");
+        };
+        assert!(matches!(
+            parenthesized.output,
+            ast::FnRetTy::Default(span) if span == default_return_span
+        ));
+    }
+
+    #[test]
+    fn path_lifting_keeps_explicit_unit_parenthesized_return_type() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let input_span = Span::new(1, 10, 14);
+        let output_span = Span::new(1, 18, 20);
+        let args = hir::GenericArgs {
+            args: vec![hir::GenericArg::Type(Box::new(hir::TypeExpr::new(
+                hir::HirId::new(owner.clone(), 1),
+                hir::TypeExprKind::Tuple(Vec::new()),
+                input_span,
+            )))],
+            constraints: vec![hir::AssocItemConstraint {
+                hir_id: hir::HirId::new(owner.clone(), 2),
+                ident: "Output".into(),
+                gen_args: hir::GenericArgs::default(),
+                kind: hir::AssocItemConstraintKind::Equality {
+                    term: hir::Term::Ty(Box::new(hir::TypeExpr::new(
+                        hir::HirId::new(owner.clone(), 3),
+                        hir::TypeExprKind::Tuple(Vec::new()),
+                        output_span,
+                    ))),
+                },
+                span: output_span,
+            }],
+            parenthesized: hir::GenericArgsParentheses::ParenSugar,
+            span_ext: input_span,
+        };
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter
+            .lift_hir_generic_args(&args)
+            .expect("lift parenthesized arguments");
+        let ast::GenericArgs::Parenthesized(parenthesized) = lifted else {
+            panic!("expected parenthesized arguments");
+        };
+        assert!(matches!(parenthesized.output, ast::FnRetTy::Ty(_)));
     }
 
     #[test]
