@@ -909,10 +909,15 @@ impl GenericArgs {
         if self.parenthesized != GenericArgsParentheses::ParenSugar {
             return None;
         }
-        let [GenericArg::Type(input)] = self.args.as_slice() else {
-            return None;
-        };
-        let TypeExprKind::Tuple(inputs) = &input.kind else {
+        let Some(inputs) = self.args.iter().find_map(|arg| {
+            let GenericArg::Type(input) = arg else {
+                return None;
+            };
+            let TypeExprKind::Tuple(inputs) = &input.kind else {
+                return None;
+            };
+            Some(inputs.as_slice())
+        }) else {
             return None;
         };
         let [AssocItemConstraint {
@@ -925,7 +930,7 @@ impl GenericArgs {
         else {
             return None;
         };
-        (ident.as_str() == "Output").then_some((inputs.as_slice(), output.as_ref()))
+        (ident.as_str() == "Output").then_some((inputs, output.as_ref()))
     }
 
     /// Return the synthesized output type for parenthesized trait syntax.
@@ -1916,7 +1921,10 @@ mod path_tests {
             Default::default(),
         );
         let args = GenericArgs {
-            args: vec![GenericArg::Type(Box::new(input))],
+            args: vec![
+                GenericArg::Lifetime("'a".into()),
+                GenericArg::Type(Box::new(input)),
+            ],
             constraints: vec![AssocItemConstraint {
                 hir_id: Default::default(),
                 ident: "Output".into(),
