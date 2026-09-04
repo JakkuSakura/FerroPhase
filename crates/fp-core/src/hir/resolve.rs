@@ -116,7 +116,7 @@ impl ModuleData {
                 segments: vec![crate::hir::PathSegment {
                     ident: name.into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: resolution.clone(),
                 }],
@@ -175,7 +175,7 @@ impl ModuleData {
                 segments: vec![crate::hir::PathSegment {
                     ident: last.as_str().into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: resolution.clone(),
                 }],

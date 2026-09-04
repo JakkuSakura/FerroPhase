@@ -799,7 +799,7 @@ impl AstToHirLowerer {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("Self"),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::SelfTy,
                     }],

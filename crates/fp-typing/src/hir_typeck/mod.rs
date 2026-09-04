@@ -922,7 +922,7 @@ impl HirTypeChecker {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("Self"),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(trait_def_id.clone()),
                     }],
@@ -3251,7 +3251,7 @@ impl HirTypeChecker {
         let args = match path
             .segments
             .iter()
-            .find_map(|segment| segment.generic_args())
+            .find_map(|segment| segment.args.as_ref())
         {
             Some(args) => {
                 let mut checked = Vec::with_capacity(args.args.len());
@@ -4281,7 +4281,7 @@ impl HirTypeChecker {
         let explicit_args = path
             .segments
             .iter()
-            .find_map(|segment| segment.generic_args());
+            .find_map(|segment| segment.args.as_ref());
         let args = if let Some(args) = explicit_args {
             let mut checked = Vec::with_capacity(args.args.len());
             for arg in &args.args {
@@ -4698,7 +4698,7 @@ impl HirTypeChecker {
                         hir::TypeExprKind::Path(path) => path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.generic_args())
+                                .find_map(|segment| segment.args.as_ref())
                         }),
                         _ => None,
                     })
@@ -4861,7 +4861,7 @@ impl HirTypeChecker {
                             .and_then(|path| {
                                 path.segments
                                     .iter()
-                                    .find_map(|segment| segment.generic_args())
+                                    .find_map(|segment| segment.args.as_ref())
                             })
                             .into_iter()
                             .flat_map(|args| &args.args)

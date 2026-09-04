@@ -1491,7 +1491,7 @@ impl<'a> BodyBuilder<'a> {
                     .and_then(|path| {
                         path.segments
                             .iter()
-                            .find_map(|segment| segment.generic_args())
+                            .find_map(|segment| segment.args.as_ref())
                     })
                     .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
@@ -1595,7 +1595,7 @@ impl<'a> BodyBuilder<'a> {
             if let Some(args) = path
                 .segments()
                 .last()
-                .and_then(|segment| segment.generic_args())
+                .and_then(|segment| segment.args.as_ref())
             {
                 explicit_args = self.lowering.lower_generic_args(Some(args), expr.span);
             }
@@ -2213,7 +2213,7 @@ impl<'a> BodyBuilder<'a> {
                                 if let Some(args) = path.path().and_then(|path| {
                                     path.segments
                                         .last()
-                                        .and_then(|segment| segment.generic_args())
+                                        .and_then(|segment| segment.args.as_ref())
                                 }) {
                                     let mut output_args = Vec::new();
                                     for arg in &args.args {
@@ -2309,7 +2309,7 @@ impl<'a> BodyBuilder<'a> {
                                 if let Some(args) = path.path().and_then(|path| {
                                     path.segments
                                         .last()
-                                        .and_then(|segment| segment.generic_args())
+                                        .and_then(|segment| segment.args.as_ref())
                                 }) {
                                     let mut output_args = Vec::new();
                                     for arg in &args.args {
@@ -3384,7 +3384,7 @@ impl<'a> BodyBuilder<'a> {
                 let explicit_args = resolved_path
                     .segments()
                     .last()
-                    .and_then(|segment| segment.generic_args())
+                    .and_then(|segment| segment.args.as_ref())
                     .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
                 let has_explicit_args = !explicit_args.is_empty();
@@ -3643,7 +3643,7 @@ impl<'a> BodyBuilder<'a> {
                                 .and_then(|path| {
                                     path.segments
                                         .iter()
-                                        .find_map(|segment| segment.generic_args())
+                                        .find_map(|segment| segment.args.as_ref())
                                 })
                                 .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                                 .unwrap_or_default();
@@ -3727,7 +3727,7 @@ impl<'a> BodyBuilder<'a> {
                                 .and_then(|path| {
                                     path.segments
                                         .iter()
-                                        .find_map(|segment| segment.generic_args())
+                                        .find_map(|segment| segment.args.as_ref())
                                 })
                                 .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                                 .unwrap_or_default();

@@ -1427,7 +1427,7 @@ impl HirToMirLowerer {
                         if let Some(args) = path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.generic_args())
+                                .find_map(|segment| segment.args.as_ref())
                         }) {
                             let mut output_args = Vec::new();
                             for arg in &args.args {
@@ -1463,7 +1463,7 @@ impl HirToMirLowerer {
                         if let Some(args) = path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.generic_args())
+                                .find_map(|segment| segment.args.as_ref())
                         }) {
                             let mut output_args = Vec::new();
                             for arg in &args.args {

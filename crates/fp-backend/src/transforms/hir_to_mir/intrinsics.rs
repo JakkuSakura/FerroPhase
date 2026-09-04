@@ -950,7 +950,7 @@ impl<'a> BodyBuilder<'a> {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new(call_name),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Error,
                     }],
@@ -1094,7 +1094,7 @@ impl<'a> BodyBuilder<'a> {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new(call_name),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Error,
                     }],
@@ -1632,7 +1632,7 @@ impl<'a> BodyBuilder<'a> {
         let args = path
             .segments()
             .iter()
-            .find_map(|segment| segment.generic_args())
+            .find_map(|segment| segment.args.as_ref())
             .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
             .unwrap_or_default();
 

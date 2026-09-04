@@ -1876,7 +1876,8 @@ impl<'a> HirToAstLifter<'a> {
             .iter()
             .map(|segment| {
                 let arguments = segment
-                    .generic_args()
+                    .args
+                    .as_ref()
                     .map(|args| self.lift_hir_generic_args(args))
                     .transpose()?;
                 Ok(PathSegment::with_arguments(
@@ -2241,7 +2242,7 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
             type_expr_contains_infer(inner)
         }
         hir::TypeExprKind::Path(path) => path.segments().iter().any(|seg| {
-            seg.generic_args().is_some_and(|args| {
+            seg.args.as_ref().is_some_and(|args| {
                 args.args.iter().any(|arg| match arg {
                     hir::GenericArg::Lifetime(_) => false,
                     hir::GenericArg::Type(t) => type_expr_contains_infer(t),
@@ -2672,7 +2673,7 @@ mod tests {
             vec![hir::PathSegment {
                 ident: "Vec".into(),
                 hir_id: Default::default(),
-                args: generic_args,
+                args: Some(generic_args),
                 infer_args: false,
                 res: hir::Res::Error,
             }],
@@ -2711,7 +2712,7 @@ mod tests {
             vec![hir::PathSegment {
                 ident: "Array".into(),
                 hir_id: Default::default(),
-                args: generic_args,
+                args: Some(generic_args),
                 infer_args: false,
                 res: hir::Res::Error,
             }],
@@ -2776,14 +2777,14 @@ mod tests {
                 hir::PathSegment {
                     ident: "Trait".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Def(trait_id),
                 },
                 hir::PathSegment {
                     ident: "Item".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Error,
                 },
@@ -2799,7 +2800,7 @@ mod tests {
             hir::PathSegment {
                 ident: "Nested".into(),
                 hir_id: Default::default(),
-                args: Default::default(),
+                args: None,
                 infer_args: true,
                 res: hir::Res::Error,
             },
@@ -2882,14 +2883,14 @@ mod tests {
                             hir::PathSegment {
                                 ident: "String".into(),
                                 hir_id: Default::default(),
-                                args: Default::default(),
+                                args: None,
                                 infer_args: true,
                                 res: hir::Res::Def(receiver_id.clone()),
                             },
                             hir::PathSegment {
                                 ident: "from_utf8_lossy".into(),
                                 hir_id: Default::default(),
-                                args: Default::default(),
+                                args: None,
                                 infer_args: true,
                                 res: hir::Res::Error,
                             },
@@ -2955,7 +2956,7 @@ mod tests {
                         segments: vec![hir::PathSegment {
                             ident: "from_utf8_lossy".into(),
                             hir_id: Default::default(),
-                            args: Default::default(),
+                            args: None,
                             infer_args: true,
                             res: hir::Res::Def(function_id.clone()),
                         }],
@@ -2999,7 +3000,7 @@ mod tests {
                         segments: vec![hir::PathSegment {
                             ident: "path".into(),
                             hir_id: Default::default(),
-                            args: Default::default(),
+                            args: None,
                             infer_args: true,
                             res: hir::Res::Def(receiver_id.clone()),
                         }],
@@ -3048,7 +3049,7 @@ mod tests {
                     segments: vec![hir::PathSegment {
                         ident: name.into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(def_id.clone()),
                     }],
@@ -3075,7 +3076,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "output".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
                 }],
@@ -3193,7 +3194,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "ListAlias".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Def(vec_def_id.clone()),
                 }],
@@ -3208,7 +3209,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "FileAlias".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Def(command_def_id.clone()),
                 }],

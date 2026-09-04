@@ -102,14 +102,14 @@ mod tests {
                     hir::PathSegment {
                         ident: "std".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Module(std_root),
                     },
                     hir::PathSegment {
                         ident: "alloc".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(alloc),
                     },
@@ -208,7 +208,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "T".into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Generic(ty),
                 },]
@@ -278,14 +278,14 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(value),
                     },
@@ -301,14 +301,14 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(ty),
                     },
@@ -324,14 +324,14 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Module(module),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Def(mac),
                     },
@@ -447,7 +447,7 @@ impl Resolver {
                     .map(|segment| hir::PathSegment {
                         ident: segment.ident.name.clone().into(),
                         hir_id: Default::default(),
-                        args: Default::default(),
+                        args: None,
                         infer_args: true,
                         res: hir::Res::Module(root.clone()),
                     })
@@ -484,7 +484,7 @@ impl Resolver {
                 .map(|segment| hir::PathSegment {
                     ident: segment.ident.name.clone().into(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Module(root.clone()),
                 })
@@ -506,7 +506,7 @@ impl Resolver {
                         resolved_segments.push(hir::PathSegment {
                             ident: segment.ident.name.clone().into(),
                             hir_id: Default::default(),
-                            args: Default::default(),
+                            args: None,
                             infer_args: true,
                             res: resolved.clone(),
                         });

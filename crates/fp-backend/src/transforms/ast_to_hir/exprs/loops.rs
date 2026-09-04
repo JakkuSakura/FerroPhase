@@ -241,7 +241,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: idx_name.clone(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Local(idx_pat.hir_id.clone()),
                 }],
@@ -486,7 +486,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: base_name,
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Local(base_pat.hir_id.clone()),
                 }],
@@ -570,7 +570,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: idx_name.clone(),
                     hir_id: Default::default(),
-                    args: Default::default(),
+                    args: None,
                     infer_args: true,
                     res: hir::Res::Local(idx_pat.hir_id.clone()),
                 }],
