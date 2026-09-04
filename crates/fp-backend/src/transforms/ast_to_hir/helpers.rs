@@ -172,7 +172,11 @@ impl AstToHirLowerer {
                 }
                 ast::GenericArg::Type(ty) => {
                     if matches!(ty.as_ref(), ast::Ty::Wildcard(_)) {
-                        hir_args.push(hir::GenericArg::Infer);
+                        hir_args.push(hir::GenericArg::Infer(hir::InferArg {
+                            hir_id: self.next_id(),
+                            span: ty.span(),
+                            kind: hir::InferArgKind::TypeOrConst,
+                        }));
                         continue;
                     }
                     // Rust keeps a path-shaped generic argument ambiguous in
@@ -205,9 +209,32 @@ impl AstToHirLowerer {
                     }
                 }
                 ast::GenericArg::Const(expr) => {
-                    hir_args.push(hir::GenericArg::Const(Box::new(
-                        self.transform_expr_to_hir(expr.as_ref())?,
-                    )));
+                    let is_infer = match expr.kind() {
+                        ast::ExprKind::Name(name) => name
+                            .as_ident()
+                            .is_some_and(|ident| ident.as_str() == "_"),
+                        ast::ExprKind::Block(block) => block.last_expr().is_some_and(|inner| {
+                            matches!(
+                                inner.kind(),
+                                ast::ExprKind::Name(name)
+                                    if name
+                                        .as_ident()
+                                        .is_some_and(|ident| ident.as_str() == "_")
+                            )
+                        }),
+                        _ => false,
+                    };
+                    if is_infer {
+                        hir_args.push(hir::GenericArg::Infer(hir::InferArg {
+                            hir_id: self.next_id(),
+                            span: expr.span(),
+                            kind: hir::InferArgKind::Const,
+                        }));
+                    } else {
+                        hir_args.push(hir::GenericArg::Const(Box::new(
+                            self.transform_expr_to_hir(expr.as_ref())?,
+                        )));
+                    }
                 }
             }
         }
@@ -215,6 +242,7 @@ impl AstToHirLowerer {
             args: hir_args,
             constraints,
             parenthesized,
+            span_ext: Span::null(),
         })
     }
 
@@ -222,7 +250,11 @@ impl AstToHirLowerer {
         let mut hir_args = Vec::new();
         for arg in args {
             if matches!(arg, ast::Ty::Wildcard(_)) {
-                hir_args.push(hir::GenericArg::Infer);
+                hir_args.push(hir::GenericArg::Infer(hir::InferArg {
+                    hir_id: self.next_id(),
+                    span: arg.span(),
+                    kind: hir::InferArgKind::TypeOrConst,
+                }));
                 continue;
             }
             // An explicit associated-type binding (`Iterator<Item = U>` —
@@ -304,6 +336,7 @@ impl AstToHirLowerer {
             args: hir_args,
             constraints: Vec::new(),
             parenthesized: hir::GenericArgsParentheses::No,
+            span_ext: Span::null(),
         })
     }
 

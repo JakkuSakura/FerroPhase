@@ -889,7 +889,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
             GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
             GenericArg::Type(ty) => fmt_type_expr(ty.as_ref(), ctx),
             GenericArg::Const(expr) => format_expr_inline(expr.as_ref(), ctx),
-            GenericArg::Infer => "_".to_owned(),
+            GenericArg::Infer(_) => "_".to_owned(),
         })
         .collect::<Vec<_>>();
     rendered.extend(args.constraints.iter().map(|constraint| match constraint {
@@ -977,7 +977,7 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                     GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
                     GenericArg::Type(ty) => fmt_type_expr(ty, ctx),
                     GenericArg::Const(expr) => format_expr_inline(expr, ctx),
-                    GenericArg::Infer => "_".to_owned(),
+                    GenericArg::Infer(_) => "_".to_owned(),
                 })
                 .collect::<Vec<_>>();
             args.extend(generic_args.constraints.iter().map(|binding| match binding {

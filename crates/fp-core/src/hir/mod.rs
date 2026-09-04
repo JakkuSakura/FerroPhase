@@ -826,6 +826,9 @@ pub struct GenericArgs {
     /// return type as an `Output` associated constraint; this marker preserves
     /// the syntax distinction without duplicating those semantic values.
     pub parenthesized: GenericArgsParentheses,
+    /// Span covering the complete argument list, including delimiters when
+    /// source information is available. Generated HIR uses a null span.
+    pub span_ext: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -835,6 +838,26 @@ pub enum GenericArgsParentheses {
     ParenSugar,
 }
 
+/// The kind of inference represented by a generic `_` argument.
+///
+/// Rustc keeps this distinction on the inference argument itself because a
+/// syntactic wildcard can remain ambiguous between a type and a const until
+/// generic argument lowering, while `{ _ }` is unambiguously a const.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InferArgKind {
+    TypeOrConst,
+    Const,
+}
+
+/// Metadata carried by an inferred generic argument, matching rustc HIR's
+/// `InferArg` rather than collapsing `_` to an unlocated unit variant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferArg {
+    pub hir_id: HirId,
+    pub span: Span,
+    pub kind: InferArgKind,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericArg {
     Lifetime(Symbol),
@@ -842,7 +865,7 @@ pub enum GenericArg {
     Const(Box<Expr>),
     /// An inferred generic argument (`_`), matching rustc HIR's dedicated
     /// `GenericArg::Infer` variant rather than encoding it as a type node.
-    Infer,
+    Infer(InferArg),
 }
 
 /// A constraint on an associated item of a path segment.
@@ -1668,12 +1691,13 @@ impl PathSegment {
 
 impl GenericArgs {
     pub fn span(&self) -> Span {
-        Span::union(
+        let payload = Span::union(
             self.args
                 .iter()
                 .map(GenericArg::span)
                 .chain(self.constraints.iter().map(AssocItemConstraint::span)),
-        )
+        );
+        self.span_ext.or(payload)
     }
 }
 
@@ -1683,7 +1707,7 @@ impl GenericArg {
             GenericArg::Lifetime(_) => Span::null(),
             GenericArg::Type(ty) => ty.span(),
             GenericArg::Const(expr) => expr.span(),
-            GenericArg::Infer => Span::null(),
+            GenericArg::Infer(infer) => infer.span,
         }
     }
 }

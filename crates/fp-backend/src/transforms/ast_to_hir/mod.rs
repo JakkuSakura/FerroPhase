@@ -595,7 +595,7 @@ impl AstToHirLowerer {
                                 hir::GenericArg::Const(expr) => {
                                     Some(Ok(ImplGenericArgKey::Const(expr.hir_id.clone())))
                                 }
-                                hir::GenericArg::Infer => Some(Ok(ImplGenericArgKey::Infer)),
+                                hir::GenericArg::Infer(_) => Some(Ok(ImplGenericArgKey::Infer)),
                             })
                             .collect::<Result<Vec<_>>>()
                     })
@@ -2560,6 +2560,7 @@ impl AstToHirLowerer {
                     args: vec![hir::GenericArg::Type(elem)],
                     constraints: Vec::new(),
                     parenthesized: hir::GenericArgsParentheses::No,
+                    span_ext: Span::null(),
                 };
                 // `Vec<T>` is a nominal ADT type, even though the parser has
                 // a dedicated AST variant for its surface spelling. Resolve

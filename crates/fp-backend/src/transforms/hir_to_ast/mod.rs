@@ -1815,11 +1815,17 @@ impl<'a> HirToAstLifter<'a> {
                 hir::GenericArg::Const(expr) => self.lift_expr(expr).map(|expr| {
                     ast::AngleBracketedArg::Arg(ast::GenericArg::Const(Box::new(expr)))
                 }),
-                hir::GenericArg::Infer => Ok(ast::AngleBracketedArg::Arg(
-                    ast::GenericArg::Type(Box::new(ast::Ty::Wildcard(
-                        fp_core::ast::TypeWildcard,
-                    ))),
-                )),
+                hir::GenericArg::Infer(infer) => {
+                    let arg = match infer.kind {
+                        hir::InferArgKind::TypeOrConst => ast::GenericArg::Type(Box::new(
+                            ast::Ty::Wildcard(fp_core::ast::TypeWildcard),
+                        )),
+                        hir::InferArgKind::Const => {
+                            ast::GenericArg::Const(Box::new(ast::Expr::ident(Ident::new("_"))))
+                        }
+                    };
+                    Ok(ast::AngleBracketedArg::Arg(arg))
+                }
             })
             .collect::<Result<Vec<_>>>()?;
         for binding in &args.constraints {
@@ -2241,7 +2247,7 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
                     hir::GenericArg::Lifetime(_) => false,
                     hir::GenericArg::Type(t) => type_expr_contains_infer(t),
                     hir::GenericArg::Const(_) => false,
-                    hir::GenericArg::Infer => true,
+                    hir::GenericArg::Infer(_) => true,
                 })
             })
         }),
@@ -2598,10 +2604,15 @@ mod tests {
                     hir::ExprKind::Literal(hir::Lit::Integer(3)),
                     Span::null(),
                 ))),
-                hir::GenericArg::Infer,
+                hir::GenericArg::Infer(hir::InferArg {
+                    hir_id: hir::HirId::new(owner.clone(), 5),
+                    span: Span::null(),
+                    kind: hir::InferArgKind::TypeOrConst,
+                }),
             ],
             constraints: Vec::new(),
             parenthesized: hir::GenericArgsParentheses::No,
+            span_ext: Span::null(),
         };
         let call = hir::Expr::new(
             call_id,
@@ -2655,6 +2666,7 @@ mod tests {
             )))],
             constraints: Vec::new(),
             parenthesized: hir::GenericArgsParentheses::No,
+            span_ext: Span::null(),
         };
         let path = hir::Path::new(
             hir::Res::Error,
@@ -2677,6 +2689,49 @@ mod tests {
             args.as_slice(),
             [ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty))]
                 if matches!(ty.as_ref(), ast::Ty::Primitive(_))
+        ));
+    }
+
+    #[test]
+    fn path_lifting_preserves_const_inference_kind() {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let generic_args = hir::GenericArgs {
+            args: vec![hir::GenericArg::Infer(hir::InferArg {
+                hir_id: hir::HirId::new(owner.clone(), 1),
+                span: Span::null(),
+                kind: hir::InferArgKind::Const,
+            })],
+            constraints: Vec::new(),
+            parenthesized: hir::GenericArgsParentheses::No,
+            span_ext: Span::null(),
+        };
+        let path = hir::Path::new(
+            hir::Res::Error,
+            vec![hir::PathSegment {
+                ident: "Array".into(),
+                args: Some(generic_args),
+                infer_args: false,
+                res: hir::Res::Error,
+            }],
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+        let lifted = lifter.lift_path(&path).expect("lift const-infer path");
+        let Some(ast::PathArguments::AngleBracketed(args)) = lifted.segments[0].arguments.as_deref()
+        else {
+            panic!("expected lifted generic arguments");
+        };
+        assert!(matches!(
+            args.as_slice(),
+            [ast::AngleBracketedArg::Arg(ast::GenericArg::Const(expr))]
+                if matches!(
+                    expr.kind(),
+                    ast::ExprKind::Name(name)
+                        if name.as_ident().is_some_and(|ident| ident.as_str() == "_")
+                )
         ));
     }
 

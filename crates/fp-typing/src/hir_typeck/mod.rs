@@ -3245,7 +3245,7 @@ impl HirTypeChecker {
         {
             Some(args) => {
                 let mut checked = Vec::with_capacity(args.args.len());
-                for (index, arg) in args.args.iter().enumerate() {
+                for arg in &args.args {
                     let arg = match arg {
                         hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
                         hir::GenericArg::Type(ty) => {
@@ -3254,9 +3254,18 @@ impl HirTypeChecker {
                         hir::GenericArg::Const(expr) => {
                             GenericArg::Const(self.const_arg_kind(expr))
                         }
-                        hir::GenericArg::Infer => GenericArg::Type(Ty {
-                            kind: TyKind::Infer(ty::InferTy::FreshTy(index as u32)),
-                        }),
+                        hir::GenericArg::Infer(infer) => match infer.kind {
+                            hir::InferArgKind::TypeOrConst => GenericArg::Type(Ty {
+                                kind: TyKind::Infer(ty::InferTy::FreshTy(
+                                    infer.hir_id.local_id(),
+                                )),
+                            }),
+                            hir::InferArgKind::Const => GenericArg::Const(
+                                ty::ConstKind::Infer(ty::InferConst::Fresh(
+                                    infer.hir_id.local_id(),
+                                )),
+                            ),
+                        },
                     };
                     checked.push(arg);
                 }
@@ -4260,14 +4269,23 @@ impl HirTypeChecker {
             .find_map(|segment| segment.args.as_ref());
         let args = if let Some(args) = explicit_args {
             let mut checked = Vec::with_capacity(args.args.len());
-            for (index, arg) in args.args.iter().enumerate() {
+            for arg in &args.args {
                 let arg = match arg {
                     hir::GenericArg::Lifetime(_) => GenericArg::Lifetime(ty::Region::ReErased),
                     hir::GenericArg::Type(ty) => GenericArg::Type(self.check_type_expr(ty).await?),
                     hir::GenericArg::Const(expr) => GenericArg::Const(self.const_arg_kind(expr)),
-                    hir::GenericArg::Infer => GenericArg::Type(Ty {
-                        kind: TyKind::Infer(ty::InferTy::FreshTy(index as u32)),
-                    }),
+                    hir::GenericArg::Infer(infer) => match infer.kind {
+                        hir::InferArgKind::TypeOrConst => GenericArg::Type(Ty {
+                            kind: TyKind::Infer(ty::InferTy::FreshTy(
+                                infer.hir_id.local_id(),
+                            )),
+                        }),
+                        hir::InferArgKind::Const => GenericArg::Const(
+                            ty::ConstKind::Infer(ty::InferConst::Fresh(
+                                infer.hir_id.local_id(),
+                            )),
+                        ),
+                    },
                 };
                 checked.push(arg);
             }
@@ -4635,7 +4653,7 @@ impl HirTypeChecker {
                         hir::GenericArg::Lifetime(_) => None,
                         hir::GenericArg::Type(ty) => Some(ty.as_ref()),
                         hir::GenericArg::Const(_) => None,
-                        hir::GenericArg::Infer => None,
+                        hir::GenericArg::Infer(_) => None,
                     });
                 for (parameter, argument) in trait_def
                     .generics
@@ -4796,7 +4814,7 @@ impl HirTypeChecker {
                                 hir::GenericArg::Lifetime(_) => None,
                                 hir::GenericArg::Type(ty) => Some(ty.as_ref()),
                                 hir::GenericArg::Const(_) => None,
-                                hir::GenericArg::Infer => None,
+                                hir::GenericArg::Infer(_) => None,
                             });
                         for (parameter, argument) in trait_def
                             .generics

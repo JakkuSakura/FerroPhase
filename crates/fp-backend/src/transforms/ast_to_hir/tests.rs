@@ -4537,6 +4537,54 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn preserves_infer_argument_metadata_on_path_segments() {
+        let (package, diagnostics) = lower(
+            "struct Wrapper<T>(T); fn take(value: Wrapper::<_>) -> Wrapper::<_> { value }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "inferred generic arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "take");
+        let input_path = type_path(&function.sig.inputs[0].ty);
+        let args = input_path
+            .segments()
+            .first()
+            .and_then(|segment| segment.args.as_ref())
+            .expect("Wrapper generic arguments");
+        let hir::GenericArg::Infer(infer) = &args.args[0] else {
+            panic!("expected an inferred generic argument, got {:?}", args.args[0]);
+        };
+        assert_eq!(infer.kind, hir::InferArgKind::TypeOrConst);
+        assert_eq!(
+            infer.hir_id.package_id(),
+            function.sig.inputs[0].hir_id.package_id()
+        );
+    }
+
+    #[test]
+    fn classifies_braced_const_inference_as_const() {
+        let (package, diagnostics) = lower(
+            "struct Array<const N: usize>([u8; N]); fn take(value: Array<{ _ }>) -> Array<{ _ }> { value }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "const inference emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "take");
+        let input_path = type_path(&function.sig.inputs[0].ty);
+        let args = input_path
+            .segments()
+            .first()
+            .and_then(|segment| segment.args.as_ref())
+            .expect("Array generic arguments");
+        let hir::GenericArg::Infer(infer) = &args.args[0] else {
+            panic!("expected an inferred generic argument, got {:?}", args.args[0]);
+        };
+        assert_eq!(infer.kind, hir::InferArgKind::Const);
+    }
+
+    #[test]
     fn preserves_generic_arguments_on_type_relative_segments() {
         let (package, diagnostics) = lower(
             "struct Outer<T>(T); impl<T> Outer<T> { fn inner<U>(value: U) -> U { value } } fn call(value: u16) -> u16 { Outer::<u8>::inner::<u16>(value) }",

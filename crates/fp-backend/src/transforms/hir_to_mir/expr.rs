@@ -3142,18 +3142,27 @@ impl HirToMirLowerer {
             return Vec::new();
         };
         let mut lowered = Vec::new();
-        for (index, arg) in args.args.iter().enumerate() {
-            match arg {
+            for arg in &args.args {
+                match arg {
                 hir::GenericArg::Lifetime(_) => {}
                 hir::GenericArg::Type(ty) => lowered.push(self.lower_type_expr(ty)),
                 hir::GenericArg::Const(_) => {
                     self.emit_warning(span, "const generics are ignored during MIR lowering");
                 }
-                // Preserve an elided type argument as an inference variable so
-                // downstream specialization can still resolve it from context.
-                hir::GenericArg::Infer => lowered.push(Ty {
-                    kind: TyKind::Infer(mir::ty::InferTy::FreshTy(index as u32)),
-                }),
+                // Preserve an ambiguous elided argument as an inference
+                // variable so downstream specialization can still resolve it
+                // from context. Const-only inference is not representable in
+                // this type-only MIR helper, just like explicit const args.
+                hir::GenericArg::Infer(infer) => match infer.kind {
+                    hir::InferArgKind::TypeOrConst => lowered.push(Ty {
+                        kind: TyKind::Infer(mir::ty::InferTy::FreshTy(
+                            infer.hir_id.local_id(),
+                        )),
+                    }),
+                    hir::InferArgKind::Const => {
+                        self.emit_warning(span, "const generics are ignored during MIR lowering");
+                    }
+                },
             }
         }
         lowered
@@ -3262,7 +3271,7 @@ impl HirToMirLowerer {
                                             );
                                             None
                                         }
-                                        hir::GenericArg::Infer => None,
+                                        hir::GenericArg::Infer(_) => None,
                                     })
                                     .collect::<Vec<_>>()
                             })
@@ -3297,7 +3306,7 @@ impl HirToMirLowerer {
                                             );
                                             None
                                         }
-                                        hir::GenericArg::Infer => None,
+                                        hir::GenericArg::Infer(_) => None,
                                     })
                                     .collect::<Vec<_>>()
                             })
@@ -4564,7 +4573,7 @@ impl HirToMirLowerer {
                                         Some(self.lower_generic_type_arg(ty, substs))
                                     }
                                     hir::GenericArg::Const(_) => None,
-                                    hir::GenericArg::Infer => None,
+                                    hir::GenericArg::Infer(_) => None,
                                 })
                                 .collect()
                         })
