@@ -418,6 +418,25 @@ pub struct ParenthesizedArgs {
     pub output: FnRetTy,
 }
 
+impl ParenthesizedArgs {
+    /// Convert the input types to the angle-bracketed argument view used by
+    /// rustc when desugaring parenthesized trait syntax. The return type is
+    /// intentionally not included: HIR stores it as the synthesized
+    /// `Output` associated-item constraint.
+    pub fn as_angle_bracketed_args(&self) -> AngleBracketedArgs {
+        AngleBracketedArgs {
+            span: self.inputs_span,
+            args: self
+                .inputs
+                .iter()
+                .cloned()
+                .map(ast_ty_to_generic_arg)
+                .map(AngleBracketedArg::Arg)
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum FnRetTy {
     /// No return type was written. The span marks where one could be added.
@@ -966,6 +985,25 @@ mod tests {
         assert!(matches!(
             args.args[1],
             AngleBracketedArg::Arg(GenericArg::Const(_))
+        ));
+    }
+
+    #[test]
+    fn parenthesized_arguments_expose_rustc_angle_bracketed_view() {
+        let args = ParenthesizedArgs {
+            span: Span::new(1, 1, 8),
+            inputs_span: Span::new(1, 1, 5),
+            inputs: vec![Ty::ident(Ident::new("Input"))],
+            output: FnRetTy::Default(Span::new(1, 8, 8)),
+        };
+
+        let angle = args.as_angle_bracketed_args();
+        assert_eq!(angle.span, args.inputs_span);
+        assert!(matches!(
+            angle.args.as_slice(),
+            [AngleBracketedArg::Arg(GenericArg::Type(ty))]
+                if matches!(ty.as_ref(), Ty::Expr(expr)
+                    if matches!(expr.kind(), ExprKind::Name(_)))
         ));
     }
 
