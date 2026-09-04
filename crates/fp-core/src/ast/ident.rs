@@ -105,9 +105,30 @@ impl Path {
         }
     }
 
-    pub fn plain(segments: Vec<Ident>) -> Self {
+    pub fn plain(mut segments: Vec<Ident>) -> Self {
+        // Keep programmatically-built paths consistent with parsed Rust
+        // paths: these keywords are prefixes, never ordinary identifiers.
+        let prefix = match segments.first().map(Ident::as_str) {
+            Some("crate") => {
+                segments.remove(0);
+                PathPrefix::Crate
+            }
+            Some("self") => {
+                segments.remove(0);
+                PathPrefix::SelfMod
+            }
+            Some("super") => {
+                let depth = segments
+                    .iter()
+                    .take_while(|segment| segment.as_str() == "super")
+                    .count();
+                segments.drain(..depth);
+                PathPrefix::Super(depth)
+            }
+            _ => PathPrefix::Plain,
+        };
         Self::new(
-            PathPrefix::Plain,
+            prefix,
             segments.into_iter().map(PathSegment::from_ident).collect(),
         )
     }
@@ -925,5 +946,24 @@ mod tests {
             args.args[1],
             AngleBracketedArg::Arg(GenericArg::Const(_))
         ));
+    }
+
+    #[test]
+    fn plain_constructor_normalizes_rust_path_prefixes() {
+        let crate_path = Path::plain(vec![Ident::new("crate"), Ident::new("module")]);
+        assert_eq!(crate_path.prefix, PathPrefix::Crate);
+        assert_eq!(crate_path.join("::"), "module");
+
+        let self_path = Path::plain(vec![Ident::new("self"), Ident::new("Item")]);
+        assert_eq!(self_path.prefix, PathPrefix::SelfMod);
+        assert_eq!(self_path.join("::"), "Item");
+
+        let super_path = Path::plain(vec![
+            Ident::new("super"),
+            Ident::new("super"),
+            Ident::new("Item"),
+        ]);
+        assert_eq!(super_path.prefix, PathPrefix::Super(2));
+        assert_eq!(super_path.join("::"), "Item");
     }
 }
