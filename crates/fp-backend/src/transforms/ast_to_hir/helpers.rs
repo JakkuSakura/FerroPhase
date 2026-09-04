@@ -1062,14 +1062,15 @@ impl AstToHirLowerer {
         }
         match args {
             None => true,
-            Some(args) => {
-                matches!(args.parenthesized, hir::GenericArgsParentheses::No)
-                    && !args.args.is_empty()
-                    && args
-                        .args
-                        .iter()
-                        .all(|arg| matches!(arg, hir::GenericArg::Lifetime(_)))
-            }
+            // Rustc's `has_non_lt_args` ignores associated-item constraints
+            // and is false for an empty argument list, so both `Trait<>`
+            // and `Trait<Item = T>` keep omitted type arguments inferable in
+            // optional-parameter mode.
+            Some(args) => matches!(args.parenthesized, hir::GenericArgsParentheses::No)
+                && args
+                    .args
+                    .iter()
+                    .all(|arg| matches!(arg, hir::GenericArg::Lifetime(_))),
         }
     }
 }

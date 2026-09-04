@@ -314,6 +314,45 @@ fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> 
 }
 
 #[test]
+fn optional_path_parameters_infer_when_arguments_have_no_types_or_consts() {
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        hir::PackageId::new("test"),
+    );
+    let segment = generator.make_path_segment(
+        "Trait",
+        Some(hir::GenericArgs::default()),
+        ParamMode::Optional,
+    );
+    assert!(segment.infer_args);
+
+    let output = hir::TypeExpr::new(
+        generator.next_id(),
+        hir::TypeExprKind::Primitive(ast::TypePrimitive::Bool),
+        Span::null(),
+    );
+    let constrained = hir::GenericArgs {
+        args: Vec::new(),
+        constraints: vec![hir::AssocItemConstraint {
+            hir_id: generator.next_id(),
+            ident: hir::Symbol::new("Output"),
+            gen_args: hir::GenericArgs::default(),
+            kind: hir::AssocItemConstraintKind::Equality {
+                term: hir::Term::Ty(Box::new(output)),
+            },
+            span: Span::null(),
+        }],
+        parenthesized: hir::GenericArgsParentheses::No,
+        span_ext: Span::null(),
+    };
+    let segment = generator.make_path_segment("Trait", Some(constrained), ParamMode::Optional);
+    assert!(segment.infer_args);
+}
+
+#[test]
 fn impl_self_keys_use_definition_identity_and_generic_arguments() {
     let package = hir::PackageId::new("impl-key-test");
     let adt = |index| ImplSelfKey::Adt {
