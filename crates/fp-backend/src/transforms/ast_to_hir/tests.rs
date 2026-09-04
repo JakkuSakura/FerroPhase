@@ -1807,7 +1807,7 @@ fn generic_transparent_type_alias_resolves_rhs_parameter() -> Result<()> {
 fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result<()> {
     let parser = FerroPhaseParser::new();
     let items = parser.parse_items_ast(
-        "struct Wrapper<T>(T); fn read<'a, T: 'a>(value: Wrapper<&'a T>) -> Wrapper<&'a T> { value }",
+        "struct Wrapper<'a, T>(T); fn read<'a, T: 'a>(value: Wrapper<'a, T>) -> Wrapper<'a, T> { value }",
     )?;
     let package = package_from_items(items)?;
     let mut lowerer = AstToHirLowerer::new(
@@ -1817,7 +1817,7 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
         hir::SharedHirProgram::new(hir::HirProgram::new()),
         hir::PackageId::new("test"),
     );
-    let _ = lowerer.transform_package(&package)?;
+    let lowered = lowerer.transform_package(&package)?;
     let diagnostics = lowerer.take_diagnostics().get_diagnostics();
     assert!(
         diagnostics
@@ -1825,6 +1825,30 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
             .all(|diagnostic| !diagnostic.message.contains("'a")),
         "lifetime arguments must not be resolved as type paths: {diagnostics:?}"
     );
+    let read = lowered
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(function) if function.sig.name.as_str() == "read" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("read should be lowered");
+    let hir::TypeExprKind::Path(path) = &read.sig.inputs[0].ty.kind else {
+        return Err(crate::error::optimization_error(
+            "expected Wrapper parameter type path".to_owned(),
+        ));
+    };
+    let Some(hir::GenericArgs { args, .. }) = path.segments()[0].args.as_ref() else {
+        return Err(crate::error::optimization_error(
+            "expected lifetime generic arguments".to_owned(),
+        ));
+    };
+    assert!(args.iter().any(|arg| matches!(
+        arg,
+        hir::GenericArg::Lifetime(lifetime) if !lifetime.span().is_null()
+    )));
     Ok(())
 }
 

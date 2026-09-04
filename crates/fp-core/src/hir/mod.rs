@@ -907,7 +907,7 @@ impl Lifetime {
     /// declaration is available. Named lifetimes carry their HIR identity as
     /// the parameter identity; unlike rustc, this compiler does not allocate a
     /// separate `LocalDefId` for erased regions.
-    pub fn from_name(name: impl Into<Symbol>, hir_id: HirId) -> Self {
+    pub fn from_name(name: impl Into<Symbol>, hir_id: HirId, span: Span) -> Self {
         let ident = name.into();
         let (kind, syntax) = match ident.as_str() {
             "'static" => (LifetimeKind::Static, LifetimeSyntax::ExplicitBound),
@@ -920,7 +920,7 @@ impl Lifetime {
             kind,
             LifetimeSource::Path,
             syntax,
-            Span::null(),
+            span,
         )
     }
 
@@ -935,13 +935,13 @@ impl Lifetime {
 
 impl From<&str> for Lifetime {
     fn from(name: &str) -> Self {
-        Self::from_name(name, HirId::default())
+        Self::from_name(name, HirId::default(), Span::null())
     }
 }
 
 impl From<String> for Lifetime {
     fn from(name: String) -> Self {
-        Self::from_name(name, HirId::default())
+        Self::from_name(name, HirId::default(), Span::null())
     }
 }
 
@@ -2029,6 +2029,7 @@ impl GenericParamKind {
 
 #[cfg(test)]
 mod path_tests {
+    use crate::span::Span;
     use super::{
         AssocItemConstraint, AssocItemConstraintKind, GenericArg, GenericArgs,
         GenericArgsParentheses, HirId, Lifetime, LifetimeKind, OwnerId, PackageId, PathSegment,
@@ -2089,13 +2090,18 @@ mod path_tests {
 
     #[test]
     fn lifetime_arguments_keep_hir_identity_and_kind() {
-        let lifetime = Lifetime::from_name("'a", HirId::new(OwnerId::root(PackageId::new("p")), 7));
+        let span = Span::new(0, 11, 13);
+        let lifetime = Lifetime::from_name(
+            "'a",
+            HirId::new(OwnerId::root(PackageId::new("p")), 7),
+            span,
+        );
         let arg = GenericArg::Lifetime(lifetime.clone());
 
         assert_eq!(lifetime.as_str(), "'a");
         assert!(matches!(&lifetime.kind, LifetimeKind::Param(_)));
         assert_eq!(arg.hir_id(), lifetime.hir_id.clone());
-        assert_eq!(arg.span(), lifetime.span);
+        assert_eq!(arg.span(), span);
     }
 
     #[test]

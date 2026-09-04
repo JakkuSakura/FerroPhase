@@ -542,7 +542,7 @@ fn ast_ty_to_generic_arg(ty: Ty) -> GenericArg {
             {
                 GenericArg::Lifetime(Lifetime::from_name(
                     name.path.segments[0].as_str(),
-                    name.path.segments[0].ident.span(),
+                    name.path.span(),
                 ))
             }
             ExprKind::Value(value)

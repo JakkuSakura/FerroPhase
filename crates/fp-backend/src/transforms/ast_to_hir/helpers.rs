@@ -182,6 +182,7 @@ impl AstToHirLowerer {
                     hir_args.push(hir::GenericArg::Lifetime(hir::Lifetime::from_name(
                         name.as_str(),
                         self.next_id(),
+                        name.span,
                     )))
                 }
                 ast::GenericArg::Type(ty) => {
@@ -300,6 +301,7 @@ impl AstToHirLowerer {
                     hir_args.push(hir::GenericArg::Lifetime(hir::Lifetime::from_name(
                         name.path.segments[0].as_str(),
                         self.next_id(),
+                        name.path.span(),
                     )));
                     continue;
                 }

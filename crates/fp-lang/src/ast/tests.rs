@@ -196,6 +196,12 @@ fn parse_path_arguments_preserve_lifetime_const_and_binding_kinds() {
         args.args[0],
         fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(_))
     ));
+    let fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(lifetime)) =
+        &args.args[0]
+    else {
+        panic!("expected lifetime argument");
+    };
+    assert!(!lifetime.span.is_null());
     assert!(matches!(
         args.args[1],
         fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_))
