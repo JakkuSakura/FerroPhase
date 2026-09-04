@@ -894,29 +894,25 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
         .collect::<Vec<_>>();
     rendered.extend(args.constraints.iter().map(|constraint| match constraint {
         AssocItemConstraint {
-            name,
+            ident,
             gen_args,
             kind: crate::hir::AssocItemConstraintKind::Equality { term },
+            ..
         } => format!(
             "{}{} = {}",
-            name,
-            gen_args
-                .as_ref()
-                .map(|nested| fmt_generic_args(nested, ctx))
-                .unwrap_or_default(),
+            ident,
+            fmt_assoc_item_args(gen_args, ctx),
             fmt_term(term, ctx)
         ),
         AssocItemConstraint {
-            name,
+            ident,
             gen_args,
             kind: crate::hir::AssocItemConstraintKind::Bound { bounds },
+            ..
         } => format!(
             "{}{}: {}",
-            name,
-            gen_args
-                .as_ref()
-                .map(|nested| fmt_generic_args(nested, ctx))
-                .unwrap_or_default(),
+            ident,
+            fmt_assoc_item_args(gen_args, ctx),
             bounds
                 .iter()
                 .map(|bound| fmt_type_expr(bound, ctx))
@@ -949,10 +945,10 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
             matches!(
                 constraint,
                 AssocItemConstraint {
-                    name,
+                    ident,
                     kind: crate::hir::AssocItemConstraintKind::Equality { .. },
                     ..
-                } if name.as_str() == "Output"
+                } if ident.as_str() == "Output"
             )
         }) {
             if !matches!(&ty.kind, TypeExprKind::Tuple(inputs) if inputs.is_empty()) {
@@ -982,31 +978,27 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                 .collect::<Vec<_>>();
             args.extend(generic_args.constraints.iter().map(|binding| match binding {
                 AssocItemConstraint {
-                    name,
+                    ident,
                     gen_args,
                     kind: crate::hir::AssocItemConstraintKind::Equality { term },
+                    ..
                 } => {
                     format!(
                         "{}{} = {}",
-                        name,
-                        gen_args
-                            .as_ref()
-                            .map(|args| fmt_generic_args(args, ctx))
-                            .unwrap_or_default(),
+                        ident,
+                        fmt_assoc_item_args(gen_args, ctx),
                         fmt_term(term, ctx)
                     )
                 }
                 AssocItemConstraint {
-                    name,
+                    ident,
                     gen_args,
                     kind: crate::hir::AssocItemConstraintKind::Bound { bounds },
+                    ..
                 } => format!(
                     "{}{}: {}",
-                    name,
-                    gen_args
-                        .as_ref()
-                        .map(|args| fmt_generic_args(args, ctx))
-                        .unwrap_or_default(),
+                    ident,
+                    fmt_assoc_item_args(gen_args, ctx),
                     bounds
                         .iter()
                         .map(|bound| fmt_type_expr(bound, ctx))
@@ -1046,11 +1038,11 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                         matches!(
                             constraint,
                             AssocItemConstraint {
-                                name,
+                                ident,
                                 kind: crate::hir::AssocItemConstraintKind::Equality { .. },
                                 ..
                             }
-                                if name.as_str() == "Output"
+                                if ident.as_str() == "Output"
                         )
                     })
                 {
@@ -1065,6 +1057,17 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
         segments.push(text);
     }
     segments.join("::")
+}
+
+fn fmt_assoc_item_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
+    if args.args.is_empty()
+        && args.constraints.is_empty()
+        && matches!(args.parenthesized, GenericArgsParentheses::No)
+    {
+        String::new()
+    } else {
+        fmt_generic_args(args, ctx)
+    }
 }
 
 fn fmt_term(term: &Term, ctx: &PrettyCtx<'_>) -> String {

@@ -4271,10 +4271,10 @@ mod function_body_resolution {
         assert!(matches!(
             args.constraints.as_slice(),
             [hir::AssocItemConstraint {
-                name,
+                ident,
                 kind: hir::AssocItemConstraintKind::Equality { .. },
                 ..
-            }] if name.as_str() == "Item"
+            }] if ident.as_str() == "Item"
         ));
     }
 
@@ -4303,14 +4303,15 @@ mod function_body_resolution {
             .as_ref()
             .expect("trait generic arguments");
         let [hir::AssocItemConstraint {
-            name,
-            gen_args: Some(gen_args),
+            ident,
+            gen_args,
             kind: hir::AssocItemConstraintKind::Equality { .. },
+            ..
         }] = args.constraints.as_slice()
         else {
             panic!("expected one generic associated-type equality constraint");
         };
-        assert_eq!(name.as_str(), "Item");
+        assert_eq!(ident.as_str(), "Item");
         assert!(matches!(
             gen_args.args.as_slice(),
             [hir::GenericArg::Lifetime(lifetime)] if lifetime.as_str() == "'a"
@@ -4344,12 +4345,12 @@ mod function_body_resolution {
         assert!(matches!(
             args.constraints.as_slice(),
             [hir::AssocItemConstraint {
-                name,
+                ident,
                 kind: hir::AssocItemConstraintKind::Equality {
                     term: hir::Term::Const(_),
                 },
                 ..
-            }] if name.as_str() == "VALUE"
+            }] if ident.as_str() == "VALUE"
         ));
     }
 
@@ -4384,12 +4385,12 @@ mod function_body_resolution {
         assert!(matches!(
             args.constraints.as_slice(),
             [hir::AssocItemConstraint {
-                name,
+                ident,
                 kind: hir::AssocItemConstraintKind::Equality {
                     term: hir::Term::Ty(ty),
                 },
                 ..
-            }] if name.as_str() == "Output" && matches!(ty.kind, hir::TypeExprKind::Primitive(_))
+            }] if ident.as_str() == "Output" && matches!(ty.kind, hir::TypeExprKind::Primitive(_))
         ));
     }
 

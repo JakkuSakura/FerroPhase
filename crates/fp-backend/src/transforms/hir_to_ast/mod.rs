@@ -1787,7 +1787,7 @@ impl<'a> HirToAstLifter<'a> {
                 .iter()
                 .find_map(|constraint| {
                     let hir::AssocItemConstraint {
-                        name,
+                        ident,
                         kind: hir::AssocItemConstraintKind::Equality {
                             term: hir::Term::Ty(ty),
                         },
@@ -1796,7 +1796,7 @@ impl<'a> HirToAstLifter<'a> {
                     else {
                         return None;
                     };
-                    (name.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
+                    (ident.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
                 })
                 .transpose()?;
             return Ok(ast::PathArguments::Parenthesized { inputs, output });
@@ -1829,18 +1829,23 @@ impl<'a> HirToAstLifter<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
         for binding in &args.constraints {
-            let gen_args = binding
-                .gen_args
-                .as_ref()
-                .map(|gen_args| self.lift_hir_generic_args(gen_args))
-                .transpose()?;
+            let gen_args = if binding.gen_args.args.is_empty()
+                && binding.gen_args.constraints.is_empty()
+                && matches!(
+                    binding.gen_args.parenthesized,
+                    hir::GenericArgsParentheses::No
+                ) {
+                None
+            } else {
+                Some(self.lift_hir_generic_args(&binding.gen_args)?)
+            };
             lifted.push(match binding {
                 hir::AssocItemConstraint {
-                    name,
+                    ident,
                     kind: hir::AssocItemConstraintKind::Equality { term },
                     ..
                 } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
-                    name: Ident::new(name.as_str()),
+                    name: Ident::new(ident.as_str()),
                     gen_args,
                     kind: ast::AssocItemConstraintKind::Equality {
                         term: match term {
@@ -1852,11 +1857,11 @@ impl<'a> HirToAstLifter<'a> {
                     },
                 }),
                 hir::AssocItemConstraint {
-                    name,
+                    ident,
                     kind: hir::AssocItemConstraintKind::Bound { bounds },
                     ..
                 } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
-                    name: Ident::new(name.as_str()),
+                    name: Ident::new(ident.as_str()),
                     gen_args,
                     kind: ast::AssocItemConstraintKind::Bound {
                         bounds: bounds

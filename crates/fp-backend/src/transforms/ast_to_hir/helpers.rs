@@ -87,6 +87,10 @@ impl AstToHirLowerer {
                     .as_ref()
                     .map(|output| self.transform_type_to_hir(output))
                     .transpose()?;
+                let output_span = output
+                    .as_ref()
+                    .map(|output| output.span())
+                    .unwrap_or_else(Span::null);
                 let input_tuple = hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Tuple(
@@ -96,8 +100,9 @@ impl AstToHirLowerer {
                 );
                 hir_args.push(hir::GenericArg::Type(Box::new(input_tuple)));
                 constraints.push(hir::AssocItemConstraint {
-                    name: hir::Symbol::new("Output"),
-                    gen_args: None,
+                    hir_id: self.next_id(),
+                    ident: hir::Symbol::new("Output"),
+                    gen_args: hir::GenericArgs::default(),
                     kind: hir::AssocItemConstraintKind::Equality {
                         term: hir::Term::Ty(Box::new(output.unwrap_or_else(|| {
                             hir::TypeExpr::new(
@@ -107,6 +112,7 @@ impl AstToHirLowerer {
                             )
                         }))),
                     },
+                    span: output_span,
                 });
                 parenthesized = hir::GenericArgsParentheses::ParenSugar;
                 &[]
@@ -120,6 +126,12 @@ impl AstToHirLowerer {
             let ast::AngleBracketedArg::Arg(arg) = arg else {
                 let ast::AngleBracketedArg::Constraint(constraint) = arg else {
                     continue;
+                };
+                let constraint_span = match &constraint.kind {
+                    ast::AssocItemConstraintKind::Equality { term } => term.span(),
+                    ast::AssocItemConstraintKind::Bound { bounds } => {
+                        Span::union(bounds.iter().map(ast::Ty::span))
+                    }
                 };
                 match constraint {
                     ast::AssocItemConstraint {
@@ -135,13 +147,17 @@ impl AstToHirLowerer {
                                 self.transform_expr_to_hir(expr.as_ref())?,
                             )),
                         };
+                        let gen_args = gen_args
+                            .as_ref()
+                            .map(|args| self.convert_path_arguments(args))
+                            .transpose()?
+                            .unwrap_or_default();
                         constraints.push(hir::AssocItemConstraint {
-                            name: name.clone().into(),
-                            gen_args: gen_args
-                                .as_ref()
-                                .map(|args| self.convert_path_arguments(args))
-                                .transpose()?,
+                            hir_id: self.next_id(),
+                            ident: name.clone().into(),
+                            gen_args,
                             kind: hir::AssocItemConstraintKind::Equality { term },
+                            span: constraint_span,
                         });
                     }
                     ast::AssocItemConstraint {
@@ -149,18 +165,22 @@ impl AstToHirLowerer {
                         gen_args,
                         kind: ast::AssocItemConstraintKind::Bound { bounds },
                     } => {
+                        let gen_args = gen_args
+                            .as_ref()
+                            .map(|args| self.convert_path_arguments(args))
+                            .transpose()?
+                            .unwrap_or_default();
                         constraints.push(hir::AssocItemConstraint {
-                            name: name.clone().into(),
-                            gen_args: gen_args
-                                .as_ref()
-                                .map(|args| self.convert_path_arguments(args))
-                                .transpose()?,
+                            hir_id: self.next_id(),
+                            ident: name.clone().into(),
+                            gen_args,
                             kind: hir::AssocItemConstraintKind::Bound {
                                 bounds: bounds
                                     .iter()
                                     .map(|bound| self.transform_type_to_hir(bound))
                                     .collect::<Result<Vec<_>>>()?,
                             },
+                            span: constraint_span,
                         });
                     }
                 }

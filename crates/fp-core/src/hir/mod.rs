@@ -848,6 +848,12 @@ impl PathSegment {
             res,
         }
     }
+
+    /// Return this segment's arguments, using rustc's empty-list view when
+    /// the source omitted an argument list.
+    pub fn args(&self) -> &GenericArgs {
+        self.args.as_ref().unwrap_or(GenericArgs::NONE)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -864,6 +870,33 @@ pub struct GenericArgs {
     /// Span covering the complete argument list, including delimiters when
     /// source information is available. Generated HIR uses a null span.
     pub span_ext: Span,
+}
+
+impl GenericArgs {
+    /// The empty argument list used by rustc for a path segment without
+    /// explicit arguments. `PathSegment::args` exposes this view while the
+    /// optional field still preserves whether arguments were written.
+    pub const NONE: &'static Self = &Self {
+        args: Vec::new(),
+        constraints: Vec::new(),
+        parenthesized: GenericArgsParentheses::No,
+        span_ext: Span {
+            file: 0,
+            lo: 0,
+            hi: 0,
+        },
+    };
+}
+
+impl Default for GenericArgs {
+    fn default() -> Self {
+        Self {
+            args: Vec::new(),
+            constraints: Vec::new(),
+            parenthesized: GenericArgsParentheses::No,
+            span_ext: Span::null(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -910,9 +943,15 @@ pub enum GenericArg {
 /// equality/bound payload, so HIR does the same.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssocItemConstraint {
-    pub name: Symbol,
-    pub gen_args: Option<GenericArgs>,
+    /// HIR identity of the constraint itself, matching rustc HIR rather than
+    /// treating a constraint as metadata owned solely by its path segment.
+    pub hir_id: HirId,
+    pub ident: Symbol,
+    /// HIR always has generic arguments for a constraint. An AST constraint
+    /// without an explicit argument list lowers to an empty `GenericArgs`.
+    pub gen_args: GenericArgs,
     pub kind: AssocItemConstraintKind,
+    pub span: Span,
 }
 
 /// The right-hand side of an associated-item equality constraint.
@@ -1759,10 +1798,8 @@ impl AssocItemConstraint {
                 Span::union(bounds.iter().map(TypeExpr::span))
             }
         };
-        self.gen_args
-            .as_ref()
-            .map(GenericArgs::span)
-            .map_or(payload, |args| Span::union([args, payload]))
+        self.span
+            .or(Span::union([self.gen_args.span(), payload]))
     }
 }
 
@@ -1796,6 +1833,21 @@ impl GenericParamKind {
                     .flatten(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::{GenericArgs, PathSegment};
+
+    #[test]
+    fn omitted_segment_arguments_use_rustc_empty_view() {
+        let segment = PathSegment::new("Item", None);
+
+        assert!(segment.args.is_none());
+        assert_eq!(segment.args(), GenericArgs::NONE);
+        assert!(segment.args().args.is_empty());
+        assert!(segment.infer_args);
     }
 }
 
