@@ -4599,6 +4599,26 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn type_namespace_wins_for_ambiguous_single_segment_generic_arguments() {
+        let (package, diagnostics) = lower(
+            "struct N; const N: usize = 1; struct Array<T, const M: usize> { value: T } fn use_array(value: Array<N, 1>) -> Array<N, 1> { value }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "ambiguous generic arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "use_array");
+        let input_path = type_path(&function.sig.inputs[0].ty);
+        let args = input_path
+            .segments()
+            .first()
+            .and_then(|segment| segment.args.as_ref())
+            .expect("Array generic arguments");
+        assert!(matches!(args.args[0], hir::GenericArg::Type(_)));
+        assert!(matches!(args.args[1], hir::GenericArg::Const(_)));
+    }
+
+    #[test]
     fn preserves_infer_argument_metadata_on_path_segments() {
         let (package, diagnostics) =
             lower("struct Wrapper<T>(T); fn take(value: Wrapper::<_>) -> Wrapper::<_> { value }");

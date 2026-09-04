@@ -197,13 +197,23 @@ impl AstToHirLowerer {
                     // Rust keeps a path-shaped generic argument ambiguous in
                     // the AST and disambiguates it against the declaration's
                     // generic parameter.  Our HIR has separate type/const
-                    // variants, so use the value namespace only for this
-                    // generic-argument disambiguation step; ordinary path
-                    // resolution remains the resolver's responsibility.
+                    // variants, so mirror rustc's disambiguation rule: use
+                    // the value namespace only when the type namespace does
+                    // not resolve the same single-segment path. Ordinary
+                    // path resolution remains the resolver's responsibility.
                     if let ast::Ty::Expr(expr) = ty.as_ref()
                         && let ast::ExprKind::Name(name) = expr.kind()
                         && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
                         && name.path.segments.len() == 1
+                        && !matches!(
+                            self.local_resolver.resolve_parsed_path(
+                                &self.package_id,
+                                &self.module_path,
+                                &name.path,
+                                fp_core::hir::resolve::Namespace::Type,
+                            ),
+                            fp_core::hir::resolve::ResolutionResult::Found(_)
+                        )
                         && matches!(
                             self.local_resolver.resolve_parsed_path(
                                 &self.package_id,
@@ -330,6 +340,15 @@ impl AstToHirLowerer {
                 if let ast::ExprKind::Name(name) = expr.kind()
                     && name.path.prefix == fp_core::ast::path::PathPrefix::Plain
                     && name.path.segments.len() == 1
+                    && !matches!(
+                        self.local_resolver.resolve_parsed_path(
+                            &self.package_id,
+                            &self.module_path,
+                            &name.path,
+                            fp_core::hir::resolve::Namespace::Type,
+                        ),
+                        fp_core::hir::resolve::ResolutionResult::Found(_)
+                    )
                     && matches!(
                         self.local_resolver.resolve_parsed_path(
                             &self.package_id,
