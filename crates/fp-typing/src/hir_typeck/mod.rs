@@ -4276,39 +4276,77 @@ impl HirTypeChecker {
                     hir::GenericArg::Const(expr) => GenericArg::Const(self.const_arg_kind(expr)),
                     hir::GenericArg::Infer(infer) => match infer.kind {
                         hir::InferArgKind::TypeOrConst => GenericArg::Type(Ty {
-                            kind: TyKind::Infer(ty::InferTy::FreshTy(
-                                infer.hir_id.local_id(),
-                            )),
+                            kind: TyKind::Infer(ty::InferTy::FreshTy(infer.hir_id.local_id())),
                         }),
                         hir::InferArgKind::Const => GenericArg::Const(
-                            ty::ConstKind::Infer(ty::InferConst::Fresh(
-                                infer.hir_id.local_id(),
-                            )),
+                            ty::ConstKind::Infer(ty::InferConst::Fresh(infer.hir_id.local_id())),
                         ),
                     },
                 };
                 checked.push(arg);
             }
-            Some(checked)
+            for parameter in enum_def.generics.params.iter().skip(checked.len()) {
+                let argument = match &parameter.kind {
+                    hir::GenericParamKind::Type { default } => {
+                        let default_ty = match default.as_ref() {
+                            Some(default) => Some(self.check_type_expr(default).await?),
+                            None => None,
+                        };
+                        GenericArg::Type(default_ty.unwrap_or_else(|| Ty {
+                            kind: TyKind::Param(ty::ParamTy {
+                                index: parameter.def_id.index,
+                                name: parameter.name.clone(),
+                            }),
+                        }))
+                    }
+                    hir::GenericParamKind::Const { default, .. } => {
+                        let default = default
+                            .as_ref()
+                            .map(|default| self.const_arg_kind(default))
+                            .unwrap_or_else(|| {
+                                ty::ConstKind::Param(ty::ParamConst {
+                                    index: parameter.def_id.index,
+                                    name: parameter.name.clone(),
+                                })
+                            });
+                        GenericArg::Const(default)
+                    }
+                };
+                checked.push(argument);
+            }
+            checked
         } else {
-            None
-        };
-        let args = match args {
-            Some(args) => args,
-            None => enum_def
-                .generics
-                .params
-                .iter()
-                .enumerate()
-                .map(|(_index, parameter)| {
-                    GenericArg::Type(Ty {
-                        kind: TyKind::Param(ty::ParamTy {
-                            index: parameter.def_id.index,
-                            name: parameter.name.clone(),
-                        }),
-                    })
-                })
-                .collect(),
+            let mut defaults = Vec::with_capacity(enum_def.generics.params.len());
+            for parameter in &enum_def.generics.params {
+                let argument = match &parameter.kind {
+                    hir::GenericParamKind::Type { default } => {
+                        let ty = match default.as_ref() {
+                            Some(default) => self.check_type_expr(default).await?,
+                            None => Ty {
+                                kind: TyKind::Param(ty::ParamTy {
+                                    index: parameter.def_id.index,
+                                    name: parameter.name.clone(),
+                                }),
+                            },
+                        };
+                        GenericArg::Type(ty)
+                    }
+                    hir::GenericParamKind::Const { default, .. } => {
+                        let value = default
+                            .as_ref()
+                            .map(|default| self.const_arg_kind(default))
+                            .unwrap_or_else(|| {
+                                ty::ConstKind::Param(ty::ParamConst {
+                                    index: parameter.def_id.index,
+                                    name: parameter.name.clone(),
+                                })
+                            });
+                        GenericArg::Const(value)
+                    }
+                };
+                defaults.push(argument);
+            }
+            defaults
         };
         Ok(Ty {
             kind: TyKind::Adt(
