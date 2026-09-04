@@ -1698,7 +1698,12 @@ impl<'a> HirToAstLifter<'a> {
                                     .filter(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
                                     .map(|_| index + 1)
                             })
-                            .unwrap_or(path.segments.len());
+                            // A resolved QPath with a qself always has an
+                            // associated-item tail. If the trait comes from
+                            // an unpublished external package, its item kind
+                            // is unavailable here; retain the rustc shape by
+                            // treating the final segment as that tail.
+                            .unwrap_or_else(|| path.segments.len().saturating_sub(1));
                         Ok::<ast::QSelf, fp_core::error::Error>(ast::QSelf {
                             ty: Box::new(self.lift_type(ty)?),
                             path_span: Span::null(),
@@ -2954,6 +2959,58 @@ mod tests {
         assert_eq!(lifted.path.segments[0].ident.as_str(), "Trait");
         assert_eq!(lifted.path.segments[1].ident.as_str(), "Item");
         assert_eq!(lifted.path.segments[2].ident.as_str(), "Nested");
+        Ok(())
+    }
+
+    #[test]
+    fn lifts_external_explicit_qself_with_associated_tail() -> Result<()> {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let qself_ty = hir::TypeExpr::new(
+            hir::HirId::new(owner.clone(), 1),
+            hir::TypeExprKind::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::U8,
+            )),
+            Span::null(),
+        );
+        let qpath = hir::QPath::Resolved(
+            Some(Box::new(qself_ty)),
+            hir::Path::new(
+                hir::Res::Error,
+                vec![
+                    hir::PathSegment::with_hir_id(
+                        "external",
+                        Default::default(),
+                        None,
+                        hir::Res::Error,
+                        false,
+                    ),
+                    hir::PathSegment::with_hir_id(
+                        "Trait",
+                        Default::default(),
+                        None,
+                        hir::Res::Error,
+                        false,
+                    ),
+                    hir::PathSegment::with_hir_id(
+                        "Item",
+                        Default::default(),
+                        None,
+                        hir::Res::Error,
+                        false,
+                    ),
+                ],
+            ),
+        );
+        let package = hir::HirPackage::new(package_id.clone());
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let lifted = lifter.lift_qpath(&qpath)?;
+        let qself = lifted.qself.expect("explicit qself");
+        assert_eq!(qself.position, 2);
+        assert_eq!(lifted.path.join("::"), "external::Trait::Item");
         Ok(())
     }
 
