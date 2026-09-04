@@ -4991,6 +4991,123 @@ mod function_body_resolution {
         };
         assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
     }
+
+    #[test]
+    fn resolves_parent_module_import_in_nested_function_body() {
+        let (package, diagnostics) = lower(
+            "mod helpers { pub fn answer() -> i64 { 1 } } mod outer { use crate::helpers; mod inner { fn call() -> i64 { helpers::answer() } } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "nested child should inherit the parent import: {diagnostics:?}"
+        );
+        assert!(
+            package.items.iter().any(|item| matches!(
+                &item.kind,
+                hir::ItemKind::Function(function) if function.sig.name.as_str() == "call"
+            )),
+            "nested function should be lowered"
+        );
+    }
+
+    #[test]
+    fn resolves_self_in_trait_default_function_body() {
+        let (package, diagnostics) = lower(
+            "trait Identity { fn make(&self) -> Self { Self {} } } struct Value; impl Identity for Value {}",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "trait default body should resolve `Self`: {diagnostics:?}"
+        );
+        let trait_item = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Trait(def) => Some(def),
+                _ => None,
+            })
+            .expect("trait item");
+        let method = trait_item
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::TraitItemKind::Method(method) if item.name.as_str() == "make" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("trait default method");
+        let hir::ExprKind::Struct(path, _) = &body_expr(method).kind else {
+            panic!("expected trait default body constructor: {:?}", body_expr(method));
+        };
+        assert!(matches!(path.res, hir::Res::Def(_) | hir::Res::SelfTy));
+    }
+
+    #[test]
+    fn resolves_const_impl_array_parameter_in_function_body() {
+        let (package, diagnostics) = lower(
+            "trait Len { fn len(&self) -> usize; } impl<T, const N: usize> Len for [T; N] { fn len(&self) -> usize { N } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "array const parameter should resolve in impl method body: {diagnostics:?}"
+        );
+        let impl_block = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl item");
+        let method = impl_block
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "len" => Some(method),
+                _ => None,
+            })
+            .expect("len method");
+        let hir::ExprKind::Path(path) = &body_expr(method).kind else {
+            panic!("expected const parameter path: {:?}", body_expr(method));
+        };
+        assert!(matches!(path.res, hir::Res::Generic(_)), "path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_associated_function_from_generic_type_in_body() {
+        let (package, diagnostics) = lower(
+            "struct Wrapper<T>(T); impl<T> Wrapper<T> { fn new(value: T) -> Self { Self(value) } } fn call(value: i64) -> Wrapper<i64> { Wrapper::new(value) }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "associated function path should resolve its type base: {diagnostics:?}"
+        );
+        let call = function(&package, "call");
+        let hir::ExprKind::Call(callee, _) = &body_expr(call).kind else {
+            panic!("expected associated function call");
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            panic!("expected associated function path: {callee:?}");
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+    }
+
+    #[test]
+    fn resolves_imported_type_constructor_in_function_body() {
+        let (package, diagnostics) = lower(
+            "mod types { pub struct Token; } mod consumer { use crate::types::Token; fn make() -> Token { Token {} } }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "imported type constructor should resolve in function body: {diagnostics:?}"
+        );
+        let make = function(&package, "make");
+        let hir::ExprKind::Struct(path, _) = &body_expr(make).kind else {
+            panic!("expected imported constructor expression: {:?}", body_expr(make));
+        };
+        assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
+    }
 }
 
 #[test]

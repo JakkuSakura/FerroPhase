@@ -342,79 +342,105 @@ impl Resolver {
             .clone()
             .unwrap_or_else(|| current_package_id.clone());
         let root = fp_core::hir::resolve::ModuleData::virtual_root_for(target_package_id.clone());
-        let mut module = root;
         let skip_external = external_package.is_some()
             && matches!(parsed.prefix, PathPrefix::Plain | PathPrefix::Root);
-        if !skip_external && !matches!(parsed.prefix, PathPrefix::Root | PathPrefix::Crate) {
-            let start_segments = match parsed.prefix {
-                PathPrefix::Super(depth) => {
-                    let Some(parent) = location.segments.len().checked_sub(depth) else {
-                        return ResolutionResult::NotFound(ResolutionNotFound::InvalidParent {
-                            location: location.clone(),
-                            depth,
-                        });
-                    };
-                    &location.segments[..parent]
-                }
-                _ => &location.segments,
-            };
-            match hir_program.resolve_module_location_segments(&target_package_id, start_segments) {
-                ResolutionResult::Found(path) if let hir::Res::Module(start) = path.res.clone() => {
-                    module = start
-                }
-                result => return result,
+        let start_segments = match parsed.prefix {
+            PathPrefix::Super(depth) => {
+                let Some(parent) = location.segments.len().checked_sub(depth) else {
+                    return ResolutionResult::NotFound(ResolutionNotFound::InvalidParent {
+                        location: location.clone(),
+                        depth,
+                    });
+                };
+                location.segments[..parent].to_vec()
             }
-        }
+            _ => location.segments.clone(),
+        };
+        // A plain path in a nested module can refer to a private item imported
+        // by an ancestor module. This is ordinary Rust lexical lookup, not a
+        // suffix search: once a candidate ancestor provides the first segment
+        // but a later segment fails, lookup stops at that shadowing binding.
+        let search_ancestors = matches!(parsed.prefix, PathPrefix::Plain) && !skip_external;
+        let mut start_len = start_segments.len();
         let first = usize::from(skip_external);
         let count = parsed.segments.len().saturating_sub(first);
         if count == 0 {
             return ResolutionResult::Found(hir::Path {
-                res: hir::Res::Module(module),
+                res: hir::Res::Module(root),
                 segments: Vec::new(),
             });
         }
-        let mut last_result = ResolutionResult::NotFound(ResolutionNotFound::EmptyPath);
-        for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
-            let segment_namespace = if offset + 1 == count {
-                namespace
-            } else {
-                Namespace::Type
-            };
-            let result = hir_program.resolve_module_child(
-                &module,
-                segment.ident.as_str(),
-                segment_namespace,
-            );
-            last_result = result.clone();
-            if offset + 1 == count {
-                return result;
+
+        'ancestor: loop {
+            let mut module = root.clone();
+            if !skip_external && !matches!(parsed.prefix, PathPrefix::Root | PathPrefix::Crate) {
+                match hir_program.resolve_module_location_segments(
+                    &target_package_id,
+                    &start_segments[..start_len],
+                ) {
+                    ResolutionResult::Found(path)
+                        if let hir::Res::Module(start) = path.res.clone() =>
+                    {
+                        module = start;
+                    }
+                    result => {
+                        if search_ancestors && start_len > 0 {
+                            start_len -= 1;
+                            continue 'ancestor;
+                        }
+                        return result;
+                    }
+                }
             }
-            match result {
-                ResolutionResult::Found(path) if let hir::Res::Module(next) = path.res.clone() => {
-                    module = next
+
+            for (offset, segment) in parsed.segments.iter().skip(first).enumerate() {
+                let segment_namespace = if offset + 1 == count {
+                    namespace
+                } else {
+                    Namespace::Type
+                };
+                let result = hir_program.resolve_module_child(
+                    &module,
+                    segment.ident.as_str(),
+                    segment_namespace,
+                );
+                if offset + 1 == count {
+                    return result;
                 }
-                ResolutionResult::Found(found) => {
-                    // A non-module segment is the resolved base (for
-                    // example `Vec` in `Vec::new` or `Trait::Assoc`).  Keep
-                    // the remaining path segments for type checking to
-                    // resolve as associated items instead of treating them
-                    // as an invalid module traversal.
-                    return ResolutionResult::Found(hir::Path {
-                        res: found.res,
-                        segments: parsed
-                            .segments
-                            .iter()
-                            .skip(first + offset + 1)
-                            .map(|segment| hir::PathSegment {
-                                name: segment.ident.name.clone().into(),
-                                args: None,
-                            })
-                            .collect(),
-                    });
+                match result {
+                    ResolutionResult::Found(path)
+                        if let hir::Res::Module(next) = path.res.clone() =>
+                    {
+                        module = next;
+                    }
+                    ResolutionResult::Found(found) => {
+                        // A non-module segment is the resolved base (for
+                        // example `Vec` in `Vec::new` or `Trait::Assoc`). Keep
+                        // the remaining path segments for type checking to
+                        // resolve as associated items instead of treating it
+                        // as an invalid module traversal.
+                        return ResolutionResult::Found(hir::Path {
+                            res: found.res,
+                            segments: parsed
+                                .segments
+                                .iter()
+                                .skip(first + offset + 1)
+                                .map(|segment| hir::PathSegment {
+                                    name: segment.ident.name.clone().into(),
+                                    args: None,
+                                })
+                                .collect(),
+                        });
+                    }
+                    result => {
+                        if search_ancestors && offset == 0 && start_len > 0 {
+                            start_len -= 1;
+                            continue 'ancestor;
+                        }
+                        return result;
+                    }
                 }
-                _ => break,
             }
         }
-        last_result
     }
 }

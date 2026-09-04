@@ -739,6 +739,23 @@ impl AstToHirLowerer {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
+            // `Self` is an implicit type/value binding in every trait body.
+            // Keep it in the same lexical scopes used by impl bodies so
+            // default methods can lower paths such as `Self { ... }` and
+            // `Self::Assoc` without manufacturing an error resolution.
+            for namespace in [
+                fp_core::hir::resolve::Namespace::Type,
+                fp_core::hir::resolve::Namespace::Value,
+            ] {
+                let _ = self.local_resolver.declare(
+                    "Self",
+                    fp_core::hir::resolve::Binding::Import {
+                        target: hir::Res::SelfTy,
+                        namespace,
+                        span: Span::null(),
+                    },
+                );
+            }
             let generics = self.transform_generics(&def_trait.generics_params)?;
             let self_ty = hir::TypeExpr::new(
                 self.next_id(),
