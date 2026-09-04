@@ -1873,8 +1873,7 @@ impl<'a> HirToAstLifter<'a> {
                     .args
                     .as_ref()
                     .map(|args| self.lift_hir_generic_args(args))
-                    .transpose()?
-                    .unwrap_or(ast::PathArguments::None);
+                    .transpose()?;
                 Ok(PathSegment::with_arguments(
                     Ident::new(segment.ident.as_str()),
                     arguments,
@@ -2671,7 +2670,7 @@ mod tests {
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
         let lifted = lifter.lift_path(&path).expect("lift generic path");
-        let ast::PathArguments::AngleBracketed(args) = &lifted.segments[0].arguments else {
+        let Some(ast::PathArguments::AngleBracketed(args)) = lifted.segments[0].arguments.as_deref() else {
             panic!("expected lifted generic arguments");
         };
         assert!(matches!(

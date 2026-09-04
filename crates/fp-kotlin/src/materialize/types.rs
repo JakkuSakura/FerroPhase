@@ -79,7 +79,10 @@ pub(super) fn materialize_aliases(mut ty: Ty) -> Ty {
                 let path = &name.path;
                 (
                     path.last().ident.as_str().to_owned(),
-                    path.last().arguments.legacy_types(),
+                    path.last()
+                        .arguments
+                        .as_deref()
+                        .map_or_else(Vec::new, fp_core::ast::PathArguments::legacy_types),
                 )
             };
             let replacement = match last.as_str() {
@@ -115,7 +118,7 @@ pub(super) fn parameterized(name: &str, arg: Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new(name),
-            fp_core::ast::PathArguments::from_types(&[arg]),
+            Some(fp_core::ast::PathArguments::from_types(&[arg])),
         )],
     )))))
 }
@@ -171,7 +174,10 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
         Name { path, .. } => {
             let last = path.last().as_str().to_owned();
             for segment in &mut path.segments {
-                match &mut segment.arguments {
+                let Some(arguments) = &mut segment.arguments else {
+                    continue;
+                };
+                match arguments.as_mut() {
                     fp_core::ast::PathArguments::AngleBracketed(args) => {
                         for arg in args {
                             match arg {
@@ -213,8 +219,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                     fp_core::ast::PathArguments::None => {}
                 }
                 if segment.ident.as_str() == "Result" {
-                    if let fp_core::ast::PathArguments::AngleBracketed(args) =
-                        &mut segment.arguments
+                    if let fp_core::ast::PathArguments::AngleBracketed(args) = arguments.as_mut()
                     {
                         if args.len() > 1 {
                             args.truncate(1);

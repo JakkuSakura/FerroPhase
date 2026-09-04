@@ -278,22 +278,35 @@ impl From<&Path> for Path {
 pub struct PathSegment {
     pub ident: Ident,
     #[serde(default)]
-    pub arguments: PathArguments,
+    /// Type/lifetime arguments attached to this segment. `None` means the
+    /// source omitted an argument list; `Some` may still hold an explicitly
+    /// empty list, matching rustc's AST representation.
+    pub arguments: Option<Box<PathArguments>>,
 }
 
 impl PathSegment {
-    pub fn new(ident: Ident, arguments: PathArguments) -> Self {
-        Self { ident, arguments }
+    pub fn new(ident: Ident, arguments: Option<PathArguments>) -> Self {
+        Self {
+            ident,
+            arguments: arguments
+                .filter(|arguments| !arguments.is_none())
+                .map(Box::new),
+        }
     }
 
-    pub fn with_arguments(ident: Ident, arguments: PathArguments) -> Self {
-        Self { ident, arguments }
+    pub fn with_arguments(ident: Ident, arguments: Option<PathArguments>) -> Self {
+        Self {
+            ident,
+            arguments: arguments
+                .filter(|arguments| !arguments.is_none())
+                .map(Box::new),
+        }
     }
 
     pub fn from_ident(ident: Ident) -> Self {
         Self {
             ident,
-            arguments: PathArguments::None,
+            arguments: None,
         }
     }
 
@@ -481,35 +494,8 @@ impl Eq for Path {}
 impl std::fmt::Display for PathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ident)?;
-        match &self.arguments {
-            PathArguments::None => {
-                return Ok(());
-            }
-            PathArguments::AngleBracketed(args) => {
-                write!(
-                    f,
-                    "<{}>",
-                    args.iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )?;
-            }
-            PathArguments::Parenthesized { inputs, output } => {
-                write!(
-                    f,
-                    "({})",
-                    inputs
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )?;
-                if let Some(output) = output {
-                    write!(f, " -> {}", output)?;
-                }
-            }
-            PathArguments::ParenthesizedElided => write!(f, "(..)")?,
+        if let Some(arguments) = &self.arguments {
+            write!(f, "{arguments}")?;
         }
         Ok(())
     }
@@ -696,7 +682,7 @@ mod tests {
     fn parameterized_path_retains_per_segment_arguments() {
         let path = Path::new(
             PathPrefix::Plain,
-            vec![PathSegment::new(Ident::new("Vec"), PathArguments::None)],
+            vec![PathSegment::new(Ident::new("Vec"), None)],
         );
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].ident.as_str(), "Vec");
@@ -726,12 +712,15 @@ mod tests {
     fn path_segment_retains_structured_generic_arguments() {
         let segment = PathSegment::new(
             Ident::new("Array"),
-            PathArguments::AngleBracketed(vec![
+            Some(PathArguments::AngleBracketed(vec![
                 AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),
                 AngleBracketedArg::Arg(GenericArg::Const(Box::new(Expr::ident(Ident::new("N"))))),
-            ]),
+            ])),
         );
-        let PathArguments::AngleBracketed(args) = segment.arguments else {
+        let Some(arguments) = segment.arguments else {
+            panic!("expected generic arguments");
+        };
+        let PathArguments::AngleBracketed(args) = *arguments else {
             panic!("expected angle-bracketed arguments");
         };
         assert!(matches!(args[0], AngleBracketedArg::Arg(GenericArg::Type(_))));

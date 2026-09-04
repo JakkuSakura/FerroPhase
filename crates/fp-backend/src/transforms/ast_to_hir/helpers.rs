@@ -58,11 +58,11 @@ impl AstToHirLowerer {
                 .segments
                 .iter()
                 .map(|segment| {
-                    if !segment.arguments.is_none() {
-                        self.convert_path_arguments(&segment.arguments).map(Some)
-                    } else {
-                        Ok(None)
-                    }
+                    segment
+                        .arguments
+                        .as_deref()
+                        .map(|arguments| self.convert_path_arguments(arguments))
+                        .transpose()
                 })
                 .collect(),
         }

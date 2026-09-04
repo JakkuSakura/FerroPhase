@@ -151,7 +151,10 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
         ast::Ty::Expr(mut expr) => {
             if let ast::ExprKind::Name(name) = expr.kind_mut() {
                 for segment in &mut name.path.segments {
-                    match &mut segment.arguments {
+                    let Some(arguments) = &mut segment.arguments else {
+                        continue;
+                    };
+                    match arguments.as_mut() {
                         ast::PathArguments::AngleBracketed(args) => {
                             for arg in args {
                                 match arg {

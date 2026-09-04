@@ -447,6 +447,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         .is_some();
     let first = ident_like(input)?;
     let first_args = parse_optional_path_arguments(input)?;
+    let first_args = (!first_args.is_none()).then_some(first_args);
     let mut segments = vec![PathSegment::with_arguments(first, first_args)];
     loop {
         let mut probe = *input;
@@ -456,7 +457,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         if peek_symbol(probe) == Some("<") {
             let args = parse_optional_path_arguments(&mut probe)?;
             if let Some(segment) = segments.last_mut() {
-                segment.arguments = args;
+                segment.arguments = (!args.is_none()).then_some(Box::new(args));
             }
             *input = probe;
             continue;
@@ -466,7 +467,10 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         };
         let args = parse_optional_path_arguments(&mut probe)?;
         *input = probe;
-        segments.push(PathSegment::with_arguments(next, args));
+        segments.push(PathSegment::with_arguments(
+            next,
+            (!args.is_none()).then_some(args),
+        ));
     }
     let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
     Ok(Name::path(Path::new(prefix, segments)))

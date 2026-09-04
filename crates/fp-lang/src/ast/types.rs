@@ -386,7 +386,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = PathArguments::ParenthesizedElided;
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided));
             return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
         }
         let mut params = Vec::new();
@@ -424,10 +424,10 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let Some(segment) = path.segments.last_mut() else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
-        segment.arguments = PathArguments::Parenthesized {
+        segment.arguments = Some(Box::new(PathArguments::Parenthesized {
             inputs: params,
             output: ret_ty,
-        };
+        }));
         return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
     }
     {
@@ -436,11 +436,13 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             && parameter_path.segments.len() == 1
             && parameter_path.segments[0].ident.as_str() == "quote"
             && matches!(
-                &parameter_path.segments[0].arguments,
-                PathArguments::AngleBracketed(args) if args.len() == 1
+                parameter_path.segments[0].arguments.as_deref(),
+                Some(PathArguments::AngleBracketed(args)) if args.len() == 1
             )
         {
-            let PathArguments::AngleBracketed(args) = &parameter_path.segments[0].arguments else {
+            let Some(PathArguments::AngleBracketed(args)) =
+                parameter_path.segments[0].arguments.as_deref()
+            else {
                 unreachable!("quote arguments checked above");
             };
             let AngleBracketedArg::Arg(GenericArg::Type(argument)) = &args[0] else {
@@ -543,7 +545,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     };
     if type_name == "type" {
         if let Some(ppath) = bare_path {
-            let PathArguments::AngleBracketed(args) = &ppath.segments[0].arguments else {
+            let Some(PathArguments::AngleBracketed(args)) = ppath.segments[0].arguments.as_deref()
+            else {
                 return Ok(Ty::Type(TypeType {
                     span: Span::null(),
                     inner: None,
@@ -750,7 +753,7 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = PathArguments::ParenthesizedElided;
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided));
             return Ok(Expr::name(Name { qself, path }));
         }
         let mut params = Vec::new();

@@ -138,7 +138,7 @@ impl LocalResolver {
                 .map(|segment| {
                     fp_core::ast::PathSegment::new(
                         fp_core::ast::Ident::new(segment),
-                        fp_core::ast::PathArguments::None,
+                        None,
                     )
                 })
                 .collect(),

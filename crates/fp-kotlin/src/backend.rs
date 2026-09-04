@@ -428,10 +428,10 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Result"),
-                fp_core::ast::PathArguments::from_types(&[
+                Some(fp_core::ast::PathArguments::from_types(&[
                     Ty::ident(Ident::new("String")),
                     Ty::ident(Ident::new("CoreError")),
-                ]),
+                ])),
             )],
         )));
         let mut function = ItemDefFunction::new_simple(Ident::new("load"), ExprBlock::new());
@@ -450,8 +450,12 @@ mod tests {
             panic!("expected parameterized Result type");
         };
         assert!(matches!(
-            path.segments.last().expect("Result segment").arguments,
-            PathArguments::AngleBracketed(ref args) if args.len() == 1
+            path.segments
+                .last()
+                .expect("Result segment")
+                .arguments
+                .as_deref(),
+            Some(PathArguments::AngleBracketed(args)) if args.len() == 1
         ));
     }
 
@@ -645,7 +649,9 @@ mod tests {
                 PathSegment::from_ident(Ident::new("vec")),
                 PathSegment::new(
                     Ident::new("Vec"),
-                    fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("Entry"))]),
+                    Some(fp_core::ast::PathArguments::from_types(&[
+                        Ty::ident(Ident::new("Entry")),
+                    ])),
                 ),
             ],
         )));
@@ -660,7 +666,8 @@ mod tests {
         };
         let segment = path.last();
         assert_eq!(segment.ident.as_str(), "MutableList");
-        let fp_core::ast::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = segment.arguments.as_deref()
+        else {
             panic!("expected one element type");
         };
         let [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(element))] = args.as_slice() else {
@@ -681,9 +688,9 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                fp_core::ast::PathArguments::from_types(&[Ty::Primitive(TypePrimitive::Int(
+                Some(fp_core::ast::PathArguments::from_types(&[Ty::Primitive(TypePrimitive::Int(
                     TypeInt::U8,
-                ))]),
+                ))])),
             )],
         )));
 
@@ -726,7 +733,9 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("Entry"))]),
+                Some(fp_core::ast::PathArguments::from_types(&[
+                    Ty::ident(Ident::new("Entry")),
+                ])),
             )],
         )));
         let mut function = ItemDefFunction::new_simple(Ident::new("load"), ExprBlock::new());
@@ -831,7 +840,7 @@ mod tests {
                 PathPrefix::Plain,
                 vec![PathSegment::new(
                     Ident::new(name),
-                    fp_core::ast::PathArguments::from_types(&args),
+                    Some(fp_core::ast::PathArguments::from_types(&args)),
                 )],
             )))
         };
@@ -1668,7 +1677,10 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
         return;
     };
     for segment in &mut path.segments {
-        match &mut segment.arguments {
+        let Some(arguments) = &mut segment.arguments else {
+            continue;
+        };
+        match arguments.as_mut() {
             fp_core::ast::PathArguments::AngleBracketed(args) => {
                 for arg in args {
                     match arg {
@@ -1719,7 +1731,10 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
 fn materialize_rust_type_alias(name: &Name) -> Option<Ty> {
     let segment = name.path.last();
     let last = segment.ident.as_str();
-    let args = segment.arguments.legacy_types();
+    let args = segment
+        .arguments
+        .as_deref()
+        .map_or_else(Vec::new, fp_core::ast::PathArguments::legacy_types);
 
     match last {
         "str" => Some(Ty::ident(Ident::new("String"))),
@@ -1812,7 +1827,7 @@ pub(crate) fn kotlin_parameterized_ty(name: &str, arg: Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new(name),
-            fp_core::ast::PathArguments::from_types(&[arg]),
+            Some(fp_core::ast::PathArguments::from_types(&[arg])),
         )],
     )))))
 }
@@ -1829,7 +1844,7 @@ fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("MutableList"),
-            fp_core::ast::PathArguments::from_types(&[element_ty.clone()]),
+            Some(fp_core::ast::PathArguments::from_types(&[element_ty.clone()])),
         )],
     )))))
 }
