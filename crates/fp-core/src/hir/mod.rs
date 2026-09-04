@@ -1045,6 +1045,21 @@ impl GenericArgs {
     pub fn paren_sugar_output(&self) -> Option<&TypeExpr> {
         self.paren_sugar_inputs_output().map(|(_, output)| output)
     }
+
+    /// Match rustc HIR's `GenericArgs::is_empty`: only positional arguments
+    /// determine emptiness. Associated-item constraints are kept in a
+    /// separate list and therefore do not make this view non-empty.
+    pub fn is_empty(&self) -> bool {
+        self.args.is_empty()
+    }
+
+    /// Return the source span for non-empty generic argument syntax, matching
+    /// rustc's optional `span_ext()` accessor. A zero-width span represents a
+    /// synthesized or absent argument list.
+    pub fn span_ext(&self) -> Option<Span> {
+        (!self.span_ext.is_null() && self.span_ext.lo != self.span_ext.hi)
+            .then_some(self.span_ext)
+    }
 }
 
 impl Default for GenericArgs {
@@ -2086,6 +2101,31 @@ mod path_tests {
         assert_eq!(inputs.len(), 1);
         assert!(matches!(output.kind, TypeExprKind::Never));
         assert!(args.paren_sugar_output().is_some());
+    }
+
+    #[test]
+    fn generic_args_match_rustc_empty_and_span_views() {
+        let constraint_only = GenericArgs {
+            args: Vec::new(),
+            constraints: vec![AssocItemConstraint {
+                hir_id: Default::default(),
+                ident: "Output".into(),
+                gen_args: GenericArgs::default(),
+                kind: AssocItemConstraintKind::Bound { bounds: Vec::new() },
+                span: Span::null(),
+            }],
+            parenthesized: GenericArgsParentheses::No,
+            span_ext: Span::new(1, 4, 7),
+        };
+        assert!(constraint_only.is_empty());
+        assert_eq!(constraint_only.span_ext(), Some(Span::new(1, 4, 7)));
+
+        let synthesized = GenericArgs {
+            span_ext: Span::new(1, 7, 7),
+            ..GenericArgs::default()
+        };
+        assert!(synthesized.is_empty());
+        assert_eq!(synthesized.span_ext(), None);
     }
 
     #[test]

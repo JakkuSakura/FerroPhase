@@ -89,11 +89,13 @@ impl AstToHirLowerer {
                 );
                 let output_ty = match output {
                     ast::FnRetTy::Ty(output) => self.transform_type_to_hir(output)?,
-                    // Rustc gives the synthesized `()` output the span carried
-                    // by `FnRetTy::Default` (normally the zero-width position
-                    // immediately after `)`) rather than the full argument
-                    // list. Keeping that distinction lets HIR->AST recover
-                    // `Trait(T)` instead of inventing `Trait(T) -> ()`.
+                    // Preserve the AST's default-return insertion span
+                    // (normally the zero-width position immediately after
+                    // `)`) so HIR->AST can recover `Trait(T)` instead of
+                    // inventing `Trait(T) -> ()`. This source-preserving
+                    // detail is intentionally kept even though rustc's HIR
+                    // lowering uses the enclosing parenthesized span for its
+                    // synthesized unit type.
                     ast::FnRetTy::Default(default_span) => hir::TypeExpr::new(
                         self.next_id(),
                         hir::TypeExprKind::Tuple(Vec::new()),
