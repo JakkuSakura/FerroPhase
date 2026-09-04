@@ -160,8 +160,10 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                     }
                                     ast::AngleBracketedArg::Constraint(constraint) => {
                                         match &mut constraint.kind {
-                                            ast::AssocItemConstraintKind::Equality { ty } => {
-                                                **ty = materialize_ty((**ty).clone(), strategy)?;
+                                            ast::AssocItemConstraintKind::Equality { term } => {
+                                                if let ast::Term::Ty(ty) = term {
+                                                    **ty = materialize_ty((**ty).clone(), strategy)?;
+                                                }
                                             }
                                             ast::AssocItemConstraintKind::Bound { bounds } => {
                                                 for bound in bounds {

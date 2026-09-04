@@ -99,13 +99,13 @@ impl AstToHirLowerer {
                     name: hir::Symbol::new("Output"),
                     gen_args: None,
                     kind: hir::AssocItemConstraintKind::Equality {
-                        ty: Box::new(output.unwrap_or_else(|| {
+                        term: hir::Term::Ty(Box::new(output.unwrap_or_else(|| {
                             hir::TypeExpr::new(
                                 self.next_id(),
                                 hir::TypeExprKind::Tuple(Vec::new()),
                                 Span::null(),
                             )
-                        })),
+                        }))),
                     },
                 });
                 parenthesized = hir::GenericArgsParentheses::ParenSugar;
@@ -125,17 +125,23 @@ impl AstToHirLowerer {
                     ast::AssocItemConstraint {
                         name,
                         gen_args,
-                        kind: ast::AssocItemConstraintKind::Equality { ty },
+                        kind: ast::AssocItemConstraintKind::Equality { term },
                     } => {
+                        let term = match term {
+                            ast::Term::Ty(ty) => hir::Term::Ty(Box::new(
+                                self.transform_type_to_hir(ty.as_ref())?,
+                            )),
+                            ast::Term::Const(expr) => hir::Term::Const(Box::new(
+                                self.transform_expr_to_hir(expr.as_ref())?,
+                            )),
+                        };
                         constraints.push(hir::AssocItemConstraint {
                             name: name.clone().into(),
                             gen_args: gen_args
                                 .as_ref()
                                 .map(|args| self.convert_path_arguments(args))
                                 .transpose()?,
-                            kind: hir::AssocItemConstraintKind::Equality {
-                                ty: Box::new(self.transform_type_to_hir(ty.as_ref())?),
-                            },
+                            kind: hir::AssocItemConstraintKind::Equality { term },
                         });
                     }
                     ast::AssocItemConstraint {

@@ -4322,6 +4322,42 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn preserves_associated_const_constraint_terms() {
+        let (package, diagnostics) = lower(
+            "trait Trait { const VALUE: i32; } type Alias = Trait<VALUE = 3>;",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "associated-const constraint emitted diagnostics: {diagnostics:?}"
+        );
+        let alias = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::TypeAlias(alias) if alias.name.as_str() == "Alias" => Some(alias),
+                _ => None,
+            })
+            .expect("type alias should be present");
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(_, path)) = &alias.target.kind else {
+            panic!("expected resolved trait path, got {:?}", alias.target.kind);
+        };
+        let args = path.segments[0]
+            .args
+            .as_ref()
+            .expect("trait generic arguments");
+        assert!(matches!(
+            args.constraints.as_slice(),
+            [hir::AssocItemConstraint {
+                name,
+                kind: hir::AssocItemConstraintKind::Equality {
+                    term: hir::Term::Const(_),
+                },
+                ..
+            }] if name.as_str() == "VALUE"
+        ));
+    }
+
+    #[test]
     fn lowers_parenthesized_path_arguments_like_rustc() {
         let (package, diagnostics) = lower("trait Callable<T> {} type Alias = Callable(u8) -> bool;");
         assert!(
@@ -4353,7 +4389,9 @@ mod function_body_resolution {
             args.constraints.as_slice(),
             [hir::AssocItemConstraint {
                 name,
-                kind: hir::AssocItemConstraintKind::Equality { ty },
+                kind: hir::AssocItemConstraintKind::Equality {
+                    term: hir::Term::Ty(ty),
+                },
                 ..
             }] if name.as_str() == "Output" && matches!(ty.kind, hir::TypeExprKind::Primitive(_))
         ));

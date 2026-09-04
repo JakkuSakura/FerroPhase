@@ -433,9 +433,30 @@ pub struct AssocItemConstraint {
     pub kind: AssocItemConstraintKind,
 }
 
+/// The right-hand side of an associated-item equality constraint.
+///
+/// Rustc keeps associated type and associated const bindings distinct in the
+/// AST. Keeping the distinction here prevents a const expression such as
+/// `Trait<VALUE = 1>` from being reinterpreted as a malformed type path during
+/// HIR lowering.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum Term {
+    Ty(Box<Ty>),
+    Const(Box<Expr>),
+}
+
+impl Term {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Ty(ty) => ty.span(),
+            Self::Const(expr) => expr.span(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum AssocItemConstraintKind {
-    Equality { ty: Box<Ty> },
+    Equality { term: Term },
     Bound { bounds: Vec<Ty> },
 }
 
@@ -507,6 +528,15 @@ impl std::fmt::Display for GenericArg {
     }
 }
 
+impl std::fmt::Display for Term {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ty(ty) => ty.fmt(f),
+            Self::Const(expr) => expr.fmt(f),
+        }
+    }
+}
+
 impl std::fmt::Display for AngleBracketedArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -514,13 +544,13 @@ impl std::fmt::Display for AngleBracketedArg {
             Self::Constraint(AssocItemConstraint {
                 name,
                 gen_args,
-                kind: AssocItemConstraintKind::Equality { ty },
+                kind: AssocItemConstraintKind::Equality { term },
             }) => {
                 write!(f, "{name}")?;
                 if let Some(args) = gen_args {
                     write!(f, "{args}")?;
                 }
-                write!(f, " = {ty}")
+                write!(f, " = {term}")
             }
             Self::Constraint(AssocItemConstraint {
                 name,

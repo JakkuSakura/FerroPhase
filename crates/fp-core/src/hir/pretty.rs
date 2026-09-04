@@ -4,7 +4,7 @@ use std::fmt::{self, Formatter};
 
 use super::{
     AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
-    AssocItemConstraint, Function, GenericArg, GenericArgs, GenericArgsParentheses,
+    AssocItemConstraint, Function, GenericArg, GenericArgs, GenericArgsParentheses, Term,
     GenericParamKind,
     Generics, HirPackage, Impl,
     ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Query, Stmt, StmtKind, Struct, Trait,
@@ -896,7 +896,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
         AssocItemConstraint {
             name,
             gen_args,
-            kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+            kind: crate::hir::AssocItemConstraintKind::Equality { term },
         } => format!(
             "{}{} = {}",
             name,
@@ -904,7 +904,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
                 .as_ref()
                 .map(|nested| fmt_generic_args(nested, ctx))
                 .unwrap_or_default(),
-            fmt_type_expr(ty.as_ref(), ctx)
+            fmt_term(term, ctx)
         ),
         AssocItemConstraint {
             name,
@@ -943,7 +943,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
         };
         let mut text = format!("({inputs})");
         if let Some(AssocItemConstraint {
-            kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+            kind: crate::hir::AssocItemConstraintKind::Equality { term: Term::Ty(ty) },
             ..
         }) = args.constraints.iter().find(|constraint| {
             matches!(
@@ -984,7 +984,7 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                 AssocItemConstraint {
                     name,
                     gen_args,
-                    kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+                    kind: crate::hir::AssocItemConstraintKind::Equality { term },
                 } => {
                     format!(
                         "{}{} = {}",
@@ -993,7 +993,7 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                             .as_ref()
                             .map(|args| fmt_generic_args(args, ctx))
                             .unwrap_or_default(),
-                        fmt_type_expr(ty, ctx)
+                        fmt_term(term, ctx)
                     )
                 }
                 AssocItemConstraint {
@@ -1037,7 +1037,7 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                 };
                 text.push_str(&format!("({inputs})"));
                 if let Some(AssocItemConstraint {
-                    kind: crate::hir::AssocItemConstraintKind::Equality { ty },
+                    kind: crate::hir::AssocItemConstraintKind::Equality { term: Term::Ty(ty) },
                     ..
                 }) = generic_args
                     .constraints
@@ -1065,6 +1065,13 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
         segments.push(text);
     }
     segments.join("::")
+}
+
+fn fmt_term(term: &Term, ctx: &PrettyCtx<'_>) -> String {
+    match term {
+        Term::Ty(ty) => fmt_type_expr(ty, ctx),
+        Term::Const(expr) => format_expr_inline(expr, ctx),
+    }
 }
 
 fn fmt_qpath(path: &super::QPath, ctx: &PrettyCtx<'_>) -> String {

@@ -1773,7 +1773,9 @@ impl<'a> HirToAstLifter<'a> {
                             let output = args.constraints.iter().find_map(|constraint| {
                                 let hir::AssocItemConstraint {
                                     name,
-                                    kind: hir::AssocItemConstraintKind::Equality { ty },
+                                    kind: hir::AssocItemConstraintKind::Equality {
+                                        term: hir::Term::Ty(ty),
+                                    },
                                     ..
                                 } = constraint
                                 else {
@@ -1845,13 +1847,20 @@ impl<'a> HirToAstLifter<'a> {
                             lifted.push(match binding {
                                 hir::AssocItemConstraint {
                                     name,
-                                    kind: hir::AssocItemConstraintKind::Equality { ty },
+                                    kind: hir::AssocItemConstraintKind::Equality { term },
                                     ..
                                 } => ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
                                     name: Ident::new(name.as_str()),
                                     gen_args,
                                     kind: ast::AssocItemConstraintKind::Equality {
-                                        ty: Box::new(self.lift_type(ty)?),
+                                        term: match term {
+                                            hir::Term::Ty(ty) => {
+                                                ast::Term::Ty(Box::new(self.lift_type(ty)?))
+                                            }
+                                            hir::Term::Const(expr) => {
+                                                ast::Term::Const(Box::new(self.lift_expr(expr)?))
+                                            }
+                                        },
                                     },
                                 }),
                                 hir::AssocItemConstraint {

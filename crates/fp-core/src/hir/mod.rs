@@ -857,9 +857,20 @@ pub struct AssocItemConstraint {
     pub kind: AssocItemConstraintKind,
 }
 
+/// The right-hand side of an associated-item equality constraint.
+///
+/// Rustc's HIR preserves whether an equality binds an associated type or an
+/// associated const. Keeping that distinction avoids turning const bindings
+/// into invalid type expressions during later lowering stages.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Term {
+    Ty(Box<TypeExpr>),
+    Const(Box<Expr>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssocItemConstraintKind {
-    Equality { ty: Box<TypeExpr> },
+    Equality { term: Term },
     /// A bound constraint such as `Item: Trait`, matching rustc's
     /// `AssocItemConstraintKind::Bound` terminology.
     Bound { bounds: Vec<TypeExpr> },
@@ -1680,7 +1691,10 @@ impl GenericArg {
 impl AssocItemConstraint {
     pub fn span(&self) -> Span {
         let payload = match &self.kind {
-            AssocItemConstraintKind::Equality { ty } => ty.span(),
+            AssocItemConstraintKind::Equality { term } => match term {
+                Term::Ty(ty) => ty.span(),
+                Term::Const(expr) => expr.span(),
+            },
             AssocItemConstraintKind::Bound { bounds } => {
                 Span::union(bounds.iter().map(TypeExpr::span))
             }

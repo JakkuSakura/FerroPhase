@@ -921,7 +921,7 @@ fn parse_grouped(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     .into())
 }
 
-fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
+pub(crate) fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
     let token = token_kind(input, TokenKind::Number)?;
     let (value, ty) = parse_numeric_literal_local(&token.lexeme)
         .map_err(|_| ErrMode::Cut(ContextError::new()))?;
@@ -930,7 +930,7 @@ fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
     Ok(node)
 }
 
-fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+pub(crate) fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let token = token_kind(input, TokenKind::StringLiteral)?;
     if token.lexeme.starts_with('f') {
         return parse_f_string_literal_local(&token.lexeme, file)
@@ -1018,7 +1018,7 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     Ok(Expr::value(Value::string(value)).with_span(token_span_to_span(&token)))
 }
 
-fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+pub(crate) fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let span = input
         .first()
         .map(token_span_to_span)

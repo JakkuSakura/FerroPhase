@@ -245,6 +245,36 @@ fn parse_assoc_constraint_preserves_item_generic_arguments() {
 }
 
 #[test]
+fn parse_assoc_constraint_preserves_const_terms() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("type Alias = Trait<OTHER = { 1 + 2 }>;")
+        .unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected path type");
+    };
+    let ExprKind::Name(Name { path, .. }) = expr.kind() else {
+        panic!("expected named path");
+    };
+    let PathArguments::AngleBracketed(args) = &path.segments[0].arguments else {
+        panic!("expected angle-bracketed arguments");
+    };
+    assert!(matches!(
+        args[0],
+        AngleBracketedArg::Constraint(AssocItemConstraint {
+            kind: AssocItemConstraintKind::Equality {
+                term: fp_core::ast::Term::Const(_),
+            },
+            ..
+        })
+    ));
+}
+
+#[test]
 fn parse_generic_parameter_default_is_retained() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

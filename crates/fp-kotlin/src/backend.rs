@@ -1669,8 +1669,10 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
                         }
                         fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
                             match &mut constraint.kind {
-                                fp_core::ast::AssocItemConstraintKind::Equality { ty } => {
-                                    materialize_kotlin_ty(ty);
+                                fp_core::ast::AssocItemConstraintKind::Equality { term } => {
+                                    if let fp_core::ast::Term::Ty(ty) = term {
+                                        materialize_kotlin_ty(ty);
+                                    }
                                 }
                                 fp_core::ast::AssocItemConstraintKind::Bound { bounds } => {
                                     for bound in bounds {

@@ -179,8 +179,10 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                                 }
                                 fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
                                     match &mut constraint.kind {
-                                        fp_core::ast::AssocItemConstraintKind::Equality { ty } => {
-                                            **ty = materialize_jvm_type((**ty).clone());
+                                        fp_core::ast::AssocItemConstraintKind::Equality { term } => {
+                                            if let fp_core::ast::Term::Ty(ty) = term {
+                                                **ty = materialize_jvm_type((**ty).clone());
+                                            }
                                         }
                                         fp_core::ast::AssocItemConstraintKind::Bound { bounds } => {
                                             for bound in bounds {

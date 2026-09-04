@@ -209,7 +209,7 @@ use fp_core::ast::{
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock,
     StmtDefer, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
     TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
-    TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
+    Term, TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -508,12 +508,12 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
                     let gen_args = parse_optional_path_arguments(&mut constraint_probe)?;
                     let gen_args = (!gen_args.is_none()).then_some(gen_args);
                     if skip_symbol(&mut constraint_probe, "=").is_ok() {
-                        let ty = parse_type_expr(&mut constraint_probe)?;
+                        let term = parse_assoc_item_term(&mut constraint_probe)?;
                         probe = constraint_probe;
                         args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
                             name: ident,
                             gen_args,
-                            kind: AssocItemConstraintKind::Equality { ty: Box::new(ty) },
+                            kind: AssocItemConstraintKind::Equality { term },
                         }));
                     } else if skip_symbol(&mut constraint_probe, ":").is_ok() {
                         let bounds = parse_type_bounds(&mut constraint_probe)?;
@@ -555,6 +555,60 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
     skip_symbol(&mut probe, ">")?;
     *input = probe;
     Ok(PathArguments::AngleBracketed(args))
+}
+
+/// Parse the equality side of an associated-item constraint while retaining
+/// whether it is a type or a const term. Bare paths remain type terms because
+/// their namespace is resolved later; literal and block expressions are
+/// unambiguously const terms at this stage.
+fn parse_assoc_item_term(input: &mut &[Token]) -> ModalResult<Term> {
+    if peek_symbol(*input) == Some("{") {
+        skip_symbol(input, "{")?;
+        let expr = parse_expr_winnow_no_struct(input, 0)?;
+        skip_symbol(input, "}")?;
+        return Ok(Term::Const(Box::new(expr)));
+    }
+    if matches!(input.first(), Some(token) if token.kind == TokenKind::Number) {
+        return parse_number(input).map(|expr| Term::Const(Box::new(expr)));
+    }
+    if matches!(input.first(), Some(token) if token.kind == TokenKind::StringLiteral) {
+        return parse_string(input, 0).map(|expr| Term::Const(Box::new(expr)));
+    }
+    if matches!(peek_ident_like(*input), Some("true" | "false" | "null")) {
+        return parse_name_expr(input).map(|expr| Term::Const(Box::new(expr)));
+    }
+    let ty = parse_type_expr(input)?;
+    let is_const = matches!(
+        &ty,
+        Ty::Expr(expr)
+            if matches!(
+                expr.kind(),
+                ExprKind::Value(value)
+                    if matches!(
+                        value.as_ref(),
+                        Value::Int(_)
+                            | Value::UInt(_)
+                            | Value::BigInt(_)
+                            | Value::Bool(_)
+                            | Value::Decimal(_)
+                            | Value::BigDecimal(_)
+                            | Value::Char(_)
+                            | Value::String(_)
+                            | Value::Bytes(_)
+                            | Value::Unit(_)
+                            | Value::Null(_)
+                            | Value::None(_)
+                    )
+            )
+    );
+    if is_const {
+        let Ty::Expr(expr) = ty else {
+            unreachable!("const term classification requires an expression type")
+        };
+        Ok(Term::Const(expr))
+    } else {
+        Ok(Term::Ty(Box::new(ty)))
+    }
 }
 
 fn input_is_const_argument(input: &[Token]) -> bool {

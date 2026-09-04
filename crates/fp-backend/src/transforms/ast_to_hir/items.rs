@@ -285,7 +285,9 @@ impl AstToHirLowerer {
                         .filter_map(|arg| {
                             let ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
                                 name,
-                                kind: ast::AssocItemConstraintKind::Equality { ty },
+                                kind: ast::AssocItemConstraintKind::Equality {
+                                    term: ast::Term::Ty(ty),
+                                },
                                 ..
                             }) = arg
                             else {
