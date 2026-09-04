@@ -22,7 +22,7 @@ fn path_expr(hir_id: u32, name: &str) -> Expr {
         hid(hir_id),
         ExprKind::Path(fp_core::hir::QPath::resolved(Path {
             segments: vec![PathSegment {
-                name: Symbol::new(name),
+                ident: Symbol::new(name),
                 args: None,
                 infer_args: true,
                 res: Res::Error,

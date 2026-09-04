@@ -113,7 +113,7 @@ impl ModuleData {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
                 res: resolution.clone(),
                 segments: vec![crate::hir::PathSegment {
-                    name: name.into(),
+                    ident: name.into(),
                     args: None,
                     infer_args: true,
                     res: resolution.clone(),
@@ -170,7 +170,7 @@ impl ModuleData {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
                 res: resolution.clone(),
                 segments: vec![crate::hir::PathSegment {
-                    name: last.as_str().into(),
+                    ident: last.as_str().into(),
                     args: None,
                     infer_args: true,
                     res: resolution.clone(),

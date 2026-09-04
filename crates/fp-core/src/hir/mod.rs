@@ -791,7 +791,7 @@ pub struct PathSegment {
     /// Source spelling of this ordinary path component. In
     /// `QPath::Resolved`, every component remains in `Path::segments`;
     /// `QPath::TypeRelative` owns exactly one deferred associated component.
-    pub name: Symbol,
+    pub ident: Symbol,
     pub args: Option<GenericArgs>,
     /// Whether generic arguments were omitted and should be inferred. This
     /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
@@ -804,10 +804,10 @@ pub struct PathSegment {
 }
 
 impl PathSegment {
-    pub fn new(name: impl Into<Symbol>, args: Option<GenericArgs>) -> Self {
+    pub fn new(ident: impl Into<Symbol>, args: Option<GenericArgs>) -> Self {
         let infer_args = args.is_none();
         Self {
-            name: name.into(),
+            ident: ident.into(),
             args,
             infer_args,
             res: Res::Error,

@@ -272,7 +272,7 @@ fn unresolved_primitive_name_resolves_to_builtin() -> Result<()> {
         receiver_path.res(),
         hir::Res::Builtin(hir::BuiltinSelfType::Primitive("f128".to_owned()))
     );
-    assert_eq!(segment.name.as_str(), "MAX");
+    assert_eq!(segment.ident.as_str(), "MAX");
     Ok(())
 }
 
@@ -434,7 +434,7 @@ fn suffixed_numeric_literal_lowers_to_explicit_cast() -> Result<()> {
         ));
     };
     assert_eq!(path.segments().len(), 1);
-    assert_eq!(path.segments()[0].name.as_str(), "usize");
+    assert_eq!(path.segments()[0].ident.as_str(), "usize");
     Ok(())
 }
 
@@ -616,7 +616,7 @@ fn test_simple_type_creation() -> Result<()> {
 
     match ty.kind {
         hir::TypeExprKind::Path(path) => {
-            assert_eq!(path.segments()[0].name.as_str(), "i32");
+            assert_eq!(path.segments()[0].ident.as_str(), "i32");
         }
         _ => {
             return Err(crate::error::optimization_error(
@@ -807,7 +807,7 @@ fn transform_range_value_to_standard_range_struct() -> Result<()> {
             "expected RangeTo struct literal",
         ));
     };
-    assert_eq!(path.segments().last().unwrap().name.as_str(), "RangeTo");
+    assert_eq!(path.segments().last().unwrap().ident.as_str(), "RangeTo");
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0].name.as_str(), "end");
     Ok(())
@@ -855,7 +855,7 @@ fn transform_await_expression_to_hir_passthrough() -> Result<()> {
     match lowered.kind {
         hir::ExprKind::Path(path) => {
             assert_eq!(path.segments().len(), 1);
-            assert_eq!(path.segments()[0].name.as_str(), "future");
+            assert_eq!(path.segments()[0].ident.as_str(), "future");
         }
         other => {
             return Err(crate::error::optimization_error(format!(
@@ -890,7 +890,7 @@ fn transform_async_await_expression_to_hir_passthrough() -> Result<()> {
     match lowered.kind {
         hir::ExprKind::Path(path) => {
             assert_eq!(path.segments().len(), 1);
-            assert_eq!(path.segments()[0].name.as_str(), "future");
+            assert_eq!(path.segments()[0].ident.as_str(), "future");
         }
         other => {
             return Err(crate::error::optimization_error(format!(
@@ -1008,8 +1008,8 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
         ));
     };
     assert_eq!(arg_path.segments().len(), 2);
-    assert_eq!(arg_path.segments()[0].name.as_str(), "hir");
-    assert_eq!(arg_path.segments()[1].name.as_str(), "GenericArgs");
+    assert_eq!(arg_path.segments()[0].ident.as_str(), "hir");
+    assert_eq!(arg_path.segments()[1].ident.as_str(), "GenericArgs");
 
     Ok(())
 }
@@ -1348,7 +1348,7 @@ fn transform_trait_associated_type_bounds() -> Result<()> {
     };
     assert!(matches!(bound.res(), hir::Res::Def(_)));
     assert_eq!(bound.segments().len(), 1);
-    assert_eq!(bound.segments()[0].name.as_str(), "Borrow");
+    assert_eq!(bound.segments()[0].ident.as_str(), "Borrow");
     Ok(())
 }
 
@@ -1609,7 +1609,7 @@ fn enum_constructor_keeps_variant_identity_with_generic_arguments() -> Result<()
     let hir::QPath::TypeRelative(receiver, segment) = path else {
         panic!("expected type-relative enum constructor path: {path:?}");
     };
-    assert_eq!(segment.name.as_str(), "Value");
+    assert_eq!(segment.ident.as_str(), "Value");
     let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
         panic!("expected enum constructor receiver path: {receiver:?}");
     };
@@ -1661,7 +1661,7 @@ fn enum_constructor_through_alias_keeps_nominal_variant_identity() -> Result<()>
     let hir::QPath::TypeRelative(receiver, segment) = path else {
         panic!("expected type-relative aliased enum constructor path: {path:?}");
     };
-    assert_eq!(segment.name.as_str(), "Value");
+    assert_eq!(segment.ident.as_str(), "Value");
     let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
         panic!("expected aliased enum receiver path: {receiver:?}");
     };
@@ -1715,7 +1715,7 @@ fn self_enum_constructor_preserves_type_relative_identity() -> Result<()> {
     let hir::QPath::TypeRelative(receiver, segment) = path else {
         panic!("expected type-relative constructor path: {path:?}");
     };
-    assert_eq!(segment.name.as_str(), "Text");
+    assert_eq!(segment.ident.as_str(), "Text");
     let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
         panic!("expected Self receiver path: {receiver:?}");
     };
@@ -2116,7 +2116,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
     assert_eq!(
         path.segments()
             .iter()
-            .map(|segment| segment.name.as_str())
+            .map(|segment| segment.ident.as_str())
             .collect::<Vec<_>>(),
         vec!["dependency", "api", "PublicType"]
     );
@@ -2244,7 +2244,7 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         formatter_path
             .segments()
             .iter()
-            .map(|segment| segment.name.as_str())
+            .map(|segment| segment.ident.as_str())
             .collect::<Vec<_>>(),
         vec!["std", "fmt", "Formatter"]
     );
@@ -2851,7 +2851,7 @@ fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Resu
                 panic!("expected nominal receiver path");
             };
             assert!(matches!(receiver_path.res(), hir::Res::Def(_)));
-            assert_eq!(segment.name.as_str(), "new");
+            assert_eq!(segment.ident.as_str(), "new");
         }
         hir::QPath::Resolved(_, resolved) => {
             assert!(matches!(resolved.res(), hir::Res::Def(_)));
@@ -2945,7 +2945,7 @@ fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
     let hir::QPath::TypeRelative(receiver, segment) = path else {
         panic!("expected type-relative associated constant path, got {path:?}");
     };
-    assert_eq!(segment.name.as_str(), "IS_ZST");
+    assert_eq!(segment.ident.as_str(), "IS_ZST");
     let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
         panic!("expected generic receiver path, got {:?}", receiver.kind);
     };
@@ -3192,7 +3192,7 @@ fn transform_associated_const_uses_type_namespace_for_base() -> Result<()> {
     let hir::QPath::TypeRelative(receiver, segment) = path else {
         panic!("expected type-relative associated constant path, got {path:?}");
     };
-    assert_eq!(segment.name.as_str(), "IS_ZST");
+    assert_eq!(segment.ident.as_str(), "IS_ZST");
     let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
         panic!("expected generic receiver path, got {:?}", receiver.kind);
     };
@@ -3240,7 +3240,7 @@ fn transform_generic_associated_type_path_keeps_qpath_base() -> Result<()> {
         match path {
             hir::QPath::TypeRelative(receiver, segment) => {
                 assert_eq!(
-                    segment.name.as_str(),
+                    segment.ident.as_str(),
                     expected_segments.last().copied().unwrap()
                 );
                 if expected_segments.len() > 1 {
@@ -3293,7 +3293,7 @@ fn transform_module_const_keeps_value_namespace_for_base() -> Result<()> {
     assert_eq!(
         path.segments()
             .iter()
-            .map(|segment| segment.name.as_str())
+            .map(|segment| segment.ident.as_str())
             .collect::<Vec<_>>(),
         vec!["values", "FLAG"]
     );
@@ -4003,7 +4003,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
     for path in collected_paths {
         if let Some(segment) = path.segments().last() {
             name_to_paths
-                .entry(segment.name.as_str().to_owned())
+                .entry(segment.ident.as_str().to_owned())
                 .or_default()
                 .push(path);
         }
@@ -4130,24 +4130,20 @@ mod function_body_resolution {
                 _ => None,
             })
             .expect("type alias should be present");
-        let hir::TypeExprKind::Path(hir::QPath::TypeRelative(receiver, item)) = &alias.target.kind
-        else {
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind else {
             panic!(
                 "expected explicitly qualified QPath, got {:?}",
                 alias.target.kind
             );
         };
-        assert_eq!(item.name.as_str(), "Item");
-        assert!(matches!(item.res, hir::Res::Error));
-        assert!(!item.infer_args);
-        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &receiver.kind else {
-            panic!("expected resolved qualified trait receiver, got {:?}", receiver.kind);
-        };
-        assert_eq!(path.segments.len(), 1);
-        assert!(matches!(path.res, hir::Res::Def(_)));
+        assert_eq!(path.segments.len(), 2);
+        assert!(matches!(path.res, hir::Res::Error));
         assert!(matches!(path.segments[0].res, hir::Res::Def(_)));
-        assert_eq!(path.segments[0].name.as_str(), "Trait");
+        assert_eq!(path.segments[0].ident.as_str(), "Trait");
         assert!(!path.segments[0].infer_args);
+        assert_eq!(path.segments[1].ident.as_str(), "Item");
+        assert!(matches!(path.segments[1].res, hir::Res::Error));
+        assert!(!path.segments[1].infer_args);
     }
 
     #[test]
@@ -4167,18 +4163,12 @@ mod function_body_resolution {
                 _ => None,
             })
             .expect("type alias should be present");
-        let hir::TypeExprKind::Path(hir::QPath::TypeRelative(receiver, item)) = &alias.target.kind
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), trait_path)) = &alias.target.kind
         else {
             panic!(
                 "expected explicitly qualified QPath, got {:?}",
                 alias.target.kind
             );
-        };
-        assert_eq!(item.name.as_str(), "Item");
-        assert!(matches!(item.res, hir::Res::Error));
-        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), trait_path)) = &receiver.kind
-        else {
-            panic!("expected resolved qualified trait receiver, got {:?}", receiver.kind);
         };
         assert_eq!(
             trait_path
@@ -4191,11 +4181,16 @@ mod function_body_resolution {
             1
         );
         assert_eq!(
-            item.args.as_ref().expect("associated-type arguments").args.len(),
+            trait_path.segments[1]
+                .args
+                .as_ref()
+                .expect("associated-type arguments")
+                .args
+                .len(),
             1
         );
         assert!(!trait_path.segments[0].infer_args);
-        assert!(!item.infer_args);
+        assert!(!trait_path.segments[1].infer_args);
     }
 
     #[test]
@@ -4221,7 +4216,7 @@ mod function_body_resolution {
                 alias.target.kind
             );
         };
-        assert_eq!(second.name.as_str(), "Second");
+        assert_eq!(second.ident.as_str(), "Second");
         assert_eq!(
             second.args.as_ref().expect("Second arguments").args.len(),
             1
@@ -4235,7 +4230,7 @@ mod function_body_resolution {
                 first_receiver.kind
             );
         };
-        assert_eq!(first.name.as_str(), "First");
+        assert_eq!(first.ident.as_str(), "First");
         assert_eq!(first.args.as_ref().expect("First arguments").args.len(), 1);
         assert!(!first.infer_args);
         let hir::TypeExprKind::Path(hir::QPath::Resolved(None, base)) = &base_receiver.kind else {
@@ -4246,7 +4241,7 @@ mod function_body_resolution {
         };
         assert!(matches!(base.res, hir::Res::Generic(_)));
         assert_eq!(base.segments.len(), 1);
-        assert_eq!(base.segments[0].name.as_str(), "T");
+        assert_eq!(base.segments[0].ident.as_str(), "T");
     }
 
     #[test]
@@ -4536,7 +4531,7 @@ mod function_body_resolution {
         let hir::ExprKind::Path(hir::QPath::TypeRelative(receiver, method)) = &callee.kind else {
             panic!("expected type-relative callee, got {:?}", callee.kind);
         };
-        assert_eq!(method.name.as_str(), "inner");
+        assert_eq!(method.ident.as_str(), "inner");
         assert_eq!(
             method.args.as_ref().expect("method arguments").args.len(),
             1
@@ -4546,7 +4541,7 @@ mod function_body_resolution {
             panic!("expected resolved receiver path, got {:?}", receiver.kind);
         };
         assert_eq!(receiver.segments.len(), 1);
-        assert_eq!(receiver.segments[0].name.as_str(), "Outer");
+        assert_eq!(receiver.segments[0].ident.as_str(), "Outer");
         assert!(!receiver.segments[0].infer_args);
         assert_eq!(
             receiver.segments[0]
@@ -4644,7 +4639,7 @@ mod function_body_resolution {
         };
         assert!(matches!(path.res(), hir::Res::Def(_)), "path: {path:?}");
         assert_eq!(path.segments().len(), 1, "fully resolved path: {path:?}");
-        assert_eq!(path.segments()[0].name.as_str(), "inner");
+        assert_eq!(path.segments()[0].ident.as_str(), "inner");
     }
 
     #[test]
@@ -4691,7 +4686,7 @@ mod function_body_resolution {
             capture_path
                 .segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["input"]
         );
@@ -4764,7 +4759,7 @@ mod function_body_resolution {
         assert_eq!(
             path.segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["f"]
         );
@@ -4809,7 +4804,7 @@ mod function_body_resolution {
         assert_eq!(
             path.segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["__env", "holder"]
         );
@@ -4856,7 +4851,7 @@ mod function_body_resolution {
         assert_eq!(
             path.segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["f"]
         );
@@ -4903,7 +4898,7 @@ mod function_body_resolution {
         assert_eq!(
             path.segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["helpers", "answer"]
         );
@@ -4923,7 +4918,7 @@ mod function_body_resolution {
         let hir::QPath::TypeRelative(receiver, segment) = path else {
             panic!("expected type-relative enum variant path: {path:?}");
         };
-        assert_eq!(segment.name.as_str(), "Yes");
+        assert_eq!(segment.ident.as_str(), "Yes");
         let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
             panic!("expected enum receiver path: {receiver:?}");
         };
@@ -4945,7 +4940,7 @@ mod function_body_resolution {
         let hir::QPath::TypeRelative(receiver, segment) = path else {
             panic!("expected type-relative nested enum variant path: {path:?}");
         };
-        assert_eq!(segment.name.as_str(), "Yes");
+        assert_eq!(segment.ident.as_str(), "Yes");
         let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
             panic!("expected nested enum receiver path: {receiver:?}");
         };
@@ -4953,7 +4948,7 @@ mod function_body_resolution {
             receiver_path
                 .segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             ["values", "Choice"]
         );
@@ -5006,7 +5001,7 @@ mod function_body_resolution {
             hir::TypeExprKind::Path(hir::QPath::Resolved(_, ref path))
                 if matches!(path.res(), hir::Res::Generic(_))
         ));
-        assert_eq!(segment.name.as_str(), "VALUE");
+        assert_eq!(segment.ident.as_str(), "VALUE");
     }
 
     #[test]
@@ -5245,7 +5240,7 @@ mod function_body_resolution {
             path.segments()
                 .last()
                 .expect("self field path segment")
-                .name
+                .ident
                 .as_str(),
             "field"
         );
@@ -5274,7 +5269,7 @@ mod function_body_resolution {
             resolved
                 .segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             vec!["helpers", "identity"]
         );
@@ -5483,7 +5478,7 @@ mod function_body_resolution {
         assert_eq!(
             path.segments()
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.ident.as_str())
                 .collect::<Vec<_>>(),
             vec!["helpers", "answer"]
         );
@@ -5573,7 +5568,7 @@ mod function_body_resolution {
         let hir::QPath::TypeRelative(receiver, segment) = path else {
             panic!("expected type-relative associated function path: {path:?}");
         };
-        assert_eq!(segment.name.as_str(), "new");
+        assert_eq!(segment.ident.as_str(), "new");
         let hir::TypeExprKind::Path(receiver_path) = &receiver.kind else {
             panic!("expected associated function receiver path: {receiver:?}");
         };

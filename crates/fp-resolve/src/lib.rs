@@ -99,13 +99,13 @@ mod tests {
                 res: hir::Res::Def(alloc.clone()),
                 segments: vec![
                     hir::PathSegment {
-                        name: "std".into(),
+                        ident: "std".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(std_root),
                     },
                     hir::PathSegment {
-                        name: "alloc".into(),
+                        ident: "alloc".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(alloc),
@@ -201,7 +201,7 @@ mod tests {
             ResolutionResult::Found(hir::Path {
                 res: hir::Res::Generic(ty.clone()),
                 segments: vec![hir::PathSegment {
-                    name: "T".into(),
+                    ident: "T".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Generic(ty),
@@ -269,13 +269,13 @@ mod tests {
                 res: hir::Res::Def(value.clone()),
                 segments: vec![
                     hir::PathSegment {
-                        name: "nested".into(),
+                        ident: "nested".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
-                        name: "Thing".into(),
+                        ident: "Thing".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(value),
@@ -289,13 +289,13 @@ mod tests {
                 res: hir::Res::Def(ty.clone()),
                 segments: vec![
                     hir::PathSegment {
-                        name: "nested".into(),
+                        ident: "nested".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
-                        name: "Thing".into(),
+                        ident: "Thing".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(ty),
@@ -309,13 +309,13 @@ mod tests {
                 res: hir::Res::Def(mac.clone()),
                 segments: vec![
                     hir::PathSegment {
-                        name: "nested".into(),
+                        ident: "nested".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module),
                     },
                     hir::PathSegment {
-                        name: "Thing".into(),
+                        ident: "Thing".into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(mac),
@@ -429,7 +429,7 @@ impl Resolver {
                     .iter()
                     .take(first)
                     .map(|segment| hir::PathSegment {
-                        name: segment.ident.name.clone().into(),
+                        ident: segment.ident.name.clone().into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(root.clone()),
@@ -465,7 +465,7 @@ impl Resolver {
                 .iter()
                 .take(first)
                 .map(|segment| hir::PathSegment {
-                    name: segment.ident.name.clone().into(),
+                    ident: segment.ident.name.clone().into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Module(root.clone()),
@@ -486,7 +486,7 @@ impl Resolver {
                     ResolutionResult::Found(path) => {
                         let resolved = path.res.clone();
                         resolved_segments.push(hir::PathSegment {
-                            name: segment.ident.name.clone().into(),
+                            ident: segment.ident.name.clone().into(),
                             args: None,
                             infer_args: true,
                             res: resolved.clone(),

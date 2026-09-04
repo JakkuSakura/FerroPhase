@@ -259,7 +259,7 @@ impl<'a> BodyBuilder<'a> {
             return false;
         };
         matches!(
-            segment.name.as_str(),
+            segment.ident.as_str(),
             "bool"
                 | "char"
                 | "str"
@@ -287,7 +287,7 @@ impl<'a> BodyBuilder<'a> {
             hir::TypeExprKind::Path(path) => path
                 .segments()
                 .first()
-                .map(|segment| segment.name.as_str() == "Self")
+                .map(|segment| segment.ident.as_str() == "Self")
                 .unwrap_or(false),
             hir::TypeExprKind::Tuple(items) => {
                 items.iter().any(|item| Self::type_expr_mentions_self(item))
@@ -941,7 +941,7 @@ impl<'a> BodyBuilder<'a> {
     pub(super) fn resolve_self_path(&self, path: &mut hir::Path) {
         if let Some(context) = &self.method_context {
             if let Some(first) = path.segments().first() {
-                if first.name.as_str() == "Self" {
+                if first.ident.as_str() == "Self" {
                     let mut new_segments = context.path.clone();
                     new_segments.extend(path.segments().iter().skip(1).cloned());
                     path.segments = new_segments;
@@ -1021,8 +1021,8 @@ impl<'a> BodyBuilder<'a> {
         if let hir::ExprKind::Path(path) = &callee.kind {
             let segments = &path.segments();
             if segments.len() >= 2
-                && segments[segments.len() - 2].name.as_str() == "HashMap"
-                && segments[segments.len() - 1].name.as_str() == "from"
+                && segments[segments.len() - 2].ident.as_str() == "HashMap"
+                && segments[segments.len() - 1].ident.as_str() == "from"
             {
                 if let Some((place, expected_ty)) = destination {
                     if arg_values.len() != 1 {
@@ -1055,7 +1055,7 @@ impl<'a> BodyBuilder<'a> {
 
                     for element in elements {
                         if let hir::ExprKind::Struct(path, fields) = &element.kind {
-                            let tail = path.segments().last().map(|seg| seg.name.as_str());
+                            let tail = path.segments().last().map(|seg| seg.ident.as_str());
                             if tail == Some("HashMapEntry") {
                                 let mut key_expr = None;
                                 let mut value_expr = None;
@@ -1118,7 +1118,7 @@ impl<'a> BodyBuilder<'a> {
                     }));
                 }
             }
-            if segments.last().map(|seg| seg.name.as_str()) == Some("raw_parts_to_str") {
+            if segments.last().map(|seg| seg.ident.as_str()) == Some("raw_parts_to_str") {
                 // `std::ffi::raw_parts_to_str(ptr, len)` — the one genuinely
                 // backend-level primitive `CStr::as_str_unchecked` needs:
                 // assembling a `&str`/`str` fat pointer from an already
@@ -1159,7 +1159,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
-            let tail = path.segments().last().map(|seg| seg.name.as_str());
+            let tail = path.segments().last().map(|seg| seg.ident.as_str());
             if tail == Some("get_unchecked") || tail == Some("::get_unchecked") {
                 let (place, expected_ty) = match destination.as_ref() {
                     Some((place, expected_ty)) => (place.clone(), expected_ty.clone()),
@@ -1208,7 +1208,7 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if resolved_path.segments().len() == 1 {
-                        let name = resolved_path.segments()[0].name.as_str();
+                        let name = resolved_path.segments()[0].ident.as_str();
                         let matching_const =
                             self.lowering
                                 .hir_all_items()
@@ -1472,7 +1472,7 @@ impl<'a> BodyBuilder<'a> {
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
             let expected_ty = destination.as_ref().map(|(_, ty)| ty);
-            let tail = path.segments().last().map(|seg| seg.name.as_str());
+            let tail = path.segments().last().map(|seg| seg.ident.as_str());
             let variant = path
                 .path()
                 .and_then(|path| self.enum_variant_info_from_path(path))
@@ -1735,7 +1735,7 @@ impl<'a> BodyBuilder<'a> {
             _ => None,
         };
         let callee_tail = if let hir::ExprKind::Path(path) = &callee.kind {
-            path.segments().last().map(|seg| seg.name.as_str())
+            path.segments().last().map(|seg| seg.ident.as_str())
         } else {
             None
         };
@@ -2117,7 +2117,7 @@ impl<'a> BodyBuilder<'a> {
                                     .first()
                                     .filter(|_| path.segments().len() == 1)
                                     .and_then(|seg| {
-                                        self.fallback_locals.get(seg.name.as_str()).copied()
+                                        self.fallback_locals.get(seg.ident.as_str()).copied()
                                     })
                             }
                         }
@@ -2829,7 +2829,7 @@ impl<'a> BodyBuilder<'a> {
         let qualified = resolved_path
             .segments()
             .iter()
-            .map(|seg| seg.name.as_str())
+            .map(|seg| seg.ident.as_str())
             .collect::<Vec<_>>()
             .join("::");
         if qualified.is_empty() {
@@ -2842,7 +2842,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         }
-        let tail = resolved_path.segments().last().map(|seg| seg.name.as_str());
+        let tail = resolved_path.segments().last().map(|seg| seg.ident.as_str());
         if let Some(tail) = tail {
             let mut candidate: Option<(hir::Abi, bool)> = None;
             for item in self.lowering.hir_all_items() {
@@ -3139,7 +3139,7 @@ impl<'a> BodyBuilder<'a> {
         let path = resolved_path
             .segments()
             .iter()
-            .map(|segment| segment.name.as_str())
+            .map(|segment| segment.ident.as_str())
             .collect::<Vec<_>>()
             .join("::");
         Err(crate::error::optimization_error(format!(
@@ -3814,7 +3814,7 @@ impl<'a> BodyBuilder<'a> {
                 let name = resolved_path
                     .segments()
                     .iter()
-                    .map(|seg| seg.name.as_str())
+                    .map(|seg| seg.ident.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
                 // Type names used as values (i64, bool, str, etc.) —
@@ -5272,7 +5272,7 @@ impl<'a> BodyBuilder<'a> {
         path.segments()
             .first()
             .filter(|_| path.segments().len() == 1)
-            .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
+            .and_then(|seg| self.fallback_locals.get(seg.ident.as_str()).copied())
     }
 
     pub(super) fn evaluate_array_length(&mut self, expr: &hir::Expr) -> Option<u64> {

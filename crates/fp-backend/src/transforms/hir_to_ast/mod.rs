@@ -1485,7 +1485,7 @@ impl<'a> HirToAstLifter<'a> {
                     name: Ident::new(
                         path.segments()
                             .last()
-                            .map(|seg| seg.name.as_str())
+                            .map(|seg| seg.ident.as_str())
                             .unwrap_or("_"),
                     ),
                     fields: fields
@@ -1687,15 +1687,28 @@ impl<'a> HirToAstLifter<'a> {
                 qself: qself
                     .as_ref()
                     .map(|ty| {
+                        // HIR keeps the complete `Trait::Assoc` path in a
+                        // resolved QPath. Recover the AST insertion point
+                        // from the segment resolved as a trait; the segment
+                        // immediately following it is the associated item.
+                        let position = path
+                            .segments
+                            .iter()
+                            .enumerate()
+                            .find_map(|(index, segment)| {
+                                let hir::Res::Def(def_id) = &segment.res else {
+                                    return None;
+                                };
+                                self.hir_program
+                                    .item(def_id.clone())
+                                    .filter(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
+                                    .map(|_| index + 1)
+                            })
+                            .unwrap_or(path.segments.len());
                         Ok::<ast::QSelf, fp_core::error::Error>(ast::QSelf {
                             ty: Box::new(self.lift_type(ty)?),
                             path_span: Span::null(),
-                            // HIR's resolved qualified path contains only
-                            // the ordinary trait path; associated suffixes
-                            // are represented by enclosing `TypeRelative`
-                            // nodes. Reinsert the qself after that complete
-                            // trait prefix, as in rustc's AST.
-                            position: path.segments.len(),
+                            position,
                         })
                     })
                     .transpose()?,
@@ -1829,7 +1842,7 @@ impl<'a> HirToAstLifter<'a> {
                                     let path = hir::Path::new(
                                         hir::Res::Error,
                                         vec![hir::PathSegment {
-                                            name: "__constraint_args__".into(),
+                                            ident: "__constraint_args__".into(),
                                             args: Some(gen_args.clone()),
                                             infer_args: false,
                                             res: hir::Res::Error,
@@ -1884,7 +1897,7 @@ impl<'a> HirToAstLifter<'a> {
                     .transpose()?
                     .unwrap_or(ast::PathArguments::None);
                 Ok(PathSegment::with_arguments(
-                    Ident::new(segment.name.as_str()),
+                    Ident::new(segment.ident.as_str()),
                     arguments,
                 ))
             })
@@ -2188,7 +2201,7 @@ impl<'a> HirToAstLifter<'a> {
             PathPrefix::Plain,
             path.segments()
                 .iter()
-                .map(|segment| PathSegment::new(Ident::new(segment.name.as_str()), Vec::new()))
+                .map(|segment| PathSegment::new(Ident::new(segment.ident.as_str()), Vec::new()))
                 .collect(),
         )
     }
@@ -2226,7 +2239,7 @@ impl<'a> HirToAstLifter<'a> {
                 if let Some(variant_name) = path.segments().last() {
                     return Path::plain(vec![
                         Ident::new(enum_name),
-                        Ident::new(variant_name.name.as_str()),
+                        Ident::new(variant_name.ident.as_str()),
                     ]);
                 }
             }
@@ -2650,13 +2663,13 @@ mod tests {
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![
                             hir::PathSegment {
-                                name: "String".into(),
+                                ident: "String".into(),
                                 args: None,
                                 infer_args: true,
                                 res: hir::Res::Def(receiver_id.clone()),
                             },
                             hir::PathSegment {
-                                name: "from_utf8_lossy".into(),
+                                ident: "from_utf8_lossy".into(),
                                 args: None,
                                 infer_args: true,
                                 res: hir::Res::Error,
@@ -2720,7 +2733,7 @@ mod tests {
                     hir_id: callee_id,
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![hir::PathSegment {
-                            name: "from_utf8_lossy".into(),
+                            ident: "from_utf8_lossy".into(),
                             args: None,
                             infer_args: true,
                             res: hir::Res::Def(function_id.clone()),
@@ -2762,7 +2775,7 @@ mod tests {
                     hir_id: receiver_hir_id,
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                         segments: vec![hir::PathSegment {
-                            name: "path".into(),
+                            ident: "path".into(),
                             args: None,
                             infer_args: true,
                             res: hir::Res::Def(receiver_id.clone()),
@@ -2809,7 +2822,7 @@ mod tests {
                 hir::HirId::new(owner.clone(), index),
                 hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: name.into(),
+                        ident: name.into(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(def_id.clone()),
@@ -2834,7 +2847,7 @@ mod tests {
             hir::HirId::new(owner.clone(), 26),
             hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: "output".into(),
+                    ident: "output".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
@@ -2950,7 +2963,7 @@ mod tests {
             vec_ty_id.clone(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: "ListAlias".into(),
+                    ident: "ListAlias".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(vec_def_id.clone()),
@@ -2963,7 +2976,7 @@ mod tests {
             command_ty_id.clone(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: "FileAlias".into(),
+                    ident: "FileAlias".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(command_def_id.clone()),

@@ -242,7 +242,7 @@ impl HirTypeChecker {
                     if path.segments().len() != 1 {
                         continue;
                     }
-                    if let Some(target) = params.get(&path.segments()[0].name) {
+                    if let Some(target) = params.get(&path.segments()[0].ident) {
                         let replace = match substitutions.get(target) {
                             None => true,
                             Some(existing) => {

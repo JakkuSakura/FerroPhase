@@ -593,7 +593,7 @@ impl AstToHirLowerer {
             Value::Escaped(_) => {
                 let path = hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new("__fp_escaped"),
+                        ident: hir::Symbol::new("__fp_escaped"),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,
@@ -1056,7 +1056,7 @@ impl AstToHirLowerer {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: base_symbol,
+                    ident: base_symbol,
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(base_pat_id.clone()),
@@ -1421,7 +1421,7 @@ impl AstToHirLowerer {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: loop_name.clone(),
+                    ident: loop_name.clone(),
                     args: None,
                     infer_args: true,
                     res: loop_res.clone(),

@@ -316,14 +316,8 @@ impl AstToHirLowerer {
                 if let Some(qself) = &name.qself {
                     let base_ty = self.transform_type_to_hir(&qself.ty)?;
                     let args = self.name_segment_args(name)?;
-                    // Rustc resolves only the ordinary trait prefix here.
-                    // Every associated suffix becomes a nested
-                    // `QPath::TypeRelative`, so associated type/value lookup
-                    // remains type-directed until type checking.
                     let trait_count = qself.position;
-                    let mut receiver = if trait_count == 0 {
-                        base_ty.clone()
-                    } else {
+                    if trait_count > 0 {
                         let trait_path = ast::Path::new(
                             name.path.prefix,
                             name.path
@@ -347,25 +341,56 @@ impl AstToHirLowerer {
                                 "trait qualification did not resolve to an ordinary path".into(),
                             );
                         };
-                        hir::TypeExpr::new(
-                            self.next_id(),
-                            hir::TypeExprKind::Path(hir::QPath::qualified(
-                                base_ty.clone(),
-                                trait_path,
-                            )),
-                            expr.span(),
-                        )
-                    };
+                        let mut associated = name.path.segments.iter().skip(trait_count).zip(
+                            args.into_iter().skip(trait_count),
+                        );
+                        let Some((first_segment, first_args)) = associated.next() else {
+                            return Err("qualified path has no associated segment".into());
+                        };
+                        let first_segment =
+                            self.make_path_segment(first_segment.as_str(), first_args, param_mode);
+                        let mut resolved_segments = trait_path.segments;
+                        resolved_segments.push(first_segment.clone());
+                        // Rustc keeps an explicitly qualified trait path in
+                        // `QPath::Resolved(Some(Self), Path)`.  Only a later
+                        // associated suffix is represented as a nested
+                        // `QPath::TypeRelative` node.
+                        let mut qpath = hir::QPath::Resolved(
+                            Some(Box::new(base_ty)),
+                            hir::Path {
+                                res: first_segment.res.clone(),
+                                segments: resolved_segments,
+                            },
+                        );
+                        for (segment, args) in associated {
+                            let receiver = hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::Path(qpath),
+                                expr.span(),
+                            );
+                            qpath = hir::QPath::type_relative(
+                                receiver,
+                                self.make_path_segment(segment.as_str(), args, param_mode),
+                            );
+                        }
+                        return Ok(qpath);
+                    }
+
+                    // `<T>::Assoc` has no trait path to resolve.  Build the
+                    // same nested type-relative chain rustc uses for
+                    // `T::Assoc::Nested`.
+                    let mut receiver = base_ty;
                     let mut qpath = None;
                     for (segment, args) in name
                         .path
                         .segments
                         .iter()
-                        .skip(trait_count)
-                        .zip(args.into_iter().skip(trait_count))
+                        .zip(args.into_iter())
                     {
-                        let segment = self.make_path_segment(segment.as_str(), args, param_mode);
-                        let path = hir::QPath::type_relative(receiver, segment);
+                        let path = hir::QPath::type_relative(
+                            receiver,
+                            self.make_path_segment(segment.as_str(), args, param_mode),
+                        );
                         qpath = Some(path.clone());
                         receiver = hir::TypeExpr::new(
                             self.next_id(),
@@ -982,7 +1007,7 @@ impl AstToHirLowerer {
     ) -> hir::PathSegment {
         let infer_args = Self::infer_path_segment_args(&args, param_mode);
         hir::PathSegment {
-            name: hir::Symbol::new(name),
+            ident: hir::Symbol::new(name),
             args,
             infer_args,
             res: hir::Res::Error,

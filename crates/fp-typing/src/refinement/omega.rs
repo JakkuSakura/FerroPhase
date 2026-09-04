@@ -92,7 +92,7 @@ pub fn normalize(expr: &Expr) -> Result<LinearTerm, NotLinear> {
             let name = path
                 .segments()
                 .last()
-                .map(|s| s.name.as_str())
+                .map(|s| s.ident.as_str())
                 .unwrap_or_default();
             Ok(LinearTerm::var(name))
         }

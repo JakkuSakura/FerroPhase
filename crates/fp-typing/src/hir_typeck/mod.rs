@@ -181,7 +181,7 @@ impl HirTypeChecker {
             hir::ExprKind::Path(path) if path.segments().len() == 1 => {
                 ty::ConstKind::Param(ty::ParamConst {
                     index: u32::MAX,
-                    name: path.segments()[0].name.clone(),
+                    name: path.segments()[0].ident.clone(),
                 })
             }
             _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.local_id())),
@@ -919,7 +919,7 @@ impl HirTypeChecker {
                 hir_id: self_bound_hir_id,
                 kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new("Self"),
+                        ident: hir::Symbol::new("Self"),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(trait_def_id.clone()),
@@ -1088,7 +1088,7 @@ impl HirTypeChecker {
                                     if let Some(variant) = def.variants.iter().find(|variant| {
                                         path.segments()
                                             .last()
-                                            .is_some_and(|segment| variant.name == segment.name)
+                                            .is_some_and(|segment| variant.name == segment.ident)
                                     }) {
                                         if let hir::QPath::Resolved(_, resolved) = path {
                                             resolved.res = hir::Res::Def(variant.def_id.clone());
@@ -1261,7 +1261,7 @@ impl HirTypeChecker {
                         // `segments[0]`.
                         if path.segments().len() >= 2 {
                             if let Some(receiver_ty) = arg_types.first().cloned() {
-                                let method_name = path.segments().last().unwrap().name.clone();
+                                let method_name = path.segments().last().unwrap().ident.clone();
                                 // The receiver may itself still be a
                                 // generic type parameter (`fn max<T:
                                 // Ord>(a: T, b: T) -> T { Ord::max(a,
@@ -1330,7 +1330,7 @@ impl HirTypeChecker {
                                 .clone()
                                 .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
                             if let Some(receiver_ty) = expected {
-                                let method_name = path.segments().last().unwrap().name.clone();
+                                let method_name = path.segments().last().unwrap().ident.clone();
                                 let sig = if let hir::Res::Def(trait_id) = path.res_ref() {
                                     self.trait_qualified_method_signature(
                                         trait_id,
@@ -1465,7 +1465,7 @@ impl HirTypeChecker {
                                     .segments()
                                     .last()
                                     .expect("type-relative path has a tail")
-                                    .name;
+                                    .ident;
                                 if let Some(method_def_id) = self
                                     .associated_function_resolution(&receiver_ty, method)
                                     .await?
@@ -2662,16 +2662,16 @@ impl HirTypeChecker {
                         };
                         let mut seen = HashSet::new();
                         let Some(assoc_type) =
-                            self.trait_assoc_type(trait_def, &assoc_segment.name, &mut seen)
+                            self.trait_assoc_type(trait_def, &assoc_segment.ident, &mut seen)
                         else {
                             return Ok(self.error_ty(format!(
                                 "trait does not declare associated type `{}`",
-                                assoc_segment.name
+                                assoc_segment.ident
                             )));
                         };
                         let name = hir::Symbol::new(format!(
                             "<{} as {}>::{}",
-                            owner_ty, trait_def_id, assoc_segment.name
+                            owner_ty, trait_def_id, assoc_segment.ident
                         ));
                         let projection_ty = Ty {
                             kind: TyKind::Param(ty::ParamTy {
@@ -2693,12 +2693,12 @@ impl HirTypeChecker {
                     hir::QPath::Resolved(None, resolved) => self.path_ty(resolved).await?,
                     hir::QPath::TypeRelative(receiver, segment) => {
                         let receiver_ty = self.check_type_expr(receiver).await?;
-                        self.assoc_type_for_self(&receiver_ty, &segment.name)
+                        self.assoc_type_for_self(&receiver_ty, &segment.ident)
                             .await?
                             .unwrap_or_else(|| {
                                 self.error_ty(format!(
                                     "associated type `{}` is not defined for `{}`",
-                                    segment.name, receiver_ty
+                                    segment.ident, receiver_ty
                                 ))
                             })
                     }
@@ -3093,7 +3093,7 @@ impl HirTypeChecker {
             // overwhelming majority of real value-path cases.
             if let Some(assoc_segment) = path.segments.get(1) {
                 let scope = self.assoc_types.as_ref();
-                if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.name)) {
+                if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.ident)) {
                     return Ok(ty.clone());
                 }
                 // `Self` is still a generic parameter here (a blanket
@@ -3104,20 +3104,20 @@ impl HirTypeChecker {
                 // already uses for an explicit generic parameter.
                 if let TyKind::Param(param) = &self_type.kind {
                     if let Some(ty) = self
-                        .assoc_type_from_generic_param_bounds(&param.name, &assoc_segment.name)
+                        .assoc_type_from_generic_param_bounds(&param.name, &assoc_segment.ident)
                         .await?
                     {
                         return Ok(ty);
                     }
                 }
                 tracing::debug!(
-                    assoc = %assoc_segment.name,
+                    assoc = %assoc_segment.ident,
                     ?self_type,
                     "associated type not defined in this impl"
                 );
                 return Ok(self.error_ty(format!(
                     "associated type `Self::{}` is not defined in this impl (self type: {:?})",
-                    assoc_segment.name, self_type
+                    assoc_segment.ident, self_type
                 )));
             }
             return Ok(self_type);
@@ -3133,7 +3133,7 @@ impl HirTypeChecker {
             // table used by builtin-tagged paths; do not treat `f16`/`f128`
             // or the other primitives as ordinary unresolved definitions.
             if path.segments.len() == 1 {
-                if let Some(primitive) = primitive_path_ty(path.segments[0].name.as_str()) {
+                if let Some(primitive) = primitive_path_ty(path.segments[0].ident.as_str()) {
                     return Ok(primitive);
                 }
             }
@@ -3161,8 +3161,8 @@ impl HirTypeChecker {
                 // projection directly.
                 if let Some(ty) = self
                     .assoc_type_from_generic_param_bounds(
-                        &path.segments[0].name,
-                        &path.segments.last().unwrap().name,
+                        &path.segments[0].ident,
+                        &path.segments.last().unwrap().ident,
                     )
                     .await?
                 {
@@ -3173,7 +3173,7 @@ impl HirTypeChecker {
                 "unresolved type path `{}`{}",
                 path.segments
                     .iter()
-                    .map(|segment| segment.name.as_str())
+                    .map(|segment| segment.ident.as_str())
                     .collect::<Vec<_>>()
                     .join("::"),
                 self.current_item_path
@@ -3397,7 +3397,7 @@ impl HirTypeChecker {
     /// function signature for exactly that fixed set of names, mirroring
     /// MIR lowering's list — keep the two in sync.
     fn collection_constructor_signature(&mut self, path: &hir::Path) -> Option<Result<Ty>> {
-        let mut names = path.segments.iter().rev().map(|seg| seg.name.as_str());
+        let mut names = path.segments.iter().rev().map(|seg| seg.ident.as_str());
         let last = names.next()?;
         let second_last = names.next();
         if last != "from" {
@@ -3616,16 +3616,16 @@ impl HirTypeChecker {
                     2 => {
                         let method_segment = &path.segments[1];
                         if let Some(ctor) = self
-                            .self_enum_variant_constructor(&self_ty, &method_segment.name)
+                            .self_enum_variant_constructor(&self_ty, &method_segment.ident)
                             .await?
                         {
                             return Ok(ctor);
                         }
                         let found = self
-                            .method_declared_signature_at(&self_ty, &method_segment.name)
+                            .method_declared_signature_at(&self_ty, &method_segment.ident)
                             .await?;
                         tracing::debug!(
-                            method = %method_segment.name,
+                            method = %method_segment.ident,
                             ?self_ty,
                             found = found.is_some(),
                             "Self::method lookup"
@@ -3635,7 +3635,7 @@ impl HirTypeChecker {
                         }
                         return Ok(self.error_ty(format!(
                             "method `{}` not found on `Self` (self type: {:?})",
-                            method_segment.name, self_ty
+                            method_segment.ident, self_ty
                         )));
                     }
                     _ => {}
@@ -3653,14 +3653,14 @@ impl HirTypeChecker {
             {
                 if path.segments.len() == 2 {
                     if let Some(sig) = self
-                        .method_declared_signature_at(&receiver_ty, &tail.name)
+                        .method_declared_signature_at(&receiver_ty, &tail.ident)
                         .await?
                     {
                         return Ok(sig);
                     }
                     return Ok(self.error_ty(format!(
                         "no item named `{}` found on primitive `{}`",
-                        tail.name, name
+                        tail.ident, name
                     )));
                 }
             }
@@ -3685,8 +3685,8 @@ impl HirTypeChecker {
         // input. This is the type-relative analogue of rustc's QPath
         // resolution, limited to a primitive base plus one constant segment.
         if path.segments.len() == 3 {
-            if let Some(receiver_ty) = primitive_path_ty(path.segments[0].name.as_str()) {
-                let method = &path.segments[2].name;
+            if let Some(receiver_ty) = primitive_path_ty(path.segments[0].ident.as_str()) {
+                let method = &path.segments[2].ident;
                 if let Some(Ty {
                     kind: TyKind::FnPtr(signature),
                 }) = self
@@ -3712,7 +3712,7 @@ impl HirTypeChecker {
             if let Some(ty) = self.program_rc().pat_type(local.clone()) {
                 return Ok(ty);
             }
-            if let Some(name) = path.segments.last().map(|segment| &segment.name) {
+            if let Some(name) = path.segments.last().map(|segment| &segment.ident) {
                 if let Some(ty) = self.locals.get(name) {
                     return Ok(ty.clone());
                 }
@@ -3739,7 +3739,7 @@ impl HirTypeChecker {
         // scanning or selecting arbitrary package-local definitions.
         let recovered_def_id = if !matches!(path.res, hir::Res::Def(_)) && path.segments.len() >= 2
         {
-            let trait_name = &path.segments[path.segments.len() - 2].name;
+            let trait_name = &path.segments[path.segments.len() - 2].ident;
             // Use only the namespace-qualified export index. The old
             // package-wide source-path scan selected an arbitrary same-
             // named trait from an unrelated module and made resolution
@@ -3774,7 +3774,7 @@ impl HirTypeChecker {
                     "unresolved value path `{}`",
                     path.segments
                         .iter()
-                        .map(|segment| segment.name.as_str())
+                        .map(|segment| segment.ident.as_str())
                         .collect::<Vec<_>>()
                         .join("::")
                 )));
@@ -3790,7 +3790,7 @@ impl HirTypeChecker {
                     if let Some(variant) = enum_def
                         .variants
                         .iter()
-                        .find(|variant| variant.name == path.segments[1].name)
+                        .find(|variant| variant.name == path.segments[1].ident)
                     {
                         let receiver = self.path_ty(path).await?;
                         let TyKind::Adt(adt, args) = receiver.kind else {
@@ -3835,7 +3835,7 @@ impl HirTypeChecker {
         // settles the method), so `def_id` here names the struct/enum/
         // trait/generic-param the path starts from, not the method itself.
         if path.segments.len() > 1 {
-            let tail_method = &path.segments.last().unwrap().name;
+            let tail_method = &path.segments.last().unwrap().ident;
             // A generic type parameter base (`T::default()` where
             // `T: Default`) — there is no impl to search (`T` is still
             // abstract), so resolve the method against the parameter's own
@@ -3843,7 +3843,7 @@ impl HirTypeChecker {
             // param_bounds` resolves `T::AssocType` for the analogous
             // associated-type case.
             if let Some(sig) = self
-                .generic_param_bound_method_signature(&path.segments[0].name, tail_method)
+                .generic_param_bound_method_signature(&path.segments[0].ident, tail_method)
                 .await?
             {
                 return Ok(sig);
@@ -4096,7 +4096,7 @@ impl HirTypeChecker {
             let name = path
                 .segments
                 .last()
-                .map(|segment| segment.name.clone())
+                .map(|segment| segment.ident.clone())
                 .unwrap_or_else(|| hir::Symbol::new("_"));
             return Ok(Ty {
                 kind: TyKind::Param(ty::ParamTy {
@@ -5605,7 +5605,7 @@ impl HirTypeChecker {
             let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
                 continue;
             };
-            if path.segments().last().map(|seg| seg.name.as_str()) != Some("Deref") {
+            if path.segments().last().map(|seg| seg.ident.as_str()) != Some("Deref") {
                 continue;
             }
             let mut scope = self.with_generics(&impl_item.generics);

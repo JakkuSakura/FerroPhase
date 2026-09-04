@@ -968,7 +968,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
 fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
     let mut segments = Vec::new();
     for segment in &path.segments {
-        let mut text = String::from(segment.name.clone());
+        let mut text = String::from(segment.ident.clone());
         if let Some(generic_args) = &segment.args {
             let mut args = generic_args
                 .args

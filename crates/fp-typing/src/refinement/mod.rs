@@ -60,7 +60,7 @@ fn path_expr(name: &str) -> hir::Expr {
         hir::HirId::new(hir::OwnerId::root(hir::PackageId::new("test")), 0),
         hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
             segments: vec![hir::PathSegment {
-                name: name.into(),
+                ident: name.into(),
                 args: None,
                 infer_args: true,
                 res: fp_core::hir::Res::Error,
@@ -159,7 +159,7 @@ pub(crate) mod test_support {
             HirId::new(OwnerId::root(PackageId::new("test")), 0),
             ExprKind::Path(QPath::resolved(Path {
                 segments: vec![PathSegment {
-                    name: name.into(),
+                    ident: name.into(),
                     args: None,
                     infer_args: true,
                     res: Res::Error,

@@ -410,9 +410,9 @@ fn classify_type_shape(
                 }
                 Res::Def(did) => ImplShapeClass::Nominal(did.clone()),
                 _ if path.segments.len() == 1
-                    && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].name.as_str()) =>
+                    && PRIMITIVE_SELF_TYPE_NAMES.contains(&path.segments[0].ident.as_str()) =>
                 {
-                    ImplShapeClass::Shape(path.segments[0].name.as_str().to_string())
+                    ImplShapeClass::Shape(path.segments[0].ident.as_str().to_string())
                 }
                 _ => ImplShapeClass::Unclassified,
             },
@@ -1025,7 +1025,7 @@ mod tests {
             HirId::new(OwnerId::root(PackageId::new("test")), 1),
             TypeExprKind::Path(QPath::resolved(Path {
                 segments: vec![PathSegment {
-                    name: name.into(),
+                    ident: name.into(),
                     args: None,
                     infer_args: true,
                     res: res.clone(),

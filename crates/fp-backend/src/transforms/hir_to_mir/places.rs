@@ -28,7 +28,7 @@ impl<'a> BodyBuilder<'a> {
             .segments()
             .first()
             .filter(|_| path.segments().len() == 1)
-            .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
+            .and_then(|seg| self.fallback_locals.get(seg.ident.as_str()).copied());
         match &path.res_ref() {
             hir::Res::Local(hir_id) => {
                 if let Some(local_id) = self.local_map.get(hir_id) {
@@ -1202,7 +1202,7 @@ impl<'a> BodyBuilder<'a> {
                                 }
                             }
                         } else if resolved_path.segments().len() == 1 {
-                            let name = resolved_path.segments()[0].name.as_str();
+                            let name = resolved_path.segments()[0].ident.as_str();
                             let matching_const =
                                 self.lowering
                                     .hir_all_items()

@@ -59,7 +59,7 @@ impl AstToHirLowerer {
                             if path
                                 .segments()
                                 .last()
-                                .map(|seg| seg.name.as_str().starts_with("__Closure"))
+                                .map(|seg| seg.ident.as_str().starts_with("__Closure"))
                                 .unwrap_or(false)
                             {
                                 output = hir::TypeExpr::new(
@@ -794,7 +794,7 @@ impl AstToHirLowerer {
                 self.next_id(),
                 hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new("Self"),
+                        ident: hir::Symbol::new("Self"),
                         args: None,
                         infer_args: true,
                         res: hir::Res::SelfTy,

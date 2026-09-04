@@ -238,7 +238,7 @@ impl AstToHirLowerer {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: idx_name.clone(),
+                    ident: idx_name.clone(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(idx_pat.hir_id.clone()),
@@ -481,7 +481,7 @@ impl AstToHirLowerer {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: base_name,
+                    ident: base_name,
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(base_pat.hir_id.clone()),
@@ -563,7 +563,7 @@ impl AstToHirLowerer {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: idx_name.clone(),
+                    ident: idx_name.clone(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(idx_pat.hir_id.clone()),

@@ -110,7 +110,7 @@ impl LocalResolver {
                 if !matches!(resolved.res, Res::Module(_)) {
                     let base_res = resolved.res.clone();
                     resolved.segments = vec![fp_core::hir::PathSegment {
-                        name: path.segments[0].as_str().into(),
+                        ident: path.segments[0].as_str().into(),
                         args: None,
                         infer_args: true,
                         res: base_res,
@@ -191,7 +191,7 @@ mod tests {
             ResolutionResult::Found(hir::Path {
                 res: Res::Generic(generic.clone()),
                 segments: vec![fp_core::hir::PathSegment {
-                    name: "T".into(),
+                    ident: "T".into(),
                     args: None,
                     infer_args: true,
                     res: Res::Generic(generic.clone()),

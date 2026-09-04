@@ -38,7 +38,7 @@ impl<'a> BodyBuilder<'a> {
         let name = path
             .segments()
             .iter()
-            .map(|seg| seg.name.as_str())
+            .map(|seg| seg.ident.as_str())
             .collect::<Vec<_>>()
             .join("::");
         self.lowering
@@ -53,7 +53,7 @@ impl<'a> BodyBuilder<'a> {
                         .mir_package
                         .borrow()
                         .enum_variant_names
-                        .get(seg.name.as_str())
+                        .get(seg.ident.as_str())
                         .cloned()
                 })
             })
@@ -70,7 +70,7 @@ impl<'a> BodyBuilder<'a> {
         let name = path
             .segments()
             .iter()
-            .map(|seg| seg.name.as_str())
+            .map(|seg| seg.ident.as_str())
             .collect::<Vec<_>>()
             .join("::");
         let def_id = self
@@ -86,7 +86,7 @@ impl<'a> BodyBuilder<'a> {
                         .mir_package
                         .borrow()
                         .enum_variant_names
-                        .get(seg.name.as_str())
+                        .get(seg.ident.as_str())
                         .cloned()
                 })
             });
@@ -141,7 +141,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         }
-        let tail = path.segments().last()?.name.as_str();
+        let tail = path.segments().last()?.ident.as_str();
 
         self.enum_variant_from_expected_ty_by_name(expected_ty, tail)
     }
@@ -1371,7 +1371,7 @@ impl<'a> BodyBuilder<'a> {
                     let matches_name = path
                         .segments()
                         .last()
-                        .map(|seg| seg.name.as_str())
+                        .map(|seg| seg.ident.as_str())
                         .map(|name| {
                             self.lowering
                                 .mir_package
@@ -1444,7 +1444,7 @@ impl<'a> BodyBuilder<'a> {
                 if type_path.segments().len() != 1 || type_path.segments()[0].args.is_some() {
                     return None;
                 }
-                let name = type_path.segments()[0].name.as_str();
+                let name = type_path.segments()[0].ident.as_str();
                 if !function
                     .sig
                     .generics

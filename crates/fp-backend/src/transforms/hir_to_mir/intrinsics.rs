@@ -152,7 +152,7 @@ impl<'a> BodyBuilder<'a> {
                 if let hir::ExprKind::Path(path) = &target_expr.kind {
                     if let [segment] = path.segments() {
                         if let Some(resolved_ty) =
-                            self.type_substs.get(segment.name.as_str()).cloned()
+                            self.type_substs.get(segment.ident.as_str()).cloned()
                         {
                             let size = match self.compute_ty_size(span, &resolved_ty) {
                                 Some(value) => value,
@@ -940,14 +940,14 @@ impl<'a> BodyBuilder<'a> {
         let callee = arg_values[0];
         let mut call_args: Vec<mir::Operand> = Vec::new();
         let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
-            let struct_name = path.segments().last().map(|seg| seg.name.as_str());
+            let struct_name = path.segments().last().map(|seg| seg.ident.as_str());
             let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
             if let Some(suffix) = closure_suffix {
                 let env = self.lower_operand(callee, None)?;
                 let call_name = format!("__closure{}_call", suffix);
                 let path = hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new(call_name),
+                        ident: hir::Symbol::new(call_name),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,
@@ -1082,14 +1082,14 @@ impl<'a> BodyBuilder<'a> {
         let callee = arg_values[0];
         let mut call_args: Vec<mir::Operand> = Vec::new();
         let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
-            let struct_name = path.segments().last().map(|seg| seg.name.as_str());
+            let struct_name = path.segments().last().map(|seg| seg.ident.as_str());
             let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
             if let Some(suffix) = closure_suffix {
                 let env = self.lower_operand(callee, None)?;
                 let call_name = format!("__closure{}_call", suffix);
                 let path = hir::Path {
                     segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new(call_name),
+                        ident: hir::Symbol::new(call_name),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,
@@ -1643,7 +1643,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(segment) = path.segments().last() {
-            let name = segment.name.as_str();
+            let name = segment.ident.as_str();
             let mut matches = self
                 .lowering
                 .mir_package

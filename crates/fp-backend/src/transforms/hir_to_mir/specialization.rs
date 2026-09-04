@@ -1345,7 +1345,7 @@ impl HirToMirLowerer {
                     if path
                         .segments()
                         .last()
-                        .map(|seg| seg.name.as_str() == "Self")
+                        .map(|seg| seg.ident.as_str() == "Self")
                         .unwrap_or(false)
                     {
                         let mut fallback_ty =

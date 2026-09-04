@@ -599,7 +599,7 @@ fn collect_path_refs(
     }
     let tail = segments
         .last()
-        .map(|seg| seg.name.as_str())
+        .map(|seg| seg.ident.as_str())
         .unwrap_or_default();
     if let Some(def_id) = tail_map.get(tail) {
         work.push_back(def_id.clone());
@@ -662,7 +662,7 @@ mod tests {
                 segments: segments
                     .iter()
                     .map(|segment| PathSegment {
-                        name: symbol(segment),
+                        ident: symbol(segment),
                         args: None,
                         infer_args: true,
                         res: res.clone().unwrap_or(hir::Res::Error),

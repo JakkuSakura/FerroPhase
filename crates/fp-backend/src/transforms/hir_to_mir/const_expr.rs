@@ -609,7 +609,7 @@ impl HirToMirLowerer {
         let reflected_name = path
             .segments()
             .last()
-            .map(|segment| format!("struct {}", segment.name));
+            .map(|segment| format!("struct {}", segment.ident));
         let struct_def_id = def_id.clone();
         self.try_lazily_register_adt(struct_def_id.clone(), span);
         let struct_info = self
@@ -992,7 +992,7 @@ impl HirToMirLowerer {
             hir::TypeExprKind::Path(path) => {
                 let tail = path.segments().last()?;
                 let args = tail.args.as_ref()?;
-                match tail.name.as_str() {
+                match tail.ident.as_str() {
                     "Vec" if args.args.len() == 1 => {
                         let hir::GenericArg::Type(elem) = &args.args[0] else {
                             return None;
@@ -1032,7 +1032,7 @@ impl HirToMirLowerer {
                 match &entries_ty.kind {
                     hir::TypeExprKind::Path(path) => {
                         let tail = path.segments().last()?;
-                        if tail.name.as_str() == "Vec" {
+                        if tail.ident.as_str() == "Vec" {
                             let args = tail.args.as_ref()?;
                             if args.args.len() == 1 {
                                 if let hir::GenericArg::Type(inner) = &args.args[0] {
@@ -1052,7 +1052,7 @@ impl HirToMirLowerer {
                 };
                 if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
                     let tail = path.segments().last()?;
-                    if tail.name.as_str() == "Expr" {
+                    if tail.ident.as_str() == "Expr" {
                         let args = tail.args.as_ref()?;
                         if args.args.len() == 1 {
                             if let hir::GenericArg::Type(inner) = &args.args[0] {
@@ -1065,7 +1065,7 @@ impl HirToMirLowerer {
                 match &entry_ty_expr.kind {
                     hir::TypeExprKind::Path(path) => {
                         let tail = path.segments().last()?;
-                        if tail.name.as_str() == "HashMapEntry" {
+                        if tail.ident.as_str() == "HashMapEntry" {
                             let args = tail.args.as_ref()?;
                             if args.args.len() == 2 {
                                 if let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =

@@ -266,7 +266,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             } else {
                 if let Some(seg) = path.segments().last() {
-                    let name = seg.name.as_str();
+                    let name = seg.ident.as_str();
                     self.lowering
                         .mir_package
                         .borrow()

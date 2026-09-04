@@ -701,7 +701,7 @@ mod tests {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
                 res: hir::Res::Def(target.clone()),
                 segments: vec![hir::PathSegment {
-                    name: "Alias".into(),
+                    ident: "Alias".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(target),
@@ -813,7 +813,7 @@ mod tests {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
                 res: hir::Res::Def(target.clone()),
                 segments: vec![hir::PathSegment {
-                    name: "Item".into(),
+                    ident: "Item".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(target),
@@ -861,7 +861,7 @@ mod tests {
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
                 res: hir::Res::Module(hir::DefId::local(1)),
                 segments: vec![hir::PathSegment {
-                    name: "alias".into(),
+                    ident: "alias".into(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Module(hir::DefId::local(1)),

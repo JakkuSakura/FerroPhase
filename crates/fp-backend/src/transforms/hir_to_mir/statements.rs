@@ -39,7 +39,7 @@ impl<'a> BodyBuilder<'a> {
                     return Some(def_id.clone());
                 }
             }
-            let name = path.segments().last()?.name.as_str();
+            let name = path.segments().last()?.ident.as_str();
             self.lowering
                 .mir_package
                 .borrow()
