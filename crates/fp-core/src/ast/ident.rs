@@ -109,6 +109,7 @@ impl Path {
         // Keep programmatically-built paths consistent with parsed Rust
         // paths: these keywords are prefixes, never ordinary identifiers.
         let prefix = match segments.first().map(Ident::as_str) {
+            _ if segments.len() < 2 => PathPrefix::Plain,
             Some("crate") => {
                 segments.remove(0);
                 PathPrefix::Crate
@@ -950,6 +951,9 @@ mod tests {
 
     #[test]
     fn plain_constructor_normalizes_rust_path_prefixes() {
+        let bare_self = Path::plain(vec![Ident::new("self")]);
+        assert_eq!(bare_self.prefix, PathPrefix::Plain);
+
         let crate_path = Path::plain(vec![Ident::new("crate"), Ident::new("module")]);
         assert_eq!(crate_path.prefix, PathPrefix::Crate);
         assert_eq!(crate_path.join("::"), "module");
