@@ -2265,10 +2265,18 @@ impl HirTypeChecker {
                 Some(generic_args) => {
                     let mut checked = Vec::with_capacity(generic_args.args.len());
                     for arg in &generic_args.args {
-                        let hir::GenericArg::Type(ty) = arg else {
-                            return Err(Error::from(
-                                "const generic method arguments are not supported here",
-                            ));
+                        let ty = match arg {
+                            // Lifetime arguments are source-visible in HIR,
+                            // but regions are erased from this checker's
+                            // method substitutions just as they are from
+                            // nominal ADT arguments.
+                            hir::GenericArg::Lifetime(_) => continue,
+                            hir::GenericArg::Type(ty) => ty,
+                            hir::GenericArg::Const(_) | hir::GenericArg::Infer(_) => {
+                                return Err(Error::from(
+                                    "const generic method arguments are not supported here",
+                                ));
+                            }
                         };
                         checked.push(self.check_type_expr(ty).await?);
                     }

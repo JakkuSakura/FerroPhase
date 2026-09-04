@@ -843,7 +843,12 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                             span: fp_core::span::Span::null(),
                         }),
                         "output".into(),
-                        None,
+                        Some(hir::GenericArgs {
+                            args: vec![hir::GenericArg::Lifetime("'a".into())],
+                            constraints: Vec::new(),
+                            parenthesized: hir::GenericArgsParentheses::No,
+                            span_ext: fp_core::span::Span::null(),
+                        }),
                         Vec::new(),
                     ),
                     span: fp_core::span::Span::null(),
@@ -865,7 +870,7 @@ fn typed_command_helper_local_preserves_method_def_identity() {
     assert_eq!(
         result.borrow().method_resolution(output_call_hir_id),
         Some(output_id),
-        "a typed helper local must retain its Command DefId for method resolution"
+        "an erased lifetime argument must not prevent method resolution"
     );
     assert_eq!(
         result.borrow().method_resolution(hid(49)),
