@@ -1194,7 +1194,6 @@ dependencies = [
  "globset",
  "indicatif",
  "libc",
- "miette",
  "object 0.37.3",
  "pathdiff",
  "predicates",
