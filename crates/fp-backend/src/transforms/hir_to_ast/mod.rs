@@ -1771,44 +1771,33 @@ impl<'a> HirToAstLifter<'a> {
             return Ok(ast::GenericArgs::ParenthesizedElided(args.span_ext));
         }
         if matches!(args.parenthesized, hir::GenericArgsParentheses::ParenSugar) {
-            let inputs = match args.args.first() {
-                Some(hir::GenericArg::Type(ty)) => match &ty.kind {
-                    hir::TypeExprKind::Tuple(inputs) => inputs
-                        .iter()
-                        .map(|input| self.lift_type(input))
-                        .collect::<Result<Vec<_>>>()?,
-                    _ => vec![self.lift_type(ty.as_ref())?],
-                },
-                _ => Vec::new(),
-            };
-            let output = args
-                .constraints
+            let (hir_inputs, hir_output) = args
+                .paren_sugar_inputs_output()
+                .ok_or_else(|| {
+                    fp_core::error::Error::from(
+                        "malformed parenthesized HIR generic arguments".to_owned(),
+                    )
+                })?;
+            let inputs = hir_inputs
                 .iter()
-                .find_map(|constraint| {
-                    let hir::AssocItemConstraint {
-                        ident,
-                        kind:
-                            hir::AssocItemConstraintKind::Equality {
-                                term: hir::Term::Ty(ty),
-                            },
-                        ..
-                    } = constraint
-                    else {
-                        return None;
-                    };
-                    (ident.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
-                })
-                .transpose()?;
-            let output = match output {
-                Some(output) => ast::FnRetTy::Ty(output),
-                None => ast::FnRetTy::Default(Span::new(
+                .map(|input| self.lift_type(input))
+                .collect::<Result<Vec<_>>>()?;
+            let output = if matches!(
+                &hir_output.kind,
+                hir::TypeExprKind::Tuple(inputs) if inputs.is_empty()
+            ) && hir_output.span() == args.span_ext
+            {
+                ast::FnRetTy::Default(Span::new(
                     args.span_ext.file,
                     args.span_ext.hi,
                     args.span_ext.hi,
-                )),
+                ))
+            } else {
+                ast::FnRetTy::Ty(Box::new(self.lift_type(hir_output)?))
             };
+            let span = Span::union([args.span_ext, hir_output.span()]);
             return Ok(ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
-                span: args.span_ext,
+                span,
                 inputs,
                 inputs_span: args.span_ext,
                 output,

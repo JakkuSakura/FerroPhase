@@ -898,6 +898,40 @@ impl GenericArgs {
             hi: 0,
         },
     };
+
+    /// Return the parenthesized trait inputs and synthesized `Output` type.
+    ///
+    /// Rustc lowers `Trait(A, B) -> C` into one tuple type argument and one
+    /// `Output = C` associated-item constraint. Keeping this accessor beside
+    /// the representation makes consumers rely on that invariant instead of
+    /// independently interpreting the two lists.
+    pub fn paren_sugar_inputs_output(&self) -> Option<(&[Box<TypeExpr>], &TypeExpr)> {
+        if self.parenthesized != GenericArgsParentheses::ParenSugar {
+            return None;
+        }
+        let [GenericArg::Type(input)] = self.args.as_slice() else {
+            return None;
+        };
+        let TypeExprKind::Tuple(inputs) = &input.kind else {
+            return None;
+        };
+        let [AssocItemConstraint {
+            ident,
+            kind: AssocItemConstraintKind::Equality {
+                term: Term::Ty(output),
+            },
+            ..
+        }] = self.constraints.as_slice()
+        else {
+            return None;
+        };
+        (ident.as_str() == "Output").then_some((inputs.as_slice(), output.as_ref()))
+    }
+
+    /// Return the synthesized output type for parenthesized trait syntax.
+    pub fn paren_sugar_output(&self) -> Option<&TypeExpr> {
+        self.paren_sugar_inputs_output().map(|(_, output)| output)
+    }
 }
 
 impl Default for GenericArgs {
@@ -1850,7 +1884,10 @@ impl GenericParamKind {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{GenericArgs, PathSegment};
+    use super::{
+        AssocItemConstraint, AssocItemConstraintKind, GenericArg, GenericArgs,
+        GenericArgsParentheses, PathSegment, Term, TypeExpr, TypeExprKind,
+    };
 
     #[test]
     fn omitted_segment_arguments_use_rustc_empty_view() {
@@ -1860,6 +1897,45 @@ mod path_tests {
         assert_eq!(segment.args(), GenericArgs::NONE);
         assert!(segment.args().args.is_empty());
         assert!(segment.infer_args);
+    }
+
+    #[test]
+    fn parenthesized_arguments_expose_rustc_shape() {
+        let input = TypeExpr::new(
+            Default::default(),
+            TypeExprKind::Tuple(vec![Box::new(TypeExpr::new(
+                Default::default(),
+                TypeExprKind::Never,
+                Default::default(),
+            ))]),
+            Default::default(),
+        );
+        let output = TypeExpr::new(
+            Default::default(),
+            TypeExprKind::Never,
+            Default::default(),
+        );
+        let args = GenericArgs {
+            args: vec![GenericArg::Type(Box::new(input))],
+            constraints: vec![AssocItemConstraint {
+                hir_id: Default::default(),
+                ident: "Output".into(),
+                gen_args: GenericArgs::default(),
+                kind: AssocItemConstraintKind::Equality {
+                    term: Term::Ty(Box::new(output)),
+                },
+                span: Default::default(),
+            }],
+            parenthesized: GenericArgsParentheses::ParenSugar,
+            span_ext: Default::default(),
+        };
+
+        let (inputs, output) = args
+            .paren_sugar_inputs_output()
+            .expect("valid parenthesized generic arguments");
+        assert_eq!(inputs.len(), 1);
+        assert!(matches!(output.kind, TypeExprKind::Never));
+        assert!(args.paren_sugar_output().is_some());
     }
 }
 
