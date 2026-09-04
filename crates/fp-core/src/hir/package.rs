@@ -1030,6 +1030,7 @@ mod tests {
                     hir_id: HirId::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: res.clone(),
                 }],
                 res,

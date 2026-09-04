@@ -104,6 +104,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Module(std_root),
                     },
                     hir::PathSegment {
@@ -111,6 +112,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Def(alloc),
                     },
                 ]
@@ -210,6 +212,7 @@ mod tests {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: hir::Res::Generic(ty),
                 },]
             })
@@ -280,6 +283,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
@@ -287,6 +291,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Def(value),
                     },
                 ]
@@ -303,6 +308,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
@@ -310,6 +316,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Def(ty),
                     },
                 ]
@@ -326,6 +333,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Module(module),
                     },
                     hir::PathSegment {
@@ -333,6 +341,7 @@ mod tests {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Def(mac),
                     },
                 ]
@@ -449,6 +458,7 @@ impl Resolver {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Module(root.clone()),
                     })
                     .collect(),
@@ -486,6 +496,7 @@ impl Resolver {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: hir::Res::Module(root.clone()),
                 })
                 .collect();
@@ -508,6 +519,7 @@ impl Resolver {
                             hir_id: Default::default(),
                             args: None,
                             infer_args: true,
+                            delegation_child_segment: false,
                             res: resolved.clone(),
                         });
                         if offset + 1 == count {

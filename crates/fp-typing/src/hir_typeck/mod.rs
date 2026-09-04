@@ -924,6 +924,7 @@ impl HirTypeChecker {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::Def(trait_def_id.clone()),
                     }],
                     res: hir::Res::Def(trait_def_id),

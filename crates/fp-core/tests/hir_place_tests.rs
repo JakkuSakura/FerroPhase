@@ -27,6 +27,7 @@ fn path_expr(hir_id: u32, name: &str) -> Expr {
                 hir_id: Default::default(),
                 args: None,
                 infer_args: true,
+                delegation_child_segment: false,
                 res: Res::Error,
             }],
             res: Res::Error,

@@ -707,6 +707,7 @@ mod tests {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: hir::Res::Def(target),
                 }]
             }),
@@ -821,6 +822,7 @@ mod tests {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: hir::Res::Def(target),
                 }]
             }),
@@ -871,6 +873,7 @@ mod tests {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: hir::Res::Module(hir::DefId::local(1)),
                 }]
             }),

@@ -807,6 +807,7 @@ impl AstToHirLowerer {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: hir::Res::SelfTy,
                     }],
                     res: hir::Res::SelfTy,

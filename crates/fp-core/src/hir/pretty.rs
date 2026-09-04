@@ -1092,6 +1092,7 @@ mod tests {
             hir_id: Default::default(),
             args: None,
             infer_args: false,
+            delegation_child_segment: false,
             res: Res::Error,
         }
     }
@@ -1168,6 +1169,7 @@ mod tests {
                 hir_id: Default::default(),
                 args: Some(args),
                 infer_args: false,
+                delegation_child_segment: false,
                 res: Res::Error,
             }],
         );

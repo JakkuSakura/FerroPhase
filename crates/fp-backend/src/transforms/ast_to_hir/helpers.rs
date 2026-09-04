@@ -1071,6 +1071,7 @@ impl AstToHirLowerer {
             args,
             infer_args,
             res: hir::Res::Error,
+            delegation_child_segment: false,
         }
     }
 

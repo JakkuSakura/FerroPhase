@@ -831,6 +831,10 @@ pub struct PathSegment {
     /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
     /// represented by `args = Some(...)` with an `Infer` generic argument.
     pub infer_args: bool,
+    /// Whether this segment is the child of a delegation path. FerroPhase
+    /// does not currently expose delegation syntax, but retaining rustc's
+    /// bit keeps the HIR path-segment shape lossless for future lowering.
+    pub delegation_child_segment: bool,
 }
 
 impl PathSegment {
@@ -842,6 +846,7 @@ impl PathSegment {
             args,
             infer_args,
             res: Res::Error,
+            delegation_child_segment: false,
         }
     }
 
@@ -858,6 +863,7 @@ impl PathSegment {
             args,
             infer_args,
             res,
+            delegation_child_segment: false,
         }
     }
 

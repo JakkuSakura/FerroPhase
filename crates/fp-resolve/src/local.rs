@@ -114,6 +114,7 @@ impl LocalResolver {
                         hir_id: Default::default(),
                         args: None,
                         infer_args: true,
+                        delegation_child_segment: false,
                         res: base_res,
                     }];
                     return ResolutionResult::Found(resolved);
@@ -200,6 +201,7 @@ mod tests {
                     hir_id: Default::default(),
                     args: None,
                     infer_args: true,
+                    delegation_child_segment: false,
                     res: Res::Generic(generic.clone()),
                 },],
             })
