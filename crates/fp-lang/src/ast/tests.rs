@@ -430,6 +430,20 @@ fn parse_qualified_path_keeps_qself_and_trait_segments() {
 }
 
 #[test]
+fn parse_qualified_expression_uses_trait_path_for_qself_span() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("<Vec<u8> as a::Trait>::Item")
+        .unwrap();
+    let ExprKind::Name(Name { qself, .. }) = expr.kind() else {
+        panic!("expected qualified path expression");
+    };
+    let qself = qself.as_ref().expect("qualified self");
+    assert_eq!(qself.path_span.snippet().as_deref(), Some("a::Trait"));
+}
+
+#[test]
 fn parse_traitless_expression_qpath_keeps_associated_tail() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
@@ -483,6 +497,41 @@ fn parse_type_relative_path_keeps_qself() {
     assert_eq!(qself.path_span, fp_core::span::Span::null());
     assert_eq!(qself.position, 0);
     assert_eq!(path.join("::"), "Assoc::Nested");
+}
+
+#[test]
+fn parse_nested_qualified_path_keeps_each_qself() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast(
+            "type Alias = <<T as Trait>::Assoc as Trait2>::Item;",
+        )
+        .unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected qualified path type");
+    };
+    let ExprKind::Name(Name { qself, path }) = expr.kind() else {
+        panic!("expected name path type");
+    };
+    let qself = qself.as_ref().expect("outer qualified self");
+    assert_eq!(qself.position, 1);
+    assert_eq!(path.join("::"), "Trait2::Item");
+    let Ty::Expr(inner) = qself.ty.as_ref() else {
+        panic!("expected nested qualified path type");
+    };
+    let ExprKind::Name(Name {
+        qself: inner_qself,
+        path: inner_path,
+    }) = inner.kind()
+    else {
+        panic!("expected nested qualified name path");
+    };
+    assert!(inner_qself.is_some());
+    assert_eq!(inner_path.join("::"), "Trait::Assoc");
 }
 
 #[test]

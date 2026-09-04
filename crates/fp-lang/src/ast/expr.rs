@@ -793,7 +793,13 @@ fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<
         return Ok(Expr::name(Name {
             qself: Some(fp_core::ast::QSelf {
                 ty: Box::new(ty),
-                path_span: trait_ty.as_ref().map(Ty::span).unwrap_or_else(Span::null),
+                // `QSelf::path_span` covers the trait path after `as`, not
+                // the qualified receiver type.  This is the same distinction
+                // rustc keeps in its AST and matters for diagnostics and
+                // round-tripping qualified paths.
+                path_span: trait_path
+                    .map(Path::span)
+                    .unwrap_or_else(Span::null),
                 position,
             }),
             path: Path::with_span(path_span, prefix, segments),

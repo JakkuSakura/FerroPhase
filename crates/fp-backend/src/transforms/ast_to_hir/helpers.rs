@@ -66,46 +66,50 @@ impl AstToHirLowerer {
         &mut self,
         arguments: &ast::GenericArgs,
     ) -> Result<hir::GenericArgs> {
-        let span_ext = arguments.span();
+        let mut span_ext = arguments.span();
         let mut parenthesized = hir::GenericArgsParentheses::No;
         let mut hir_args = Vec::new();
         let mut constraints = Vec::new();
         let args: &[ast::AngleBracketedArg] = match arguments {
             ast::GenericArgs::AngleBracketed(args) => &args.args,
             ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
-                inputs, output, ..
+                span,
+                inputs,
+                inputs_span,
+                output,
             }) => {
-                let output_span = output.span();
                 let input_types = inputs
                     .iter()
                     .map(|input| self.transform_type_to_hir(input))
                     .collect::<Result<Vec<_>>>()?;
-                let output = match output {
-                    ast::FnRetTy::Ty(output) => Some(self.transform_type_to_hir(output)?),
-                    ast::FnRetTy::Default(_) => None,
-                };
                 let input_tuple = hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Tuple(input_types.into_iter().map(Box::new).collect()),
-                    Span::null(),
+                    *inputs_span,
                 );
+                let output_ty = match output {
+                    ast::FnRetTy::Ty(output) => self.transform_type_to_hir(output)?,
+                    ast::FnRetTy::Default(_) => hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Tuple(Vec::new()),
+                        *span,
+                    ),
+                };
                 hir_args.push(hir::GenericArg::Type(Box::new(input_tuple)));
                 constraints.push(hir::AssocItemConstraint {
                     hir_id: self.next_id(),
                     ident: hir::Symbol::new("Output"),
                     gen_args: hir::GenericArgs::default(),
                     kind: hir::AssocItemConstraintKind::Equality {
-                        term: hir::Term::Ty(Box::new(output.unwrap_or_else(|| {
-                            hir::TypeExpr::new(
-                                self.next_id(),
-                                hir::TypeExprKind::Tuple(Vec::new()),
-                                Span::null(),
-                            )
-                        }))),
+                        term: hir::Term::Ty(Box::new(output_ty.clone())),
                     },
-                    span: output_span,
+                    span: output_ty.span(),
                 });
                 parenthesized = hir::GenericArgsParentheses::ParenSugar;
+                // rustc uses the `(A, B)` span for HIR `GenericArgs`; the
+                // enclosing `-> Output` belongs to the synthesized Output
+                // constraint instead.
+                span_ext = *inputs_span;
                 &[]
             }
             ast::GenericArgs::ParenthesizedElided(_) => {
