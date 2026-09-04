@@ -1723,11 +1723,28 @@ impl<'a> HirToAstLifter<'a> {
                 {
                     let mut path = trait_path.segments.clone();
                     path.extend(associated);
+                    // `QSelf::position` counts the trait-path segments only;
+                    // `trait_path` may already contain one or more associated
+                    // segments when this is a nested type-relative path.
+                    let position = trait_path
+                        .segments
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, segment)| {
+                            let hir::Res::Def(def_id) = &segment.res else {
+                                return None;
+                            };
+                            self.hir_program
+                                .item(def_id.clone())
+                                .filter(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
+                                .map(|_| index + 1)
+                        })
+                        .unwrap_or(trait_path.segments.len());
                     return Ok(Name {
                         qself: Some(ast::QSelf {
                             ty: Box::new(self.lift_type(qself)?),
                             path_span: Span::null(),
-                            position: trait_path.segments.len(),
+                            position,
                         }),
                         path: self.lift_ast_path(&hir::Path::new(trait_path.res.clone(), path))?,
                     });
@@ -2662,6 +2679,82 @@ mod tests {
             [ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty))]
                 if matches!(ty.as_ref(), ast::Ty::Primitive(_))
         ));
+    }
+
+    #[test]
+    fn lifts_nested_explicit_qself_with_trait_position() -> Result<()> {
+        let package_id = hir::PackageId::new("root");
+        let owner = hir::OwnerId::root(package_id.clone());
+        let trait_id = hir::DefId::new(package_id.clone(), 1);
+        let package = {
+            let mut package = hir::HirPackage::new(package_id.clone());
+            package.add_item(hir::Item {
+                hir_id: hir::HirId::new(owner.clone(), 1),
+                def_id: trait_id.clone(),
+                visibility: hir::Visibility::Public,
+                kind: hir::ItemKind::Trait(hir::Trait {
+                    generics: hir::Generics {
+                        params: Vec::new(),
+                        where_clause: None,
+                    },
+                    items: Vec::new(),
+                    supertraits: Vec::new(),
+                }),
+                span: Span::null(),
+            });
+            package
+        };
+        let mut workspace = hir::HirProgram::new();
+        workspace.publish_package(package.clone());
+        let lifter = HirToAstLifter::new(&package, &workspace);
+
+        let qself_ty = hir::TypeExpr::new(
+            hir::HirId::new(owner.clone(), 2),
+            hir::TypeExprKind::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::U8,
+            )),
+            Span::null(),
+        );
+        let path = hir::Path::new(
+            hir::Res::Error,
+            vec![
+                hir::PathSegment {
+                    ident: "Trait".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Def(trait_id),
+                },
+                hir::PathSegment {
+                    ident: "Item".into(),
+                    args: None,
+                    infer_args: true,
+                    res: hir::Res::Error,
+                },
+            ],
+        );
+        let receiver = hir::TypeExpr::new(
+            hir::HirId::new(owner.clone(), 3),
+            hir::TypeExprKind::Path(hir::QPath::Resolved(Some(Box::new(qself_ty)), path)),
+            Span::null(),
+        );
+        let qpath = hir::QPath::TypeRelative(
+            Box::new(receiver),
+            hir::PathSegment {
+                ident: "Nested".into(),
+                args: None,
+                infer_args: true,
+                res: hir::Res::Error,
+            },
+        );
+
+        let lifted = lifter.lift_qpath(&qpath)?;
+        let qself = lifted.qself.expect("explicit qself");
+        assert_eq!(qself.position, 1);
+        assert_eq!(lifted.path.segments.len(), 3);
+        assert_eq!(lifted.path.segments[0].ident.as_str(), "Trait");
+        assert_eq!(lifted.path.segments[1].ident.as_str(), "Item");
+        assert_eq!(lifted.path.segments[2].ident.as_str(), "Nested");
+        Ok(())
     }
 
     impl IntrinsicMaterializer for TestMaterializer {
