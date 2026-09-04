@@ -313,6 +313,37 @@ impl KotlinWorkspaceContext {
 
 pub struct KotlinSerializer;
 
+/// Return one entry for each source-file module, retaining the module path
+/// while excluding nested module declarations from the parent file. Without
+/// this grouping every child is emitted into `root.kt`.
+fn source_modules(module: &fp_core::ast::Module) -> Vec<(String, Vec<Item>)> {
+    fn visit(module: &fp_core::ast::Module, parent: &str, output: &mut Vec<(String, Vec<Item>)>) {
+        let path = if module.name.as_str().is_empty() {
+            parent.to_owned()
+        } else if parent.is_empty() {
+            module.name.as_str().to_owned()
+        } else {
+            format!("{parent}/{}", module.name.as_str())
+        };
+        let own_items = module
+            .items
+            .iter()
+            .filter(|item| !matches!(item.kind(), ItemKind::Module(_)))
+            .cloned()
+            .collect();
+        output.push((path.clone(), own_items));
+        for item in &module.items {
+            if let ItemKind::Module(child) = item.kind() {
+                visit(child, &path, output);
+            }
+        }
+    }
+
+    let mut modules = Vec::new();
+    visit(module, "", &mut modules);
+    modules
+}
+
 impl KotlinSerializer {
     pub fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut emitter = KotlinEmitter::new();
@@ -346,7 +377,7 @@ impl KotlinSerializer {
             enum_variant_payload_fields,
             referenced_paths,
         } = ctx;
-        let modules = vec![source.module.clone()];
+        let modules = source_modules(&source.module);
 
         let pkg_name = &source.name;
         let mut files = Vec::new();
@@ -359,7 +390,9 @@ impl KotlinSerializer {
         // import is needed for them.
         let local_modules: HashSet<String> = modules
             .iter()
-            .map(|module| module.relative_path())
+            .filter_map(|(path, _)| path.split('/').next())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
             .collect();
 
         // Gradle manifest
@@ -367,8 +400,7 @@ impl KotlinSerializer {
         files.push(("build.gradle.kts".into(), build_gradle(pkg_name, &deps)));
 
         // Source files under src/main/kotlin/
-        for module in modules {
-            let mod_path = module.relative_path();
+        for (mod_path, module_items) in modules {
             let output_name = if mod_path.is_empty() {
                 "root".to_string()
             } else {
@@ -377,7 +409,7 @@ impl KotlinSerializer {
             let file = File {
                 path: std::path::PathBuf::from(&mod_path),
                 attrs: Vec::new(),
-                items: module.items,
+                items: module_items,
             };
             // Every referenced-path entry is keyed by the REFERENCING
             // item's own qualified path (module segments + name) — take
@@ -2565,6 +2597,37 @@ mod tests {
     use fp_core::lang::LangItemRegistry;
 
     use super::*;
+
+    #[test]
+    fn source_modules_preserve_nested_output_paths() {
+        let child = fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: Ident::new("bar"),
+            items: Vec::new(),
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        };
+        let parent = fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: Ident::new("foo"),
+            items: vec![Item::from(ItemKind::Module(child))],
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        };
+        let root = fp_core::ast::Module {
+            attrs: Vec::new(),
+            name: Ident::new(""),
+            items: vec![Item::from(ItemKind::Module(parent))],
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        };
+
+        let paths = source_modules(&root)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["", "foo", "foo/bar"]);
+    }
 
     #[test]
     fn error_derive_emits_throwable_enum_base() {
