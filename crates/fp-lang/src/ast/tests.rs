@@ -404,6 +404,8 @@ fn parse_path_retains_source_span_and_rustc_shape_helpers() {
         panic!("expected path expression");
     };
     assert!(!path.span().is_null());
+    assert!(!path.segments[0].span().is_null());
+    assert!(!path.segments[0].args.as_deref().unwrap().span().is_null());
     assert!(!path.is_global());
     assert!(!path.is_single_argless_ident());
 

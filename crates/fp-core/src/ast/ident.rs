@@ -188,6 +188,7 @@ impl Path {
 
     pub fn span(&self) -> Span {
         self.span
+            .or(Span::union(self.segments.iter().map(PathSegment::span)))
     }
 
     pub fn segments(&self) -> &[PathSegment] {
@@ -345,6 +346,20 @@ impl PathSegment {
     pub fn as_str(&self) -> &str {
         self.ident.as_str()
     }
+
+    /// Source span for this segment, including its generic arguments when
+    /// they are present. The identifier span is currently unavailable in the
+    /// compact AST identifier representation, so generated argument spans are
+    /// used as the fallback.
+    pub fn span(&self) -> Span {
+        Span::union([
+            self.ident.span(),
+            self.args
+                .as_deref()
+                .map(GenericArgs::span)
+                .unwrap_or_else(Span::null),
+        ])
+    }
 }
 
 /// Generic arguments attached to one AST path segment.
@@ -442,6 +457,15 @@ impl GenericArgs {
 impl GenericArg {
     pub fn from_ty(ty: Ty) -> Self {
         ast_ty_to_generic_arg(ty)
+    }
+
+    /// Source span of this generic argument, matching rustc's AST helper.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Lifetime(_) => Span::null(),
+            Self::Type(ty) => ty.span(),
+            Self::Const(expr) => expr.span(),
+        }
     }
 }
 
