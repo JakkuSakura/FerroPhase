@@ -678,8 +678,17 @@ impl AstToHirLowerer {
                     .transpose()?;
                 let seg = self.make_path_segment(&select.field.name, member_args, param_mode);
                 if matches!(base_scope, PathResolutionScope::Type) {
-                    let receiver =
-                        self.transform_type_to_hir(&ast::Ty::expr((*select.obj).clone()))?;
+                    // The receiver was already lowered with the caller's
+                    // parameter mode above. Reusing that QPath preserves
+                    // rustc's `infer_args` bit for omitted arguments (for
+                    // example, the `Vec` receiver in `Vec::new`). Lowering
+                    // the AST expression again through `transform_type_to_hir`
+                    // would force `ParamMode::Explicit` and lose that fact.
+                    let receiver = hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Path(type_base),
+                        select.obj.span(),
+                    );
                     return Ok(hir::QPath::type_relative(receiver, seg));
                 }
                 match type_base {

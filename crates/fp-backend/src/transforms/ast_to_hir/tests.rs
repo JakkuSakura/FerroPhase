@@ -4802,6 +4802,35 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn infers_omitted_type_arguments_on_type_relative_receivers() {
+        let (package, diagnostics) = lower(
+            "struct Outer<T>(T); impl<T> Outer<T> { fn inner(value: T) -> T { value } } fn call(value: u8) -> u8 { Outer::inner(value) }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "omitted receiver arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let hir::ExprKind::Call(callee, _) = &body_expr(function(&package, "call")).kind else {
+            panic!("expected associated-function call");
+        };
+        let hir::ExprKind::Path(hir::QPath::TypeRelative(receiver, method)) = &callee.kind
+        else {
+            panic!("expected type-relative callee, got {:?}", callee.kind);
+        };
+        assert_eq!(method.ident.as_str(), "inner");
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(None, receiver)) = &receiver.kind else {
+            panic!("expected resolved receiver path, got {:?}", receiver.kind);
+        };
+        let receiver = receiver.segments.first().expect("receiver path segment");
+        assert_eq!(receiver.ident.as_str(), "Outer");
+        assert!(
+            receiver.infer_args,
+            "omitted generic arguments on a type-relative receiver should be inferred"
+        );
+        assert!(receiver.args.is_none());
+    }
+
+    #[test]
     fn preserves_lifetime_and_const_arguments_on_runtime_method_calls() {
         let (package, diagnostics) =
             lower("fn call(value: i64) -> i64 { value.method::<'a, 3>() }");
