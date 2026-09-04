@@ -522,12 +522,8 @@ pub enum AngleBracketedArg {
 impl AngleBracketedArg {
     pub fn span(&self) -> Span {
         match self {
-            Self::Arg(arg) => match arg {
-                GenericArg::Lifetime(_) => Span::null(),
-                GenericArg::Type(ty) => ty.span(),
-                GenericArg::Const(expr) => expr.span(),
-            },
-            Self::Constraint(constraint) => constraint.span,
+            Self::Arg(arg) => arg.span(),
+            Self::Constraint(constraint) => constraint.span(),
         }
     }
 }
@@ -546,6 +542,25 @@ pub struct AssocItemConstraint {
     pub ident: Ident,
     pub gen_args: Option<GenericArgs>,
     pub kind: AssocItemConstraintKind,
+}
+
+impl AssocItemConstraint {
+    /// Source span of this constraint, falling back to its generic arguments
+    /// and payload when a generated node has no explicit span.
+    pub fn span(&self) -> Span {
+        let payload = match &self.kind {
+            AssocItemConstraintKind::Equality { term } => term.span(),
+            AssocItemConstraintKind::Bound { bounds } => {
+                Span::union(bounds.iter().map(Ty::span))
+            }
+        };
+        let gen_args = self
+            .gen_args
+            .as_ref()
+            .map(GenericArgs::span)
+            .unwrap_or_else(Span::null);
+        self.span.or(Span::union([gen_args, payload]))
+    }
 }
 
 /// The right-hand side of an associated-item equality constraint.

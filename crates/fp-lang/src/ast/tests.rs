@@ -207,6 +207,10 @@ fn parse_path_arguments_preserve_lifetime_const_and_binding_kinds() {
             ..
         })
     ));
+    let fp_core::ast::AngleBracketedArg::Constraint(constraint) = &args.args[2] else {
+        panic!("expected associated-item constraint");
+    };
+    assert!(!constraint.span().is_null());
 }
 
 #[test]
