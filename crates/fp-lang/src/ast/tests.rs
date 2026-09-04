@@ -425,6 +425,7 @@ fn parse_qualified_path_keeps_qself_and_trait_segments() {
     };
     let qself = qself.as_ref().expect("qualified self");
     assert_eq!(qself.position, 2);
+    assert!(!qself.path_span.is_null());
     assert_eq!(path.join("::"), "a::Trait::Item");
 }
 

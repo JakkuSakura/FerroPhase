@@ -8,6 +8,7 @@ use fp_core::ast::TypeWildcard;
 
 /// A UFCS-disambiguated qualified path in type position.
 fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    let original = *input;
     let mut probe = *input;
     // A nested qualified path (real `core::future::future`'s own
     // `<<P as ops::Deref>::Target as Future>::Output`) lexes its two
@@ -69,17 +70,30 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 .cloned()
                 .chain(assoc_path.segments)
                 .collect();
-            let path_span = trait_ty.span();
-            let path_span_complete = Span::union([trait_path.span(), assoc_path_span]);
+            // rustc's `QSelf::path_span` covers the trait path in the
+            // `as` qualification, not the qualified receiver type.
+            let path_span = trait_path.span();
+            let path_span_complete = Span::union([
+                original
+                    .first()
+                    .map(token_span_to_span)
+                    .unwrap_or_else(Span::null),
+                assoc_path_span,
+            ]);
             (prefix, segments, position, path_span, path_span_complete)
         } else {
-            let path_span = assoc_path_span;
             (
                 assoc_path.prefix,
                 assoc_path.segments,
                 0,
                 Span::null(),
-                path_span,
+                Span::union([
+                    original
+                        .first()
+                        .map(token_span_to_span)
+                        .unwrap_or_else(Span::null),
+                    assoc_path_span,
+                ]),
             )
         };
 
