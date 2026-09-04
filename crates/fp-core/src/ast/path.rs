@@ -68,6 +68,9 @@ pub struct InPackagePath {
     pub segments: Vec<String>,
 }
 
+/// Compatibility alias for downstream graph tooling.
+pub type QualifiedPath = InPackagePath;
+
 impl InPackagePath {
     pub fn new(segments: Vec<String>) -> Self {
         Self { segments }
