@@ -413,6 +413,70 @@ impl FnRetTy {
     }
 }
 
+/// A lifetime argument in the AST.
+///
+/// Rustc represents lifetimes as nodes with their own source span instead of
+/// embedding their spelling directly in `GenericArg`. Keeping that boundary
+/// here lets generic-argument spans survive parsing and HIR lowering.
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct Lifetime {
+    pub ident: Ident,
+    pub span: Span,
+}
+
+impl Lifetime {
+    pub fn new(ident: impl Into<Ident>, span: Span) -> Self {
+        Self {
+            ident: ident.into(),
+            span,
+        }
+    }
+
+    pub fn from_name(name: impl Into<String>, span: Span) -> Self {
+        Self::new(Ident::new(name), span)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.ident.as_str()
+    }
+}
+
+impl From<&str> for Lifetime {
+    fn from(name: &str) -> Self {
+        Self::from_name(name, Span::null())
+    }
+}
+
+impl From<String> for Lifetime {
+    fn from(name: String) -> Self {
+        Self::from_name(name, Span::null())
+    }
+}
+
+impl PartialEq<&str> for Lifetime {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<str> for Lifetime {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<Lifetime> for &str {
+    fn eq(&self, other: &Lifetime) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl std::fmt::Display for Lifetime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.ident.fmt(f)
+    }
+}
+
 impl GenericArgs {
     pub fn from_types(types: &[Ty]) -> Self {
         Self::AngleBracketed(AngleBracketedArgs {
@@ -462,7 +526,7 @@ impl GenericArg {
     /// Source span of this generic argument, matching rustc's AST helper.
     pub fn span(&self) -> Span {
         match self {
-            Self::Lifetime(_) => Span::null(),
+            Self::Lifetime(lifetime) => lifetime.span,
             Self::Type(ty) => ty.span(),
             Self::Const(expr) => expr.span(),
         }
@@ -476,7 +540,10 @@ fn ast_ty_to_generic_arg(ty: Ty) -> GenericArg {
                 if name.path.segments.len() == 1
                     && name.path.segments[0].as_str().starts_with('\'') =>
             {
-                GenericArg::Lifetime(name.path.segments[0].as_str().to_owned())
+                GenericArg::Lifetime(Lifetime::from_name(
+                    name.path.segments[0].as_str(),
+                    name.path.segments[0].ident.span(),
+                ))
             }
             ExprKind::Value(value)
                 if matches!(
@@ -505,7 +572,7 @@ fn ast_ty_to_generic_arg(ty: Ty) -> GenericArg {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum GenericArg {
-    Lifetime(String),
+    Lifetime(Lifetime),
     Type(Box<Ty>),
     Const(Box<Expr>),
 }

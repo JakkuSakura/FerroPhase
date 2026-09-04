@@ -1,3 +1,4 @@
+use fp_core::ast::Lifetime;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use std::path::{Path as FsPath, PathBuf};
 
@@ -512,7 +513,7 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<GenericArgs> 
                 if name.starts_with('\'') {
                     probe = item_probe;
                     args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
-                        name.to_owned(),
+                        Lifetime::from_name(name, ident_span),
                     )));
                 } else {
                     // Rustc's `AssocItemConstraint` retains generic arguments

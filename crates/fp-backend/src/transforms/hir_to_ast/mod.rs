@@ -1813,7 +1813,10 @@ impl<'a> HirToAstLifter<'a> {
             .iter()
             .map(|arg| match arg {
                 hir::GenericArg::Lifetime(lifetime) => Ok(ast::AngleBracketedArg::Arg(
-                    ast::GenericArg::Lifetime(lifetime.as_str().to_owned()),
+                    ast::GenericArg::Lifetime(ast::Lifetime::from_name(
+                        lifetime.as_str(),
+                        lifetime.span(),
+                    )),
                 )),
                 hir::GenericArg::Type(ty) => self
                     .lift_type(ty)
