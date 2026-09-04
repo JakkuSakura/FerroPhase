@@ -286,7 +286,7 @@ impl AstToHirLowerer {
                     args.iter()
                         .filter_map(|arg| {
                             let ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
-                                name,
+                                ident,
                                 kind: ast::AssocItemConstraintKind::Equality {
                                     term: ast::Term::Ty(ty),
                                 },
@@ -306,7 +306,7 @@ impl AstToHirLowerer {
                                 )
                                 .ok()?;
                             Some((
-                                name.as_str().into(),
+                                ident.as_str().into(),
                                 hir::TypeExpr::new(
                                     self.next_id(),
                                     hir::TypeExprKind::Path(value_path),

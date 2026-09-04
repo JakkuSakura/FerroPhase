@@ -515,7 +515,7 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
                         let term = parse_assoc_item_term(&mut constraint_probe)?;
                         probe = constraint_probe;
                         args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
-                            name: ident,
+                            ident,
                             gen_args,
                             kind: AssocItemConstraintKind::Equality { term },
                         }));
@@ -523,7 +523,7 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
                         let bounds = parse_type_bounds(&mut constraint_probe)?;
                         probe = constraint_probe;
                         args.push(AngleBracketedArg::Constraint(AssocItemConstraint {
-                            name: ident,
+                            ident,
                             gen_args,
                             kind: AssocItemConstraintKind::Bound {
                                 bounds: bounds

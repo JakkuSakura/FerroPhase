@@ -438,7 +438,8 @@ pub enum AngleBracketedArg {
 /// Keep that distinction here instead of throwing away the `<...>` portion.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub struct AssocItemConstraint {
-    pub name: Ident,
+    /// The constrained associated item identifier, matching rustc AST.
+    pub ident: Ident,
     pub gen_args: Option<PathArguments>,
     pub kind: AssocItemConstraintKind,
 }
@@ -525,22 +526,22 @@ impl std::fmt::Display for AngleBracketedArg {
         match self {
             Self::Arg(arg) => arg.fmt(f),
             Self::Constraint(AssocItemConstraint {
-                name,
+                ident,
                 gen_args,
                 kind: AssocItemConstraintKind::Equality { term },
             }) => {
-                write!(f, "{name}")?;
+                write!(f, "{ident}")?;
                 if let Some(args) = gen_args {
                     write!(f, "{args}")?;
                 }
                 write!(f, " = {term}")
             }
             Self::Constraint(AssocItemConstraint {
-                name,
+                ident,
                 gen_args,
                 kind: AssocItemConstraintKind::Bound { bounds },
             }) => {
-                write!(f, "{name}")?;
+                write!(f, "{ident}")?;
                 if let Some(args) = gen_args {
                     write!(f, "{args}")?;
                 }

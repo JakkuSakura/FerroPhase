@@ -135,7 +135,7 @@ impl AstToHirLowerer {
                 };
                 match constraint {
                     ast::AssocItemConstraint {
-                        name,
+                        ident,
                         gen_args,
                         kind: ast::AssocItemConstraintKind::Equality { term },
                     } => {
@@ -154,14 +154,14 @@ impl AstToHirLowerer {
                             .unwrap_or_default();
                         constraints.push(hir::AssocItemConstraint {
                             hir_id: self.next_id(),
-                            ident: name.clone().into(),
+                            ident: ident.clone().into(),
                             gen_args,
                             kind: hir::AssocItemConstraintKind::Equality { term },
                             span: constraint_span,
                         });
                     }
                     ast::AssocItemConstraint {
-                        name,
+                        ident,
                         gen_args,
                         kind: ast::AssocItemConstraintKind::Bound { bounds },
                     } => {
@@ -172,7 +172,7 @@ impl AstToHirLowerer {
                             .unwrap_or_default();
                         constraints.push(hir::AssocItemConstraint {
                             hir_id: self.next_id(),
-                            ident: name.clone().into(),
+                            ident: ident.clone().into(),
                             gen_args,
                             kind: hir::AssocItemConstraintKind::Bound {
                                 bounds: bounds
