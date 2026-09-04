@@ -4517,6 +4517,26 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn classifies_named_const_generic_arguments_as_constants() {
+        let (package, diagnostics) = lower(
+            "struct Array<T, const N: usize> { value: T } fn use_array<T, const N: usize>(value: Array<T, N>) -> Array<T, N> { value }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "named const generic arguments emitted diagnostics: {diagnostics:?}"
+        );
+        let function = function(&package, "use_array");
+        let input_path = type_path(&function.sig.inputs[0].ty);
+        let args = input_path
+            .segments()
+            .first()
+            .and_then(|segment| segment.args.as_ref())
+            .expect("Array generic arguments");
+        assert!(matches!(args.args[0], hir::GenericArg::Type(_)));
+        assert!(matches!(args.args[1], hir::GenericArg::Const(_)));
+    }
+
+    #[test]
     fn preserves_generic_arguments_on_type_relative_segments() {
         let (package, diagnostics) = lower(
             "struct Outer<T>(T); impl<T> Outer<T> { fn inner<U>(value: U) -> U { value } } fn call(value: u16) -> u16 { Outer::<u8>::inner::<u16>(value) }",
