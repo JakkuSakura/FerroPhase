@@ -513,6 +513,13 @@ impl AstToHirLowerer {
         program.source_paths.insert(def_id.clone(), path);
     }
 
+    fn record_member_source_path(&mut self, name: &str, def_id: &hir::DefId) {
+        let path = self.qualify_path(name);
+        self.package_mut()
+            .source_paths
+            .insert(def_id.clone(), path.clone());
+    }
+
     /// Binds `path`'s last segment as `res` in namespace `ns`, at the
     /// tree node for `path`'s remaining prefix (created via
     /// `ensure_namespace` if it doesn't exist yet) — the module tree's

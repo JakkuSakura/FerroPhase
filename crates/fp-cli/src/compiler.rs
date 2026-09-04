@@ -468,7 +468,6 @@ pub fn build_workspace_session(
     let std_provider = std_provider_for(language);
     let source_operations = operation_registry_for(provider.as_ref());
     let source_std_operations = operation_registry_for(std_provider.as_ref());
-    let fp_operations = operation_registry_for(std_provider_for(languages::FERROPHASE).as_ref());
     let external_api_provider: Arc<dyn fp_core::ast::package::provider::PackageProvider> =
         if language == languages::RUST {
             Arc::new(fp_rust::RustExternalApiProvider)
@@ -497,7 +496,6 @@ pub fn build_workspace_session(
     }
     let mut state = session.driver().state.borrow_mut();
     state.set_source_operations(merged_source_operations);
-    state.set_fp_operations(fp_operations);
     drop(state);
     (executor, session)
 }

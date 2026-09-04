@@ -808,11 +808,6 @@ impl CompilerDriver {
             } else {
                 lifter
             };
-            let lifter = if let Some(operations) = state.fp_operations() {
-                lifter.with_fp_operations(operations)
-            } else {
-                lifter
-            };
             let lifter = if let Some(materializer) = state.intrinsic_materializer() {
                 lifter.with_materializer(materializer)
             } else {

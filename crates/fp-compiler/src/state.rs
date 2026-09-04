@@ -72,7 +72,6 @@ pub struct CompilerState {
         Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
     pub(crate) target_operations: Option<fp_core::lang::LangItemRegistry>,
     pub(crate) source_operations: Option<fp_core::lang::LangItemRegistry>,
-    pub(crate) fp_operations: Option<fp_core::lang::LangItemRegistry>,
     /// Selects bytecode lowering for comptime requests made during typing.
     bytecode_comptime: bool,
     /// The one shared task pool every suspendable unit of driver work runs
@@ -122,7 +121,6 @@ impl CompilerState {
             intrinsic_materializer: None,
             target_operations: None,
             source_operations: None,
-            fp_operations: None,
             bytecode_comptime: false,
             tasks,
             interpreter: LirInterpreter::new(),
@@ -333,16 +331,8 @@ impl CompilerState {
         self.source_operations = operations;
     }
 
-    pub fn set_fp_operations(&mut self, operations: Option<fp_core::lang::LangItemRegistry>) {
-        self.fp_operations = operations;
-    }
-
     pub fn source_operations(&self) -> Option<fp_core::lang::LangItemRegistry> {
         self.source_operations.clone()
-    }
-
-    pub fn fp_operations(&self) -> Option<fp_core::lang::LangItemRegistry> {
-        self.fp_operations.clone()
     }
 
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {

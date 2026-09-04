@@ -4017,10 +4017,12 @@ mod function_body_resolution {
             })
         }
         if has_module_path(&package.module, &["prelude", "v1"]) {
-            package.prelude_modules.push(fp_core::ast::package::PackagePath::new(
-                PackageId::new("test"),
-                InPackagePath::new(vec!["prelude".into(), "v1".into()]),
-            ));
+            package
+                .prelude_modules
+                .push(fp_core::ast::package::PackagePath::new(
+                    PackageId::new("test"),
+                    InPackagePath::new(vec!["prelude".into(), "v1".into()]),
+                ));
         }
         let mut lowerer = AstToHirLowerer::new(
             std::rc::Rc::new(AstProgram::new(std::sync::Arc::new(
@@ -4834,9 +4836,7 @@ mod function_body_resolution {
             .items
             .iter()
             .find_map(|item| match &item.kind {
-                hir::ImplItemKind::Method(method) if item.name.as_str() == "length" => {
-                    Some(method)
-                }
+                hir::ImplItemKind::Method(method) if item.name.as_str() == "length" => Some(method),
                 _ => None,
             })
             .expect("length method");
@@ -4897,16 +4897,17 @@ mod function_body_resolution {
             "nested impl const-generic resolution emitted diagnostics: {diagnostics:?}"
         );
         assert!(
-            package.items.iter().any(|item| matches!(item.kind, hir::ItemKind::Impl(_))),
+            package
+                .items
+                .iter()
+                .any(|item| matches!(item.kind, hir::ItemKind::Impl(_))),
             "nested const-generic impl should be lowered"
         );
     }
 
     #[test]
     fn resolves_const_generic_in_array_body_expression() {
-        let (package, diagnostics) = lower(
-            "fn make<const N: usize>() -> [u8; N] { [0; N] }",
-        );
+        let (package, diagnostics) = lower("fn make<const N: usize>() -> [u8; N] { [0; N] }");
         assert!(
             diagnostics.iter().all(|diagnostic| !diagnostic
                 .message
@@ -4976,9 +4977,8 @@ mod function_body_resolution {
 
     #[test]
     fn resolves_qualified_module_type_in_function_body() {
-        let (package, diagnostics) = lower(
-            "mod types { pub struct Token; } fn make() -> types::Token { types::Token }",
-        );
+        let (package, diagnostics) =
+            lower("mod types { pub struct Token; } fn make() -> types::Token { types::Token }");
         assert!(
             diagnostics.is_empty(),
             "qualified module body resolution emitted diagnostics: {diagnostics:?}"
@@ -5003,7 +5003,10 @@ mod function_body_resolution {
         );
         let call = function(&package, "call");
         let hir::ExprKind::Call(callee, _) = &body_expr(call).kind else {
-            panic!("expected nested imported function call: {:?}", body_expr(call));
+            panic!(
+                "expected nested imported function call: {:?}",
+                body_expr(call)
+            );
         };
         let hir::ExprKind::Path(path) = &callee.kind else {
             panic!("expected nested imported callee path: {callee:?}");
@@ -5033,14 +5036,15 @@ mod function_body_resolution {
             .items
             .iter()
             .find_map(|item| match &item.kind {
-                hir::TraitItemKind::Method(method) if item.name.as_str() == "make" => {
-                    Some(method)
-                }
+                hir::TraitItemKind::Method(method) if item.name.as_str() == "make" => Some(method),
                 _ => None,
             })
             .expect("trait default method");
         let hir::ExprKind::Struct(path, _) = &body_expr(method).kind else {
-            panic!("expected trait default body constructor: {:?}", body_expr(method));
+            panic!(
+                "expected trait default body constructor: {:?}",
+                body_expr(method)
+            );
         };
         assert!(matches!(path.res, hir::Res::Def(_) | hir::Res::SelfTy));
     }
@@ -5106,7 +5110,10 @@ mod function_body_resolution {
         );
         let make = function(&package, "make");
         let hir::ExprKind::Struct(path, _) = &body_expr(make).kind else {
-            panic!("expected imported constructor expression: {:?}", body_expr(make));
+            panic!(
+                "expected imported constructor expression: {:?}",
+                body_expr(make)
+            );
         };
         assert!(matches!(path.res, hir::Res::Def(_)), "path: {path:?}");
     }

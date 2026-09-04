@@ -494,6 +494,7 @@ impl AstToHirLowerer {
                                 !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
                             )
                         })?;
+                        self.record_member_source_path(&func.name.name, &method_def_id);
                         // See `function_body_is_compiler_intrinsic_marker`'s
                         // doc comment: a real, hand-written method's body
                         // must survive; only a bare `compile_error!(...)`
@@ -686,8 +687,7 @@ impl AstToHirLowerer {
                                 this.transform_function_with_body(
                                     func,
                                     Some(self_ty.clone()),
-                                    !stub_methods
-                                        && !attrs_has_name(&func.attrs, "unimplemented"),
+                                    !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
                                 )
                             })?;
                             method_names.insert(method.sig.name.as_str().to_string());

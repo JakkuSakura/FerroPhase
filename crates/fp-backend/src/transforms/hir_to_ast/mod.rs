@@ -20,8 +20,9 @@ use fp_core::intrinsics::{IntrinsicMaterializer, PortableOpCall};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
-/// Converts a canonical portable operation to the destination language's
-/// ordinary AST using paths collected from its `#[op]` declarations.
+/// Converts operations in either direction: source expressions are first
+/// recognized as the common `PortableOpCall`, then common calls are lowered
+/// to target AST using target declarations.
 pub struct PortableOpAstConverter {
     operations: fp_core::lang::LangItemRegistry,
 }
@@ -31,13 +32,33 @@ impl PortableOpAstConverter {
         Self { operations }
     }
 
+    fn resolve_identity(&self, identity: &str) -> Option<fp_core::intrinsics::PortableOp> {
+        self.operations.resolve(identity)
+    }
+
+    fn convert_from_source_path(
+        &self,
+        segments: &[&str],
+    ) -> Option<fp_core::intrinsics::PortableOp> {
+        self.operations.find_op_by_call_segments(segments)
+    }
+
     pub fn convert(&self, call: PortableOpCall, expr_ty: &ast::TySlot) -> Option<Expr> {
+        fp_core::tracing::info!(
+            operation = call.op.name(),
+            "looking up target operation mapping"
+        );
         let binding =
             self.operations
                 .resolve_operation(fp_core::lang::OperationSelector::PortableName(
                     call.op.name(),
                 ))?;
         let path = binding.path.clone();
+        fp_core::tracing::info!(
+            operation = call.op.name(),
+            target_path = %path,
+            "mapping common portable operation to target AST"
+        );
         if call.op.arity.receiver {
             let (receiver, args) = call.args.split_first()?;
             let field = path.segments.last()?.ident.clone();
@@ -62,6 +83,35 @@ impl PortableOpAstConverter {
             }));
             Some(node)
         }
+    }
+
+    /// Recognize a target/source AST invocation as a declared portable
+    /// operation. This is the inverse direction of `convert`: callers can
+    /// feed the resulting common `PortableOpCall` into the other converter.
+    pub fn convert_from_ast(&self, expr: &Expr, identity: &str) -> Option<PortableOpCall> {
+        let ast::ExprKind::Invoke(invoke) = &expr.kind else {
+            return None;
+        };
+        let (op, args) = match &invoke.target {
+            ast::ExprInvokeTarget::Function(name) => {
+                let op = self.operations.resolve(identity)?;
+                (op, invoke.args.clone())
+            }
+            ast::ExprInvokeTarget::Method(select) => {
+                let op = self.operations.resolve(identity)?;
+                let mut args = Vec::with_capacity(invoke.args.len() + 1);
+                args.push((*select.obj).clone());
+                args.extend(invoke.args.clone());
+                (op, args)
+            }
+            _ => return None,
+        };
+        Some(PortableOpCall {
+            span: invoke.span,
+            op,
+            args,
+            kwargs: invoke.kwargs.clone(),
+        })
     }
 }
 
@@ -95,15 +145,10 @@ pub struct HirToAstLifter<'a> {
     /// library.  A hit is lowered to an ordinary target AST call; only a miss
     /// reaches the target materializer.
     target_converter: Option<std::sync::Arc<PortableOpAstConverter>>,
-    /// The fp-lang standard-library operation declarations.  A destination
-    /// mapping is valid only after the operation exists in this canonical
-    /// middle language.
-    fp_operations: Option<fp_core::lang::LangItemRegistry>,
-    fp_converter: Option<std::sync::Arc<PortableOpAstConverter>>,
+    source_converter: Option<std::sync::Arc<PortableOpAstConverter>>,
     /// The source standard-library operation declarations. HIR identity is
     /// authoritative, while this registry verifies the source declaration
     /// participated in the same attribute-driven mapping.
-    source_operations: Option<fp_core::lang::LangItemRegistry>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -131,9 +176,7 @@ impl<'a> HirToAstLifter<'a> {
             capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             materializer: None,
             target_converter: None,
-            fp_operations: None,
-            fp_converter: None,
-            source_operations: None,
+            source_converter: None,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
         }
@@ -167,16 +210,8 @@ impl<'a> HirToAstLifter<'a> {
         self.with_target_converter(std::sync::Arc::new(PortableOpAstConverter::new(operations)))
     }
 
-    pub fn with_fp_operations(mut self, operations: fp_core::lang::LangItemRegistry) -> Self {
-        self.fp_converter = Some(std::sync::Arc::new(PortableOpAstConverter::new(
-            operations.clone(),
-        )));
-        self.fp_operations = Some(operations);
-        self
-    }
-
     pub fn with_source_operations(mut self, operations: fp_core::lang::LangItemRegistry) -> Self {
-        self.source_operations = Some(operations);
+        self.source_converter = Some(std::sync::Arc::new(PortableOpAstConverter::new(operations)));
         self
     }
 
@@ -198,41 +233,53 @@ impl<'a> HirToAstLifter<'a> {
             args,
             kwargs,
         };
-        let source_declared = self
-            .source_operations
-            .as_ref()
-            .map(|operations| operations.get_op_path(call.op.name()).is_some())
-            .unwrap_or(true);
-        let fp_declared = self
-            .fp_operations
-            .as_ref()
-            .map(|operations| operations.get_op_path(call.op.name()).is_some())
-            .unwrap_or(true);
-        if source_declared && fp_declared {
-            let fp_ast = self
-                .fp_converter
-                .as_ref()
-                .and_then(|converter| converter.convert(call.clone(), &expr_ty));
-            if let Some(converter) = &self.target_converter {
-                if fp_ast.is_some() || self.fp_operations.is_none() {
-                    if let Some(expr) = converter.convert(call.clone(), &expr_ty) {
-                        return Ok(expr);
-                    }
-                }
-            } else if let Some(expr) = fp_ast {
+        fp_core::tracing::info!(
+            operation = call.op.name(),
+            argument_count = call.args.len(),
+            "source operation is available as common portable call"
+        );
+        // Source normalization has already produced this common operation;
+        // convert it to target AST before invoking the fallback materializer.
+        if let Some(converter) = &self.target_converter {
+            if let Some(expr) = converter.convert(call.clone(), &expr_ty) {
+                fp_core::tracing::info!(
+                    operation = call.op.name(),
+                    "target operation mapping succeeded"
+                );
                 return Ok(expr);
             }
+            fp_core::tracing::info!(
+                operation = call.op.name(),
+                "target operation mapping unavailable; trying materializer fallback"
+            );
+        } else {
+            fp_core::tracing::info!(
+                operation = call.op.name(),
+                "no target operation converter configured; trying materializer fallback"
+            );
         }
         let Some(materializer) = &self.materializer else {
             return Err(fp_core::error::Error::from(
                 "portable operation reached HIR-to-AST without a target materializer",
             ));
         };
-        match materializer.materialize_portable_operation(call, &expr_ty)? {
-            fp_core::intrinsics::MaterializeOutcome::Replaced(expr) => Ok(expr),
-            fp_core::intrinsics::MaterializeOutcome::Unchanged => Err(fp_core::error::Error::from(
-                "target materializer did not handle portable operation",
-            )),
+        match materializer.materialize_portable_operation(call.clone(), &expr_ty)? {
+            fp_core::intrinsics::MaterializeOutcome::Replaced(expr) => {
+                fp_core::tracing::info!(
+                    operation = call.op.name(),
+                    "materialized portable operation as fallback"
+                );
+                Ok(expr)
+            }
+            fp_core::intrinsics::MaterializeOutcome::Unchanged => {
+                fp_core::tracing::info!(
+                    operation = call.op.name(),
+                    "materializer left portable operation unchanged"
+                );
+                Err(fp_core::error::Error::from(
+                    "target materializer did not handle portable operation",
+                ))
+            }
         }
     }
 
@@ -246,14 +293,23 @@ impl<'a> HirToAstLifter<'a> {
             .iter()
             .map(|segment| segment.as_str())
             .collect::<Vec<_>>();
-        self.source_operations
+        let operation = self
+            .source_converter
             .as_ref()
-            .and_then(|registry| registry.find_op_by_call_segments(&segments))
-            .or_else(|| {
-                self.fp_operations
-                    .as_ref()
-                    .and_then(|registry| registry.find_op_by_call_segments(&segments))
-            })
+            .and_then(|converter| converter.convert_from_source_path(&segments));
+        if let Some(operation) = &operation {
+            fp_core::tracing::info!(
+                source_path = path.to_key(),
+                operation = operation.name(),
+                "mapping source declaration to common portable operation"
+            );
+        } else {
+            fp_core::tracing::info!(
+                source_path = path.to_key(),
+                "source operation mapping not found"
+            );
+        }
+        operation
     }
 
     fn portable_operations_enabled(&self) -> bool {
@@ -985,12 +1041,12 @@ impl<'a> HirToAstLifter<'a> {
                     && self.is_standard_result_expr(&expr_try.expr) =>
             {
                 let op = self
-                    .fp_operations
+                    .source_converter
                     .as_ref()
-                    .and_then(|operations| operations.resolve("Result.propagate"))
+                    .and_then(|converter| converter.resolve_identity("Result.propagate"))
                     .ok_or_else(|| {
                         fp_core::error::Error::from(
-                            "fp-lang std does not declare Result.propagate for try expressions",
+                            "source std does not declare Result.propagate for try expressions",
                         )
                     })?;
                 self.materialize_portable_op(
@@ -2431,14 +2487,6 @@ mod tests {
                 ast::Ident::new("from_utf8_lossy"),
             ]),
         );
-        let mut fp_operations = fp_core::lang::LangItemRegistry::default();
-        fp_operations.insert_op(
-            "string_from_utf8_lossy",
-            ast::Path::plain(vec![
-                ast::Ident::new("fp"),
-                ast::Ident::new("string_from_utf8_lossy"),
-            ]),
-        );
         let mut target_operations = fp_core::lang::LangItemRegistry::default();
         target_operations.insert_op("string_from_utf8_lossy", target_path);
         let lifter = HirToAstLifter::new(&package, &workspace)
@@ -2447,7 +2495,6 @@ mod tests {
                 ..fp_core::capabilities::LanguageCapabilities::NATIVE
             })
             .with_source_operations(source_operations)
-            .with_fp_operations(fp_operations)
             .with_target_operations(target_operations)
             .with_materializer(Arc::new(TestMaterializer));
 

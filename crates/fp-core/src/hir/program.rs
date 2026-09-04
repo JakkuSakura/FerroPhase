@@ -1,5 +1,5 @@
 use super::*;
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 /// Session-wide HIR storage. Cloning this handle preserves both program and
@@ -38,6 +38,10 @@ impl SharedHirProgram {
 
     pub fn borrow(&self) -> Ref<'_, HirProgram> {
         self.0.borrow()
+    }
+
+    pub fn borrow_mut(&self) -> RefMut<'_, HirProgram> {
+        self.0.borrow_mut()
     }
 
     /// Captures the packages published so far in a stable membership view.
@@ -254,7 +258,6 @@ impl SharedHirProgram {
     pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
         self.0.borrow().const_block_value(def_id)
     }
-
 }
 
 impl From<Rc<RefCell<HirProgram>>> for SharedHirProgram {
