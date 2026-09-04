@@ -440,7 +440,9 @@ fn parse_qualified_expression_uses_trait_path_for_qself_span() {
         panic!("expected qualified path expression");
     };
     let qself = qself.as_ref().expect("qualified self");
-    assert_eq!(qself.path_span.snippet().as_deref(), Some("a::Trait"));
+    // `parse_expr_ast` intentionally uses the dummy file id, so source-map
+    // snippets are not stable across tests. Check the token offsets instead.
+    assert_eq!((qself.path_span.lo, qself.path_span.hi), (12, 20));
 }
 
 #[test]
