@@ -324,18 +324,14 @@ impl PathSegment {
     pub fn new(ident: Ident, arguments: Option<PathArguments>) -> Self {
         Self {
             ident,
-            arguments: arguments
-                .filter(|arguments| !arguments.is_none())
-                .map(Box::new),
+            arguments: arguments.map(Box::new),
         }
     }
 
     pub fn with_arguments(ident: Ident, arguments: Option<PathArguments>) -> Self {
         Self {
             ident,
-            arguments: arguments
-                .filter(|arguments| !arguments.is_none())
-                .map(Box::new),
+            arguments: arguments.map(Box::new),
         }
     }
 
@@ -358,55 +354,63 @@ impl PathSegment {
 /// every argument through a type-only list.
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
 pub enum PathArguments {
-    None,
-    AngleBracketed(Vec<AngleBracketedArg>),
-    Parenthesized {
-        inputs: Vec<Ty>,
-        output: Option<Box<Ty>>,
-    },
+    AngleBracketed(AngleBracketedArgs),
+    Parenthesized(ParenthesizedArgs),
     /// Return-type notation, `Trait(..)`, as distinct from the concrete
     /// parenthesized `Trait(Args) -> Output` form.
-    ParenthesizedElided,
+    ParenthesizedElided(Span),
 }
 
-impl Default for PathArguments {
-    fn default() -> Self {
-        Self::None
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub struct AngleBracketedArgs {
+    pub span: Span,
+    pub args: Vec<AngleBracketedArg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub struct ParenthesizedArgs {
+    pub span: Span,
+    pub inputs: Vec<Ty>,
+    pub output: Option<Box<Ty>>,
 }
 
 impl PathArguments {
     pub fn from_types(types: &[Ty]) -> Self {
-        if types.is_empty() {
-            Self::None
-        } else {
-            Self::AngleBracketed(
-                types
-                    .iter()
-                    .cloned()
-                    .map(ast_ty_to_generic_arg)
-                    .map(AngleBracketedArg::Arg)
-                    .collect(),
-            )
-        }
+        Self::AngleBracketed(AngleBracketedArgs {
+            span: Span::null(),
+            args: types
+                .iter()
+                .cloned()
+                .map(ast_ty_to_generic_arg)
+                .map(AngleBracketedArg::Arg)
+                .collect(),
+        })
     }
 
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
+    pub fn is_angle_bracketed(&self) -> bool {
+        matches!(self, Self::AngleBracketed(_))
     }
 
     pub fn legacy_types(&self) -> Vec<Ty> {
         match self {
-            Self::None => Vec::new(),
             Self::AngleBracketed(args) => args
+                .args
                 .iter()
                 .filter_map(|arg| match arg {
                     AngleBracketedArg::Arg(GenericArg::Type(ty)) => Some((**ty).clone()),
                     _ => None,
                 })
                 .collect(),
-            Self::Parenthesized { inputs, .. } => inputs.clone(),
-            Self::ParenthesizedElided => Vec::new(),
+            Self::Parenthesized(args) => args.inputs.clone(),
+            Self::ParenthesizedElided(_) => Vec::new(),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Self::AngleBracketed(args) => args.span,
+            Self::Parenthesized(args) => args.span,
+            Self::ParenthesizedElided(span) => *span,
         }
     }
 }
@@ -598,16 +602,16 @@ impl std::fmt::Display for AngleBracketedArg {
 impl std::fmt::Display for PathArguments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::None => Ok(()),
             Self::AngleBracketed(args) => write!(
                 f,
                 "<{}>",
-                args.iter()
+                args.args
+                    .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::Parenthesized { inputs, output } => {
+            Self::Parenthesized(ParenthesizedArgs { inputs, output, .. }) => {
                 write!(
                     f,
                     "({})",
@@ -622,7 +626,7 @@ impl std::fmt::Display for PathArguments {
                 }
                 Ok(())
             }
-            Self::ParenthesizedElided => f.write_str("(..)"),
+            Self::ParenthesizedElided(_) => f.write_str("(..)"),
         }
     }
 }
@@ -749,10 +753,15 @@ mod tests {
     fn path_segment_retains_structured_generic_arguments() {
         let segment = PathSegment::new(
             Ident::new("Array"),
-            Some(PathArguments::AngleBracketed(vec![
-                AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),
-                AngleBracketedArg::Arg(GenericArg::Const(Box::new(Expr::ident(Ident::new("N"))))),
-            ])),
+            Some(PathArguments::AngleBracketed(AngleBracketedArgs {
+                span: Span::null(),
+                args: vec![
+                    AngleBracketedArg::Arg(GenericArg::Type(Box::new(Ty::ident(Ident::new("T"))))),
+                    AngleBracketedArg::Arg(GenericArg::Const(Box::new(Expr::ident(Ident::new(
+                        "N",
+                    ))))),
+                ],
+            })),
         );
         let Some(arguments) = segment.arguments else {
             panic!("expected generic arguments");
@@ -761,11 +770,11 @@ mod tests {
             panic!("expected angle-bracketed arguments");
         };
         assert!(matches!(
-            args[0],
+            args.args[0],
             AngleBracketedArg::Arg(GenericArg::Type(_))
         ));
         assert!(matches!(
-            args[1],
+            args.args[1],
             AngleBracketedArg::Arg(GenericArg::Const(_))
         ));
     }

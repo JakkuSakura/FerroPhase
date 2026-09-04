@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, Pattern, Ty, Value,
-    PathArguments, ValueFunction, get_threadlocal_serializer,
+    BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, PathArguments,
+    Pattern, Ty, Value, ValueFunction, get_threadlocal_serializer,
 };
 use crate::intrinsics::CallKind;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -1384,7 +1384,7 @@ common_struct! {
         /// Generic arguments attached to a method or associated-item
         /// selection.  Keeping the rustc-shaped argument list here preserves
         /// lifetimes, consts, inference, and associated-item constraints.
-        pub generic_args: PathArguments,
+        pub generic_args: Option<PathArguments>,
     }
 }
 

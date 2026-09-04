@@ -680,9 +680,9 @@ fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
     let args = parse_optional_path_arguments(&mut probe)?;
-    if args.is_none() {
+    let Some(args) = args else {
         return Err(ErrMode::Backtrack(ContextError::new()));
-    }
+    };
     *input = probe;
     Ok(Postfix::Turbofish(args))
 }
@@ -1068,7 +1068,7 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 span: span_from_expr(&expr),
                 obj: Box::new(expr),
                 field,
-                generic_args: PathArguments::None,
+                generic_args: None,
             })
             .into(),
             Postfix::ConstField(field) => {
@@ -1083,14 +1083,14 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                         span,
                         obj: Box::new(expr),
                         field,
-                        generic_args: PathArguments::None,
+                        generic_args: None,
                     })
                     .into(),
                 }
             }
             Postfix::Turbofish(args) => match expr.kind {
                 ExprKind::FieldAccess(mut select) => {
-                    select.generic_args = args;
+                    select.generic_args = Some(args);
                     expr = Expr::new(ExprKind::FieldAccess(select));
                     expr
                 }

@@ -117,9 +117,11 @@ impl AstToHirLowerer {
                 ast::Value::Bytes(bytes) => Self::transform_bytes_value_to_hir(bytes, None),
                 _ => self.transform_value_to_hir(value)?,
             },
-            ExprKind::Name(_) => hir::ExprKind::Path(
-                self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value, ParamMode::Optional)?,
-            ),
+            ExprKind::Name(_) => hir::ExprKind::Path(self.ast_expr_to_hir_path(
+                ast_expr,
+                PathResolutionScope::Value,
+                ParamMode::Optional,
+            )?),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
             ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
@@ -643,8 +645,11 @@ impl AstToHirLowerer {
                 });
                 let name = Name::ident(name);
                 let expr = ast::Expr::new(ast::ExprKind::Name(name));
-                let path =
-                    self.ast_expr_to_hir_path(&expr, PathResolutionScope::Value, ParamMode::Optional)?;
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Value,
+                    ParamMode::Optional,
+                )?;
                 Ok(hir::ExprKind::Path(path))
             }
             _ => Ok(self.error_placeholder_expr_kind(
@@ -756,12 +761,11 @@ impl AstToHirLowerer {
                         // keeps those arguments on the resolved QPath head,
                         // and type-directed associated-item lookup needs them
                         // for `Vec::<T>::from`, `Arc::<T>::new`, and the like.
-                        let base_path =
-                            self.ast_expr_to_hir_path(
-                                &select.obj,
-                                PathResolutionScope::Type,
-                                ParamMode::Optional,
-                            )?;
+                        let base_path = self.ast_expr_to_hir_path(
+                            &select.obj,
+                            PathResolutionScope::Type,
+                            ParamMode::Optional,
+                        )?;
                         if matches!(
                             base_path.res(),
                             hir::Res::Def(_) | hir::Res::Builtin(_) | hir::Res::SelfTy
@@ -774,11 +778,11 @@ impl AstToHirLowerer {
                             // `Res` (or bind a same-named module), which then
                             // makes the type checker report an unresolved
                             // value path instead of selecting the impl item.
-                            let member_args = if select.generic_args.is_none() {
-                                None
-                            } else {
-                                Some(self.convert_path_arguments(&select.generic_args)?)
-                            };
+                            let member_args = select
+                                .generic_args
+                                .as_ref()
+                                .map(|args| self.convert_path_arguments(args))
+                                .transpose()?;
                             let receiver = hir::TypeExpr::new(
                                 self.next_id(),
                                 hir::TypeExprKind::Path(base_path),
@@ -803,11 +807,11 @@ impl AstToHirLowerer {
                     }
                 }
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
-                let generic_args = if select.generic_args.is_none() {
-                    None
-                } else {
-                    Some(self.convert_path_arguments(&select.generic_args)?)
-                };
+                let generic_args = select
+                    .generic_args
+                    .as_ref()
+                    .map(|args| self.convert_path_arguments(args))
+                    .transpose()?;
                 let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(
                     Box::new(receiver),
@@ -937,12 +941,11 @@ impl AstToHirLowerer {
         &mut self,
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::ExprKind> {
-        let path =
-            self.ast_expr_to_hir_path(
-                struct_expr.name.as_ref(),
-                PathResolutionScope::Value,
-                ParamMode::Optional,
-            )?;
+        let path = self.ast_expr_to_hir_path(
+            struct_expr.name.as_ref(),
+            PathResolutionScope::Value,
+            ParamMode::Optional,
+        )?;
         let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();
@@ -1135,11 +1138,8 @@ impl AstToHirLowerer {
         };
         let path_expr =
             ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ast::Ident::new(name))));
-        let path = self.ast_expr_to_hir_path(
-            &path_expr,
-            PathResolutionScope::Type,
-            ParamMode::Explicit,
-        )?;
+        let path =
+            self.ast_expr_to_hir_path(&path_expr, PathResolutionScope::Type, ParamMode::Explicit)?;
         let fields = fields
             .into_iter()
             .map(|(name, expr)| hir::StructExprField {

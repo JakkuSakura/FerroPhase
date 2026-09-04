@@ -67,7 +67,7 @@ impl PortableOpAstConverter {
                 target: ast::ExprInvokeTarget::Method(ast::ExprFieldAccess {
                     obj: Box::new(receiver.clone()),
                     field,
-                    generic_args: ast::PathArguments::None,
+                    generic_args: None,
                     span: call.span,
                 }),
                 args: args.to_vec(),
@@ -675,7 +675,10 @@ impl<'a> HirToAstLifter<'a> {
                 bounds: trait_def
                     .supertraits
                     .iter()
-                    .map(|bound| self.lift_path(bound).map(|path| Expr::name(Name::path(path))))
+                    .map(|bound| {
+                        self.lift_path(bound)
+                            .map(|path| Expr::name(Name::path(path)))
+                    })
                     .collect::<Result<Vec<_>>>()?,
             },
             collected_items: Vec::new(),
@@ -906,8 +909,7 @@ impl<'a> HirToAstLifter<'a> {
                             generic_args: generic_args
                                 .as_ref()
                                 .map(|args| self.lift_hir_generic_args(args))
-                                .transpose()?
-                                .unwrap_or(ast::PathArguments::None),
+                                .transpose()?,
                         }),
                         args: lifted_args,
                         kwargs: lifted_kwargs,
@@ -919,7 +921,7 @@ impl<'a> HirToAstLifter<'a> {
                     span: expr.span,
                     obj: Box::new(self.lift_expr(base)?),
                     field: Ident::new(field.as_str()),
-                    generic_args: ast::PathArguments::None,
+                    generic_args: None,
                 }))
             }
             hir::ExprKind::Index(base, index) => Expr::new(ast::ExprKind::Index(ExprIndex {
@@ -1766,12 +1768,9 @@ impl<'a> HirToAstLifter<'a> {
             args.parenthesized,
             hir::GenericArgsParentheses::ReturnTypeNotation
         ) {
-            return Ok(ast::PathArguments::ParenthesizedElided);
+            return Ok(ast::PathArguments::ParenthesizedElided(args.span_ext));
         }
-        if matches!(
-            args.parenthesized,
-            hir::GenericArgsParentheses::ParenSugar
-        ) {
+        if matches!(args.parenthesized, hir::GenericArgsParentheses::ParenSugar) {
             let inputs = match args.args.first() {
                 Some(hir::GenericArg::Type(ty)) => match &ty.kind {
                     hir::TypeExprKind::Tuple(inputs) => inputs
@@ -1788,9 +1787,10 @@ impl<'a> HirToAstLifter<'a> {
                 .find_map(|constraint| {
                     let hir::AssocItemConstraint {
                         ident,
-                        kind: hir::AssocItemConstraintKind::Equality {
-                            term: hir::Term::Ty(ty),
-                        },
+                        kind:
+                            hir::AssocItemConstraintKind::Equality {
+                                term: hir::Term::Ty(ty),
+                            },
                         ..
                     } = constraint
                     else {
@@ -1799,7 +1799,11 @@ impl<'a> HirToAstLifter<'a> {
                     (ident.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
                 })
                 .transpose()?;
-            return Ok(ast::PathArguments::Parenthesized { inputs, output });
+            return Ok(ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
+                span: args.span_ext,
+                inputs,
+                output,
+            }));
         }
 
         let mut lifted = args
@@ -1809,9 +1813,9 @@ impl<'a> HirToAstLifter<'a> {
                 hir::GenericArg::Lifetime(lifetime) => Ok(ast::AngleBracketedArg::Arg(
                     ast::GenericArg::Lifetime(lifetime.as_str().to_owned()),
                 )),
-                hir::GenericArg::Type(ty) => self.lift_type(ty).map(|ty| {
-                    ast::AngleBracketedArg::Arg(ast::GenericArg::Type(Box::new(ty)))
-                }),
+                hir::GenericArg::Type(ty) => self
+                    .lift_type(ty)
+                    .map(|ty| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(Box::new(ty)))),
                 hir::GenericArg::Const(expr) => self.lift_expr(expr).map(|expr| {
                     ast::AngleBracketedArg::Arg(ast::GenericArg::Const(Box::new(expr)))
                 }),
@@ -1872,7 +1876,12 @@ impl<'a> HirToAstLifter<'a> {
                 }),
             });
         }
-        Ok(ast::PathArguments::AngleBracketed(lifted))
+        Ok(ast::PathArguments::AngleBracketed(
+            ast::AngleBracketedArgs {
+                span: args.span_ext,
+                args: lifted,
+            },
+        ))
     }
 
     fn lift_ast_path(&self, path: &hir::Path) -> Result<Path> {
@@ -2640,11 +2649,11 @@ mod tests {
         let ast::ExprInvokeTarget::Method(select) = invoke.target else {
             panic!("expected lifted method target");
         };
-        let ast::PathArguments::AngleBracketed(args) = select.generic_args else {
+        let Some(ast::PathArguments::AngleBracketed(args)) = select.generic_args else {
             panic!("expected lifted angle-bracketed arguments");
         };
         assert!(matches!(
-            args.as_slice(),
+            args.args.as_slice(),
             [
                 ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(lifetime)),
                 ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)),
@@ -2688,11 +2697,13 @@ mod tests {
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
         let lifted = lifter.lift_path(&path).expect("lift generic path");
-        let Some(ast::PathArguments::AngleBracketed(args)) = lifted.segments[0].arguments.as_deref() else {
+        let Some(ast::PathArguments::AngleBracketed(args)) =
+            lifted.segments[0].arguments.as_deref()
+        else {
             panic!("expected lifted generic arguments");
         };
         assert!(matches!(
-            args.as_slice(),
+            args.args.as_slice(),
             [ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty))]
                 if matches!(ty.as_ref(), ast::Ty::Primitive(_))
         ));
@@ -2727,12 +2738,13 @@ mod tests {
         workspace.publish_package(package.clone());
         let lifter = HirToAstLifter::new(&package, &workspace);
         let lifted = lifter.lift_path(&path).expect("lift const-infer path");
-        let Some(ast::PathArguments::AngleBracketed(args)) = lifted.segments[0].arguments.as_deref()
+        let Some(ast::PathArguments::AngleBracketed(args)) =
+            lifted.segments[0].arguments.as_deref()
         else {
             panic!("expected lifted generic arguments");
         };
         assert!(matches!(
-            args.as_slice(),
+            args.args.as_slice(),
             [ast::AngleBracketedArg::Arg(ast::GenericArg::Const(expr))]
                 if matches!(
                     expr.kind(),

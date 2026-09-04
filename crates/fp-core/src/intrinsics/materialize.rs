@@ -156,7 +156,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                     };
                     match arguments.as_mut() {
                         ast::PathArguments::AngleBracketed(args) => {
-                            for arg in args {
+                            for arg in &mut args.args {
                                 match arg {
                                     ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) => {
                                         **ty = materialize_ty((**ty).clone(), strategy)?;
@@ -165,24 +165,29 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                         match &mut constraint.kind {
                                             ast::AssocItemConstraintKind::Equality { term } => {
                                                 if let ast::Term::Ty(ty) = term {
-                                                    **ty = materialize_ty((**ty).clone(), strategy)?;
+                                                    **ty =
+                                                        materialize_ty((**ty).clone(), strategy)?;
                                                 }
                                             }
                                             ast::AssocItemConstraintKind::Bound { bounds } => {
                                                 for bound in bounds {
-                                                    *bound = materialize_ty(bound.clone(), strategy)?;
+                                                    *bound =
+                                                        materialize_ty(bound.clone(), strategy)?;
                                                 }
                                             }
                                         }
                                     }
                                     ast::AngleBracketedArg::Arg(
-                                        ast::GenericArg::Lifetime(_)
-                                        | ast::GenericArg::Const(_),
+                                        ast::GenericArg::Lifetime(_) | ast::GenericArg::Const(_),
                                     ) => {}
                                 }
                             }
                         }
-                        ast::PathArguments::Parenthesized { inputs, output } => {
+                        ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
+                            inputs,
+                            output,
+                            ..
+                        }) => {
                             for input in inputs {
                                 *input = materialize_ty(input.clone(), strategy)?;
                             }
@@ -190,8 +195,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                                 **output = materialize_ty((**output).clone(), strategy)?;
                             }
                         }
-                        ast::PathArguments::ParenthesizedElided => {}
-                        ast::PathArguments::None => {}
+                        ast::PathArguments::ParenthesizedElided(_) => {}
                     }
                 }
             }
@@ -784,7 +788,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
     let select = ast::ExprFieldAccess {
         obj: expr_index.obj,
         field: ast::Ident::new("get_unchecked"),
-        generic_args: ast::PathArguments::None,
+        generic_args: None,
         span: Span::null(),
     };
     let invoke = ast::ExprInvoke {

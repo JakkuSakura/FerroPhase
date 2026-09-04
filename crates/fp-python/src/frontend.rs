@@ -11,7 +11,7 @@ use fp_core::ast::{
     ExprStringTemplate, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith, File,
     FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item, ItemDefFunction,
     ItemDefStruct, ItemKind, Name, Pattern, PatternIdent, PatternKind, PatternTuple, ReprOptions,
-    StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap, ValueTuple, PathArguments,
+    StructuralField, Ty, TypeStruct, Value, ValueBytes, ValueMap, ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -583,7 +583,7 @@ fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
             span: Span::null(),
             obj: Box::new(lower_expr(&attr.value)?),
             field: Ident::new(attr.attr.as_str()),
-            generic_args: PathArguments::None,
+            generic_args: None,
         }))),
         PyExpr::Subscript(subscript) => {
             let index_expr = lower_expr(&subscript.slice)?;

@@ -455,7 +455,7 @@ mod tests {
                 .expect("Result segment")
                 .arguments
                 .as_deref(),
-            Some(PathArguments::AngleBracketed(args)) if args.len() == 1
+            Some(PathArguments::AngleBracketed(args)) if args.args.len() == 1
         ));
     }
 
@@ -649,9 +649,9 @@ mod tests {
                 PathSegment::from_ident(Ident::new("vec")),
                 PathSegment::new(
                     Ident::new("Vec"),
-                    Some(fp_core::ast::PathArguments::from_types(&[
-                        Ty::ident(Ident::new("Entry")),
-                    ])),
+                    Some(fp_core::ast::PathArguments::from_types(&[Ty::ident(
+                        Ident::new("Entry"),
+                    )])),
                 ),
             ],
         )));
@@ -670,7 +670,9 @@ mod tests {
         else {
             panic!("expected one element type");
         };
-        let [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(element))] = args.as_slice() else {
+        let [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(element))] =
+            args.args.as_slice()
+        else {
             panic!("expected one element type");
         };
         let Ty::Expr(element) = element.as_ref() else {
@@ -688,9 +690,9 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                Some(fp_core::ast::PathArguments::from_types(&[Ty::Primitive(TypePrimitive::Int(
-                    TypeInt::U8,
-                ))])),
+                Some(fp_core::ast::PathArguments::from_types(&[Ty::Primitive(
+                    TypePrimitive::Int(TypeInt::U8),
+                )])),
             )],
         )));
 
@@ -733,9 +735,9 @@ mod tests {
             PathPrefix::Plain,
             vec![PathSegment::new(
                 Ident::new("Vec"),
-                Some(fp_core::ast::PathArguments::from_types(&[
-                    Ty::ident(Ident::new("Entry")),
-                ])),
+                Some(fp_core::ast::PathArguments::from_types(&[Ty::ident(
+                    Ident::new("Entry"),
+                )])),
             )],
         )));
         let mut function = ItemDefFunction::new_simple(Ident::new("load"), ExprBlock::new());
@@ -835,7 +837,7 @@ mod tests {
 
     #[test]
     fn backend_materializes_rust_aliases_to_kotlin_jvm_types() {
-        let named_ty = |name, args| {
+        let named_ty = |name: &str, args: Vec<Ty>| {
             Ty::name(Name::path(Path::new(
                 PathPrefix::Plain,
                 vec![PathSegment::new(
@@ -1682,9 +1684,11 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
         };
         match arguments.as_mut() {
             fp_core::ast::PathArguments::AngleBracketed(args) => {
-                for arg in args {
+                for arg in &mut args.args {
                     match arg {
-                        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty)) => {
+                        fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(
+                            ty,
+                        )) => {
                             materialize_kotlin_ty(ty);
                         }
                         fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
@@ -1708,7 +1712,11 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
                     }
                 }
             }
-            fp_core::ast::PathArguments::Parenthesized { inputs, output } => {
+            fp_core::ast::PathArguments::Parenthesized(fp_core::ast::ParenthesizedArgs {
+                inputs,
+                output,
+                ..
+            }) => {
                 for input in inputs {
                     materialize_kotlin_ty(input);
                 }
@@ -1716,8 +1724,7 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
                     materialize_kotlin_ty(output);
                 }
             }
-            fp_core::ast::PathArguments::ParenthesizedElided => {}
-            fp_core::ast::PathArguments::None => {}
+            fp_core::ast::PathArguments::ParenthesizedElided(_) => {}
         }
     }
 }
@@ -1844,7 +1851,9 @@ fn kotlin_vector_ty(element_ty: &Ty) -> Ty {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("MutableList"),
-            Some(fp_core::ast::PathArguments::from_types(&[element_ty.clone()])),
+            Some(fp_core::ast::PathArguments::from_types(&[
+                element_ty.clone()
+            ])),
         )],
     )))))
 }

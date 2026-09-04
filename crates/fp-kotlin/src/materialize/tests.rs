@@ -1,7 +1,6 @@
 use fp_core::ast::{
     BlockStmt, ExprBlock, ExprFieldAccess, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, PathArguments, PatternKind, Ty,
-    Value,
+    ExprKind, File, Ident, Item, ItemDefFunction, ItemKind, Name, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::{PortableOpCall, materialize_file};
 use fp_core::lang::LangItemRegistry;
@@ -392,7 +391,7 @@ fn materializes_kotlin_result_status_properties_through_the_runtime() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new(field),
-            generic_args: PathArguments::None,
+            generic_args: None,
         };
         let materialized = materializer
             .lower_select(&mut select, &None)
@@ -414,7 +413,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("map_err"),
-            generic_args: PathArguments::None,
+            generic_args: None,
         }),
         args: vec![Expr::name(Name::ident("convert_error"))],
         kwargs: Vec::new(),
@@ -423,7 +422,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
         span: Default::default(),
         obj: Box::new(Expr::name(Name::ident("result"))),
         field: Ident::new("isSuccess"),
-        generic_args: PathArguments::None,
+        generic_args: None,
     }));
     let ok = Expr::new(ExprKind::Invoke(ExprInvoke {
         span: Default::default(),
@@ -431,7 +430,7 @@ fn leaves_unresolved_result_operations_for_resolution() {
             span: Default::default(),
             obj: Box::new(Expr::name(Name::ident("result"))),
             field: Ident::new("ok"),
-            generic_args: PathArguments::None,
+            generic_args: None,
         }),
         args: Vec::new(),
         kwargs: Vec::new(),
@@ -519,7 +518,9 @@ fn materializes_collection_defaults_without_rust_default_calls() {
         fp_core::ast::path::PathPrefix::Plain,
         vec![fp_core::ast::PathSegment::new(
             Ident::new("Vec"),
-            fp_core::ast::PathArguments::from_types(&[Ty::ident(Ident::new("u8"))]),
+            Some(fp_core::ast::PathArguments::from_types(&[Ty::ident(
+                Ident::new("u8"),
+            )])),
         )],
     ))));
     let lists_ty = Some(Ty::Vec(fp_core::ast::TypeVec {

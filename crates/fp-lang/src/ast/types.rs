@@ -40,40 +40,47 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     }
     let assoc_path_span = assoc_path.span();
 
-    let (prefix, segments, position, path_span, path_span_complete) = if let Some(trait_ty) = trait_ty {
-        let Ty::Expr(trait_expr) = &trait_ty else {
-            return Err(ErrMode::Cut(ContextError::new()));
+    let (prefix, segments, position, path_span, path_span_complete) =
+        if let Some(trait_ty) = trait_ty {
+            let Ty::Expr(trait_expr) = &trait_ty else {
+                return Err(ErrMode::Cut(ContextError::new()));
+            };
+            let ExprKind::Name(Name {
+                qself: None,
+                path: trait_path,
+            }) = trait_expr.kind()
+            else {
+                return Err(ErrMode::Cut(ContextError::new()));
+            };
+            if trait_path.segments.is_empty() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+            // `QSelf::position` is the insertion index of the qualified self in
+            // the complete path.  For `<T as Trait>::Item`, the path is
+            // `Trait::Item` and the qself is inserted before `Item`, so the
+            // position is `1` (the number of trait-path segments), matching
+            // rustc's AST representation.
+            let position = trait_path.segments.len();
+            let prefix = trait_path.prefix;
+            let segments = trait_path
+                .segments
+                .iter()
+                .cloned()
+                .chain(assoc_path.segments)
+                .collect();
+            let path_span = trait_ty.span();
+            let path_span_complete = Span::union([trait_path.span(), assoc_path_span]);
+            (prefix, segments, position, path_span, path_span_complete)
+        } else {
+            let path_span = assoc_path_span;
+            (
+                assoc_path.prefix,
+                assoc_path.segments,
+                0,
+                Span::null(),
+                path_span,
+            )
         };
-        let ExprKind::Name(Name {
-            qself: None,
-            path: trait_path,
-        }) = trait_expr.kind()
-        else {
-            return Err(ErrMode::Cut(ContextError::new()));
-        };
-        if trait_path.segments.is_empty() {
-            return Err(ErrMode::Cut(ContextError::new()));
-        }
-        // `QSelf::position` is the insertion index of the qualified self in
-        // the complete path.  For `<T as Trait>::Item`, the path is
-        // `Trait::Item` and the qself is inserted before `Item`, so the
-        // position is `1` (the number of trait-path segments), matching
-        // rustc's AST representation.
-        let position = trait_path.segments.len();
-        let prefix = trait_path.prefix;
-        let segments = trait_path
-            .segments
-            .iter()
-            .cloned()
-            .chain(assoc_path.segments)
-            .collect();
-        let path_span = trait_ty.span();
-        let path_span_complete = Span::union([trait_path.span(), assoc_path_span]);
-        (prefix, segments, position, path_span, path_span_complete)
-    } else {
-        let path_span = assoc_path_span;
-        (assoc_path.prefix, assoc_path.segments, 0, Span::null(), path_span)
-    };
 
     *input = probe;
     Ok(Ty::Expr(Box::new(Expr::name(Name {
@@ -389,7 +396,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided));
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(Span::null())));
             return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
         }
         let mut params = Vec::new();
@@ -427,10 +434,13 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let Some(segment) = path.segments.last_mut() else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
-        segment.arguments = Some(Box::new(PathArguments::Parenthesized {
-            inputs: params,
-            output: ret_ty,
-        }));
+        segment.arguments = Some(Box::new(PathArguments::Parenthesized(
+            fp_core::ast::ParenthesizedArgs {
+                span: Span::null(),
+                inputs: params,
+                output: ret_ty,
+            },
+        )));
         return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
     }
     {
@@ -440,7 +450,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             && parameter_path.segments[0].ident.as_str() == "quote"
             && matches!(
                 parameter_path.segments[0].arguments.as_deref(),
-                Some(PathArguments::AngleBracketed(args)) if args.len() == 1
+                Some(PathArguments::AngleBracketed(args)) if args.args.len() == 1
             )
         {
             let Some(PathArguments::AngleBracketed(args)) =
@@ -448,7 +458,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             else {
                 unreachable!("quote arguments checked above");
             };
-            let AngleBracketedArg::Arg(GenericArg::Type(argument)) = &args[0] else {
+            let AngleBracketedArg::Arg(GenericArg::Type(argument)) = &args.args[0] else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
             let (kind, inner_ty) = match argument.as_ref() {
@@ -555,8 +565,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     inner: None,
                 }));
             };
-            if args.len() == 1 {
-                let AngleBracketedArg::Arg(GenericArg::Type(arg)) = &args[0] else {
+            if args.args.len() == 1 {
+                let AngleBracketedArg::Arg(GenericArg::Type(arg)) = &args.args[0] else {
                     return Err(ErrMode::Cut(ContextError::new()));
                 };
                 let inner = if is_path_ident(arg, "_") {
@@ -756,7 +766,7 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided));
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(Span::null())));
             return Ok(Expr::name(Name { qself, path }));
         }
         let mut params = Vec::new();

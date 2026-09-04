@@ -1,8 +1,8 @@
 use fp_core::ast::{
     BlockStmt, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprFieldAccess,
     ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, Ident, Name,
-    Path, PathArguments, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt,
-    TypePrimitive, Value,
+    Path, Pattern, PatternIdent, PatternKind, PatternType, Ty, TySlot, TypeInt, TypePrimitive,
+    Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome, PortableOpCall};
@@ -65,7 +65,7 @@ fn is_byte_vector_ty(ty: &Ty) -> bool {
                     && matches!(
                         path.last().arguments.as_deref(),
                         Some(fp_core::ast::PathArguments::AngleBracketed(args))
-                            if matches!(args.as_slice(), [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty))]
+                            if matches!(args.args.as_slice(), [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty))]
                                 if is_u8_type(ty))
                     )
             }
@@ -161,7 +161,7 @@ fn invoke_static_method(receiver: &[&str], method: &str, args: Vec<Expr>) -> Exp
                     .collect(),
             )))),
             field: Ident::new(method),
-            generic_args: PathArguments::None,
+            generic_args: None,
         }),
         args,
         kwargs: Vec::new(),
@@ -300,7 +300,7 @@ fn invoke_method(receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {
             span: Default::default(),
             obj: Box::new(receiver),
             field: Ident::new(method),
-            generic_args: PathArguments::None,
+            generic_args: None,
         }),
         args,
         kwargs: Vec::new(),
@@ -312,6 +312,6 @@ fn select_property(receiver: Expr, property: &str) -> Expr {
         span: Default::default(),
         obj: Box::new(receiver),
         field: Ident::new(property),
-        generic_args: PathArguments::None,
+        generic_args: None,
     }))
 }

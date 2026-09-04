@@ -236,7 +236,8 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         .hir_program
         .add_package(generator.hir_package_handle());
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("u8"))));
-    let path = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
+    let path =
+        generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
     assert_eq!(path.res(), hir::Res::Def(user_type));
     Ok(())
 }
@@ -251,7 +252,8 @@ fn unresolved_primitive_name_resolves_to_builtin() -> Result<()> {
         hir::PackageId::new("test"),
     );
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("f128"))));
-    let path = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
+    let path =
+        generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
     assert_eq!(
         path.res(),
         hir::Res::Builtin(hir::BuiltinSelfType::Primitive("f128".to_owned()))
@@ -260,8 +262,11 @@ fn unresolved_primitive_name_resolves_to_builtin() -> Result<()> {
         fp_core::ast::path::PathPrefix::Plain,
         vec!["f128".into(), "MAX".into()],
     ))));
-    let associated_path =
-        generator.ast_expr_to_hir_path(&associated, PathResolutionScope::Value, ParamMode::Optional)?;
+    let associated_path = generator.ast_expr_to_hir_path(
+        &associated,
+        PathResolutionScope::Value,
+        ParamMode::Optional,
+    )?;
     let hir::QPath::TypeRelative(receiver, segment) = associated_path else {
         panic!("expected primitive type-relative path");
     };
@@ -302,7 +307,8 @@ fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> 
         vec![ident("missing").into(), ident("Item").into()],
     );
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::path(path)));
-    let lowered = generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
+    let lowered =
+        generator.ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Explicit)?;
     assert_eq!(lowered.res(), hir::Res::Error);
     Ok(())
 }
@@ -1127,7 +1133,7 @@ fn transform_generic_function_and_method() -> Result<()> {
                 span: Span::null(),
                 obj: Box::new(ast::Expr::ident(ident("self"))),
                 field: ident("value"),
-                generic_args: ast::PathArguments::None,
+                generic_args: None,
             },
         ))),
     );
@@ -3323,7 +3329,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
                 span: Span::null(),
                 obj: Box::new(ast::Expr::ident(ident("self"))),
                 field: ident("value"),
-                generic_args: ast::PathArguments::None,
+                generic_args: None,
             },
         ))),
     );
@@ -4131,7 +4137,8 @@ mod function_body_resolution {
                 _ => None,
             })
             .expect("type alias should be present");
-        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind else {
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind
+        else {
             panic!(
                 "expected explicitly qualified QPath, got {:?}",
                 alias.target.kind
@@ -4172,8 +4179,7 @@ mod function_body_resolution {
             );
         };
         assert_eq!(
-            trait_path
-                .segments[0]
+            trait_path.segments[0]
                 .args
                 .as_ref()
                 .expect("trait arguments")
@@ -4280,9 +4286,8 @@ mod function_body_resolution {
 
     #[test]
     fn preserves_generic_arguments_on_associated_constraints() {
-        let (package, diagnostics) = lower(
-            "trait Trait { type Item; } type Alias<T> = Trait<Item<'a> = T>;",
-        );
+        let (package, diagnostics) =
+            lower("trait Trait { type Item; } type Alias<T> = Trait<Item<'a> = T>;");
         assert!(
             diagnostics.is_empty(),
             "generic associated constraint emitted diagnostics: {diagnostics:?}"
@@ -4302,12 +4307,14 @@ mod function_body_resolution {
             .args
             .as_ref()
             .expect("trait generic arguments");
-        let [hir::AssocItemConstraint {
-            ident,
-            gen_args,
-            kind: hir::AssocItemConstraintKind::Equality { .. },
-            ..
-        }] = args.constraints.as_slice()
+        let [
+            hir::AssocItemConstraint {
+                ident,
+                gen_args,
+                kind: hir::AssocItemConstraintKind::Equality { .. },
+                ..
+            },
+        ] = args.constraints.as_slice()
         else {
             panic!("expected one generic associated-type equality constraint");
         };
@@ -4320,9 +4327,8 @@ mod function_body_resolution {
 
     #[test]
     fn preserves_associated_const_constraint_terms() {
-        let (package, diagnostics) = lower(
-            "trait Trait { const VALUE: i32; } type Alias = Trait<VALUE = 3>;",
-        );
+        let (package, diagnostics) =
+            lower("trait Trait { const VALUE: i32; } type Alias = Trait<VALUE = 3>;");
         assert!(
             diagnostics.is_empty(),
             "associated-const constraint emitted diagnostics: {diagnostics:?}"
@@ -4356,7 +4362,8 @@ mod function_body_resolution {
 
     #[test]
     fn lowers_parenthesized_path_arguments_like_rustc() {
-        let (package, diagnostics) = lower("trait Callable<T> {} type Alias = Callable(u8) -> bool;");
+        let (package, diagnostics) =
+            lower("trait Callable<T> {} type Alias = Callable(u8) -> bool;");
         assert!(
             diagnostics.is_empty(),
             "parenthesized path arguments emitted diagnostics: {diagnostics:?}"
@@ -4370,7 +4377,10 @@ mod function_body_resolution {
             })
             .expect("type alias should be present");
         let hir::TypeExprKind::Path(hir::QPath::Resolved(_, path)) = &alias.target.kind else {
-            panic!("expected resolved callable path, got {:?}", alias.target.kind);
+            panic!(
+                "expected resolved callable path, got {:?}",
+                alias.target.kind
+            );
         };
         let args = path.segments[0]
             .args
@@ -4520,22 +4530,21 @@ mod function_body_resolution {
 
     #[test]
     fn explicit_empty_generic_arguments_disable_inference() {
-        let (package, diagnostics) = lower(
-            "struct Wrapper<T>(T); fn take(value: Wrapper<>) -> Wrapper<> { value }",
-        );
+        let (package, diagnostics) =
+            lower("struct Wrapper<T>(T); fn take(value: Wrapper<>) -> Wrapper<> { value }");
         assert!(
             diagnostics.is_empty(),
             "explicit empty arguments emitted diagnostics: {diagnostics:?}"
         );
         let function = function(&package, "take");
         let input_path = type_path(&function.sig.inputs[0].ty);
-        let segment = input_path
-            .segments()
-            .first()
-            .expect("Wrapper path segment");
+        let segment = input_path.segments().first().expect("Wrapper path segment");
         assert!(segment.args.is_some(), "explicit <> must be retained");
         assert!(
-            segment.args.as_ref().is_some_and(|args| args.args.is_empty()),
+            segment
+                .args
+                .as_ref()
+                .is_some_and(|args| args.args.is_empty()),
             "explicit <> must remain empty"
         );
         assert!(!segment.infer_args);
@@ -4563,9 +4572,8 @@ mod function_body_resolution {
 
     #[test]
     fn preserves_infer_argument_metadata_on_path_segments() {
-        let (package, diagnostics) = lower(
-            "struct Wrapper<T>(T); fn take(value: Wrapper::<_>) -> Wrapper::<_> { value }",
-        );
+        let (package, diagnostics) =
+            lower("struct Wrapper<T>(T); fn take(value: Wrapper::<_>) -> Wrapper::<_> { value }");
         assert!(
             diagnostics.is_empty(),
             "inferred generic arguments emitted diagnostics: {diagnostics:?}"
@@ -4578,7 +4586,10 @@ mod function_body_resolution {
             .and_then(|segment| segment.args.as_ref())
             .expect("Wrapper generic arguments");
         let hir::GenericArg::Infer(infer) = &args.args[0] else {
-            panic!("expected an inferred generic argument, got {:?}", args.args[0]);
+            panic!(
+                "expected an inferred generic argument, got {:?}",
+                args.args[0]
+            );
         };
         assert_eq!(infer.kind, hir::InferArgKind::TypeOrConst);
         assert_eq!(
@@ -4604,7 +4615,10 @@ mod function_body_resolution {
             .and_then(|segment| segment.args.as_ref())
             .expect("Array generic arguments");
         let hir::GenericArg::Infer(infer) = &args.args[0] else {
-            panic!("expected an inferred generic argument, got {:?}", args.args[0]);
+            panic!(
+                "expected an inferred generic argument, got {:?}",
+                args.args[0]
+            );
         };
         assert_eq!(infer.kind, hir::InferArgKind::Const);
     }
@@ -4694,11 +4708,16 @@ mod function_body_resolution {
             span: Span::null(),
             obj: Box::new(ast::Expr::name(ast::Name::ident("Receiver"))),
             field: ast::Ident::new("method"),
-            generic_args: ast::PathArguments::AngleBracketed(vec![ast::AngleBracketedArg::Arg(
-                ast::GenericArg::Type(Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
-                    ast::TypeInt::U8,
-                )))),
-            )]),
+            generic_args: Some(ast::PathArguments::AngleBracketed(
+                ast::AngleBracketedArgs {
+                    span: Span::null(),
+                    args: vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
+                        Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
+                            ast::TypeInt::U8,
+                        ))),
+                    ))],
+                },
+            )),
         };
         let expr = ast::Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
             span: Span::null(),

@@ -232,7 +232,7 @@ impl ClosureLowering {
         else {
             return None;
         };
-        let ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) = args.get(index)? else {
+        let ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) = args.args.get(index)? else {
             return None;
         };
         Some((**ty).clone())
@@ -1442,7 +1442,7 @@ impl CaptureReplacer {
                                 span: fp_core::span::Span::null(),
                                 obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                 field: ident.clone(),
-                                generic_args: ast::PathArguments::None,
+                                generic_args: None,
                             }));
                         *expr = expr_struct;
                     }
@@ -1520,7 +1520,7 @@ impl CaptureReplacer {
                                         span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                         field: ident.clone(),
-                                        generic_args: ast::PathArguments::None,
+                                        generic_args: None,
                                     },
                                 ));
                                 invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());

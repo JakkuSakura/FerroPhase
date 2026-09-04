@@ -110,7 +110,7 @@ fn parse_expr_ast_strips_prefix_from_parameter_path_segments() {
             assert_eq!(path.segments[0].ident.as_str(), "Foo");
             assert!(matches!(
                 path.segments[0].arguments.as_deref(),
-                Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.len() == 1
+                Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.args.len() == 1
             ));
         }
         other => panic!("expected parameter path expr, got {:?}", other),
@@ -143,7 +143,7 @@ fn parse_type_alias_strips_prefix_from_parameter_path_segments() {
     );
     assert!(matches!(
         path.segments[1].arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.len() == 1
+        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.args.len() == 1
     ));
 }
 
@@ -167,7 +167,7 @@ fn parse_type_args_accept_trailing_comma_before_close_angle() {
     };
     assert!(matches!(
         path.segments.last().unwrap().arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.len() == 2
+        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.args.len() == 2
     ));
 }
 
@@ -193,15 +193,15 @@ fn parse_path_arguments_preserve_lifetime_const_and_binding_kinds() {
         panic!("expected angle-bracketed arguments");
     };
     assert!(matches!(
-        args[0],
+        args.args[0],
         fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(_))
     ));
     assert!(matches!(
-        args[1],
+        args.args[1],
         fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_))
     ));
     assert!(matches!(
-        args[2],
+        args.args[2],
         fp_core::ast::AngleBracketedArg::Constraint(fp_core::ast::AssocItemConstraint {
             kind: fp_core::ast::AssocItemConstraintKind::Equality { .. },
             ..
@@ -234,20 +234,20 @@ fn parse_assoc_constraint_preserves_item_generic_arguments() {
         gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
         kind: fp_core::ast::AssocItemConstraintKind::Equality { .. },
         ..
-    }) = &args[0]
+    }) = &args.args[0]
     else {
         panic!("expected generic associated-type equality constraint");
     };
-    assert_eq!(item_args.len(), 1);
+    assert_eq!(item_args.args.len(), 1);
     let fp_core::ast::AngleBracketedArg::Constraint(fp_core::ast::AssocItemConstraint {
         gen_args: Some(fp_core::ast::PathArguments::AngleBracketed(item_args)),
         kind: fp_core::ast::AssocItemConstraintKind::Bound { .. },
         ..
-    }) = &args[1]
+    }) = &args.args[1]
     else {
         panic!("expected generic associated-type bound constraint");
     };
-    assert_eq!(item_args.len(), 1);
+    assert_eq!(item_args.args.len(), 1);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn parse_assoc_constraint_preserves_const_terms() {
         panic!("expected angle-bracketed arguments");
     };
     assert!(matches!(
-        args[0],
+        args.args[0],
         AngleBracketedArg::Constraint(AssocItemConstraint {
             kind: AssocItemConstraintKind::Equality {
                 term: fp_core::ast::Term::Const(_),
@@ -310,7 +310,7 @@ fn parse_turbofish_arguments_on_path_segment() {
         panic!("expected turbofish arguments");
     };
     assert!(matches!(
-        args[0],
+        args.args[0],
         fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(_))
     ));
 }
@@ -332,7 +332,7 @@ fn parse_wildcard_generic_argument_as_type_variant() {
         panic!("expected turbofish arguments");
     };
     assert!(matches!(
-        args.as_slice(),
+        args.args.as_slice(),
         [fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(ty))]
             if matches!(ty.as_ref(), fp_core::ast::Ty::Wildcard(_))
     ));
@@ -362,8 +362,8 @@ fn parse_turbofish_arguments_are_retained_per_path_segment() {
     else {
         panic!("expected generic arguments on the associated segment");
     };
-    assert_eq!(outer_args.len(), 1);
-    assert_eq!(method_args.len(), 1);
+    assert_eq!(outer_args.args.len(), 1);
+    assert_eq!(method_args.args.len(), 1);
 }
 
 #[test]
@@ -390,7 +390,7 @@ fn parse_path_distinguishes_omitted_and_explicit_empty_arguments() {
     };
     assert!(matches!(
         explicit_path.segments[0].arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.is_empty()
+        Some(fp_core::ast::PathArguments::AngleBracketed(args)) if args.args.is_empty()
     ));
 }
 
@@ -502,7 +502,7 @@ fn parse_parenthesized_path_arguments() {
     };
     assert!(matches!(
         path.last().arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::Parenthesized { .. })
+        Some(fp_core::ast::PathArguments::Parenthesized(..))
     ));
 }
 
@@ -522,7 +522,7 @@ fn parse_return_type_notation_as_elided_path_arguments() {
     };
     assert!(matches!(
         path.last().arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::ParenthesizedElided)
+        Some(fp_core::ast::PathArguments::ParenthesizedElided(_))
     ));
 }
 
@@ -1178,7 +1178,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
         panic!("expected Option type arg");
     };
     let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) =
-        args.first()
+        args.args.first()
     else {
         panic!("expected Option type arg");
     };
@@ -1194,7 +1194,7 @@ fn parse_items_ast_supports_dyn_trait_object_type_args() {
         panic!("expected dyn trait bounds");
     };
     let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(box_arg))) =
-        box_args.first()
+        box_args.args.first()
     else {
         panic!("expected dyn trait bounds");
     };
@@ -1228,7 +1228,7 @@ fn parse_items_ast_supports_dyn_trait_object_with_multiple_bounds() {
         panic!("expected dyn trait bounds");
     };
     let Some(fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Type(arg))) =
-        args.first()
+        args.args.first()
     else {
         panic!("expected dyn trait bounds");
     };
@@ -2005,10 +2005,10 @@ fn parse_expr_ast_supports_turbofish_method_call() {
     let ExprInvokeTarget::Method(select) = &invoke.target else {
         panic!("expected method invocation, got {:?}", invoke.target);
     };
-    let fp_core::ast::PathArguments::AngleBracketed(args) = &select.generic_args else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = &select.generic_args else {
         panic!("expected angle-bracketed method arguments");
     };
-    assert_eq!(args.len(), 1);
+    assert_eq!(args.args.len(), 1);
 }
 
 #[test]
@@ -2022,11 +2022,11 @@ fn parse_expr_ast_preserves_structured_method_arguments() {
     let ExprInvokeTarget::Method(select) = &invoke.target else {
         panic!("expected method invocation, got {:?}", invoke.target);
     };
-    let fp_core::ast::PathArguments::AngleBracketed(args) = &select.generic_args else {
+    let Some(fp_core::ast::PathArguments::AngleBracketed(args)) = &select.generic_args else {
         panic!("expected angle-bracketed method arguments");
     };
     assert!(matches!(
-        args.as_slice(),
+        args.args.as_slice(),
         [
             fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Lifetime(lifetime)),
             fp_core::ast::AngleBracketedArg::Arg(fp_core::ast::GenericArg::Const(_)),

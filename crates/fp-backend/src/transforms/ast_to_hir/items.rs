@@ -283,13 +283,15 @@ impl AstToHirLowerer {
                     else {
                         return Vec::new();
                     };
-                    args.iter()
+                    args.args
+                        .iter()
                         .filter_map(|arg| {
                             let ast::AngleBracketedArg::Constraint(ast::AssocItemConstraint {
                                 ident,
-                                kind: ast::AssocItemConstraintKind::Equality {
-                                    term: ast::Term::Ty(ty),
-                                },
+                                kind:
+                                    ast::AssocItemConstraintKind::Equality {
+                                        term: ast::Term::Ty(ty),
+                                    },
                                 ..
                             }) = arg
                             else {
@@ -326,7 +328,11 @@ impl AstToHirLowerer {
                         .iter()
                         .filter_map(|bound| {
                             let path = self
-                        .ast_expr_to_hir_path(bound, PathResolutionScope::Type, ParamMode::Explicit)
+                                .ast_expr_to_hir_path(
+                                    bound,
+                                    PathResolutionScope::Type,
+                                    ParamMode::Explicit,
+                                )
                                 .ok()?;
                             Some(hir::TypeExpr::new(
                                 self.next_id(),
@@ -463,12 +469,11 @@ impl AstToHirLowerer {
             let impl_key = self.impl_self_key(&self_ty).ok();
             let trait_ty = if let Some(trait_name) = &impl_block.trait_ty {
                 let trait_expr = ast::Expr::new(ast::ExprKind::Name(trait_name.clone()));
-                let trait_path =
-                    self.ast_expr_to_hir_path(
-                        &trait_expr,
-                        PathResolutionScope::Trait,
-                        ParamMode::Explicit,
-                    )?;
+                let trait_path = self.ast_expr_to_hir_path(
+                    &trait_expr,
+                    PathResolutionScope::Trait,
+                    ParamMode::Explicit,
+                )?;
                 Some(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Path(trait_path),
@@ -609,7 +614,8 @@ impl AstToHirLowerer {
                         .last()
                         .and_then(|seg| match seg.arguments.as_deref() {
                             Some(ast::PathArguments::AngleBracketed(args)) => Some(
-                                args.iter()
+                                args.args
+                                    .iter()
                                     .filter_map(|arg| match arg {
                                         ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty)) => {
                                             Some((**ty).clone())
@@ -670,7 +676,7 @@ impl AstToHirLowerer {
                                     PathResolutionScope::Type,
                                     ParamMode::Explicit,
                                 )
-                                    .map(|path| path.res())?
+                                .map(|path| path.res())?
                             }
                             // Trait type arguments are parsed as type
                             // expressions.  Keep the default `Self` target
@@ -933,11 +939,7 @@ impl AstToHirLowerer {
                 .bounds
                 .iter()
                 .filter_map(|bound| {
-                    self.ast_expr_to_hir_path(
-                        bound,
-                        PathResolutionScope::Type,
-                        ParamMode::Explicit,
-                    )
+                    self.ast_expr_to_hir_path(bound, PathResolutionScope::Type, ParamMode::Explicit)
                         .ok()
                 })
                 .filter_map(|path| path.into_path())

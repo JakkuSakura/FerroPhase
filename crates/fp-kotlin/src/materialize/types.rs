@@ -179,7 +179,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                 };
                 match arguments.as_mut() {
                     fp_core::ast::PathArguments::AngleBracketed(args) => {
-                        for arg in args {
+                        for arg in &mut args.args {
                             match arg {
                                 fp_core::ast::AngleBracketedArg::Arg(
                                     fp_core::ast::GenericArg::Type(ty),
@@ -188,7 +188,9 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                                 }
                                 fp_core::ast::AngleBracketedArg::Constraint(constraint) => {
                                     match &mut constraint.kind {
-                                        fp_core::ast::AssocItemConstraintKind::Equality { term } => {
+                                        fp_core::ast::AssocItemConstraintKind::Equality {
+                                            term,
+                                        } => {
                                             if let fp_core::ast::Term::Ty(ty) = term {
                                                 **ty = materialize_jvm_type((**ty).clone());
                                             }
@@ -207,7 +209,9 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                             }
                         }
                     }
-                    fp_core::ast::PathArguments::Parenthesized { inputs, output } => {
+                    fp_core::ast::PathArguments::Parenthesized(
+                        fp_core::ast::ParenthesizedArgs { inputs, output, .. },
+                    ) => {
                         for input in inputs {
                             *input = materialize_jvm_type(input.clone());
                         }
@@ -215,14 +219,12 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                             **output = materialize_jvm_type((**output).clone());
                         }
                     }
-                    fp_core::ast::PathArguments::ParenthesizedElided => {}
-                    fp_core::ast::PathArguments::None => {}
+                    fp_core::ast::PathArguments::ParenthesizedElided(_) => {}
                 }
                 if segment.ident.as_str() == "Result" {
-                    if let fp_core::ast::PathArguments::AngleBracketed(args) = arguments.as_mut()
-                    {
-                        if args.len() > 1 {
-                            args.truncate(1);
+                    if let fp_core::ast::PathArguments::AngleBracketed(args) = arguments.as_mut() {
+                        if args.args.len() > 1 {
+                            args.args.truncate(1);
                         }
                     }
                 }

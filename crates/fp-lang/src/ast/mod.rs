@@ -192,26 +192,25 @@ impl FerroPhaseParser {
 use eyre::Result;
 use fp_core::ast::path::PathPrefix;
 use fp_core::ast::{
-    AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BlockStmt, BlockStmtExpr,
-    DecimalType, EnumTypeVariant, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait,
-    ExprBinOp, ExprBlock, ExprBreak, ExprCast, ExprClosure, ExprConstBlock, ExprContinue,
-    ExprField, ExprFieldAccess, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprKwArg, ExprLoop, ExprMacro, ExprParen, ExprQuote, ExprRange,
-    ExprRangeLimit, ExprReference, ExprReturn, ExprSplice, ExprStringTemplate, ExprStruct,
-    ExprStructural, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith, FormatArgRef,
-    FormatPlaceholder, FormatSpec, FormatTemplatePart, FunctionParam, FunctionParamReceiver,
-    AngleBracketedArg, AssocItemConstraint, AssocItemConstraintKind, FunctionSignature, GenericArg,
-    Ident, Item,
-    ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
-    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
-    ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
-    MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, Path, PathArguments,
-    PathSegment, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr, PatternQuote,
-    PatternStruct, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
-    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock,
-    StmtDefer, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
-    TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice, Term,
-    TypeStruct, Value, ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
+    AngleBracketedArg, AngleBracketedArgs, AssocItemConstraint, AssocItemConstraintKind, AttrMeta,
+    AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BlockStmt, BlockStmtExpr, DecimalType,
+    EnumTypeVariant, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp, ExprBlock,
+    ExprBreak, ExprCast, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFieldAccess,
+    ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
+    ExprKwArg, ExprLoop, ExprMacro, ExprParen, ExprQuote, ExprRange, ExprRangeLimit, ExprReference,
+    ExprReturn, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTryCatch,
+    ExprTuple, ExprUnOp, ExprWhile, ExprWith, FormatArgRef, FormatPlaceholder, FormatSpec,
+    FormatTemplatePart, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericArg, Ident,
+    Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic, ItemDeclType, ItemDefConst, ItemDefEnum,
+    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemKind,
+    ItemMacro, ItemOpaqueType, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken,
+    MacroTokenTree, Module, Name, Path, PathArguments, PathSegment, Pattern, PatternBox,
+    PatternIdent, PatternKind, PatternOr, PatternQuote, PatternStruct, PatternStructural,
+    PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
+    QuoteFragmentKind, QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet,
+    StructuralField, Term, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum,
+    TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStruct, Value,
+    ValueBytes, ValueChar, ValueNone, ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -450,7 +449,6 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         .is_some();
     let first = ident_like(input)?;
     let first_args = parse_optional_path_arguments(input)?;
-    let first_args = (!first_args.is_none()).then_some(first_args);
     let mut segments = vec![PathSegment::with_arguments(first, first_args)];
     loop {
         let mut probe = *input;
@@ -460,7 +458,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         if peek_symbol(probe) == Some("<") {
             let args = parse_optional_path_arguments(&mut probe)?;
             if let Some(segment) = segments.last_mut() {
-                segment.arguments = (!args.is_none()).then_some(Box::new(args));
+                segment.arguments = args.map(Box::new);
             }
             *input = probe;
             continue;
@@ -470,10 +468,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
         };
         let args = parse_optional_path_arguments(&mut probe)?;
         *input = probe;
-        segments.push(PathSegment::with_arguments(
-            next,
-            (!args.is_none()).then_some(args),
-        ));
+        segments.push(PathSegment::with_arguments(next, args));
     }
     let (prefix, segments) = split_path_prefix_segments(segments, saw_root);
     let consumed = original.len().saturating_sub(input.len());
@@ -485,21 +480,24 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
     Ok(Name::path(Path::with_span(span, prefix, segments)))
 }
 
-pub(crate) fn parse_optional_path_arguments(input: &mut &[Token]) -> ModalResult<PathArguments> {
+pub(crate) fn parse_optional_path_arguments(
+    input: &mut &[Token],
+) -> ModalResult<Option<PathArguments>> {
     let mut probe = *input;
     match parse_path_arguments_inner(&mut probe) {
         Ok(arguments) => {
             *input = probe;
-            Ok(arguments)
+            Ok(Some(arguments))
         }
-        Err(_) => Ok(PathArguments::None),
+        Err(_) => Ok(None),
     }
 }
 
 fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments> {
+    let original = *input;
     let mut probe = *input;
     if !try_eat_symbol(&mut probe, "<") {
-        return Ok(PathArguments::None);
+        return Err(ErrMode::Backtrack(ContextError::new()));
     }
     let mut args = Vec::new();
     if peek_symbol(probe) != Some(">") {
@@ -509,7 +507,9 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
                 let ident = ident_like(&mut item_probe)?;
                 if name.starts_with('\'') {
                     probe = item_probe;
-                    args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(name.to_owned())));
+                    args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
+                        name.to_owned(),
+                    )));
                 } else {
                     // Rustc's `AssocItemConstraint` retains generic arguments
                     // on the constrained item (`Item<'a> = T` and
@@ -519,7 +519,6 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
                     // type parser handles the complete path expression.
                     let mut constraint_probe = item_probe;
                     let gen_args = parse_optional_path_arguments(&mut constraint_probe)?;
-                    let gen_args = (!gen_args.is_none()).then_some(gen_args);
                     if skip_symbol(&mut constraint_probe, "=").is_ok() {
                         let term = parse_assoc_item_term(&mut constraint_probe)?;
                         probe = constraint_probe;
@@ -567,7 +566,16 @@ fn parse_path_arguments_inner(input: &mut &[Token]) -> ModalResult<PathArguments
     }
     skip_symbol(&mut probe, ">")?;
     *input = probe;
-    Ok(PathArguments::AngleBracketed(args))
+    let consumed = original.len().saturating_sub(input.len());
+    let span = original
+        .get(..consumed)
+        .and_then(|tokens| tokens.first().zip(tokens.last()))
+        .map(|(first, last)| Span::union([token_span_to_span(first), token_span_to_span(last)]))
+        .unwrap_or_else(Span::null);
+    Ok(PathArguments::AngleBracketed(AngleBracketedArgs {
+        span,
+        args,
+    }))
 }
 
 /// Parse the equality side of an associated-item constraint while retaining

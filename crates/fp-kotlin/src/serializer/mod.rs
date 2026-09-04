@@ -2600,8 +2600,7 @@ mod tests {
         AttrMeta, AttrMetaList, AttrStyle, Attribute, EnumTypeVariant, ExprBlock, ExprInvoke,
         ExprMatch, ExprMatchCase, FunctionParamReceiver, Ident, ItemDeclFunction, ItemDefEnum,
         ItemDefStruct, ItemDefTrait, ItemImpl, Path, Pattern, PatternIdent, PatternKind,
-        PathArguments, PatternTupleStruct, ReprOptions, TypeBounds, TypeEnum, TypeInt,
-        TypePrimitive, TypeTuple,
+        PatternTupleStruct, ReprOptions, TypeBounds, TypeEnum, TypeInt, TypePrimitive, TypeTuple,
     };
     use fp_core::lang::LangItemRegistry;
 
@@ -2945,7 +2944,7 @@ mod tests {
                 span: fp_core::span::Span::null(),
                 obj: input.clone().into(),
                 field: Ident::new("split_at"),
-                generic_args: PathArguments::None,
+                generic_args: None,
             }),
             args: vec![Expr::value(Value::int(3))],
             kwargs: Vec::new(),
@@ -3022,7 +3021,7 @@ mod tests {
                 span: fp_core::span::Span::null(),
                 obj: Expr::value(Value::bool(true)).into(),
                 field: Ident::new("then_some"),
-                generic_args: PathArguments::None,
+                generic_args: None,
             }),
             args: vec![Expr::value(Value::int(1))],
             kwargs: Vec::new(),
