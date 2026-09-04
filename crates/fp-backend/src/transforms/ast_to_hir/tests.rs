@@ -4891,8 +4891,9 @@ mod function_body_resolution {
 
     #[test]
     fn resolves_generic_callable_parameter_in_body() {
-        let (package, diagnostics) =
-            lower("fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { f(value) }");
+        let (package, diagnostics) = lower(
+            "trait FnOnce<Args> {} fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { f(value) }",
+        );
         assert!(
             diagnostics.is_empty(),
             "generic callable parameter resolution emitted diagnostics: {diagnostics:?}"
@@ -4912,7 +4913,7 @@ mod function_body_resolution {
     #[test]
     fn resolves_callable_capture_in_generated_closure_body() {
         let (package, diagnostics) = lower(
-            "fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| f(x); closure(value) }",
+            "trait FnOnce<Args> {} fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| f(x); closure(value) }",
         );
         assert!(
             diagnostics.is_empty(),
@@ -5001,7 +5002,7 @@ mod function_body_resolution {
     #[test]
     fn resolves_capture_in_match_scrutinee() {
         let (package, diagnostics) = lower(
-            "fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| match f(x) { _ => 1 }; closure(value) }",
+            "trait FnOnce<Args> {} fn apply<F: FnOnce(i64) -> i64>(f: F, value: i64) -> i64 { let closure = |x: i64| match f(x) { _ => 1 }; closure(value) }",
         );
         assert!(
             diagnostics.is_empty(),

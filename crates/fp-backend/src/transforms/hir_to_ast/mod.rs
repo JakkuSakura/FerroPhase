@@ -1799,9 +1799,18 @@ impl<'a> HirToAstLifter<'a> {
                     (ident.as_str() == "Output").then(|| self.lift_type(ty).map(Box::new))
                 })
                 .transpose()?;
+            let output = match output {
+                Some(output) => ast::FnRetTy::Ty(output),
+                None => ast::FnRetTy::Default(Span::new(
+                    args.span_ext.file,
+                    args.span_ext.hi,
+                    args.span_ext.hi,
+                )),
+            };
             return Ok(ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
                 span: args.span_ext,
                 inputs,
+                inputs_span: args.span_ext,
                 output,
             }));
         }

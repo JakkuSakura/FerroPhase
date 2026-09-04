@@ -215,7 +215,7 @@ pub(super) fn materialize_jvm_name(mut name: Name) -> Name {
                         for input in inputs {
                             *input = materialize_jvm_type(input.clone());
                         }
-                        if let Some(output) = output {
+                        if let fp_core::ast::FnRetTy::Ty(output) = output {
                             **output = materialize_jvm_type((**output).clone());
                         }
                     }

@@ -191,7 +191,7 @@ fn materialize_ty(ty: ast::Ty, strategy: &dyn IntrinsicMaterializer) -> CoreResu
                             for input in inputs {
                                 *input = materialize_ty(input.clone(), strategy)?;
                             }
-                            if let Some(output) = output {
+                            if let ast::FnRetTy::Ty(output) = output {
                                 **output = materialize_ty((**output).clone(), strategy)?;
                             }
                         }

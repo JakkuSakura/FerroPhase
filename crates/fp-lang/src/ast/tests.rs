@@ -502,8 +502,39 @@ fn parse_parenthesized_path_arguments() {
     };
     assert!(matches!(
         path.last().arguments.as_deref(),
-        Some(fp_core::ast::PathArguments::Parenthesized(..))
+        Some(fp_core::ast::PathArguments::Parenthesized(
+            fp_core::ast::ParenthesizedArgs {
+                inputs_span,
+                output: fp_core::ast::FnRetTy::Ty(_),
+                ..
+            }
+        )) if !inputs_span.is_null()
     ));
+}
+
+#[test]
+fn parse_parenthesized_path_arguments_without_return_type() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser.parse_items_ast("type Alias = Fn(u8);").unwrap();
+    let ItemKind::DefType(def) = items[0].kind() else {
+        panic!("expected type alias");
+    };
+    let Ty::Expr(expr) = &def.value else {
+        panic!("expected path type");
+    };
+    let ExprKind::Name(Name { path, .. }) = expr.kind() else {
+        panic!("expected path type");
+    };
+    let Some(fp_core::ast::PathArguments::Parenthesized(args)) = path.last().arguments.as_deref()
+    else {
+        panic!("expected parenthesized arguments");
+    };
+    assert_eq!(args.inputs.len(), 1);
+    assert!(matches!(args.output, fp_core::ast::FnRetTy::Default(_)));
+    assert!(!args.inputs_span.is_null());
+    assert_eq!(path.span.hi, args.span.hi);
+    assert!(path.span.lo <= args.span.lo);
 }
 
 #[test]
@@ -2486,7 +2517,21 @@ fn parse_type_alias_rhs_forms() {
     assert!(matches!(aliases[1].value, Ty::Literal(_)));
     assert!(matches!(aliases[2].value, Ty::Expr(_)));
     assert!(matches!(aliases[3].value, Ty::Structural(_)));
-    assert!(matches!(aliases[4].value, Ty::Function(_)));
+    let Ty::Expr(computed_expr) = &aliases[4].value else {
+        panic!("expected parenthesized path for computed alias");
+    };
+    let ExprKind::Name(Name { path, .. }) = computed_expr.kind() else {
+        panic!("expected parenthesized path for computed alias");
+    };
+    assert!(matches!(
+        path.last().arguments.as_deref(),
+        Some(fp_core::ast::PathArguments::Parenthesized(
+            fp_core::ast::ParenthesizedArgs {
+                output: fp_core::ast::FnRetTy::Default(_),
+                ..
+            }
+        ))
+    ));
     assert!(matches!(aliases[5].value, Ty::Expr(_)));
     assert!(matches!(aliases[6].value, Ty::ConstBlock(_)));
 }

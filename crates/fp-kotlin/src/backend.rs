@@ -1720,7 +1720,7 @@ fn materialize_kotlin_type_arguments(name: &mut Name) {
                 for input in inputs {
                     materialize_kotlin_ty(input);
                 }
-                if let Some(output) = output {
+                if let fp_core::ast::FnRetTy::Ty(output) = output {
                     materialize_kotlin_ty(output);
                 }
             }

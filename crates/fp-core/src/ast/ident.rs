@@ -371,7 +371,31 @@ pub struct AngleBracketedArgs {
 pub struct ParenthesizedArgs {
     pub span: Span,
     pub inputs: Vec<Ty>,
-    pub output: Option<Box<Ty>>,
+    /// Span covering the parenthesized input list, including `(` and `)`.
+    /// This is separate from `span`, which also includes a return type when
+    /// one is present.
+    pub inputs_span: Span,
+    /// Return type notation for the parenthesized trait arguments.  Keeping
+    /// the default case distinct from an explicit type mirrors rustc's
+    /// `FnRetTy` and preserves the source distinction for later lowering.
+    pub output: FnRetTy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq)]
+pub enum FnRetTy {
+    /// No return type was written. The span marks where one could be added.
+    Default(Span),
+    /// An explicit `-> Ty` return type.
+    Ty(Box<Ty>),
+}
+
+impl FnRetTy {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Default(span) => *span,
+            Self::Ty(ty) => ty.span(),
+        }
+    }
 }
 
 impl PathArguments {
@@ -621,7 +645,7 @@ impl std::fmt::Display for PathArguments {
                         .collect::<Vec<_>>()
                         .join(", ")
                 )?;
-                if let Some(output) = output {
+                if let FnRetTy::Ty(output) = output {
                     write!(f, " -> {output}")?;
                 }
                 Ok(())

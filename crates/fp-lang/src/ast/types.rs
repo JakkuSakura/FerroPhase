@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::ast::FnRetTy;
 use fp_core::ast::ImplTraits;
 use fp_core::ast::QSelf;
 use fp_core::ast::TypeNothing;
@@ -386,17 +387,20 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(Ty::Expr(Box::new(expr)));
     }
     let name = parse_name(input)?;
-    if skip_symbol(input, "(").is_ok() {
+    if let Ok(open_paren) = expect_symbol(input, "(") {
+        let open_span = token_span_to_span(&open_paren);
         if skip_symbol(input, "..").is_ok() {
-            skip_symbol(input, ")")?;
+            let close_paren = expect_symbol(input, ")")?;
+            let span = Span::union([open_span, token_span_to_span(&close_paren)]);
             let Name { mut path, qself } = name;
             if qself.is_some() {
                 return Err(ErrMode::Cut(ContextError::new()));
             }
+            path.span = Span::union([path.span, span]);
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(Span::null())));
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(span)));
             return Ok(Ty::Expr(Box::new(Expr::name(Name { qself, path }))));
         }
         let mut params = Vec::new();
@@ -411,33 +415,31 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 }
             }
         }
-        skip_symbol(input, ")")?;
+        let close_paren = expect_symbol(input, ")")?;
+        let inputs_span = Span::union([open_span, token_span_to_span(&close_paren)]);
         let ret_ty = if skip_symbol(input, "->").is_ok() {
-            Some(Box::new(parse_type_expr(input)?))
+            FnRetTy::Ty(Box::new(parse_type_expr(input)?))
         } else {
-            None
+            FnRetTy::Default(Span::new(
+                token_span_to_span(&close_paren).file,
+                token_span_to_span(&close_paren).hi,
+                token_span_to_span(&close_paren).hi,
+            ))
         };
-        if ret_ty.is_none() {
-            return Ok(Ty::Function(
-                TypeFunction {
-                    params,
-                    generics_params: Vec::new(),
-                    ret_ty,
-                }
-                .into(),
-            ));
-        }
         let Name { mut path, qself } = name;
         if qself.is_some() {
             return Err(ErrMode::Cut(ContextError::new()));
         }
+        let span = Span::union([inputs_span, ret_ty.span()]);
+        path.span = Span::union([path.span, span]);
         let Some(segment) = path.segments.last_mut() else {
             return Err(ErrMode::Cut(ContextError::new()));
         };
         segment.arguments = Some(Box::new(PathArguments::Parenthesized(
             fp_core::ast::ParenthesizedArgs {
-                span: Span::null(),
+                span,
                 inputs: params,
+                inputs_span,
                 output: ret_ty,
             },
         )));
@@ -756,17 +758,20 @@ fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
 
 fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let name = parse_name(input)?;
-    if skip_symbol(input, "(").is_ok() {
+    if let Ok(open_paren) = expect_symbol(input, "(") {
+        let open_span = token_span_to_span(&open_paren);
         if skip_symbol(input, "..").is_ok() {
-            skip_symbol(input, ")")?;
+            let close_paren = expect_symbol(input, ")")?;
+            let span = Span::union([open_span, token_span_to_span(&close_paren)]);
             let Name { mut path, qself } = name;
             if qself.is_some() {
                 return Err(ErrMode::Cut(ContextError::new()));
             }
+            path.span = Span::union([path.span, span]);
             let Some(segment) = path.segments.last_mut() else {
                 return Err(ErrMode::Cut(ContextError::new()));
             };
-            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(Span::null())));
+            segment.arguments = Some(Box::new(PathArguments::ParenthesizedElided(span)));
             return Ok(Expr::name(Name { qself, path }));
         }
         let mut params = Vec::new();
@@ -781,32 +786,35 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
                 }
             }
         }
-        skip_symbol(input, ")")?;
+        let close_paren = expect_symbol(input, ")")?;
+        let inputs_span = Span::union([open_span, token_span_to_span(&close_paren)]);
         let ret_ty = if skip_symbol(input, "->").is_ok() {
-            Some(Box::new(parse_type_expr(input)?))
+            FnRetTy::Ty(Box::new(parse_type_expr(input)?))
         } else {
-            None
+            FnRetTy::Default(Span::new(
+                token_span_to_span(&close_paren).file,
+                token_span_to_span(&close_paren).hi,
+                token_span_to_span(&close_paren).hi,
+            ))
         };
-        // `dyn Fn(..) -> ..`/`FnMut`/`FnOnce` — same sugar shape
-        // `parse_simple_type`'s own `name(..)` branch folds into a bare
-        // `Ty::Function`, just reached from `dyn`'s own bound list instead
-        // (`parse_dyn_type_bounds` calls this function per `+`-separated
-        // bound, not the ordinary type parser). This previously parsed
-        // and discarded the parameter/return types entirely (`let _ =
-        // parse_type_expr(input)?;`), so `dyn FnMut(&T) -> bool` erased to
-        // the bare trait name with no signature at all by the time
-        // `ast_to_hir` ever saw it. Wrap the real signature as
-        // `Value::Type(Ty::Function(..))`, the same shape `ast_to_hir`'s
-        // `ImplTraits`/`TypeBounds` arms already know how to turn into a
-        // real `FnPtr` HIR type.
-        return Ok(type_to_expr(&Ty::Function(
-            TypeFunction {
-                params,
-                generics_params: Vec::new(),
-                ret_ty,
-            }
-            .into(),
+        let Name { mut path, qself } = name;
+        if qself.is_some() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        let span = Span::union([inputs_span, ret_ty.span()]);
+        path.span = Span::union([path.span, span]);
+        let Some(segment) = path.segments.last_mut() else {
+            return Err(ErrMode::Cut(ContextError::new()));
+        };
+        segment.arguments = Some(Box::new(PathArguments::Parenthesized(
+            fp_core::ast::ParenthesizedArgs {
+                span,
+                inputs: params,
+                inputs_span,
+                output: ret_ty,
+            },
         )));
+        return Ok(Expr::name(Name { qself, path }));
     }
     Ok(Expr::name(name))
 }

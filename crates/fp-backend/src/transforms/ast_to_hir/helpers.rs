@@ -75,18 +75,15 @@ impl AstToHirLowerer {
             ast::PathArguments::Parenthesized(ast::ParenthesizedArgs {
                 inputs, output, ..
             }) => {
+                let output_span = output.span();
                 let input_types = inputs
                     .iter()
                     .map(|input| self.transform_type_to_hir(input))
                     .collect::<Result<Vec<_>>>()?;
-                let output = output
-                    .as_ref()
-                    .map(|output| self.transform_type_to_hir(output))
-                    .transpose()?;
-                let output_span = output
-                    .as_ref()
-                    .map(|output| output.span())
-                    .unwrap_or_else(Span::null);
+                let output = match output {
+                    ast::FnRetTy::Ty(output) => Some(self.transform_type_to_hir(output)?),
+                    ast::FnRetTy::Default(_) => None,
+                };
                 let input_tuple = hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Tuple(input_types.into_iter().map(Box::new).collect()),
