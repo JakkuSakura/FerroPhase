@@ -506,6 +506,7 @@ impl AstToHirLowerer {
                 let res = self.resolve_type_symbol(struct_name);
 
                 let path = hir::Path {
+                    span: Default::default(),
                     segments,
                     res: res.unwrap_or(hir::Res::Error),
                 };
@@ -592,8 +593,10 @@ impl AstToHirLowerer {
             // Deferred const-block types (Escaped) — placeholder until retry
             Value::Escaped(_) => {
                 let path = hir::Path {
+                    span: Default::default(),
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("__fp_escaped"),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,
@@ -961,6 +964,7 @@ impl AstToHirLowerer {
                         )
                         .unwrap_or_else(|_| {
                             hir::QPath::resolved(hir::Path {
+                                span: Default::default(),
                                 res: hir::Res::Error,
                                 segments: vec![self.make_path_segment(
                                     &field.name.name,
@@ -1044,8 +1048,10 @@ impl AstToHirLowerer {
         let base_path = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: base_symbol,
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(base_pat_id.clone()),
@@ -1409,8 +1415,10 @@ impl AstToHirLowerer {
         let loop_var = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: loop_name.clone(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: loop_res.clone(),

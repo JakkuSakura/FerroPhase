@@ -96,16 +96,19 @@ mod tests {
                 Namespace::Type
             ),
             ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(alloc.clone()),
                 segments: vec![
                     hir::PathSegment {
                         ident: "std".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(std_root),
                     },
                     hir::PathSegment {
                         ident: "alloc".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(alloc),
@@ -133,7 +136,8 @@ mod tests {
             ),
             ResolutionResult::Found(hir::Path {
                 res: hir::Res::Def(_),
-                segments: _
+                segments: _,
+                ..
             })
         ));
         let _ = app_root;
@@ -199,9 +203,11 @@ mod tests {
                 Namespace::Type
             ),
             ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Generic(ty.clone()),
                 segments: vec![hir::PathSegment {
                     ident: "T".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Generic(ty),
@@ -266,16 +272,19 @@ mod tests {
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Value),
             ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(value.clone()),
                 segments: vec![
                     hir::PathSegment {
                         ident: "nested".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(value),
@@ -286,16 +295,19 @@ mod tests {
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Type),
             ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(ty.clone()),
                 segments: vec![
                     hir::PathSegment {
                         ident: "nested".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module.clone()),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(ty),
@@ -306,16 +318,19 @@ mod tests {
         assert_eq!(
             resolver.resolve_parsed_path(&app, &location, &path, Namespace::Macro),
             ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(mac.clone()),
                 segments: vec![
                     hir::PathSegment {
                         ident: "nested".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(module),
                     },
                     hir::PathSegment {
                         ident: "Thing".into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(mac),
@@ -423,6 +438,7 @@ impl Resolver {
         let count = parsed.segments.len().saturating_sub(first);
         if count == 0 {
             return ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Module(root.clone()),
                 segments: parsed
                     .segments
@@ -430,6 +446,7 @@ impl Resolver {
                     .take(first)
                     .map(|segment| hir::PathSegment {
                         ident: segment.ident.name.clone().into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Module(root.clone()),
@@ -466,6 +483,7 @@ impl Resolver {
                 .take(first)
                 .map(|segment| hir::PathSegment {
                     ident: segment.ident.name.clone().into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Module(root.clone()),
@@ -487,12 +505,14 @@ impl Resolver {
                         let resolved = path.res.clone();
                         resolved_segments.push(hir::PathSegment {
                             ident: segment.ident.name.clone().into(),
+                            hir_id: Default::default(),
                             args: None,
                             infer_args: true,
                             res: resolved.clone(),
                         });
                         if offset + 1 == count {
                             return ResolutionResult::Found(hir::Path {
+                                span: Default::default(),
                                 res: resolved,
                                 segments: resolved_segments,
                             });
@@ -505,6 +525,7 @@ impl Resolver {
                             // associated-item segment as a nested
                             // `QPath::TypeRelative` node during lowering.
                             return ResolutionResult::Found(hir::Path {
+                                span: Default::default(),
                                 res: resolved,
                                 segments: resolved_segments,
                             });

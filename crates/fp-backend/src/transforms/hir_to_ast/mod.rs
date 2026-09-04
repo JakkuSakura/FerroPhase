@@ -2672,6 +2672,7 @@ mod tests {
             hir::Res::Error,
             vec![hir::PathSegment {
                 ident: "Vec".into(),
+                hir_id: Default::default(),
                 args: Some(generic_args),
                 infer_args: false,
                 res: hir::Res::Error,
@@ -2710,6 +2711,7 @@ mod tests {
             hir::Res::Error,
             vec![hir::PathSegment {
                 ident: "Array".into(),
+                hir_id: Default::default(),
                 args: Some(generic_args),
                 infer_args: false,
                 res: hir::Res::Error,
@@ -2774,12 +2776,14 @@ mod tests {
             vec![
                 hir::PathSegment {
                     ident: "Trait".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(trait_id),
                 },
                 hir::PathSegment {
                     ident: "Item".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Error,
@@ -2795,6 +2799,7 @@ mod tests {
             Box::new(receiver),
             hir::PathSegment {
                 ident: "Nested".into(),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: hir::Res::Error,
@@ -2873,15 +2878,18 @@ mod tests {
                 Box::new(hir::Expr {
                     hir_id: callee_id,
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![
                             hir::PathSegment {
                                 ident: "String".into(),
+                                hir_id: Default::default(),
                                 args: None,
                                 infer_args: true,
                                 res: hir::Res::Def(receiver_id.clone()),
                             },
                             hir::PathSegment {
                                 ident: "from_utf8_lossy".into(),
+                                hir_id: Default::default(),
                                 args: None,
                                 infer_args: true,
                                 res: hir::Res::Error,
@@ -2944,8 +2952,10 @@ mod tests {
                 Box::new(hir::Expr {
                     hir_id: callee_id,
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![hir::PathSegment {
                             ident: "from_utf8_lossy".into(),
+                            hir_id: Default::default(),
                             args: None,
                             infer_args: true,
                             res: hir::Res::Def(function_id.clone()),
@@ -2986,8 +2996,10 @@ mod tests {
                 Box::new(hir::Expr {
                     hir_id: receiver_hir_id,
                     kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![hir::PathSegment {
                             ident: "path".into(),
+                            hir_id: Default::default(),
                             args: None,
                             infer_args: true,
                             res: hir::Res::Def(receiver_id.clone()),
@@ -3033,8 +3045,10 @@ mod tests {
             hir::Expr::new(
                 hir::HirId::new(owner.clone(), index),
                 hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                    span: Default::default(),
                     segments: vec![hir::PathSegment {
                         ident: name.into(),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(def_id.clone()),
@@ -3058,8 +3072,10 @@ mod tests {
         let output_local = hir::Expr::new(
             hir::HirId::new(owner.clone(), 26),
             hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: "output".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Local(hir::HirId::new(owner.clone(), 27)),
@@ -3174,8 +3190,10 @@ mod tests {
         let vec_ty = hir::TypeExpr::new(
             vec_ty_id.clone(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: "ListAlias".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(vec_def_id.clone()),
@@ -3187,8 +3205,10 @@ mod tests {
         let command_ty = hir::TypeExpr::new(
             command_ty_id.clone(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: "FileAlias".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(command_def_id.clone()),

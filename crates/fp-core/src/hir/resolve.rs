@@ -111,9 +111,11 @@ impl ModuleData {
             .collect();
         match matches.as_slice() {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
+                span: Default::default(),
                 res: resolution.clone(),
                 segments: vec![crate::hir::PathSegment {
                     ident: name.into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: resolution.clone(),
@@ -168,9 +170,11 @@ impl ModuleData {
             .collect();
         match matches.as_slice() {
             [resolution] => ResolutionResult::Found(crate::hir::Path {
+                span: Default::default(),
                 res: resolution.clone(),
                 segments: vec![crate::hir::PathSegment {
                     ident: last.as_str().into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: resolution.clone(),
@@ -540,6 +544,7 @@ impl LocalScope {
                     [] => {}
                     [binding] => {
                         return ResolutionResult::Found(crate::hir::Path {
+                            span: Default::default(),
                             res: binding_to_res(binding),
                             segments: Vec::new(),
                         });

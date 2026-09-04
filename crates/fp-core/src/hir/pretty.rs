@@ -1117,6 +1117,7 @@ mod tests {
     fn path_segment(name: &str) -> PathSegment {
         PathSegment {
             ident: name.into(),
+            hir_id: Default::default(),
             args: None,
             infer_args: false,
             res: Res::Error,

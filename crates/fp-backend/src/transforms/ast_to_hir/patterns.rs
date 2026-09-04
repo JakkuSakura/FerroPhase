@@ -194,6 +194,7 @@ impl AstToHirLowerer {
                         hir_id: self.next_id(),
                         kind: hir::PatKind::Struct(
                             hir::Path {
+                                span: Default::default(),
                                 segments: Vec::new(),
                                 res: hir::Res::Error,
                             },

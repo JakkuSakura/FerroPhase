@@ -918,8 +918,10 @@ impl HirTypeChecker {
             .push(hir::TypeExpr {
                 hir_id: self_bound_hir_id,
                 kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                    span: Default::default(),
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("Self"),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Def(trait_def_id.clone()),

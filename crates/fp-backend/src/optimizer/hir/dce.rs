@@ -659,10 +659,12 @@ mod tests {
         Expr {
             hir_id: hid(hir_id),
             kind: ExprKind::Path(hir::QPath::resolved(Path {
+                span: Span::null(),
                 segments: segments
                     .iter()
                     .map(|segment| PathSegment {
                         ident: symbol(segment),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: res.clone().unwrap_or(hir::Res::Error),

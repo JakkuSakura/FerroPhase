@@ -1024,8 +1024,10 @@ mod tests {
         TypeExpr::new(
             HirId::new(OwnerId::root(PackageId::new("test")), 1),
             TypeExprKind::Path(QPath::resolved(Path {
+                span: Span::null(),
                 segments: vec![PathSegment {
                     ident: name.into(),
+                    hir_id: HirId::default(),
                     args: None,
                     infer_args: true,
                     res: res.clone(),

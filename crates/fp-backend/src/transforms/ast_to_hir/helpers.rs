@@ -394,6 +394,7 @@ impl AstToHirLowerer {
                         let mut qpath = hir::QPath::Resolved(
                             Some(Box::new(base_ty)),
                             hir::Path {
+                                span: Default::default(),
                                 res: trait_res,
                                 segments: resolved_segments,
                             },
@@ -452,7 +453,9 @@ impl AstToHirLowerer {
                     fp_core::hir::resolve::ResolutionResult::Found(path) => {
                         let mut path = path;
                         let args = self.name_segment_args(name)?;
+                        path.span = expr.span();
                         for (segment, args) in path.segments.iter_mut().zip(args.iter()) {
+                            segment.hir_id = self.next_id();
                             segment.infer_args = Self::infer_path_segment_args(args, param_mode);
                             segment.args = args.clone();
                         }
@@ -511,6 +514,7 @@ impl AstToHirLowerer {
                             if segments.len() > 1 {
                                 let base = segments.remove(0);
                                 let mut qpath = hir::QPath::resolved(hir::Path {
+                                    span: expr.span(),
                                     res: Res::Builtin(hir::BuiltinSelfType::Primitive(
                                         primitive.clone(),
                                     )),
@@ -527,6 +531,7 @@ impl AstToHirLowerer {
                                 return Ok(qpath);
                             }
                             return Ok(hir::QPath::resolved(hir::Path {
+                                span: expr.span(),
                                 res: Res::Builtin(hir::BuiltinSelfType::Primitive(primitive)),
                                 segments,
                             }));
@@ -569,6 +574,7 @@ impl AstToHirLowerer {
                     .map(|segment| segment.as_str())
                     .collect();
                 Ok(hir::QPath::resolved(hir::Path {
+                    span: expr.span(),
                     res: resolved,
                     segments: names
                         .into_iter()
@@ -723,6 +729,7 @@ impl AstToHirLowerer {
                                                 .with_span(expr.span()),
                                             );
                                             hir::QPath::resolved(hir::Path {
+                                                span: Default::default(),
                                                 segments: vec![
                                                     self.make_path_segment(
                                                         "__fp_error",
@@ -743,6 +750,7 @@ impl AstToHirLowerer {
                                             .with_span(expr.span()),
                                         );
                                         hir::QPath::resolved(hir::Path {
+                                            span: Default::default(),
                                             segments: vec![
                                                 self.make_path_segment(
                                                     "__fp_error",
@@ -763,6 +771,7 @@ impl AstToHirLowerer {
                                         .with_span(expr.span()),
                                     );
                                     hir::QPath::resolved(hir::Path {
+                                        span: Default::default(),
                                         segments: vec![self.make_path_segment(
                                             "__fp_error",
                                             None,
@@ -781,6 +790,7 @@ impl AstToHirLowerer {
                                     .with_span(expr.span()),
                                 );
                                 hir::QPath::resolved(hir::Path {
+                                    span: Default::default(),
                                     segments: vec![self.make_path_segment(
                                         "__fp_error",
                                         None,
@@ -797,6 +807,7 @@ impl AstToHirLowerer {
                                     .with_span(expr.span()),
                             );
                             hir::QPath::resolved(hir::Path {
+                                span: Default::default(),
                                 segments: vec![self.make_path_segment(
                                     "__fp_error",
                                     None,
@@ -846,6 +857,7 @@ impl AstToHirLowerer {
                             .with_span(expr.span()),
                         );
                         hir::QPath::resolved(hir::Path {
+                            span: Default::default(),
                             segments: vec![self.make_path_segment(
                                 "__fp_error",
                                 None,
@@ -898,6 +910,7 @@ impl AstToHirLowerer {
                         mutable: reference.mutability.unwrap_or(false),
                     };
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -909,6 +922,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Slice(_)) => {
                     let kind = hir::BuiltinSelfType::Slice;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -920,6 +934,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Array(_)) => {
                     let kind = hir::BuiltinSelfType::Array;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -933,6 +948,7 @@ impl AstToHirLowerer {
                         mutable: ptr.mutability.unwrap_or(false),
                     };
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -944,6 +960,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Nothing(_)) => {
                     let kind = hir::BuiltinSelfType::Never;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -955,6 +972,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Unit(_)) => {
                     let kind = hir::BuiltinSelfType::Unit;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -966,6 +984,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Tuple(_)) => {
                     let kind = hir::BuiltinSelfType::Tuple;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -977,6 +996,7 @@ impl AstToHirLowerer {
                 ast::Value::Type(ast::Ty::Function(_)) => {
                     let kind = hir::BuiltinSelfType::Function;
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             kind.bucket_key(),
                             None,
@@ -1013,6 +1033,7 @@ impl AstToHirLowerer {
                         .with_span(expr.span()),
                     );
                     Ok(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![self.make_path_segment(
                             "__fp_error",
                             None,
@@ -1032,6 +1053,7 @@ impl AstToHirLowerer {
                     .with_span(expr.span()),
                 );
                 Ok(hir::QPath::resolved(hir::Path {
+                    span: Default::default(),
                     segments: vec![self.make_path_segment(
                         "__fp_error",
                         None,
@@ -1044,7 +1066,7 @@ impl AstToHirLowerer {
     }
 
     pub(super) fn make_path_segment(
-        &self,
+        &mut self,
         name: &str,
         args: Option<hir::GenericArgs>,
         param_mode: ParamMode,
@@ -1052,6 +1074,7 @@ impl AstToHirLowerer {
         let infer_args = Self::infer_path_segment_args(&args, param_mode);
         hir::PathSegment {
             ident: hir::Symbol::new(name),
+            hir_id: self.next_id(),
             args,
             infer_args,
             res: hir::Res::Error,

@@ -80,6 +80,12 @@ impl HirId {
     }
 }
 
+impl Default for HirId {
+    fn default() -> Self {
+        Self::new(OwnerId::root(PackageId::new("__dummy__")), 0)
+    }
+}
+
 impl fmt::Display for HirId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}#{}", self.owner.0, self.local_id.0)
@@ -678,6 +684,8 @@ pub struct FnPtrType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path {
+    /// Source span covering the complete path.
+    pub span: Span,
     /// Resolution of the path's terminal item for an ordinary `QPath::Resolved`
     /// path. A `Path` always owns the complete sequence of ordinary segments;
     /// an associated-item tail is represented by `QPath::TypeRelative`
@@ -691,7 +699,15 @@ pub struct Path {
 
 impl Path {
     pub fn new(res: Res, segments: Vec<PathSegment>) -> Self {
-        Self { res, segments }
+        Self {
+            span: Span::null(),
+            res,
+            segments,
+        }
+    }
+
+    pub fn with_span(span: Span, res: Res, segments: Vec<PathSegment>) -> Self {
+        Self { span, res, segments }
     }
 
     pub fn base(res: Res) -> Self {
@@ -792,15 +808,17 @@ pub struct PathSegment {
     /// `QPath::Resolved`, every component remains in `Path::segments`;
     /// `QPath::TypeRelative` owns exactly one deferred associated component.
     pub ident: Symbol,
+    /// HIR identity for this path segment, matching rustc HIR.
+    pub hir_id: HirId,
+    /// Resolution of this component. A type-relative associated component
+    /// uses `Res::Error` here and is resolved by type checking, matching
+    /// rustc HIR.
+    pub res: Res,
     pub args: Option<GenericArgs>,
     /// Whether generic arguments were omitted and should be inferred. This
     /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
     /// represented by `args = Some(...)` with an `Infer` generic argument.
     pub infer_args: bool,
-    /// Resolution of this component. A type-relative associated component
-    /// uses `Res::Error` here and is resolved by type checking, matching
-    /// rustc HIR.
-    pub res: Res,
 }
 
 impl PathSegment {
@@ -808,9 +826,26 @@ impl PathSegment {
         let infer_args = args.is_none();
         Self {
             ident: ident.into(),
+            hir_id: HirId::default(),
             args,
             infer_args,
             res: Res::Error,
+        }
+    }
+
+    pub fn with_hir_id(
+        ident: impl Into<Symbol>,
+        hir_id: HirId,
+        args: Option<GenericArgs>,
+        res: Res,
+        infer_args: bool,
+    ) -> Self {
+        Self {
+            ident: ident.into(),
+            hir_id,
+            args,
+            infer_args,
+            res,
         }
     }
 }
@@ -1667,7 +1702,8 @@ impl FnPtrType {
 
 impl Path {
     pub fn span(&self) -> Span {
-        Span::union(self.segments.iter().map(PathSegment::span))
+        self.span
+            .or(Span::union(self.segments.iter().map(PathSegment::span)))
     }
 }
 

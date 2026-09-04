@@ -38,8 +38,10 @@ fn path_type(name: &str) -> TypeExpr {
     TypeExpr {
         hir_id: hid(0),
         kind: TypeExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new(name),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Error,
@@ -95,8 +97,10 @@ fn local_path(hir_id: u32, name: &str, local_id: hir::HirId) -> Expr {
     Expr::new(
         hid(hir_id),
         ExprKind::Path(hir::QPath::resolved(Path {
+            span: Span::null(),
             segments: vec![PathSegment {
                 ident: Symbol::new(name),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: Res::Local(local_id.clone()),
@@ -230,8 +234,10 @@ fn lowers_identity_function_with_parameter() {
     };
 
     let path = hir::Path {
+        span: Default::default(),
         segments: vec![hir::PathSegment {
             ident: hir::Symbol::new("x"),
+            hir_id: Default::default(),
             args: None,
             infer_args: true,
             res: hir::Res::Local(param_pat.hir_id.clone()),

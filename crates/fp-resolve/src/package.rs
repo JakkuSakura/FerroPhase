@@ -394,6 +394,7 @@ impl InPackageResolver {
                 if directive.kind == ImportKind::Glob {
                     let resolved = if directive.target.segments.is_empty() {
                         ResolutionResult::Found(hir::Path {
+                            span: Default::default(),
                             res: hir::Res::Module(ModuleData::virtual_root_for(
                                 self.hir_package.borrow().id.clone(),
                             )),
@@ -699,9 +700,11 @@ mod tests {
                 Namespace::Type
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(target.clone()),
                 segments: vec![hir::PathSegment {
                     ident: "Alias".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(target),
@@ -811,9 +814,11 @@ mod tests {
                 Namespace::Type
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Def(target.clone()),
                 segments: vec![hir::PathSegment {
                     ident: "Item".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Def(target),
@@ -859,9 +864,11 @@ mod tests {
                 Namespace::Type
             ),
             fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+                span: Default::default(),
                 res: hir::Res::Module(hir::DefId::local(1)),
                 segments: vec![hir::PathSegment {
                     ident: "alias".into(),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Module(hir::DefId::local(1)),

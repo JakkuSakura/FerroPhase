@@ -946,8 +946,10 @@ impl<'a> BodyBuilder<'a> {
                 let env = self.lower_operand(callee, None)?;
                 let call_name = format!("__closure{}_call", suffix);
                 let path = hir::Path {
+                    span: Default::default(),
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new(call_name),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,
@@ -1088,8 +1090,10 @@ impl<'a> BodyBuilder<'a> {
                 let env = self.lower_operand(callee, None)?;
                 let call_name = format!("__closure{}_call", suffix);
                 let path = hir::Path {
+                    span: Default::default(),
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new(call_name),
+                        hir_id: Default::default(),
                         args: None,
                         infer_args: true,
                         res: hir::Res::Error,

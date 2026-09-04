@@ -1283,8 +1283,10 @@ impl AstToHirLowerer {
                         hir::TypeExpr::new(
                             this.next_id(),
                             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                                span: Default::default(),
                                 segments: vec![hir::PathSegment {
                                     ident: hir::Symbol::new(name),
+                                    hir_id: Default::default(),
                                     args: None,
                                     infer_args: true,
                                     res: hir::Res::Def(def_id.clone()),
@@ -2585,6 +2587,7 @@ impl AstToHirLowerer {
                         path.res(),
                         vec![hir::PathSegment {
                             ident: "Vec".into(),
+                            hir_id: Default::default(),
                             args: Some(args),
                             infer_args: false,
                             res: path.res(),
@@ -2977,8 +2980,10 @@ impl AstToHirLowerer {
         hir::TypeExpr::new(
             self.next_id(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new(type_name),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Error,
@@ -3005,8 +3010,10 @@ impl AstToHirLowerer {
         hir::TypeExpr::new(
             self.next_id(),
             hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                span: Default::default(),
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new("null"),
+                    hir_id: Default::default(),
                     args: None,
                     infer_args: true,
                     res: hir::Res::Error,
@@ -3232,8 +3239,10 @@ impl AstToHirLowerer {
         self.register_type_def(&name, def_id.clone(), &ast::Visibility::Private);
         self.synthetic_items.push(item);
         let path = hir::Path {
+            span: Default::default(),
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(name.clone()),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: hir::Res::Def(def_id.clone()),
@@ -3306,8 +3315,10 @@ impl AstToHirLowerer {
 
     fn path_for_structural_def(&mut self, def: &StructuralValueDef) -> hir::Path {
         hir::Path {
+            span: Default::default(),
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(def.name.clone()),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: hir::Res::Def(def.def_id.clone()),

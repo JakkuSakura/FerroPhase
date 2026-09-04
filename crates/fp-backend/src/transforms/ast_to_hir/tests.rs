@@ -1940,6 +1940,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
             fp_core::hir::resolve::Namespace::Type,
         ),
         fp_core::hir::resolve::ResolutionResult::Found(hir::Path {
+            span: Default::default(),
             res: hir::Res::Def(ok_def_id.clone()),
             segments: Vec::new(),
         }),

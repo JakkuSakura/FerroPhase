@@ -100,8 +100,10 @@ fn forward_referenced_const_resolves_regardless_of_item_order() {
                         Box::new(hir::Expr {
                             hir_id: hid(24),
                             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                                span: Default::default(),
                                 segments: vec![hir::PathSegment {
                                     ident: "B".into(),
+                                    hir_id: Default::default(),
                                     args: None,
                                     infer_args: true,
                                     res: hir::Res::Def(b_def_id.clone()),
@@ -421,8 +423,10 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
                 Box::new(hir::TypeExpr {
                     hir_id: hid(hir_id_base + 3),
                     kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+                        span: Default::default(),
                         segments: vec![hir::PathSegment {
                             ident: path_name.into(),
+                            hir_id: Default::default(),
                             args: None,
                             infer_args: true,
                             res: hir::Res::Error,
@@ -504,8 +508,10 @@ fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
     let wrapper_path = hir::TypeExpr {
         hir_id: hid(11),
         kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            span: Default::default(),
             segments: vec![hir::PathSegment {
                 ident: "Wrapper".into(),
+                hir_id: Default::default(),
                 args: Some(hir::GenericArgs {
                     args: vec![
                         hir::GenericArg::Lifetime("'a".into()),
@@ -580,8 +586,10 @@ fn typed_command_helper_local_preserves_method_def_identity() {
     let command_path = || hir::TypeExpr {
         hir_id: hid(60),
         kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            span: Default::default(),
             segments: vec![hir::PathSegment {
                 ident: "Command".into(),
+                hir_id: Default::default(),
                 args: None,
                 infer_args: true,
                 res: hir::Res::Def(command_id.clone()),
@@ -635,8 +643,10 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                     hir_id: hid(21),
                     kind: hir::ExprKind::Struct(
                         hir::QPath::resolved(hir::Path {
+                            span: Default::default(),
                             segments: vec![hir::PathSegment {
                                 ident: "Command".into(),
+                                hir_id: Default::default(),
                                 args: None,
                                 infer_args: true,
                                 res: hir::Res::Def(command_id.clone()),
@@ -714,8 +724,10 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                 hir_id: hid(38),
                                 kind: hir::ExprKind::Struct(
                                     hir::QPath::resolved(hir::Path {
+                                        span: Default::default(),
                                         segments: vec![hir::PathSegment {
                                             ident: "Command".into(),
+                                            hir_id: Default::default(),
                                             args: None,
                                             infer_args: true,
                                             res: hir::Res::Def(command_id.clone()),
@@ -762,8 +774,10 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                         hir_id: hid(45),
                                         kind: hir::ExprKind::Path(hir::QPath::resolved(
                                             hir::Path {
+                                                span: Default::default(),
                                                 segments: vec![hir::PathSegment {
                                                     ident: "helper".into(),
+                                                    hir_id: Default::default(),
                                                     args: None,
                                                     infer_args: true,
                                                     res: hir::Res::Def(helper_id.clone()),
@@ -798,15 +812,18 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                                         hir_id: hid(52),
                                         kind: hir::ExprKind::Path(hir::QPath::resolved(
                                             hir::Path {
+                                                span: Default::default(),
                                                 segments: vec![
                                                     hir::PathSegment {
                                                         ident: "Command".into(),
+                                                        hir_id: Default::default(),
                                                         args: None,
                                                         infer_args: true,
                                                         res: hir::Res::Def(command_id.clone()),
                                                     },
                                                     hir::PathSegment {
                                                         ident: "new".into(),
+                                                        hir_id: Default::default(),
                                                         args: None,
                                                         infer_args: true,
                                                         res: hir::Res::Error,
@@ -832,8 +849,10 @@ fn typed_command_helper_local_preserves_method_def_identity() {
                         Box::new(hir::Expr {
                             hir_id: hid(51),
                             kind: hir::ExprKind::Path(hir::QPath::resolved(hir::Path {
+                                span: Default::default(),
                                 segments: vec![hir::PathSegment {
                                     ident: "cmd".into(),
+                                    hir_id: Default::default(),
                                     args: None,
                                     infer_args: true,
                                     res: hir::Res::Local(hid(43)),

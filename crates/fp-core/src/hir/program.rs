@@ -190,6 +190,7 @@ impl SharedHirProgram {
                 if matches!(path.res, crate::hir::Res::Module(_)) =>
             {
                 crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+                    span: Default::default(),
                     res: crate::hir::Res::Error,
                     segments: Vec::new(),
                 })
@@ -345,6 +346,7 @@ impl HirProgram {
             }
         }
         crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+            span: Default::default(),
             res: crate::hir::Res::Module(module),
             segments: Vec::new(),
         })
@@ -446,6 +448,7 @@ impl HirProgram {
                     }
                 }
                 crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+                    span: Default::default(),
                     res: crate::hir::Res::Module(module_id),
                     segments: Vec::new(),
                 })
