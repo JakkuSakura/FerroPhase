@@ -112,7 +112,7 @@ impl LocalResolver {
                     resolved.segments = vec![fp_core::hir::PathSegment {
                         ident: path.segments[0].as_str().into(),
                         hir_id: Default::default(),
-                        args: fp_core::hir::GenericArgs::default(),
+                        args: None,
                         infer_args: true,
                         delegation_child_segment: false,
                         res: base_res,
@@ -199,7 +199,7 @@ mod tests {
                 segments: vec![fp_core::hir::PathSegment {
                     ident: "T".into(),
                     hir_id: Default::default(),
-                    args: fp_core::hir::GenericArgs::default(),
+                    args: None,
                     infer_args: true,
                     delegation_child_segment: false,
                     res: Res::Generic(generic.clone()),

@@ -953,7 +953,7 @@ impl HirTypeChecker {
                     segments: vec![hir::PathSegment {
                         ident: hir::Symbol::new("Self"),
                         hir_id: Default::default(),
-                        args: hir::GenericArgs::default(),
+                        args: None,
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Def(trait_def_id.clone()),
@@ -3280,15 +3280,14 @@ impl HirTypeChecker {
         // nominal type path may have module prefixes, so select the first
         // parameterized segment rather than treating the path as one flat
         // argument list.
-        let args = match path.segments.iter().find(|segment| {
-            !segment.infer_args
-                || !segment.args.is_empty()
-                || !segment.args.constraints.is_empty()
-                || segment.args.parenthesized != hir::GenericArgsParentheses::No
-        }) {
+        let args = match path
+            .segments
+            .iter()
+            .find_map(|segment| segment.args.as_ref())
+        {
             Some(args) => {
-                let mut checked = Vec::with_capacity(args.args.args.len());
-                for arg in &args.args.args {
+                let mut checked = Vec::with_capacity(args.args.len());
+                for arg in &args.args {
                     let arg = match arg {
                         // Lifetimes remain source-visible HIR arguments, as
                         // in rustc, but this compiler erases lifetime
@@ -3297,10 +3296,10 @@ impl HirTypeChecker {
                         // contribute to trailing-default alignment here.
                         hir::GenericArg::Lifetime(_) => continue,
                         hir::GenericArg::Type(ty) => {
-                            GenericArg::Type(self.check_type_expr(ty.as_ref()).await?)
+                            GenericArg::Type(self.check_type_expr(ty).await?)
                         }
                         hir::GenericArg::Const(expr) => {
-                            GenericArg::Const(self.const_arg_kind(expr.as_ref()))
+                            GenericArg::Const(self.const_arg_kind(expr))
                         }
                         hir::GenericArg::Infer(infer) => match infer.kind {
                             hir::InferArgKind::TypeOrConst => GenericArg::Type(Ty {
@@ -4323,25 +4322,19 @@ impl HirTypeChecker {
                 is_recovered: false,
             })
             .collect();
-        let explicit_args = path.segments.iter().find(|segment| {
-            !segment.infer_args
-                || !segment.args.is_empty()
-                || !segment.args.constraints.is_empty()
-                || segment.args.parenthesized != hir::GenericArgsParentheses::No
-        });
+        let explicit_args = path
+            .segments
+            .iter()
+            .find_map(|segment| segment.args.as_ref());
         let args = if let Some(args) = explicit_args {
-            let mut checked = Vec::with_capacity(args.args.args.len());
-            for arg in &args.args.args {
+            let mut checked = Vec::with_capacity(args.args.len());
+            for arg in &args.args {
                 let arg = match arg {
                     // See `path_ty`: nominal substitutions contain only
                     // parameter kinds represented by `hir::Generics`.
                     hir::GenericArg::Lifetime(_) => continue,
-                    hir::GenericArg::Type(ty) => {
-                        GenericArg::Type(self.check_type_expr(ty.as_ref()).await?)
-                    }
-                    hir::GenericArg::Const(expr) => {
-                        GenericArg::Const(self.const_arg_kind(expr.as_ref()))
-                    }
+                    hir::GenericArg::Type(ty) => GenericArg::Type(self.check_type_expr(ty).await?),
+                    hir::GenericArg::Const(expr) => GenericArg::Const(self.const_arg_kind(expr)),
                     hir::GenericArg::Infer(infer) => match infer.kind {
                         hir::InferArgKind::TypeOrConst => GenericArg::Type(Ty {
                             kind: TyKind::Infer(ty::InferTy::FreshTy(infer.hir_id.local_id())),
@@ -4766,14 +4759,7 @@ impl HirTypeChecker {
                         hir::TypeExprKind::Path(path) => path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find(|segment| {
-                                    !segment.infer_args
-                                        || !segment.args.is_empty()
-                                        || !segment.args.constraints.is_empty()
-                                        || segment.args.parenthesized
-                                            != hir::GenericArgsParentheses::No
-                                })
-                                .map(|segment| &segment.args)
+                                .find_map(|segment| segment.args.as_ref())
                         }),
                         _ => None,
                     })
@@ -4936,14 +4922,7 @@ impl HirTypeChecker {
                             .and_then(|path| {
                                 path.segments
                                     .iter()
-                                    .find(|segment| {
-                                        !segment.infer_args
-                                            || !segment.args.is_empty()
-                                            || !segment.args.constraints.is_empty()
-                                            || segment.args.parenthesized
-                                                != hir::GenericArgsParentheses::No
-                                    })
-                                    .map(|segment| &segment.args)
+                                    .find_map(|segment| segment.args.as_ref())
                             })
                             .into_iter()
                             .flat_map(|args| &args.args)

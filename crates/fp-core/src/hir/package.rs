@@ -1028,7 +1028,7 @@ mod tests {
                 segments: vec![PathSegment {
                     ident: name.into(),
                     hir_id: HirId::default(),
-                    args: GenericArgs::default(),
+                    args: None,
                     infer_args: true,
                     delegation_child_segment: false,
                     res: res.clone(),

@@ -705,7 +705,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "Alias".into(),
                     hir_id: Default::default(),
-                    args: hir::GenericArgs::default(),
+                    args: None,
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Def(target),
@@ -820,7 +820,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "Item".into(),
                     hir_id: Default::default(),
-                    args: hir::GenericArgs::default(),
+                    args: None,
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Def(target),
@@ -871,7 +871,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "alias".into(),
                     hir_id: Default::default(),
-                    args: hir::GenericArgs::default(),
+                    args: None,
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Module(hir::DefId::local(1)),

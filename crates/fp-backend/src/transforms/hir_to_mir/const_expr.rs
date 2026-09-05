@@ -314,7 +314,7 @@ impl HirToMirLowerer {
                     .and_then(|path| {
                         path.segments
                             .iter()
-                            .find_map(|segment| segment.explicit_args())
+                            .find_map(|segment| segment.args.as_ref())
                     })
                     .map(|args| self.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
@@ -991,7 +991,7 @@ impl HirToMirLowerer {
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
                 let tail = path.segments().last()?;
-                let args = tail.explicit_args()?;
+                let args = tail.args.as_ref()?;
                 match tail.ident.as_str() {
                     "Vec" if args.args.len() == 1 => {
                         let hir::GenericArg::Type(elem) = &args.args[0] else {
@@ -1033,7 +1033,7 @@ impl HirToMirLowerer {
                     hir::TypeExprKind::Path(path) => {
                         let tail = path.segments().last()?;
                         if tail.ident.as_str() == "Vec" {
-                            let args = tail.explicit_args()?;
+                            let args = tail.args.as_ref()?;
                             if args.args.len() == 1 {
                                 if let hir::GenericArg::Type(inner) = &args.args[0] {
                                     entry_ty_expr = Some(inner.as_ref());
@@ -1053,7 +1053,7 @@ impl HirToMirLowerer {
                 if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
                     let tail = path.segments().last()?;
                     if tail.ident.as_str() == "Expr" {
-                        let args = tail.explicit_args()?;
+                        let args = tail.args.as_ref()?;
                         if args.args.len() == 1 {
                             if let hir::GenericArg::Type(inner) = &args.args[0] {
                                 entry_ty_expr = inner.as_ref();
@@ -1066,7 +1066,7 @@ impl HirToMirLowerer {
                     hir::TypeExprKind::Path(path) => {
                         let tail = path.segments().last()?;
                         if tail.ident.as_str() == "HashMapEntry" {
-                        let args = tail.explicit_args()?;
+                            let args = tail.args.as_ref()?;
                             if args.args.len() == 2 {
                                 if let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =
                                     (&args.args[0], &args.args[1])

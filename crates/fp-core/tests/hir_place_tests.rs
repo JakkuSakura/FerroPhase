@@ -1,7 +1,6 @@
 use fp_core::hir::place::{HirAssignTargetProjection, project_hir_assign_target};
 use fp_core::hir::{
-    CallArg, Expr, ExprKind, GenericArgs, IntrinsicCallExpr, Path, PathSegment, Res, SliceExpr,
-    Symbol,
+    CallArg, Expr, ExprKind, IntrinsicCallExpr, Path, PathSegment, Res, SliceExpr, Symbol,
 };
 use fp_core::intrinsics::{CallKind, IntrinsicKind};
 use fp_core::span::Span;
@@ -26,7 +25,7 @@ fn path_expr(hir_id: u32, name: &str) -> Expr {
             segments: vec![PathSegment {
                 ident: Symbol::new(name),
                 hir_id: Default::default(),
-                args: GenericArgs::default(),
+                args: None,
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Error,

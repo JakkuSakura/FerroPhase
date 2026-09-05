@@ -1536,7 +1536,7 @@ impl HirToMirLowerer {
             .segments()
             .iter()
             .rev()
-            .find_map(|segment| segment.explicit_args());
+            .find_map(|segment| segment.args.as_ref());
         if path_args.is_none() {
             if actual_type_args.len() == generics.len() {
                 for (name, actual_arg) in generics.iter().zip(actual_type_args) {
@@ -1584,9 +1584,7 @@ impl HirToMirLowerer {
             let hir::TypeExprKind::Path(type_path) = &type_arg.kind else {
                 continue;
             };
-            if type_path.segments().len() != 1
-                || type_path.segments()[0].explicit_args().is_some()
-            {
+            if type_path.segments().len() != 1 || type_path.segments()[0].args.is_some() {
                 continue;
             }
             let name = type_path.segments()[0].ident.as_str();
@@ -1838,7 +1836,7 @@ impl HirToMirLowerer {
         if segment.ident.as_str() != "Expr" {
             return None;
         }
-        let args = segment.explicit_args()?;
+        let args = segment.args.as_ref()?;
         let mut type_args = args.args.iter().filter_map(|arg| match arg {
             hir::GenericArg::Type(ty) => Some(ty.as_ref()),
             _ => None,
@@ -2032,7 +2030,7 @@ impl HirToMirLowerer {
                         if let Some(path_args) = path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.explicit_args())
+                                .find_map(|segment| segment.args.as_ref())
                         }) {
                             let path_type_args = path_args
                                 .args
@@ -2066,7 +2064,7 @@ impl HirToMirLowerer {
                         if let Some(path_args) = path.path().and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.explicit_args())
+                                .find_map(|segment| segment.args.as_ref())
                         }) {
                             let path_type_args = path_args
                                 .args
@@ -2101,7 +2099,7 @@ impl HirToMirLowerer {
                 if let Some(path_args) = path.path().and_then(|path| {
                     path.segments
                         .iter()
-                        .find_map(|segment| segment.explicit_args())
+                        .find_map(|segment| segment.args.as_ref())
                 }) {
                     let def_id = path.res_ref().as_ref().and_then(|res| match res {
                         hir::Res::Def(def_id) => Some(def_id.clone()),
@@ -2152,10 +2150,7 @@ impl HirToMirLowerer {
                     .last()
                     .map(|seg| seg.ident.as_str())
                     .unwrap_or("");
-                let is_generic = path
-                    .segments()
-                    .iter()
-                    .all(|seg| seg.explicit_args().is_none())
+                let is_generic = path.segments().iter().all(|seg| seg.args.is_none())
                     && generics.iter().any(|g| g == name);
                 if is_generic {
                     let actual_is_opaque = self.is_opaque_ty(actual_ty);
@@ -2196,7 +2191,7 @@ impl HirToMirLowerer {
                 let path_args = path.path().and_then(|path| {
                     path.segments
                         .iter()
-                        .find_map(|segment| segment.explicit_args())
+                        .find_map(|segment| segment.args.as_ref())
                 });
                 if let Some(path_args) = path_args {
                     if let Some(adt_substs) = match &actual_ty.kind {
@@ -2262,7 +2257,7 @@ impl HirToMirLowerer {
                                         };
                                         if let hir::TypeExprKind::Path(type_path) = &type_arg.kind {
                                             if type_path.segments().len() == 1
-                                                && type_path.segments()[0].explicit_args().is_none()
+                                                && type_path.segments()[0].args.is_none()
                                             {
                                                 let name = type_path.segments()[0].ident.as_str();
                                                 if let Some(existing) = substs.get(name) {
@@ -3245,7 +3240,7 @@ impl HirToMirLowerer {
             }
             hir::TypeExprKind::Path(path) => {
                 if let Some(first) = path.segments().first() {
-                    if path.segments().len() == 1 && first.explicit_args().is_none() {
+                    if path.segments().len() == 1 && first.args.is_none() {
                         if let Some(subst) = substs.get(first.ident.as_str()) {
                             return subst.clone();
                         }
@@ -3259,7 +3254,7 @@ impl HirToMirLowerer {
                             .and_then(|path| {
                                 path.segments
                                     .iter()
-                                    .find_map(|segment| segment.explicit_args())
+                                    .find_map(|segment| segment.args.as_ref())
                             })
                             .map(|args| {
                                 args.args
@@ -3294,7 +3289,7 @@ impl HirToMirLowerer {
                             .and_then(|path| {
                                 path.segments
                                     .iter()
-                                    .find_map(|segment| segment.explicit_args())
+                                    .find_map(|segment| segment.args.as_ref())
                             })
                             .map(|args| {
                                 args.args
@@ -4567,7 +4562,7 @@ impl HirToMirLowerer {
                         .and_then(|path| {
                             path.segments
                                 .iter()
-                                .find_map(|segment| segment.explicit_args())
+                                .find_map(|segment| segment.args.as_ref())
                         })
                         .map(|args| {
                             args.args

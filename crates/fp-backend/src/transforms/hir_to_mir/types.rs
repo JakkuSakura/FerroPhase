@@ -499,10 +499,11 @@ impl HirToMirLowerer {
                 hir::TypeExprKind::Path(path) => {
                     if let Some(tail) = path.segments().last() {
                         if tail.ident.as_str() == "Vec" {
-                            let args = &tail.args;
-                            if args.args.len() == 1 {
-                                if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                    entry_ty_expr = Some(inner.as_ref());
+                            if let Some(args) = &tail.args {
+                                if args.args.len() == 1 {
+                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                        entry_ty_expr = Some(inner.as_ref());
+                                    }
                                 }
                             }
                         }
@@ -518,10 +519,11 @@ impl HirToMirLowerer {
                 if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
                     if let Some(tail) = path.segments().last() {
                         if tail.ident.as_str() == "Expr" {
-                            let args = &tail.args;
-                            if args.args.len() == 1 {
-                                if let hir::GenericArg::Type(inner) = &args.args[0] {
-                                    entry_ty_expr = inner.as_ref();
+                            if let Some(args) = &tail.args {
+                                if args.args.len() == 1 {
+                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                        entry_ty_expr = inner.as_ref();
+                                    }
                                 }
                             }
                         }
@@ -534,15 +536,16 @@ impl HirToMirLowerer {
                     hir::TypeExprKind::Path(path) => {
                         if let Some(tail) = path.segments().last() {
                             if tail.ident.as_str() == "HashMapEntry" {
-                                let args = &tail.args;
-                                if args.args.len() == 2 {
-                                    if let (
-                                        hir::GenericArg::Type(key),
-                                        hir::GenericArg::Type(value),
-                                    ) = (&args.args[0], &args.args[1])
-                                    {
-                                        key_ty_expr = Some(key.as_ref());
-                                        value_ty_expr = Some(value.as_ref());
+                                if let Some(args) = &tail.args {
+                                    if args.args.len() == 2 {
+                                        if let (
+                                            hir::GenericArg::Type(key),
+                                            hir::GenericArg::Type(value),
+                                        ) = (&args.args[0], &args.args[1])
+                                        {
+                                            key_ty_expr = Some(key.as_ref());
+                                            value_ty_expr = Some(value.as_ref());
+                                        }
                                     }
                                 }
                             }
@@ -792,7 +795,7 @@ impl HirToMirLowerer {
                     if a_seg.ident != b_seg.ident {
                         return false;
                     }
-                    match (a_seg.explicit_args(), b_seg.explicit_args()) {
+                    match (&a_seg.args, &b_seg.args) {
                         (None, None) => {}
                         (Some(a_args), Some(b_args)) => {
                             if a_args.args.len() != b_args.args.len() {
@@ -801,7 +804,7 @@ impl HirToMirLowerer {
                             for (a_arg, b_arg) in a_args.args.iter().zip(b_args.args.iter()) {
                                 match (a_arg, b_arg) {
                                     (hir::GenericArg::Type(a_ty), hir::GenericArg::Type(b_ty)) => {
-                                        if !self.type_exprs_equivalent(a_ty.as_ref(), b_ty.as_ref()) {
+                                        if !self.type_exprs_equivalent(a_ty, b_ty) {
                                             return false;
                                         }
                                     }
@@ -1129,7 +1132,7 @@ impl HirToMirLowerer {
                 let args = path
                     .segments
                     .iter()
-                    .find_map(|segment| segment.explicit_args())
+                    .find_map(|segment| segment.args.as_ref())
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
                 if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
@@ -1141,7 +1144,7 @@ impl HirToMirLowerer {
                 let args = path
                     .segments
                     .iter()
-                    .find_map(|segment| segment.explicit_args())
+                    .find_map(|segment| segment.args.as_ref())
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
                 if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
@@ -1177,7 +1180,8 @@ impl HirToMirLowerer {
             let name = segment.ident.as_str();
             if name == "Vec" || name == "List" {
                 let args = segment
-                    .explicit_args()
+                    .args
+                    .as_ref()
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
                 if let Some(elem_ty) = args.first().cloned() {
@@ -1190,7 +1194,8 @@ impl HirToMirLowerer {
             }
             if name == "HashMap" {
                 let args = segment
-                    .explicit_args()
+                    .args
+                    .as_ref()
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
                 if args.len() == 2 {
@@ -1216,7 +1221,7 @@ impl HirToMirLowerer {
                     let args = path
                         .segments
                         .iter()
-                        .find_map(|segment| segment.explicit_args())
+                        .find_map(|segment| segment.args.as_ref())
                         .map(|args| self.lower_generic_args(Some(args), span))
                         .unwrap_or_default();
                     if let Some(layout) =
@@ -1230,7 +1235,7 @@ impl HirToMirLowerer {
                     let args = path
                         .segments
                         .iter()
-                        .find_map(|segment| segment.explicit_args())
+                        .find_map(|segment| segment.args.as_ref())
                         .map(|args| self.lower_generic_args(Some(args), span))
                         .unwrap_or_default();
                     if let Some(layout) = self.enum_layout_for_instance(def_id.clone(), &args, span)
