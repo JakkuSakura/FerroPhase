@@ -1183,7 +1183,11 @@ impl<'a> BodyBuilder<'a> {
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         let mut resolved_path = path.clone();
                         if let hir::QPath::Resolved(_, inner) = &mut resolved_path {
-                            self.resolve_self_path(inner);
+                            let mut qualified = hir::QPath::resolved(inner.clone());
+                            self.resolve_self_path(&mut qualified);
+                            if let hir::QPath::Resolved(_, updated) = qualified {
+                                *inner = updated;
+                            }
                         }
                         let mut const_info = None;
                         let mut const_body_len = None;

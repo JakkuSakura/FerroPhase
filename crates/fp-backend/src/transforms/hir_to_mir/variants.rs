@@ -9,7 +9,10 @@ use fp_core::span::Span;
 use std::collections::HashMap;
 
 impl<'a> BodyBuilder<'a> {
-    pub(super) fn enum_variant_info_from_qpath(&self, path: &hir::QPath) -> Option<EnumVariantInfo> {
+    pub(super) fn enum_variant_info_from_qpath(
+        &self,
+        path: &hir::QPath,
+    ) -> Option<EnumVariantInfo> {
         match path {
             hir::QPath::Resolved(_, path) => self.enum_variant_info_from_path(path),
             hir::QPath::TypeRelative(_, segment) => {
@@ -808,7 +811,11 @@ impl<'a> BodyBuilder<'a> {
         span: Span,
     ) -> Result<()> {
         let mut resolved_path = path.clone();
-        self.resolve_self_path(&mut resolved_path);
+        let mut qualified = hir::QPath::resolved(resolved_path.clone());
+        self.resolve_self_path(&mut qualified);
+        if let hir::QPath::Resolved(_, updated) = qualified {
+            resolved_path = updated;
+        }
         let mut generic_args = resolved_path
             .segments()
             .iter()
