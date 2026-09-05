@@ -683,22 +683,22 @@ pub struct FnPtrType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Path {
+pub struct Path<R = Res> {
     /// Source span covering the complete path.
     pub span: Span,
     /// Resolution of the path's terminal item for an ordinary `QPath::Resolved`
     /// path. A `Path` always owns the complete sequence of ordinary segments;
     /// an associated-item tail is represented by `QPath::TypeRelative`
     /// instead of being encoded as a truncated `Path`.
-    pub res: Res,
+    pub res: R,
     /// Complete path segments, matching rustc HIR's `Path`: module/type
     /// prefixes and the terminal item are retained in order. Generic
     /// arguments stay attached to their corresponding segment.
     pub segments: Vec<PathSegment>,
 }
 
-impl Path {
-    pub fn new(res: Res, segments: Vec<PathSegment>) -> Self {
+impl<R> Path<R> {
+    pub fn new(res: R, segments: Vec<PathSegment>) -> Self {
         Self {
             span: Span::null(),
             res,
@@ -706,11 +706,11 @@ impl Path {
         }
     }
 
-    pub fn with_span(span: Span, res: Res, segments: Vec<PathSegment>) -> Self {
+    pub fn with_span(span: Span, res: R, segments: Vec<PathSegment>) -> Self {
         Self { span, res, segments }
     }
 
-    pub fn base(res: Res) -> Self {
+    pub fn base(res: R) -> Self {
         Self::new(res, Vec::new())
     }
 
@@ -723,11 +723,13 @@ impl Path {
         &mut self.segments
     }
 
-    pub fn res_ref(&self) -> &Res {
+    pub fn res_ref(&self) -> &R {
         &self.res
     }
+}
 
-    pub fn res(&self) -> Res {
+impl<R: Clone> Path<R> {
+    pub fn res(&self) -> R {
         self.res.clone()
     }
 }
@@ -2048,7 +2050,7 @@ impl FnPtrType {
     }
 }
 
-impl Path {
+impl<R> Path<R> {
     pub fn span(&self) -> Span {
         self.span
             .or(Span::union(self.segments.iter().map(PathSegment::span)))
@@ -2256,6 +2258,14 @@ mod path_tests {
         assert_eq!(segment.args(), GenericArgs::NONE);
         assert!(segment.args().args.is_empty());
         assert!(segment.infer_args);
+    }
+
+    #[test]
+    fn path_resolution_payload_is_generic_like_rustc() {
+        let path: Path<Option<super::Res>> = Path::new(None, vec![]);
+
+        assert_eq!(path.res_ref(), &None);
+        assert_eq!(path.res(), None);
     }
 
     #[test]
