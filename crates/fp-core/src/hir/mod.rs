@@ -571,9 +571,9 @@ pub struct Pat {
 pub enum PatKind {
     Wild,
     Binding { name: Symbol, mutable: bool },
-    Struct(Path, Vec<PatField>, bool),
-    TupleStruct(Path, Vec<Pat>),
-    Variant(Path),
+    Struct(QPath, Vec<PatField>, bool),
+    TupleStruct(QPath, Vec<Pat>),
+    Variant(QPath),
     Tuple(Vec<Pat>),
     Lit(Lit),
 }
@@ -1756,7 +1756,7 @@ impl ExprKind {
             ),
             ExprKind::Cast(expr, ty) => Span::union([expr.span(), ty.span()]),
             ExprKind::Struct(path, fields) => Span::union(
-                Some(path.span())
+                Some(path.qself_span())
                     .into_iter()
                     .chain(fields.iter().map(StructExprField::span)),
             ),
@@ -1950,7 +1950,7 @@ impl PatKind {
             PatKind::Wild => Span::null(),
             PatKind::Binding { .. } => Span::null(),
             PatKind::Struct(path, fields, _) => Span::union(
-                Some(path.span())
+                Some(path.qself_span())
                     .into_iter()
                     .chain(fields.iter().map(PatField::span)),
             ),
@@ -1959,7 +1959,7 @@ impl PatKind {
                     .into_iter()
                     .chain(pats.iter().map(Pat::span)),
             ),
-            PatKind::Variant(path) => path.span(),
+            PatKind::Variant(path) => path.qself_span(),
             PatKind::Tuple(pats) => Span::union(pats.iter().map(Pat::span)),
             PatKind::Lit(_) => Span::null(),
         }

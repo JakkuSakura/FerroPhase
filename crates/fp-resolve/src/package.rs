@@ -1,16 +1,16 @@
-use super::Resolver;
 use super::worklist::ResolutionWorklist;
+use super::Resolver;
 use fp_core::ast::package::PackageId;
 use fp_core::ast::path::InPackagePath;
 use fp_core::ast::program::AstProgram;
 use fp_core::cfg::CfgFilter;
 use fp_core::hir;
-use fp_core::hir::HirProgram;
-use fp_core::hir::Symbol;
 use fp_core::hir::resolve::{
     Binding, DeclarationOutcome, DeclarationRules, ModuleData, Namespace, ResolutionResult,
     ResolutionRules,
 };
+use fp_core::hir::HirProgram;
+use fp_core::hir::Symbol;
 use fp_core::span::Span;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::VecDeque;
@@ -503,7 +503,44 @@ impl InPackageResolver {
         if let ItemKind::Import(import) = item.kind() {
             let mut leaves = Vec::new();
             let base = match &import.style {
-                fp_core::ast::ItemImportStyle::Plain => module.clone(),
+                fp_core::ast::ItemImportStyle::Plain => {
+                    // In Rust 2018+, an initial identifier in a `use` path
+                    // may name an external crate from the extern prelude.
+                    // Treat that crate name as rooted instead of appending it
+                    // to the importing module (for example, `use core::ptr`
+                    // inside `alloc::sync` must target `core::ptr`, not
+                    // `alloc::sync::core::ptr`).
+                    let starts_at_external = match &import.tree {
+                        fp_core::ast::ItemImportTree::Ident(ident)
+                        | fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
+                            from: ident,
+                            ..
+                        }) => self.hir_program.borrow().packages.keys().any(|package| {
+                            hir::HirProgram::external_crate_name(package) == ident.as_str()
+                        }),
+                        fp_core::ast::ItemImportTree::Path(path) => path
+                            .segments
+                            .first()
+                            .and_then(|segment| match segment {
+                                fp_core::ast::ItemImportTree::Ident(ident)
+                                | fp_core::ast::ItemImportTree::Rename(
+                                    fp_core::ast::ItemImportRename { from: ident, .. },
+                                ) => Some(ident.as_str()),
+                                _ => None,
+                            })
+                            .is_some_and(|name| {
+                                self.hir_program.borrow().packages.keys().any(|package| {
+                                    hir::HirProgram::external_crate_name(package) == name
+                                })
+                            }),
+                        _ => false,
+                    };
+                    if starts_at_external {
+                        InPackagePath::new(Vec::new())
+                    } else {
+                        module.clone()
+                    }
+                }
                 fp_core::ast::ItemImportStyle::From(from) => {
                     let mut base = module.clone();
                     for _ in 0..from.level {

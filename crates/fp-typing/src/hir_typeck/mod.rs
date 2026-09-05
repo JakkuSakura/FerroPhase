@@ -5855,8 +5855,10 @@ impl HirTypeChecker {
                     }
                 }
                 hir::PatKind::Struct(path, fields, _) => {
-                    if self.enum_variant_ty(path).await?.is_some() {
-                        let (_, payloads) = self.variant_payload_types(path, &adt_ty).await?;
+                    if self.enum_variant_ty_for_qpath(path).await?.is_some() {
+                        let (_, payloads) = self
+                            .variant_payload_types_for_qpath(path, &adt_ty)
+                            .await?;
                         let [payload] = payloads.as_slice() else {
                             self.record_error(
                                 "struct enum pattern requires exactly one payload type",
@@ -5868,10 +5870,15 @@ impl HirTypeChecker {
                             self.bind_pattern(&field.pat, field_ty).await?;
                         }
                     } else {
-                        let struct_ty = if path.segments.is_empty() {
+                        let struct_ty = if path.segments().is_empty() {
                             adt_ty.clone()
                         } else {
-                            self.path_ty(path).await?
+                            match path {
+                                hir::QPath::Resolved(_, path) => self.path_ty(path).await?,
+                                hir::QPath::TypeRelative(receiver, _) => {
+                                    self.check_type_expr(receiver).await?
+                                }
+                            }
                         };
                         self.require_same_adt(&adt_ty, &struct_ty, "struct pattern")?;
                         for field in fields {
@@ -5881,7 +5888,9 @@ impl HirTypeChecker {
                     }
                 }
                 hir::PatKind::TupleStruct(path, patterns) => {
-                    let (_, payloads) = self.variant_payload_types(path, &adt_ty).await?;
+                    let (_, payloads) = self
+                        .variant_payload_types_for_qpath(path, &adt_ty)
+                        .await?;
                     if patterns.len() != payloads.len() {
                         self.record_error("tuple struct pattern arity does not match variant");
                         return Ok(());
@@ -5891,7 +5900,9 @@ impl HirTypeChecker {
                     }
                 }
                 hir::PatKind::Variant(path) => {
-                    let (_, payloads) = self.variant_payload_types(path, &adt_ty).await?;
+                    let (_, payloads) = self
+                        .variant_payload_types_for_qpath(path, &adt_ty)
+                        .await?;
                     if !payloads.is_empty() {
                         self.record_error("payload variant requires a tuple or struct pattern");
                     }
@@ -6044,6 +6055,116 @@ impl HirTypeChecker {
         } else {
             Ok(None)
         }
+    }
+
+    async fn enum_variant_ty_for_qpath(&mut self, path: &hir::QPath) -> Result<Option<Ty>> {
+        let Some((item, _)) = self.enum_variant_for_qpath(path).await else {
+            return Ok(None);
+        };
+        let hir::QPath::Resolved(_, resolved) = path else {
+            return Ok(Some(self.path_ty_for_qpath_base(path).await?));
+        };
+        Ok(Some(self.enum_item_ty(&item, resolved).await?))
+    }
+
+    async fn path_ty_for_qpath_base(&mut self, path: &hir::QPath) -> Result<Ty> {
+        match path {
+            hir::QPath::Resolved(_, resolved) => self.path_ty(resolved).await,
+            hir::QPath::TypeRelative(receiver, _) => self.check_type_expr(receiver).await,
+        }
+    }
+
+    async fn enum_variant_for_qpath(
+        &mut self,
+        path: &hir::QPath,
+    ) -> Option<(hir::Item, hir::EnumVariant)> {
+        match path {
+            hir::QPath::Resolved(_, resolved) => {
+                if let hir::Res::Def(def_id) = resolved.res_ref()
+                    && let Some(result) = self.enum_variant_by_def_id(def_id.clone())
+                {
+                    return Some(result);
+                }
+                let hir::Res::Def(enum_id) = resolved.res_ref() else {
+                    return None;
+                };
+                let item = self.program_rc().item(enum_id.clone())?;
+                let hir::ItemKind::Enum(def) = &item.kind else {
+                    return None;
+                };
+                let name = resolved.segments.last()?.ident.clone();
+                let variant = def
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == name)
+                    .cloned()?;
+                Some((item, variant))
+            }
+            hir::QPath::TypeRelative(receiver, segment) => {
+                let receiver = self.check_type_expr(receiver).await.ok()?;
+                let TyKind::Adt(adt, _) = receiver.kind else {
+                    return None;
+                };
+                let item = self.program_rc().item(adt.did)?;
+                let hir::ItemKind::Enum(def) = &item.kind else {
+                    return None;
+                };
+                let variant = def
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == segment.ident)
+                    .cloned()?;
+                Some((item, variant))
+            }
+        }
+    }
+
+    async fn variant_payload_types_for_qpath(
+        &mut self,
+        path: &hir::QPath,
+        scrutinee: &Ty,
+    ) -> Result<(Ty, Vec<Ty>)> {
+        let Some((item, variant)) = self.enum_variant_for_qpath(path).await else {
+            return Ok((self.error_ty("variant pattern is unresolved"), Vec::new()));
+        };
+        let hir::ItemKind::Enum(def) = &item.kind else {
+            unreachable!("enum_variant_for_qpath only returns enum variants");
+        };
+        let enum_ty = scrutinee.clone();
+        let matches_enum = matches!(
+            &scrutinee.kind,
+            TyKind::Adt(adt, _) if adt.did == item.def_id
+        );
+        if !matches_enum {
+            return Ok((
+                self.error_ty(format!(
+                    "variant pattern does not match scrutinee type (owner={}, scrutinee={:?})",
+                    item.def_id, scrutinee.kind
+                )),
+                Vec::new(),
+            ));
+        }
+        let scrutinee_args = match &scrutinee.kind {
+            TyKind::Adt(_, args) => args,
+            _ => unreachable!("variant pattern ADT was checked above"),
+        };
+        let Some(payload) = &variant.payload else {
+            return Ok((enum_ty, Vec::new()));
+        };
+        let mut scope = self.with_generics(&def.generics);
+        let payload = scope.check_type_expr(payload).await?;
+        for (param, bounds) in &scope.projection_param_bounds {
+            self.projection_param_bounds
+                .entry(param.clone())
+                .or_default()
+                .extend(bounds.clone());
+        }
+        let payload = scope.substitute_params(payload, scrutinee_args, &def.generics.params);
+        let payloads = match payload.kind {
+            TyKind::Tuple(fields) => fields.into_iter().map(|field| *field).collect(),
+            _ => vec![payload],
+        };
+        Ok((enum_ty, payloads))
     }
 
     async fn enum_variant_ty(&mut self, path: &hir::Path) -> Result<Option<Ty>> {

@@ -871,7 +871,7 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
             };
             format!(
                 "{} {{ {}{}{} }}",
-                fmt_path(path, ctx),
+                fmt_qpath(path, ctx),
                 fields,
                 separator,
                 rest
@@ -883,9 +883,9 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
                 .map(|pat| format_pat(pat, ctx))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{}({})", fmt_path(path, ctx), parts)
+            format!("{}({})", fmt_qpath(path, ctx), parts)
         }
-        PatKind::Variant(path) => fmt_path(path, ctx),
+        PatKind::Variant(path) => fmt_qpath(path, ctx),
         PatKind::Tuple(parts) => {
             let parts = parts
                 .iter()

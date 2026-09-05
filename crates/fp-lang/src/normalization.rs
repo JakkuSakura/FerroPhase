@@ -276,7 +276,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let replacement = Expr::from(ExprKind::Invoke(invoke));
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if macro_name == "assert" {
+            if macro_name == "assert" || macro_name == "debug_assert" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.is_empty() {
                     return Err(fp_core::error::Error::from(
@@ -293,7 +293,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let replacement = assert_macro_with_panic(cond, panic_expr);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if macro_name == "assert_eq" {
+            if macro_name == "assert_eq" || macro_name == "debug_assert_eq" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() < 2 {
                     return Err(fp_core::error::Error::from(
@@ -316,7 +316,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 };
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if macro_name == "assert_ne" {
+            if macro_name == "assert_ne" || macro_name == "debug_assert_ne" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() < 2 {
                     return Err(fp_core::error::Error::from(
@@ -1522,6 +1522,28 @@ mod tests {
         };
         assert_eq!(call.kind, fp_core::intrinsics::IntrinsicKind::Print);
         assert_eq!(call.args.len(), 1);
+    }
+
+    #[test]
+    fn normalize_debug_assert_macros_like_assert_macros() {
+        let normalizer = FerroIntrinsicNormalizer::new();
+        for source in [
+            "debug_assert!(true)",
+            "debug_assert_eq!(1, 1)",
+            "debug_assert_ne!(1, 2)",
+        ] {
+            let expr = crate::FerroPhaseParser::new()
+                .parse_expr_ast(source)
+                .expect("parse debug assertion");
+            let normalized = normalizer
+                .normalize_expr(expr)
+                .expect("normalize debug assertion")
+                .into_inner();
+            assert!(
+                !matches!(normalized.kind(), ExprKind::Macro(_)),
+                "{source} remained an unlowered macro"
+            );
+        }
     }
 
     #[test]

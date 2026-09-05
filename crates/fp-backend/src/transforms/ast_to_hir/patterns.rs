@@ -20,10 +20,11 @@ impl AstToHirLowerer {
             }
             PatternKind::Name(name) => {
                 let expr = ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                let path = self
-                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Value, ParamMode::Optional)?
-                    .into_path()
-                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Value,
+                    ParamMode::Optional,
+                )?;
                 Ok((
                     hir::Pat {
                         hir_id: self.next_id(),
@@ -100,10 +101,11 @@ impl AstToHirLowerer {
             }
             PatternKind::TupleStruct(tuple_struct) => {
                 let expr = ast::Expr::new(ast::ExprKind::Name(tuple_struct.name.clone()));
-                let path = self
-                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Optional)?
-                    .into_path()
-                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Optional,
+                )?;
                 let parts = tuple_struct
                     .patterns
                     .iter()
@@ -131,10 +133,11 @@ impl AstToHirLowerer {
                 let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(
                     struct_pat.name.clone(),
                 )));
-                let path = self
-                    .ast_expr_to_hir_path(&expr, PathResolutionScope::Type, ParamMode::Optional)?
-                    .into_path()
-                    .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
+                let path = self.ast_expr_to_hir_path(
+                    &expr,
+                    PathResolutionScope::Type,
+                    ParamMode::Optional,
+                )?;
                 let fields = struct_pat
                     .fields
                     .iter()
@@ -193,11 +196,11 @@ impl AstToHirLowerer {
                     hir::Pat {
                         hir_id: self.next_id(),
                         kind: hir::PatKind::Struct(
-                            hir::Path {
+                            hir::QPath::resolved(hir::Path {
                                 span: Default::default(),
                                 segments: Vec::new(),
                                 res: hir::Res::Error,
-                            },
+                            }),
                             fields,
                             structural.has_rest,
                         ),
@@ -262,10 +265,11 @@ impl AstToHirLowerer {
             }
         }
 
-        let path = self
-            .ast_expr_to_hir_path(name, PathResolutionScope::Value, ParamMode::Optional)?
-            .into_path()
-            .unwrap_or_else(|| hir::Path::base(hir::Res::Error));
+        let path = self.ast_expr_to_hir_path(
+            name,
+            PathResolutionScope::Value,
+            ParamMode::Optional,
+        )?;
 
         if let Some(pattern) = nested {
             match pattern.kind() {

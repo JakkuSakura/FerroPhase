@@ -9,6 +9,33 @@ use fp_core::span::Span;
 use std::collections::HashMap;
 
 impl<'a> BodyBuilder<'a> {
+    pub(super) fn enum_variant_info_from_qpath(&self, path: &hir::QPath) -> Option<EnumVariantInfo> {
+        match path {
+            hir::QPath::Resolved(_, path) => self.enum_variant_info_from_path(path),
+            hir::QPath::TypeRelative(_, segment) => {
+                if let hir::Res::Def(def_id) = &segment.res {
+                    if let Some(info) = self
+                        .lowering
+                        .mir_package
+                        .borrow()
+                        .enum_variants
+                        .get(def_id)
+                        .cloned()
+                    {
+                        return Some(info);
+                    }
+                }
+                self.lowering
+                    .mir_package
+                    .borrow()
+                    .enum_variant_names
+                    .get(segment.ident.as_str())
+                    .cloned()
+                    .and_then(|def_id| self.lowering.enum_variant_def(&def_id))
+            }
+        }
+    }
+
     pub(super) fn enum_variant_info_from_path(&self, path: &hir::Path) -> Option<EnumVariantInfo> {
         if let hir::Res::Def(def_id) = &path.res_ref() {
             if let Some(info) = self

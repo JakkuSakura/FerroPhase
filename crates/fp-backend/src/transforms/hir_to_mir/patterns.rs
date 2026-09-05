@@ -104,7 +104,7 @@ impl<'a> BodyBuilder<'a> {
             return Ok(combined.unwrap_or_else(|| self.constant_bool_operand(true, span).operand));
         }
         if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
-            if let Some(variant) = self.enum_variant_info_from_path(path) {
+            if let Some(variant) = self.enum_variant_info_from_qpath(path) {
                 let layout = self
                     .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
                     .or_else(|| {
@@ -304,7 +304,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let hir::PatKind::TupleStruct(path, parts) = &pat.kind {
-            if let Some(variant) = self.enum_variant_info_from_path(path) {
+            if let Some(variant) = self.enum_variant_info_from_qpath(path) {
                 let layout = self
                     .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
                     .or_else(|| {
@@ -420,7 +420,7 @@ impl<'a> BodyBuilder<'a> {
             hir::PatKind::Variant(path)
             | hir::PatKind::Struct(path, _, _)
             | hir::PatKind::TupleStruct(path, _) => {
-                if let Some(variant) = self.enum_variant_info_from_path(path) {
+                if let Some(variant) = self.enum_variant_info_from_qpath(path) {
                     let tag_ty = self
                         .enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
                         .or_else(|| {
@@ -442,7 +442,7 @@ impl<'a> BodyBuilder<'a> {
                 } else {
                     let expr = hir::Expr {
                         hir_id: pat.hir_id.clone(),
-                        kind: hir::ExprKind::Path(hir::QPath::resolved(path.clone())),
+                        kind: hir::ExprKind::Path(path.clone()),
                         span,
                     };
                     let operand = self.lower_operand(&expr, None)?;
@@ -468,7 +468,7 @@ impl<'a> BodyBuilder<'a> {
                 hir::PatKind::Variant(path)
                 | hir::PatKind::Struct(path, _, _)
                 | hir::PatKind::TupleStruct(path, _) => self
-                    .enum_variant_info_from_path(path)
+                    .enum_variant_info_from_qpath(path)
                     .and_then(|variant| {
                         self.enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
                             .or_else(|| {
@@ -541,7 +541,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
-            if self.enum_variant_info_from_path(path).is_none() {
+            if self.enum_variant_info_from_qpath(path).is_none() {
                 let mut base_place = scrutinee_place.clone();
                 let mut base_ty = scrutinee_ty.clone();
                 if matches!(base_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
@@ -576,7 +576,7 @@ impl<'a> BodyBuilder<'a> {
             hir::PatKind::Variant(path)
             | hir::PatKind::Struct(path, _, _)
             | hir::PatKind::TupleStruct(path, _) => self
-                .enum_variant_info_from_path(path)
+                .enum_variant_info_from_qpath(path)
                 .and_then(|variant| {
                     self.enum_layout_for_variant(&variant, Some(scrutinee_ty), span)
                         .or_else(|| {
@@ -594,12 +594,12 @@ impl<'a> BodyBuilder<'a> {
             }
             match &pat.kind {
                 hir::PatKind::Variant(path) => {
-                    if self.enum_variant_info_from_path(path).is_some() {
+                    if self.enum_variant_info_from_qpath(path).is_some() {
                         return;
                     }
                 }
                 hir::PatKind::TupleStruct(path, parts) => {
-                    if let Some(variant) = self.enum_variant_info_from_path(path) {
+                    if let Some(variant) = self.enum_variant_info_from_qpath(path) {
                         let payload_tys = self.variant_payloads_from_layout_or_ty(
                             &layout,
                             &variant,
@@ -630,7 +630,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
                 hir::PatKind::Struct(path, fields, _) => {
-                    if let Some(variant) = self.enum_variant_info_from_path(path) {
+                    if let Some(variant) = self.enum_variant_info_from_qpath(path) {
                         let payload_tys = self.variant_payloads_from_layout_or_ty(
                             &layout,
                             &variant,
@@ -672,10 +672,10 @@ impl<'a> BodyBuilder<'a> {
             // fallback for exactly this situation).
             match &pat.kind {
                 hir::PatKind::TupleStruct(path, parts)
-                    if self.enum_variant_info_from_path(path).is_some() =>
+                    if self.enum_variant_info_from_qpath(path).is_some() =>
                 {
                     let variant = self
-                        .enum_variant_info_from_path(path)
+                        .enum_variant_info_from_qpath(path)
                         .expect("checked above");
                     let substituted_payloads = self.payload_types_from_type_substs(&variant, span);
                     for (idx, part) in parts.iter().enumerate() {
@@ -694,10 +694,10 @@ impl<'a> BodyBuilder<'a> {
                     return;
                 }
                 hir::PatKind::Struct(path, pat_fields, _)
-                    if self.enum_variant_info_from_path(path).is_some() =>
+                    if self.enum_variant_info_from_qpath(path).is_some() =>
                 {
                     let variant = self
-                        .enum_variant_info_from_path(path)
+                        .enum_variant_info_from_qpath(path)
                         .expect("checked above");
                     let substituted_payloads = self.payload_types_from_type_substs(&variant, span);
                     for (idx, field) in pat_fields.iter().enumerate() {

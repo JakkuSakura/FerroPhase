@@ -1460,13 +1460,15 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::PatKind::TupleStruct(path, items) => {
                 let mut lifted = Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
-                    name: Name::path(self.lift_path(path)?),
+                    name: self.lift_qpath(path)?,
                     patterns: items
                         .iter()
                         .map(|p| self.lift_pat(p))
                         .collect::<Result<Vec<_>>>()?,
                 }));
-                if let Some(op) = self.portable_op_for_path(path) {
+                if let Some(path) = path.path()
+                    && let Some(op) = self.portable_op_for_path(path)
+                {
                     lifted.set_resolved_op(op);
                 }
                 lifted
@@ -1493,10 +1495,12 @@ impl<'a> HirToAstLifter<'a> {
             }
             hir::PatKind::Variant(path) => {
                 let mut lifted = Pattern::new(PatternKind::Variant(PatternVariant {
-                    name: Expr::path(self.lift_path(path)?),
+                    name: Expr::name(self.lift_qpath(path)?),
                     pattern: None,
                 }));
-                if let Some(op) = self.portable_op_for_path(path) {
+                if let Some(path) = path.path()
+                    && let Some(op) = self.portable_op_for_path(path)
+                {
                     lifted.set_resolved_op(op);
                 }
                 lifted
