@@ -1275,10 +1275,13 @@ impl AstToHirLowerer {
                             def_id,
                             name: hir::Symbol::new(name),
                             span,
+                            pure_wrt_drop: false,
                             kind: hir::GenericParamKind::Type {
                                 default: None,
                                 synthetic: false,
                             },
+                            colon_span: None,
+                            source: hir::GenericParamSource::Generics,
                             bounds: Vec::new(),
                             explicit_bindings: Vec::new(),
                             projection_bounds: Vec::new(),

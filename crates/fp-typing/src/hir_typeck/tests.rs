@@ -489,10 +489,13 @@ fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
             def_id: wrapper_param_id,
             name: "T".into(),
             span: fp_core::span::Span::null(),
+            pure_wrt_drop: false,
             kind: hir::GenericParamKind::Type {
                 default: None,
                 synthetic: false,
             },
+            colon_span: None,
+            source: hir::GenericParamSource::Generics,
             bounds: Vec::new(),
             explicit_bindings: Vec::new(),
             projection_bounds: Vec::new(),

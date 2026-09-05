@@ -1073,10 +1073,13 @@ mod tests {
                 def_id: param.clone(),
                 name: "T".into(),
                 span: Span::null(),
+                pure_wrt_drop: false,
                 kind: GenericParamKind::Type {
                     default: None,
                     synthetic: false,
                 },
+                colon_span: None,
+                source: GenericParamSource::Generics,
                 bounds: Vec::new(),
                 explicit_bindings: Vec::new(),
                 projection_bounds: Vec::new(),

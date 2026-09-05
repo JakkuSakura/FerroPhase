@@ -1248,7 +1248,15 @@ pub struct GenericParam {
     /// Rustc stores this independently of the parameter kind so spans remain
     /// available for lifetime/type parameters without a default value.
     pub span: Span,
+    /// Whether this parameter participates in rustc's `pure_wrt_drop`
+    /// analysis. FerroPhase does not perform that analysis yet, but retaining
+    /// the bit keeps the HIR declaration shape lossless.
+    pub pure_wrt_drop: bool,
     pub kind: GenericParamKind,
+    /// Span of the parameter's `:` token when one was written.
+    pub colon_span: Option<Span>,
+    /// Origin of this parameter, matching rustc's `GenericParamSource`.
+    pub source: GenericParamSource,
     /// This parameter's own trait bounds (`T: Iterator<Item = U>`, `F:
     /// FnOnce() -> R`, ...) so `path_ty` can resolve a still-generic
     /// `T::AssocName` projection (`F::Output`, `I::Item`, ...) from the
@@ -1279,6 +1287,14 @@ pub struct GenericParam {
     /// The projection uses the associated type name because unresolved
     /// projections are represented by the same opaque parameter name.
     pub projection_bounds: Vec<(Symbol, Vec<TypeExpr>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericParamSource {
+    /// A parameter declared in an item's generic parameter list.
+    Generics,
+    /// A parameter introduced by a higher-ranked `for<...>` binder.
+    Binder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2273,10 +2289,13 @@ mod path_tests {
             def_id: super::DefId::local(1),
             name: "T".into(),
             span,
+            pure_wrt_drop: false,
             kind: super::GenericParamKind::Type {
                 default: None,
                 synthetic: false,
             },
+            colon_span: None,
+            source: super::GenericParamSource::Generics,
             bounds: Vec::new(),
             explicit_bindings: Vec::new(),
             projection_bounds: Vec::new(),
