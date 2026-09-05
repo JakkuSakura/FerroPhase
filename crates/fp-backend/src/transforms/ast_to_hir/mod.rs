@@ -2907,14 +2907,31 @@ impl AstToHirLowerer {
                             ));
                         }
                     }
-                    if let Ok(path) = self.ast_expr_to_hir_path(
-                        bound,
-                        PathResolutionScope::Trait,
-                        ParamMode::Explicit,
-                    ) {
+                    let dynamic_bounds = impl_traits
+                        .bounds
+                        .bounds
+                        .iter()
+                        .filter_map(|bound| {
+                            self.ast_expr_to_hir_path(
+                                bound,
+                                PathResolutionScope::Trait,
+                                ParamMode::Explicit,
+                            )
+                            .ok()
+                            .and_then(|path| path.into_path())
+                        })
+                        .collect::<Vec<_>>();
+                    if !dynamic_bounds.is_empty() {
+                        // Rustc lowers `impl Trait` to an opaque type whose
+                        // bounds remain a set of trait predicates. HIR has
+                        // no separate opaque-type node yet, so preserve the
+                        // complete bound list as Dynamic instead of treating
+                        // the trait definition itself as a concrete nominal
+                        // type (which makes type checking report one error
+                        // for every valid `impl Trait` use).
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
-                            hir::TypeExprKind::Path(path),
+                            hir::TypeExprKind::Dynamic(dynamic_bounds),
                             self.normalize_span(ty.span()),
                         ));
                     }

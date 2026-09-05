@@ -184,6 +184,59 @@ fn prelude_exports_are_visible_in_each_package_root() {
     );
 }
 
+#[test]
+fn resolves_nominal_bases_reported_by_typecheck_diagnostics() {
+    let prepared = prepare_std();
+    let _external_package = register_external_package(&prepared);
+    let paths = [
+        ("core", Vec::new(), "fmt::Arguments"),
+        ("core", vec!["option"], "Try"),
+        ("core", Vec::new(), "num::imp::Float"),
+        ("core", vec!["option"], "ControlFlow"),
+        ("alloc", Vec::new(), "fmt::Arguments"),
+        ("alloc", vec!["fmt"], "Arguments"),
+        ("std", Vec::new(), "backtrace::Capture"),
+        ("std", Vec::new(), "backtrace::BytesOrWide"),
+        ("std", Vec::new(), "backtrace::BacktraceSymbol"),
+    ];
+    let mut failures = Vec::new();
+    for (package, location, path) in paths {
+        let parsed = Path::new(
+            PathPrefix::Plain,
+            path.split("::").map(Into::into).collect(),
+        );
+        let result = prepared.resolver.resolve_parsed_path(
+            &PackageId::new(package),
+            &InPackagePath::new(location.into_iter().map(str::to_owned).collect()),
+            &parsed,
+            Namespace::Type,
+        );
+        if !matches!(result, ResolutionResult::Found(_)) {
+            failures.push(format!("{package}::{path}: {result:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "nominal base resolution failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn rust_std_source_items_keep_module_paths_for_local_imports() {
+    let provider = RustStdProvider;
+    let package = provider
+        .load_package_source(&PackageId::new("core"))
+        .expect("core source");
+    let option_imports = package
+        .items()
+        .into_iter()
+        .filter(|item| item.module_path.segments == ["option"])
+        .filter(|item| matches!(item.item.kind(), ItemKind::Import(_)))
+        .count();
+    assert!(option_imports > 0, "core::option imports lost their module path");
+}
+
 struct PreparedStd {
     program: Rc<AstProgram>,
     hir_program: Rc<std::cell::RefCell<HirProgram>>,
