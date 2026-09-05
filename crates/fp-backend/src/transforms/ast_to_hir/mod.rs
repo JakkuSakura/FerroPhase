@@ -41,6 +41,7 @@ pub use config::HirLoweringConfig;
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
+const MAX_MACRO_EXPANSION_DEPTH: usize = 16;
 
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
@@ -171,6 +172,14 @@ pub struct AstToHirLowerer {
     cfg_filter: CfgFilter,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
+    /// Number of expression-macro expansions currently being lowered.
+    ///
+    /// Macro expansion is intentionally integrated into AST -> HIR lowering,
+    /// but nested replacements re-enter `transform_expr_to_hir`. Keep the
+    /// expansion depth separate from ordinary AST recursion so a non-
+    /// terminating macro chain becomes a diagnostic instead of a process
+    /// stack overflow.
+    macro_expansion_depth: usize,
     workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
     local_resolver: LocalResolver,
     /// The whole workspace's HIR (every already-published dependency
@@ -389,6 +398,7 @@ impl AstToHirLowerer {
             cfg_filter: CfgFilter::host(),
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
+            macro_expansion_depth: 0,
             workspace: Rc::clone(&workspace),
             local_resolver: LocalResolver::new(
                 Rc::clone(&workspace),
@@ -449,6 +459,7 @@ impl AstToHirLowerer {
             .file_id(file_path.as_ref())
             .unwrap_or(0);
         self.current_position = 0;
+        self.macro_expansion_depth = 0;
         self.local_resolver = LocalResolver::new(
             Rc::clone(&self.workspace),
             Rc::clone(&self.hir_program),

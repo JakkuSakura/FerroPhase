@@ -504,6 +504,33 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
 }
 
 #[test]
+fn macro_expansion_limit_reports_error_instead_of_overflowing() -> Result<()> {
+    let frontend = FerroPhaseParser::new();
+    let expr = frontend.parse_expr_ast("println!(\"hello\")")?;
+
+    let mut generator = AstToHirLowerer::new(
+        std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
+            fp_core::ast::package::provider::EmptyProvider,
+        ))),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
+        hir::PackageId::new("test"),
+    )
+    .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
+    generator.macro_expansion_depth = MAX_MACRO_EXPANSION_DEPTH;
+
+    generator.transform_expr_to_hir(&expr)?;
+
+    let diagnostics = generator.take_diagnostics().get_diagnostics();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .to_string()
+            .contains("macro expansion recursion limit")
+    }));
+    Ok(())
+}
+
+#[test]
 fn suffixed_numeric_literal_lowers_to_explicit_cast() -> Result<()> {
     let frontend = fp_lang::FerroFrontend::new();
     let parsed = frontend.parse_expr("1_usize")?;

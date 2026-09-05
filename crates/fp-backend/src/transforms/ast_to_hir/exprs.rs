@@ -32,6 +32,19 @@ impl AstToHirLowerer {
 
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
+        if self.macro_expansion_depth >= MAX_MACRO_EXPANSION_DEPTH {
+            let expr_span = ast_expr.span();
+            let span = self.create_span(1);
+            let hir_id = self.next_id();
+            let kind = self.error_placeholder_expr_kind(
+                format!(
+                    "macro expansion recursion limit ({MAX_MACRO_EXPANSION_DEPTH}) reached"
+                ),
+                expr_span,
+            );
+            return Ok(hir::Expr { hir_id, span, kind });
+        }
+
         let Some(normalizer) = self.intrinsic_normalizer.as_ref() else {
             return self.transform_expr_to_hir_inner(ast_expr);
         };
@@ -61,6 +74,10 @@ impl AstToHirLowerer {
         }
 
         let expr_span = ast_expr.span();
+        let is_macro = matches!(ast_expr.kind(), ast::ExprKind::Macro(_));
+        if is_macro {
+            self.macro_expansion_depth += 1;
+        }
         let mut normalized = match normalizer.normalize_expr(ast_expr.clone()) {
             Ok(n) => n.into_inner(),
             // A malformed macro/format construct (e.g. an unsupported format
@@ -72,6 +89,9 @@ impl AstToHirLowerer {
                 let span = self.create_span(1);
                 let hir_id = self.next_id();
                 let kind = self.error_placeholder_expr_kind(e.to_string(), expr_span);
+                if is_macro {
+                    self.macro_expansion_depth -= 1;
+                }
                 return Ok(hir::Expr { hir_id, span, kind });
             }
         };
@@ -84,11 +104,18 @@ impl AstToHirLowerer {
                     let span = self.create_span(1);
                     let hir_id = self.next_id();
                     let kind = self.error_placeholder_expr_kind(e.to_string(), expr_span);
+                    if is_macro {
+                        self.macro_expansion_depth -= 1;
+                    }
                     return Ok(hir::Expr { hir_id, span, kind });
                 }
             };
         }
-        self.transform_expr_to_hir_inner(&normalized)
+        let result = self.transform_expr_to_hir_inner(&normalized);
+        if is_macro {
+            self.macro_expansion_depth -= 1;
+        }
+        result
     }
 
     fn transform_expr_to_hir_inner(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
