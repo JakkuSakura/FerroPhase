@@ -143,6 +143,9 @@ pub struct HirTypeChecker {
     /// resolves these directly from a parameter's bounds and therefore does
     /// not enter `assoc_type_for_self` first.
     resolving_generic_projections: Vec<(ty::ParamTy, hir::Symbol)>,
+    /// Type aliases currently being expanded. Recursive aliases must
+    /// terminate with one diagnostic instead of recursing through `path_ty`.
+    resolving_type_aliases: HashSet<hir::DefId>,
     /// Impl headers and associated-type bindings may refer to projections
     /// whose candidate search reaches the same impl again. Track those
     /// definition identities separately from projection names so recursive
@@ -251,6 +254,7 @@ impl HirTypeChecker {
             resolving_assoc_projections: Vec::new(),
             resolving_impl_projections: HashSet::new(),
             resolving_generic_projections: Vec::new(),
+            resolving_type_aliases: HashSet::new(),
             resolving_impl_headers: HashSet::new(),
             resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
@@ -287,6 +291,7 @@ impl HirTypeChecker {
             resolving_assoc_projections: Vec::new(),
             resolving_impl_projections: HashSet::new(),
             resolving_generic_projections: Vec::new(),
+            resolving_type_aliases: HashSet::new(),
             resolving_impl_headers: HashSet::new(),
             resolving_impl_assoc_types: Vec::new(),
             current_item_path: None,
@@ -876,11 +881,10 @@ impl HirTypeChecker {
                     self.check_trait(item.def_id.clone(), trait_def).await?;
                 }
                 hir::ItemKind::TypeAlias(alias) => {
-                    tracing::info!(
-                        def_id = ?item.def_id,
-                        alias = %alias.name,
-                        "skipping standalone type-alias item type checking"
-                    );
+                    let mut scope = self.with_generics(&alias.generics);
+                    let target = scope.check_type_expr(&alias.target).await?;
+                    self.package()
+                        .record_type_expr_type(alias.target.hir_id.clone(), target);
                 }
                 hir::ItemKind::Query(_) => {}
                 hir::ItemKind::Expr(expr) => {
@@ -979,9 +983,13 @@ impl HirTypeChecker {
                     }
                 }
                 hir::TraitItemKind::AssocType(assoc_type) => {
-                    for bound in &assoc_type.bounds {
-                        scope.check_type_expr(bound).await?;
-                    }
+                    // Associated-type bounds are trait obligations (for
+                    // example `type Owned: Borrow<Self>`), not concrete
+                    // type expressions. Rustc records them for obligation
+                    // solving and does not run them through nominal type
+                    // construction here; doing so turns every trait `DefId`
+                    // into the spurious "not a concrete type" diagnostic.
+                    let _ = assoc_type;
                 }
             }
         }
@@ -2799,18 +2807,49 @@ impl HirTypeChecker {
                     }
                 }
                 hir::TypeExprKind::Dynamic(bounds) => {
-                    let predicates = bounds
-                        .iter()
-                        .filter_map(|bound| {
-                            let hir::Res::Def(def_id) = bound.res.as_ref()? else {
-                                return None;
-                            };
-                            Some(ty::ExistentialPredicate::Trait(ty::ExistentialTraitRef {
+                    let mut predicates = Vec::new();
+                    for bound in bounds {
+                        let hir::Res::Def(def_id) = &bound.res else {
+                            continue;
+                        };
+                        let mut substs = Vec::new();
+                        if let Some(args) = bound
+                            .segments
+                            .iter()
+                            .find_map(|segment| segment.args.as_ref())
+                        {
+                            for arg in &args.args {
+                                match arg {
+                                    hir::GenericArg::Lifetime(_) => {
+                                        substs.push(GenericArg::Lifetime(ty::Region::ReErased));
+                                    }
+                                    hir::GenericArg::Type(ty) => {
+                                        substs.push(GenericArg::Type(
+                                            self.check_type_expr(ty).await?,
+                                        ));
+                                    }
+                                    hir::GenericArg::Const(constant) => {
+                                        substs.push(GenericArg::Const(
+                                            self.const_arg_kind(constant),
+                                        ));
+                                    }
+                                    hir::GenericArg::Infer(infer) => {
+                                        substs.push(GenericArg::Type(Ty {
+                                            kind: TyKind::Infer(ty::InferTy::FreshTy(
+                                                infer.hir_id.local_id(),
+                                            )),
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                        predicates.push(ty::ExistentialPredicate::Trait(
+                            ty::ExistentialTraitRef {
                                 def_id: def_id.clone(),
-                                substs: Vec::new(),
-                            }))
-                        })
-                        .collect();
+                                substs,
+                            },
+                        ));
+                    }
                     Ty {
                         kind: TyKind::Dynamic(predicates, ty::Region::ReErased),
                     }
@@ -3123,6 +3162,14 @@ impl HirTypeChecker {
             }
             return Ok(self_type);
         }
+        if let hir::Res::Generic(generic_id) = &path.res {
+            if let Some(generic) = self.generic_ty(generic_id.clone()) {
+                return Ok(generic);
+            }
+            return Ok(self.error_ty(format!(
+                "generic type parameter `{generic_id}` is not in scope"
+            )));
+        }
         let Some(def_id) = (match path.res {
             hir::Res::Def(ref def_id) => Some(def_id),
             _ => None,
@@ -3195,6 +3242,72 @@ impl HirTypeChecker {
                 "resolved type definition `{def_id}` is missing from the HIR program"
             )));
         };
+        if let hir::ItemKind::TypeAlias(alias) = &item.kind {
+            if self.resolving_type_aliases.contains(def_id) {
+                return Ok(self.error_ty(format!("recursive type alias `{}`", alias.name)));
+            }
+
+            let explicit_args = path
+                .segments
+                .iter()
+                .find_map(|segment| segment.args.as_ref())
+                .map(|args| args.args.as_slice())
+                .unwrap_or(&[]);
+            let mut scope = self.with_generics(&alias.generics);
+            scope.resolving_type_aliases.insert(def_id.clone());
+            let target = scope.check_type_expr(&alias.target).await?;
+            let mut substitutions = Vec::with_capacity(alias.generics.params.len());
+
+            for (index, parameter) in alias.generics.params.iter().enumerate() {
+                let explicit = explicit_args.get(index);
+                let substitution = match (&parameter.kind, explicit) {
+                    (hir::GenericParamKind::Lifetime { .. }, Some(hir::GenericArg::Lifetime(_)))
+                    | (hir::GenericParamKind::Lifetime { .. }, None) => {
+                        GenericArg::Lifetime(ty::Region::ReErased)
+                    }
+                    (hir::GenericParamKind::Type { .. }, Some(hir::GenericArg::Type(ty))) => {
+                        GenericArg::Type(scope.check_type_expr(ty).await?)
+                    }
+                    (hir::GenericParamKind::Type { .. }, Some(hir::GenericArg::Infer(infer))) => {
+                        GenericArg::Type(Ty {
+                            kind: TyKind::Infer(ty::InferTy::FreshTy(infer.hir_id.local_id())),
+                        })
+                    }
+                    (hir::GenericParamKind::Type { default, .. }, None) => {
+                        GenericArg::Type(match default {
+                            Some(default) => scope.check_type_expr(default).await?,
+                            None => Ty {
+                                kind: TyKind::Param(ty::ParamTy {
+                                    index: parameter.def_id.index,
+                                    name: parameter.name.clone(),
+                                }),
+                            },
+                        })
+                    }
+                    (hir::GenericParamKind::Const { .. }, Some(hir::GenericArg::Const(constant))) => {
+                        GenericArg::Const(scope.const_arg_kind(constant))
+                    }
+                    (hir::GenericParamKind::Const { .. }, Some(hir::GenericArg::Infer(infer))) => {
+                        GenericArg::Const(ty::ConstKind::Infer(ty::InferConst::Fresh(
+                            infer.hir_id.local_id(),
+                        )))
+                    }
+                    (hir::GenericParamKind::Const { default, .. }, None) => {
+                        GenericArg::Const(default.as_ref().map_or_else(
+                            || ty::ConstKind::Param(ty::ParamConst {
+                                index: parameter.def_id.index,
+                                name: parameter.name.clone(),
+                            }),
+                            |default| scope.const_arg_kind(default),
+                        ))
+                    }
+                    _ => GenericArg::Type(Ty::error()),
+                };
+                substitutions.push(substitution);
+            }
+
+            return Ok(scope.substitute_params(target, &substitutions, &alias.generics.params));
+        }
         let (flags, variants) = match &item.kind {
             hir::ItemKind::Struct(_) => (AdtFlags::IS_STRUCT, Vec::new()),
             hir::ItemKind::Enum(def) => (
@@ -6250,6 +6363,103 @@ impl HirTypeChecker {
                     ty: Box::new(self.substitute_params(*mutability.ty, args, parameters)),
                     mutbl: mutability.mutbl,
                 }),
+            },
+            TyKind::Adt(adt, substitutions) => Ty {
+                kind: TyKind::Adt(
+                    adt,
+                    substitutions
+                        .into_iter()
+                        .map(|argument| match argument {
+                            GenericArg::Type(ty) => {
+                                GenericArg::Type(self.substitute_params(ty, args, parameters))
+                            }
+                            other => other,
+                        })
+                        .collect(),
+                ),
+            },
+            TyKind::FnDef(def_id, substitutions) => Ty {
+                kind: TyKind::FnDef(
+                    def_id,
+                    substitutions
+                        .into_iter()
+                        .map(|argument| match argument {
+                            GenericArg::Type(ty) => {
+                                GenericArg::Type(self.substitute_params(ty, args, parameters))
+                            }
+                            other => other,
+                        })
+                        .collect(),
+                ),
+            },
+            TyKind::FnPtr(mut signature) => {
+                signature.binder.value.inputs = signature
+                    .binder
+                    .value
+                    .inputs
+                    .into_iter()
+                    .map(|input| Box::new(self.substitute_params(*input, args, parameters)))
+                    .collect();
+                signature.binder.value.output = Box::new(self.substitute_params(
+                    *signature.binder.value.output,
+                    args,
+                    parameters,
+                ));
+                Ty {
+                    kind: TyKind::FnPtr(signature),
+                }
+            }
+            TyKind::Projection(mut projection) => {
+                projection.substs = projection
+                    .substs
+                    .into_iter()
+                    .map(|argument| match argument {
+                        GenericArg::Type(ty) => {
+                            GenericArg::Type(self.substitute_params(ty, args, parameters))
+                        }
+                        other => other,
+                    })
+                    .collect();
+                Ty {
+                    kind: TyKind::Projection(projection),
+                }
+            }
+            TyKind::Dynamic(predicates, region) => Ty {
+                kind: TyKind::Dynamic(
+                    predicates
+                        .into_iter()
+                        .map(|predicate| match predicate {
+                            ty::ExistentialPredicate::Trait(mut trait_ref) => {
+                                trait_ref.substs = trait_ref
+                                    .substs
+                                    .into_iter()
+                                    .map(|argument| match argument {
+                                        GenericArg::Type(ty) => GenericArg::Type(
+                                            self.substitute_params(ty, args, parameters),
+                                        ),
+                                        other => other,
+                                    })
+                                    .collect();
+                                ty::ExistentialPredicate::Trait(trait_ref)
+                            }
+                            ty::ExistentialPredicate::Projection(mut projection) => {
+                                projection.substs = projection
+                                    .substs
+                                    .into_iter()
+                                    .map(|argument| match argument {
+                                        GenericArg::Type(ty) => GenericArg::Type(
+                                            self.substitute_params(ty, args, parameters),
+                                        ),
+                                        other => other,
+                                    })
+                                    .collect();
+                                ty::ExistentialPredicate::Projection(projection)
+                            }
+                            other => other,
+                        })
+                        .collect(),
+                    region,
+                ),
             },
             kind => Ty { kind },
         }

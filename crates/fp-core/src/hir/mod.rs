@@ -169,6 +169,7 @@ pub enum ItemKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAlias {
     pub name: Symbol,
+    pub generics: Generics,
     pub target: TypeExpr,
 }
 

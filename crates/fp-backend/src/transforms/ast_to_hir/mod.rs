@@ -1753,6 +1753,7 @@ impl AstToHirLowerer {
                         def_id: alias_def_id.clone(),
                         kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
                             name: hir::Symbol::new(def_type.name.name.clone()),
+                            generics: hir::Generics::default(),
                             target,
                         }),
                         span: item.span(),
@@ -3680,15 +3681,17 @@ impl AstToHirLowerer {
                 self.push_type_scope();
                 self.push_value_scope();
                 let target_result = (|| {
-                    self.transform_generics(&def_type.generics_params)?;
-                    self.transform_type_to_hir(&def_type.value)
+                    let generics = self.transform_generics(&def_type.generics_params)?;
+                    let target = self.transform_type_to_hir(&def_type.value)?;
+                    Ok::<_, fp_core::error::Error>((generics, target))
                 })();
                 self.pop_value_scope();
                 self.pop_type_scope();
-                let target = target_result?;
+                let (generics, target) = target_result?;
                 (
                     hir::ItemKind::TypeAlias(hir::TypeAlias {
                         name: hir::Symbol::new(def_type.name.name.clone()),
+                        generics,
                         target,
                     }),
                     self.map_visibility(&def_type.visibility),

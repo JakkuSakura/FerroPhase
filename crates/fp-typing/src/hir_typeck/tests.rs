@@ -942,3 +942,137 @@ fn comptime_request_returns_resolver_value_directly() {
     };
     assert!(value.is_unit());
 }
+
+#[test]
+fn generic_type_alias_is_checked_and_substituted() {
+    let alias_id = hir::DefId::new(test_pkg(), 1);
+    let parameter_id = hir::DefId::new(test_pkg(), 2);
+    let function_id = hir::DefId::new(test_pkg(), 3);
+    let parameter = hir::GenericParam {
+        hir_id: hid(1),
+        def_id: parameter_id.clone(),
+        name: "T".into(),
+        span: fp_core::span::Span::null(),
+        pure_wrt_drop: false,
+        kind: hir::GenericParamKind::Type {
+            default: None,
+            synthetic: false,
+        },
+        colon_span: None,
+        source: hir::GenericParamSource::Generics,
+        bounds: Vec::new(),
+        explicit_bindings: Vec::new(),
+        projection_bounds: Vec::new(),
+    };
+    let alias_target = hir::TypeExpr::new(
+        hid(2),
+        hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            span: fp_core::span::Span::null(),
+            res: hir::Res::Generic(parameter_id.clone()),
+            segments: vec![hir::PathSegment::with_hir_id(
+                "T",
+                hid(3),
+                None,
+                hir::Res::Generic(parameter_id.clone()),
+                true,
+            )],
+        })),
+        fp_core::span::Span::null(),
+    );
+    let alias = hir::Item {
+        hir_id: hid(4),
+        def_id: alias_id.clone(),
+        visibility: hir::Visibility::Public,
+        kind: hir::ItemKind::TypeAlias(hir::TypeAlias {
+            name: "Alias".into(),
+            generics: hir::Generics {
+                params: vec![parameter],
+                where_clause: None,
+                span: fp_core::span::Span::null(),
+            },
+            target: alias_target,
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let alias_args = hir::GenericArgs {
+        args: vec![hir::GenericArg::Type(Box::new(hir::TypeExpr::new(
+            hid(5),
+            hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+            fp_core::span::Span::null(),
+        )))],
+        constraints: Vec::new(),
+        parenthesized: hir::GenericArgsParentheses::No,
+        span_ext: fp_core::span::Span::null(),
+    };
+    let function_input = hir::TypeExpr::new(
+        hid(6),
+        hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            span: fp_core::span::Span::null(),
+            res: hir::Res::Def(alias_id.clone()),
+            segments: vec![hir::PathSegment::with_hir_id(
+                "Alias",
+                hid(7),
+                Some(alias_args),
+                hir::Res::Def(alias_id.clone()),
+                false,
+            )],
+        })),
+        fp_core::span::Span::null(),
+    );
+    let output = hir::TypeExpr::new(
+        hid(8),
+        hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        fp_core::span::Span::null(),
+    );
+    let function = hir::Item {
+        hir_id: hid(9),
+        def_id: function_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Function(hir::Function {
+            sig: hir::FunctionSig {
+                name: "read".into(),
+                inputs: vec![hir::Param {
+                    hir_id: hid(10),
+                    pat: hir::Pat {
+                        hir_id: hid(11),
+                        kind: hir::PatKind::Binding {
+                            name: "value".into(),
+                            mutable: false,
+                        },
+                    },
+                    ty: function_input,
+                    is_context: false,
+                    as_tuple: false,
+                    as_dict: false,
+                    default: None,
+                }],
+                output,
+                generics: hir::Generics {
+                    params: Vec::new(),
+                    where_clause: None,
+                    span: fp_core::span::Span::null(),
+                },
+                abi: hir::Abi::Rust,
+            },
+            body: None,
+            is_const: false,
+            is_extern: false,
+            is_async: false,
+            attrs: Vec::new(),
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let mut package = hir::HirPackage::new(test_pkg());
+    package.items.extend([alias.clone(), function.clone()]);
+    package.def_map.insert(alias_id, alias);
+    package.def_map.insert(function_id, function);
+
+    let executor = fp_core::executor::CompilerExecutor::new().handle();
+    let result = executor
+        .run(typecheck_program(package, executor.clone()))
+        .expect("HIR type check");
+    assert_eq!(
+        result.borrow().type_expr_type(hid(6)),
+        Some(Ty::int(ty::IntTy::I64))
+    );
+}
