@@ -90,6 +90,11 @@ pub struct AstToHirLowerer {
     /// never participate in this index.
     impl_items: HashMap<(ImplSelfKey, hir::Symbol), hir::DefId>,
     impl_generic_param_ids: HashMap<(hir::DefId, usize), hir::DefId>,
+    /// Occurrence ordinals for impl headers whose source spans are not unique
+    /// (macro expansion commonly gives every generated impl the same span).
+    /// The ordinal is reset between predeclaration and lowering passes, so
+    /// both passes select the same HIR-owned identity for each occurrence.
+    impl_def_occurrences: HashMap<(String, fp_core::span::Span), usize>,
     /// Memoized results for the ambiguous bare-type export query. The HIR
     /// program is immutable during one lowering pass, while this query is
     /// reached repeatedly for generic arguments in bundled std.
@@ -308,6 +313,27 @@ impl AstToHirLowerer {
             .unwrap_or_else(|| self.next_def_id())
     }
 
+    fn impl_def_id_for_current_item(&mut self, span: fp_core::span::Span) -> hir::DefId {
+        let module = self.module_path.to_key();
+        let occurrence_key = (module.clone(), span);
+        let ordinal = *self
+            .impl_def_occurrences
+            .entry(occurrence_key)
+            .and_modify(|value| *value += 1)
+            .or_insert(0);
+        if let Some(def_id) = self
+            .package()
+            .registered_impl_def_id(&module, span, ordinal)
+        {
+            return def_id;
+        }
+        self.package_mut().impl_def_id(&module, span, ordinal)
+    }
+
+    pub(super) fn reset_impl_def_occurrences(&mut self) {
+        self.impl_def_occurrences.clear();
+    }
+
     /// Provides the package being lowered to the AST resolver so definition
     /// identities are allocated from the same HIR-owned counter used by the
     /// rest of lowering.
@@ -382,6 +408,7 @@ impl AstToHirLowerer {
             module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
             impl_items: HashMap::new(),
             impl_generic_param_ids: HashMap::new(),
+            impl_def_occurrences: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -931,6 +958,7 @@ impl AstToHirLowerer {
         self.program_def_map = HashMap::new();
         self.local_dispatch_items.clear();
 
+        self.reset_impl_def_occurrences();
         for item in &generated_items {
             self.append_item(&mut hir_program, item)?;
         }
@@ -1189,6 +1217,7 @@ impl AstToHirLowerer {
         self.program_def_map = program.def_map.clone();
 
         // 5: append — unchanged.
+        self.reset_impl_def_occurrences();
         for package_item in &package_items {
             self.with_module_scope(&package_item.module_path, |this| {
                 this.append_item(&mut program, &package_item.item)
@@ -1424,6 +1453,7 @@ impl AstToHirLowerer {
         // would still be unregistered (`struct_methods` empty) when that
         // call is lowered.
         self.module_path = module_path.clone();
+        self.reset_impl_def_occurrences();
         for item in items {
             self.append_item(&mut program, item)?;
         }
@@ -1856,11 +1886,7 @@ impl AstToHirLowerer {
             }
         });
         let def_id = if matches!(item.kind(), ItemKind::Impl(_)) {
-            let module_key = self.module_path.to_key();
-            let existing = self
-                .package()
-                .registered_impl_def_id(&module_key, item.span());
-            existing.unwrap_or_else(|| self.package_mut().impl_def_id(&module_key, item.span()))
+            self.impl_def_id_for_current_item(item.span())
         } else {
             local_def_id
                 .or_else(|| {

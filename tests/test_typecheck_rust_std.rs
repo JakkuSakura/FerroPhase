@@ -30,7 +30,8 @@ fn core_f128_inherent_associated_constants_are_lowered() {
         Rc::clone(&ast_program),
         Rc::clone(&hir_program),
         package_id.clone(),
-    );
+    )
+    .with_intrinsic_normalizer(fp_rust::RustIntrinsicNormalizer::new());
     let mut package = lowerer
         .transform_package(&source)
         .expect("failed to lower core source");
@@ -54,7 +55,7 @@ fn core_f128_inherent_associated_constants_are_lowered() {
 
     package.index_derived_lookups();
     let package = Rc::new(RefCell::new(package));
-    hir_program.borrow_mut().add_package(package);
+    hir_program.borrow_mut().add_package(Rc::clone(&package));
     let indexed_impls = hir_program
         .borrow()
         .impls_for_shape("f128")
@@ -73,6 +74,28 @@ fn core_f128_inherent_associated_constants_are_lowered() {
         fp_core::hir::TypeExprKind::Path(fp_core::hir::QPath::Resolved(_, path))
             if matches!(path.res, fp_core::hir::Res::Builtin(fp_core::hir::BuiltinSelfType::Primitive(ref name)) if name == "f128")
     ), "impl f128 must resolve its self type as the primitive, not the core::f128 module");
+
+    let u128_has_byte_conversions = hir_program
+        .borrow()
+        .impls_for_shape("u128")
+        .filter_map(|item| match item.kind {
+            fp_core::hir::ItemKind::Impl(implementation) => Some(implementation),
+            _ => None,
+        })
+        .any(|implementation| {
+            [
+                "from_be_bytes",
+                "from_le_bytes",
+                "from_ne_bytes",
+                "to_be_bytes",
+            ]
+            .into_iter()
+            .all(|name| implementation.items.iter().any(|member| member.name == name))
+        });
+    assert!(
+        u128_has_byte_conversions,
+        "macro-generated u128 byte conversion methods were not indexed"
+    );
 }
 
 #[test]
