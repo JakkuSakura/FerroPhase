@@ -7,11 +7,43 @@
 //! its own files* — `fp-cli` never threads an output path through a trait
 //! method call, and never sees the generated content to write itself.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::ast::package::PackageId;
 use crate::ast::program::AstProgram;
 use crate::error::Result;
+
+/// Compiler depth required by a target backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackendStage {
+    Transpile,
+    Native,
+    Bytecode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackendPlan {
+    pub stage: BackendStage,
+}
+
+impl BackendPlan {
+    pub const fn transpile() -> Self { Self { stage: BackendStage::Transpile } }
+    pub const fn native() -> Self { Self { stage: BackendStage::Native } }
+    pub const fn bytecode() -> Self { Self { stage: BackendStage::Bytecode } }
+}
+
+/// Shared compiler results handed to a backend at emission time. The handles
+/// are cloned from the compiler state; the backend sees the canonical program
+/// objects without requiring the CLI to flatten or copy intermediate results.
+pub struct BackendContext {
+    pub ast_program: Rc<AstProgram>,
+    pub hir_program: Rc<RefCell<crate::hir::HirProgram>>,
+    pub mir_program: Rc<crate::mir::MirProgram>,
+    pub lir_program: Rc<crate::lir::LirProgram>,
+    pub emitted_packages: Vec<PackageId>,
+}
 
 /// Resolved once by `fp-cli` from `CompileArgs`, then handed to each
 /// backend's constructor — never threaded through trait methods afterward.
@@ -204,6 +236,8 @@ impl BackendConfig {
 /// rather than a fixed view type, lets every backend share this one
 /// non-generic trait as `Box<dyn TargetBackend>`.
 pub trait TargetBackend: Send + Sync {
+    fn plan(&self) -> BackendPlan;
+
     /// What this backend's target language can express directly — see
     /// `crate::capabilities::LanguageCapabilities`. Read once by `fp-cli`
     /// (via the already-constructed backend, before compiling) to seed
@@ -229,38 +263,10 @@ pub trait TargetBackend: Send + Sync {
         None
     }
 
-    /// Writes `package_id`'s artifact to the path fixed at construction,
-    /// reading whichever view of it the backend needs — `workspace`
-    /// (`package_source`, AST-level lookups, ...) for AST-emitting
-    /// backends, `mir` (this package's own units, already flattened — see
-    /// `CompilerState::mir_module`, empty rather than absent if the
-    /// session never lowered this package to MIR) for a bytecode-shaped
-    /// backend, or `lir` (already merged across dependencies and, when
-    /// resolvable, `main`-renamed — see `lir::LirProgram::merged_blob_for_package`
-    /// and its caller in `fp-cli`) for native/asm-shaped ones. `lir` is
-    /// `None` when this session never produced LIR for `package_id` at all
-    /// (e.g. an AST-only `PipelineMode::Transpile` compile) — a backend
-    /// that actually needs LIR treats that as its own error.
-    fn emit_package_artifact(
-        &self,
-        workspace: &AstProgram,
-        package_id: &PackageId,
-        mir: &crate::mir::MirCodeUnit,
-        lir: Option<&crate::lir::LirBlob>,
-    ) -> Result<()>;
+    /// Emits all package artifacts and workspace-level files for one compile.
+    fn emit(&self, context: &BackendContext) -> Result<()>;
 
-    /// Workspace-level side files not tied to a single package (e.g.
-    /// Kotlin's `settings.gradle.kts`/`build.gradle.kts`). Default: no-op.
-    fn write_workspace_files(
-        &self,
-        workspace: &AstProgram,
-        _hir_program: &crate::hir::HirProgram,
-    ) -> Result<()> {
-        let _ = workspace;
-        Ok(())
-    }
-
-    /// Runs whatever `emit_package_artifact`/`write_workspace_files` just
+    /// Runs whatever `emit_package`/`write_workspace` just
     /// produced (`--exec`). Each backend knows its own output shape, so
     /// this stays colocated with it. Default: unsupported.
     fn exec(&self) -> Result<()> {
@@ -276,6 +282,18 @@ pub trait TargetBackend: Send + Sync {
 /// backends (native/goasm/urcl) don't need it at all.
 pub struct PackageWriter {
     root: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BackendPlan, BackendStage};
+
+    #[test]
+    fn plans_select_the_expected_compilation_stage() {
+        assert_eq!(BackendPlan::transpile().stage, BackendStage::Transpile);
+        assert_eq!(BackendPlan::native().stage, BackendStage::Native);
+        assert_eq!(BackendPlan::bytecode().stage, BackendStage::Bytecode);
+    }
 }
 
 impl PackageWriter {

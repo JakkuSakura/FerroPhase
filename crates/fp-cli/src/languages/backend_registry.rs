@@ -12,7 +12,7 @@
 //!
 //! Registered targets are plain `fp_core::backend::TargetBackend` impls —
 //! the exact same trait every target implements, built-in or not — driven
-//! through `emit_package_artifact`/`write_workspace_files` exactly the same way
+//! through `emit_package`/`write_workspace` exactly the same way
 //! regardless of where the factory came from. Registered source-language
 //! providers are plain `fp_core::ast::package::provider::PackageProvider`
 //! factories, looked up the same way by
@@ -270,7 +270,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
             Ok(Box::new(fp_stackcode::BytecodeBackend {
                 output: fill_missing_extension(&config.workspace_root, "ftbc"),
                 // `emit_text` only forces text mode for the explicit
-                // "text-bytecode" target name — `emit_package_artifact`'s own
+                // "text-bytecode" target name — `emit_package`'s own
                 // `wants_text` already falls back to sniffing `.ftbc` off
                 // `output`, so fp-cli doesn't need to duplicate that here.
                 emit_text: true,

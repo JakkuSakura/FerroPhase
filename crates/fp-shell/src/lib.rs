@@ -41,6 +41,16 @@ impl ShellBackend {
 }
 
 impl TargetBackend for ShellBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::transpile() }
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> CoreResult<()> {
+        for package_id in &context.emitted_packages {
+            let package = context.ast_program.package_source(package_id)?;
+            self.emit_package(context.ast_program.as_ref(), package_id, &fp_core::mir::MirCodeUnit::new(), None)?;
+        }
+        self.write_workspace(context.ast_program.as_ref(), &context.hir_program.borrow())
+    }
+
+
     fn capabilities(&self) -> LanguageCapabilities { LanguageCapabilities::NATIVE }
 
     fn intrinsic_materializer(&self) -> Option<Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
@@ -48,7 +58,19 @@ impl TargetBackend for ShellBackend {
         Some(Arc::new(shell_materializer::ShellMaterializer::new(inventory)))
     }
 
-    fn emit_package_artifact(&self, workspace: &fp_core::ast::program::AstProgram, package_id: &fp_core::ast::package::PackageId, _mir: &fp_core::mir::MirCodeUnit, _lir: Option<&fp_core::lir::LirBlob>) -> CoreResult<()> {
+
+
+
+
+    fn exec(&self) -> CoreResult<()> {
+        let mut command = match self.target { ScriptTarget::Bash => { let mut c = Command::new("bash"); c.arg(&self.output); c }, ScriptTarget::PowerShell => { let mut c = Command::new("pwsh"); c.args(["-NoProfile", "-NonInteractive", "-File"]).arg(&self.output); c } };
+        let status = command.status()?;
+        if status.success() { Ok(()) } else { Err(fp_core::error::Error::from(format!("shell execution failed with status {status}"))) }
+    }
+}
+
+impl ShellBackend {
+    fn emit_package(&self, workspace: &fp_core::ast::program::AstProgram, package_id: &fp_core::ast::package::PackageId, _mir: &fp_core::mir::MirCodeUnit, _lir: Option<&fp_core::lir::LirBlob>) -> CoreResult<()> {
         let package = workspace.package_source(package_id)?;
         let file = File { path: PathBuf::from(package_id.as_str()), attrs: package.module.attrs.clone(), items: package.module.items.clone() };
         let inventory = self.inventory.as_deref().map(load_inventory).transpose().map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -60,7 +82,7 @@ impl TargetBackend for ShellBackend {
         Ok(())
     }
 
-    fn write_workspace_files(&self, _workspace: &fp_core::ast::program::AstProgram, _hir: &fp_core::hir::HirProgram) -> CoreResult<()> {
+    fn write_workspace(&self, _workspace: &fp_core::ast::program::AstProgram, _hir: &fp_core::hir::HirProgram) -> CoreResult<()> {
         let mut code = self.rendered.lock().map_err(|_| fp_core::error::Error::from("shell backend render lock poisoned"))?.join("\n");
         if self.dry_run {
             code = format!("#!/usr/bin/env bash\nset -euo pipefail\nFP_DRY_RUN=1\n__dry() {{ echo \\\"[DRY-RUN] $*\\\"; }}\n\n{code}");
@@ -69,13 +91,8 @@ impl TargetBackend for ShellBackend {
         std::fs::write(&self.output, code)?;
         Ok(())
     }
-
-    fn exec(&self) -> CoreResult<()> {
-        let mut command = match self.target { ScriptTarget::Bash => { let mut c = Command::new("bash"); c.arg(&self.output); c }, ScriptTarget::PowerShell => { let mut c = Command::new("pwsh"); c.args(["-NoProfile", "-NonInteractive", "-File"]).arg(&self.output); c } };
-        let status = command.status()?;
-        if status.success() { Ok(()) } else { Err(fp_core::error::Error::from(format!("shell execution failed with status {status}"))) }
-    }
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptTarget {

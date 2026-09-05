@@ -81,6 +81,7 @@ impl HirProgram {
             }
         }
         crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+            span: crate::span::Span::null(),
             res: crate::hir::Res::Module(module),
             segments: Vec::new(),
         })
@@ -182,6 +183,7 @@ impl HirProgram {
                     }
                 }
                 crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
+                    span: crate::span::Span::null(),
                     res: crate::hir::Res::Module(module_id),
                     segments: Vec::new(),
                 })

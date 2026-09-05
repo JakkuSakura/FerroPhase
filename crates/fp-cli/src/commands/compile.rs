@@ -248,7 +248,7 @@ fn provider_and_package_for_input(
 /// Runs a `--target <name>` compile — built-in or runtime-registered
 /// (`crate::languages::backend_registry`) — for a directory or a single
 /// file, through the same discovery/typecheck/`TargetBackend::
-/// emit_package_artifact`/`write_workspace_files` pipeline either way. A
+/// emit_package`/`write_workspace` pipeline either way. A
 /// single file (including a foreign artifact like a native object) is
 /// just the trivial one-package case of the same discovery, not a
 /// separate code path — so `--exec` falls out of `backend.exec()` for
@@ -525,8 +525,8 @@ fn cargo_manifest_declares_workspace(manifest: &Path) -> bool {
 }
 
 /// Shared tail of every named-target compile: typechecks every package in
-/// one `CompilerDriver::compile_workspace` call, hands each one to
-/// `backend.emit_package_artifact`, then `write_workspace_files`/`exec`.
+/// one `CompilerDriver::compile_workspace` call, then hands the compiler's
+/// shared program handles to one backend emission call followed by `exec`.
 fn run_compile_pipeline(
     input: &Path,
     output: &Path,
@@ -577,26 +577,13 @@ fn run_compile_pipeline(
         .state
         .borrow_mut()
         .set_target_operations(backend.portable_operation_registry());
-    // Source serializers consume lifted HIR, while native IR backends need
-    // the HIR -> MIR -> LIR stages populated before emission. Select that
-    // pipeline before compilation so the typed HIR is lowered exactly once.
-    let needs_native_pipeline = matches!(
-        target_name,
-        "native"
-            | "interpret"
-            | "llvm-text"
-            | "llvm-binary"
-            | "cranelift"
-            | "cil"
-            | "dotnet"
-            | "jvm-bytecode"
-            | "urcl"
-            | "ebpf"
-            | "goasm"
-    );
-    if needs_native_pipeline {
-        driver.pipeline = fp_compiler::PipelineMode::Native;
-    }
+    let backend_plan = backend.plan();
+    driver.pipeline = match backend_plan.stage {
+        fp_core::backend::BackendStage::Transpile => fp_compiler::PipelineMode::Transpile,
+        fp_core::backend::BackendStage::Native | fp_core::backend::BackendStage::Bytecode => {
+            fp_compiler::PipelineMode::Native
+        }
+    };
     executor
         .run(driver.compile_workspace(&root_id, &packages))
         .map_err(|e| {
@@ -607,7 +594,7 @@ fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(&mut driver)?;
-    if matches!(target_name, "bytecode" | "text-bytecode") {
+    if backend_plan.stage == fp_core::backend::BackendStage::Bytecode {
         driver.pipeline = fp_compiler::PipelineMode::Native;
         driver.state.borrow_mut().set_bytecode_comptime(true);
         for package_id in &packages {
@@ -616,58 +603,24 @@ fn run_compile_pipeline(
                 .map_err(|error| CliError::Compilation(error.to_string()))?;
         }
     }
-    let workspace = driver.state.borrow().workspace.clone();
-
-    // Phase 2: serialize + write every package now that the workspace-wide
-    // mutability set (and any other cross-package info) is complete.
-    for package_id in &packages {
-        // Any op materialization the backend needs (e.g. Kotlin's
-        // portable-op -> Kotlin-idiom pass) happens inside
-        // emit_package_artifact itself, not here.
-        let mir_module = {
-            let state = driver.state.borrow();
-            let mut unit = fp_core::mir::MirCodeUnit::new();
-            if let Some(package) = state.mir_program().package(package_id) {
-                let package = package.borrow();
-                unit.items.extend(package.items().cloned());
-                unit.bodies
-                    .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
-            }
-            unit
-        };
-        let lir_blob = {
-            let state = driver.state.borrow();
-            state.lir_program().merged_blob_for_package(package_id).ok()
-        }
-        .map(|mut blob| {
-            // Best-effort: resolve and rename `package_id`'s `main` to the
-            // bare symbol name native/asm emitters look for (see
-            // `fp_core::ast::package::resolve_entrypoint_def_id`/
-            // `rename_lir_function`'s own doc comments) — silently left
-            // unrenamed if `package_id` has no `main` (e.g. a library).
-            if let Some(ast_package) = workspace.compiled_package(package_id) {
-                let hir_package_id = ast_package.borrow().package_id.clone();
-                if let Ok(hir_package) = driver.state.borrow().hir(hir_package_id) {
-                    if let Ok(def_id) = fp_core::ast::package::resolve_entrypoint_def_id(
-                        package_id,
-                        &hir_package,
-                        "main",
-                    ) {
-                        fp_core::ast::package::rename_lir_function(&mut blob, def_id, "main");
-                    }
-                }
-            }
-            blob
-        });
-        backend
-            .emit_package_artifact(&workspace, package_id, &mir_module, lir_blob.as_ref())
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-    }
-
-    let hir_program = driver.state.borrow().hir_program();
-    let hir_program = hir_program.borrow();
+    let (ast_program, hir_program, mir_program, lir_program) = {
+        let state = driver.state.borrow();
+        (
+            state.ast_program.clone(),
+            state.hir_program(),
+            state.mir_program_rc(),
+            state.lir_program_rc(),
+        )
+    };
+    let context = fp_core::backend::BackendContext {
+        ast_program,
+        hir_program,
+        mir_program,
+        lir_program,
+        emitted_packages: packages.clone(),
+    };
     backend
-        .write_workspace_files(&workspace, &hir_program)
+        .emit(&context)
         .map_err(|e| CliError::Compilation(e.to_string()))?;
 
     if exec {

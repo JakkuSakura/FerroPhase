@@ -66,11 +66,52 @@ pub struct CraneliftBackend {
 }
 
 impl fp_core::backend::TargetBackend for CraneliftBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::native() }
+
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| {
+                let package = package.borrow();
+                let mut unit = fp_core::mir::MirCodeUnit::new();
+                unit.items.extend(package.items().cloned());
+                unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+                unit
+            }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        Ok(())
+    }
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         fp_core::capabilities::LanguageCapabilities::NATIVE
     }
 
-    fn emit_package_artifact(
+
+    fn exec(&self) -> Result<()> {
+        let status = std::process::Command::new(&self.output)
+            .status()
+            .map_err(|e| {
+                fp_core::error::Error::from(format!(
+                    "failed to execute '{}': {e}",
+                    self.output.display()
+                ))
+            })?;
+        if !status.success() {
+            let code = status.code().unwrap_or(-1);
+            return Err(fp_core::error::Error::from(format!(
+                "process exited with status {code}"
+            )));
+        }
+        Ok(())
+    }
+
+
+}
+
+impl CraneliftBackend {
+
+    fn emit_package(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
@@ -129,25 +170,8 @@ impl fp_core::backend::TargetBackend for CraneliftBackend {
         }
         Ok(())
     }
-
-    fn exec(&self) -> Result<()> {
-        let status = std::process::Command::new(&self.output)
-            .status()
-            .map_err(|e| {
-                fp_core::error::Error::from(format!(
-                    "failed to execute '{}': {e}",
-                    self.output.display()
-                ))
-            })?;
-        if !status.success() {
-            let code = status.code().unwrap_or(-1);
-            return Err(fp_core::error::Error::from(format!(
-                "process exited with status {code}"
-            )));
-        }
-        Ok(())
-    }
 }
+
 
 fn link_object_with_clang(
     object_path: &Path,

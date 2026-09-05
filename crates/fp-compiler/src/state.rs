@@ -57,7 +57,7 @@ pub struct CompilerState {
     /// callback does not own package-specific state.
     pub comptime_resolver: Option<ComptimeResolver>,
     /// The compiled-package registry for this compilation session.
-    pub workspace: Rc<AstProgram>,
+    pub ast_program: Rc<AstProgram>,
     /// Target ABI data shared by typing-triggered comptime blocks and
     /// normal MIR-to-LIR lowering for this compilation session — same
     /// rationale as `workspace` above.
@@ -115,7 +115,7 @@ impl CompilerState {
             runtime_programs: std::collections::HashMap::new(),
             runtime_entrypoints: std::collections::HashMap::new(),
             comptime_resolver: None,
-            workspace,
+            ast_program: workspace,
             data_layout,
             backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             intrinsic_materializer: None,

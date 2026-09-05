@@ -632,7 +632,7 @@ impl LoweredProgram {
         self.driver
             .state
             .borrow()
-            .workspace
+            .ast_program
             .compiled_package(&self.package_id)
             .ok_or_else(|| {
                 CliError::Compilation(format!(
@@ -646,7 +646,7 @@ impl LoweredProgram {
     /// this package itself), as a `AstProgram` — the input every
     /// `TargetBackend` reads from.
     fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::ast::program::AstProgram>> {
-        Ok(self.driver.state.borrow().workspace.clone())
+        Ok(self.driver.state.borrow().ast_program.clone())
     }
 
     #[allow(dead_code)]

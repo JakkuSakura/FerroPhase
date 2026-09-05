@@ -68,11 +68,48 @@ impl NativeEmitter {
 /// doesn't need a separate `BackendConfig` — the existing config already is
 /// the "where to write" state `TargetBackend`'s design calls for.
 impl fp_core::backend::TargetBackend for NativeEmitter {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::native() }
+
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| {
+                let package = package.borrow();
+                let mut unit = fp_core::mir::MirCodeUnit::new();
+                unit.items.extend(package.items().cloned());
+                unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+                unit
+            }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        Ok(())
+    }
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         fp_core::capabilities::LanguageCapabilities::NATIVE
     }
 
-    fn emit_package_artifact(
+
+    fn exec(&self) -> Result<()> {
+        let path = &self.config.output_path;
+        let status = std::process::Command::new(path).status().map_err(|e| {
+            fp_core::error::Error::from(format!("failed to execute '{}': {e}", path.display()))
+        })?;
+        if !status.success() {
+            let code = status.code().unwrap_or(-1);
+            return Err(fp_core::error::Error::from(format!(
+                "process exited with status {code}"
+            )));
+        }
+        Ok(())
+    }
+
+
+}
+
+impl NativeEmitter {
+
+    fn emit_package(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
@@ -133,21 +170,8 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         self.emit(lir, None)?;
         Ok(())
     }
-
-    fn exec(&self) -> Result<()> {
-        let path = &self.config.output_path;
-        let status = std::process::Command::new(path).status().map_err(|e| {
-            fp_core::error::Error::from(format!("failed to execute '{}': {e}", path.display()))
-        })?;
-        if !status.success() {
-            let code = status.code().unwrap_or(-1);
-            return Err(fp_core::error::Error::from(format!(
-                "process exited with status {code}"
-            )));
-        }
-        Ok(())
-    }
 }
+
 
 /// One `NativeObjectPackageProvider::from_archive` member: either a
 /// recognized object lifted to `AsmProgram` (retargeted like any other
@@ -446,7 +470,7 @@ fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
 /// `AsmProgram` once at construction (there's nothing to parse lazily)
 /// and embeds it directly as the package's one item
 /// (`fp_core::ast::ItemKind::PrecompiledAsm`), so `NativeEmitter::
-/// emit_package_artifact` picks it up from `workspace.package_source(id)` the
+/// emit_package` picks it up from `workspace.package_source(id)` the
 /// same way every AST-emitting backend already reads its package's
 /// items — no side-channel field, no extra trait method.
 pub struct NativeObjectPackageProvider {
@@ -467,7 +491,7 @@ impl NativeObjectPackageProvider {
     /// foo.s`, lifted via `asmir::lift_from_x86_64`/`lift_from_aarch64`
     /// after `asm::x86_64::AsmX86_64Program::parse_text`/`asm::aarch64::
     /// AsmAarch64Program::parse_text`) rather than a binary object file.
-    /// The one item's path is empty — `NativeEmitter::emit_package_artifact`
+    /// The one item's path is empty — `NativeEmitter::emit_package`
     /// treats an empty-path single item as "one plain object/asm", not an
     /// archive (see `from_archive`, whose members are each tagged with
     /// their own non-empty path).
@@ -481,7 +505,7 @@ impl NativeObjectPackageProvider {
 
     /// A native archive (`.a`/`.lib`) given directly as `fp compile`'s
     /// input — one item per member, each tagged with the member's own
-    /// name as its `InPackagePath` (so `NativeEmitter::emit_package_artifact`
+    /// name as its `InPackagePath` (so `NativeEmitter::emit_package`
     /// can recover it when repacking the retargeted archive). A member
     /// recognized as an object file lifts to `PrecompiledAsm`, the same
     /// as a standalone object; anything else (e.g. a symbol-table member)

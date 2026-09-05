@@ -17,7 +17,7 @@ struct KotlinScan {
     ctx: KotlinWorkspaceContext,
     workspace_packages: HashSet<String>,
     /// Every package selected for Kotlin emission, sorted — used by
-    /// `write_workspace_files` for `settings.gradle.kts`'s `include(...)`
+    /// `write_workspace` for `settings.gradle.kts`'s `include(...)`
     /// lines.
     package_names: Vec<String>,
     kotlin_packages: HashMap<String, String>,
@@ -96,7 +96,7 @@ fn kotlin_operation_registry() -> Option<fp_core::lang::LangItemRegistry> {
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context beyond what `BackendConfig` carries — the
 /// workspace-wide `KotlinScan` is read lazily from `&AstProgram` on
-/// first `emit_package_artifact`/`write_workspace_files` call, same as every
+/// first `emit_package`/`write_workspace` call, same as every
 /// other backend gets its input. `config.root_name` (the *source* project
 /// directory's name, not `config.workspace_root`, the output directory)
 /// is read straight off `self.config` — `AstProgram` has no way to
@@ -121,10 +121,10 @@ impl KotlinBackend {
     }
 
     /// Builds and caches the workspace-wide scan from `&AstProgram`
-    /// on first call. Safe to call from any package's `emit_package_artifact` —
+    /// on first call. Safe to call from any package's `emit_package` —
     /// including the very first — since `run_named_target`'s typecheck
     /// phase already ran for every package in the workspace before any
-    /// `emit_package_artifact` call happens.
+    /// `emit_package` call happens.
     fn ensure_scan(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
@@ -903,6 +903,17 @@ mod tests {
 }
 
 impl TargetBackend for KotlinBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::transpile() }
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| { let package = package.borrow(); let mut unit = fp_core::mir::MirCodeUnit::new(); unit.items.extend(package.items().cloned()); unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone()))); unit }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        self.write_workspace(context.ast_program.as_ref(), &context.hir_program.borrow())
+    }
+
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         crate::CAPABILITIES
     }
@@ -917,7 +928,13 @@ impl TargetBackend for KotlinBackend {
         kotlin_operation_registry()
     }
 
-    fn emit_package_artifact(
+
+
+
+}
+
+impl KotlinBackend {
+    fn emit_package(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
@@ -963,7 +980,7 @@ impl TargetBackend for KotlinBackend {
         Ok(())
     }
 
-    fn write_workspace_files(
+    fn write_workspace(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         _hir_program: &fp_core::hir::HirProgram,
@@ -999,6 +1016,7 @@ impl TargetBackend for KotlinBackend {
         self.publish_output()
     }
 }
+
 
 fn runtime_build_gradle() -> &'static str {
     "plugins {\n    kotlin(\"jvm\") version \"2.1.0\"\n    kotlin(\"plugin.serialization\") version \"2.1.0\"\n}\n\n\

@@ -141,7 +141,7 @@ impl CompilerDriver {
         let package = self
             .state
             .borrow()
-            .workspace
+            .ast_program
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let previous_pipeline = self.pipeline;
@@ -226,7 +226,7 @@ impl CompilerDriver {
             let hir_package_id = self
                 .state
                 .borrow()
-                .workspace
+                .ast_program
                 .compiled_package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?
                 .borrow()
@@ -256,7 +256,7 @@ impl CompilerDriver {
         let package = self
             .state
             .borrow()
-            .workspace
+                .ast_program
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         self.compile_items_to_lir_units(&package).await?;
@@ -303,7 +303,7 @@ impl CompilerDriver {
         let package = self
             .state
             .borrow()
-            .workspace
+                .ast_program
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let hir_package_id = package.borrow().package_id.clone();
@@ -401,7 +401,7 @@ impl CompilerDriver {
         package_id: &PackageId,
         is_root: bool,
     ) -> Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> {
-        let parent_workspace = self.state.borrow().workspace.clone();
+        let parent_workspace = self.state.borrow().ast_program.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_workspace.import_package(package_id.clone(), package.clone());
             if self.pipeline == PipelineMode::Transpile && !is_root {
@@ -438,7 +438,7 @@ impl CompilerDriver {
         let package_workspace = parent_workspace.clone();
         {
             let mut state = self.state.borrow_mut();
-            state.workspace = package_workspace;
+            state.ast_program = package_workspace;
         }
 
         let result: Result<Rc<RefCell<fp_core::ast::package::AstPackage>>, CompilerDriverError> =
@@ -446,7 +446,7 @@ impl CompilerDriver {
                 let provider = self
                     .state
                     .borrow()
-                    .workspace
+                    .ast_program
                     .provider_for(package_id)
                     .ok_or_else(|| {
                         CompilerDriverError::UnresolvablePackage(package_id.to_string())
@@ -489,7 +489,7 @@ impl CompilerDriver {
                         _ => None,
                     })
                     .collect();
-                let package = self.state.borrow().workspace.begin_package(
+                let package = self.state.borrow().ast_program.begin_package(
                     package_id.clone(),
                     source,
                     self.state.borrow().data_layout.clone(),
@@ -514,7 +514,7 @@ impl CompilerDriver {
         self.building_packages.remove(package_id);
         {
             let mut state = self.state.borrow_mut();
-            state.workspace = parent_workspace.clone();
+            state.ast_program = parent_workspace.clone();
         }
         let package = result?;
         self.compiled_packages
@@ -599,11 +599,11 @@ impl CompilerDriver {
         let normalizer = self
             .state
             .borrow()
-            .workspace
+            .ast_program
             .provider()
             .intrinsic_normalizer();
         let mut generator = AstToHirLowerer::new(
-            self.state.borrow().workspace.clone(),
+            self.state.borrow().ast_program.clone(),
             self.state.borrow().hir_program_rc(),
             hir_package_id,
         )
@@ -813,7 +813,7 @@ impl CompilerDriver {
         if let Some(pkg) = self
             .state
             .borrow()
-            .workspace
+            .ast_program
             .compiled_package(&current_package_id)
         {
             let mut pkg = pkg.borrow_mut();

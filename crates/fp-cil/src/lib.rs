@@ -24,53 +24,27 @@ pub struct CilBackend {
 }
 
 impl fp_core::backend::TargetBackend for CilBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::native() }
+
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| {
+                let package = package.borrow();
+                let mut unit = fp_core::mir::MirCodeUnit::new();
+                unit.items.extend(package.items().cloned());
+                unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+                unit
+            }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        Ok(())
+    }
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         fp_core::capabilities::LanguageCapabilities::NATIVE
     }
 
-    fn emit_package_artifact(
-        &self,
-        workspace: &fp_core::ast::program::AstProgram,
-        package_id: &fp_core::ast::package::PackageId,
-        mir: &fp_core::mir::MirCodeUnit,
-        lir: Option<&fp_core::lir::LirBlob>,
-    ) -> fp_core::error::Result<()> {
-        let _ = lir;
-        // CIL text or an assembled PE given directly as input (see
-        // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
-        // writes/assembles itself back out instead of going through MIR.
-        if let Ok(source) = workspace.package_source(package_id) {
-            let source_items = source.items();
-            let artifact = source_items
-                .iter()
-                .find_map(|pkg_item| match pkg_item.item.kind() {
-                    fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
-                    _ => None,
-                });
-            if let Some(bytes) = artifact {
-                return self.write_passthrough(&bytes);
-            }
-        }
-
-        if mir.items.is_empty() {
-            return Err(fp_core::error::Error::from(format!(
-                "package `{package_id}` has no MIR program"
-            )));
-        }
-        if self.assemble {
-            emit_assembly(mir, &self.output, self.save_intermediates).map_err(|e| {
-                fp_core::error::Error::from(format!(".NET assembly emit failed: {e}"))
-            })?;
-            return Ok(());
-        }
-        let code = emit_cil(mir)
-            .map_err(|e| fp_core::error::Error::from(format!("CIL emit failed: {e}")))?;
-        if let Some(parent) = self.output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.output, code)?;
-        Ok(())
-    }
 
     fn exec(&self) -> fp_core::error::Result<()> {
         if !self.assemble {
@@ -116,6 +90,54 @@ impl fp_core::backend::TargetBackend for CilBackend {
         }
         Ok(())
     }
+
+
+impl CilBackend {
+
+    fn emit_package(
+        &self,
+        workspace: &fp_core::ast::program::AstProgram,
+        package_id: &fp_core::ast::package::PackageId,
+        mir: &fp_core::mir::MirCodeUnit,
+        lir: Option<&fp_core::lir::LirBlob>,
+    ) -> fp_core::error::Result<()> {
+        let _ = lir;
+        // CIL text or an assembled PE given directly as input (see
+        // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
+        // writes/assembles itself back out instead of going through MIR.
+        if let Ok(source) = workspace.package_source(package_id) {
+            let source_items = source.items();
+            let artifact = source_items
+                .iter()
+                .find_map(|pkg_item| match pkg_item.item.kind() {
+                    fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
+                    _ => None,
+                });
+            if let Some(bytes) = artifact {
+                return self.write_passthrough(&bytes);
+            }
+        }
+
+        if mir.items.is_empty() {
+            return Err(fp_core::error::Error::from(format!(
+                "package `{package_id}` has no MIR program"
+            )));
+        }
+        if self.assemble {
+            emit_assembly(mir, &self.output, self.save_intermediates).map_err(|e| {
+                fp_core::error::Error::from(format!(".NET assembly emit failed: {e}"))
+            })?;
+            return Ok(());
+        }
+        let code = emit_cil(mir)
+            .map_err(|e| fp_core::error::Error::from(format!("CIL emit failed: {e}")))?;
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.output, code)?;
+        Ok(())
+    }
+}
 }
 
 impl CilBackend {

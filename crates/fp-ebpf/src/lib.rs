@@ -1781,39 +1781,27 @@ pub struct EbpfBackend {
 }
 
 impl fp_core::backend::TargetBackend for EbpfBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::native() }
+
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| {
+                let package = package.borrow();
+                let mut unit = fp_core::mir::MirCodeUnit::new();
+                unit.items.extend(package.items().cloned());
+                unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+                unit
+            }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        Ok(())
+    }
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         fp_core::capabilities::LanguageCapabilities::NATIVE
     }
 
-    fn emit_package_artifact(
-        &self,
-        workspace: &fp_core::ast::program::AstProgram,
-        package_id: &fp_core::ast::package::PackageId,
-        mir: &fp_core::mir::MirCodeUnit,
-        lir: Option<&fp_core::lir::LirBlob>,
-    ) -> fp_core::error::Result<()> {
-        let _ = mir;
-        let lir = lir
-            .ok_or_else(|| {
-                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
-            })?
-            .clone();
-        if let Some(parent) = self.output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        if self.output.extension().and_then(|ext| ext.to_str()) == Some("o") {
-            let object_bytes = emit_object(&lir).map_err(|e| {
-                fp_core::error::Error::from(format!("eBPF object emission failed: {e}"))
-            })?;
-            std::fs::write(&self.output, object_bytes)?;
-        } else {
-            let text = emit_assembly(&lir).map_err(|e| {
-                fp_core::error::Error::from(format!("eBPF assembly emission failed: {e}"))
-            })?;
-            std::fs::write(&self.output, text)?;
-        }
-        Ok(())
-    }
 
     fn exec(&self) -> fp_core::error::Result<()> {
         let runtime = std::env::var("FP_EBPF_RUNTIME").map_err(|_| {
@@ -1844,7 +1832,43 @@ impl fp_core::backend::TargetBackend for EbpfBackend {
         }
         Ok(())
     }
+
+
 }
+
+impl EbpfBackend {
+
+    fn emit_package(
+        &self,
+        workspace: &fp_core::ast::program::AstProgram,
+        package_id: &fp_core::ast::package::PackageId,
+        mir: &fp_core::mir::MirCodeUnit,
+        lir: Option<&fp_core::lir::LirBlob>,
+    ) -> fp_core::error::Result<()> {
+        let _ = mir;
+        let lir = lir
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR"))
+            })?
+            .clone();
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if self.output.extension().and_then(|ext| ext.to_str()) == Some("o") {
+            let object_bytes = emit_object(&lir).map_err(|e| {
+                fp_core::error::Error::from(format!("eBPF object emission failed: {e}"))
+            })?;
+            std::fs::write(&self.output, object_bytes)?;
+        } else {
+            let text = emit_assembly(&lir).map_err(|e| {
+                fp_core::error::Error::from(format!("eBPF assembly emission failed: {e}"))
+            })?;
+            std::fs::write(&self.output, text)?;
+        }
+        Ok(())
+    }
+}
+
 
 #[cfg(test)]
 mod tests;

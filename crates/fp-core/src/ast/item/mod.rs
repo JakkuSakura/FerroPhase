@@ -77,7 +77,7 @@ common_enum! {
         /// unlike `PrecompiledLir`, nothing generic ever reads this; only
         /// the one target whose own bytes these are (`fp_jvm::JvmBackend`,
         /// `fp_cil::CilBackend` when `assemble: true`) checks for it in
-        /// `emit_package_artifact`, exactly the same shape `NativeEmitter` already has for
+        /// `emit_package`, exactly the same shape `NativeEmitter` already has for
         /// `PrecompiledAsm`. A package may carry both this and a
         /// `PrecompiledLir` item side by side — one for same-target
         /// passthrough, the other for retargeting to anything else.

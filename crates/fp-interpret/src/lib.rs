@@ -119,17 +119,40 @@ fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
 /// `TargetBackend` for the `--target interpret` target — merges the
 /// package's LIR off the shared workspace exactly like `NativeEmitter`
 /// does, then runs it directly instead of emitting an artifact.
-/// `emit_package_artifact`'s `Result<()>` has no channel for the interpreted
+/// `emit_package`'s `Result<()>` has no channel for the interpreted
 /// `Value`, so it's printed as a side effect; the CLI previously discarded
 /// this value entirely, so this is new information, not a regression.
 pub struct InterpreterBackend;
 
 impl fp_core::backend::TargetBackend for InterpreterBackend {
+    fn plan(&self) -> fp_core::backend::BackendPlan { fp_core::backend::BackendPlan::native() }
+
+    fn emit(&self, context: &fp_core::backend::BackendContext) -> fp_core::error::Result<()> {
+        for package_id in &context.emitted_packages {
+            let mir = context.mir_program.package(package_id).map(|package| {
+                let package = package.borrow();
+                let mut unit = fp_core::mir::MirCodeUnit::new();
+                unit.items.extend(package.items().cloned());
+                unit.bodies.extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+                unit
+            }).unwrap_or_else(fp_core::mir::MirCodeUnit::new);
+            let lir = context.lir_program.merged_blob_for_package(package_id).ok();
+            self.emit_package(context.ast_program.as_ref(), package_id, &mir, lir.as_ref())?;
+        }
+        Ok(())
+    }
+
     fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
         fp_core::capabilities::LanguageCapabilities::NATIVE
     }
 
-    fn emit_package_artifact(
+
+
+}
+
+impl InterpreterBackend {
+
+    fn emit_package(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &PackageId,
@@ -165,6 +188,7 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
         Ok(())
     }
 }
+
 
 #[cfg(test)]
 mod tests;
