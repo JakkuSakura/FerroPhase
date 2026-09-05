@@ -478,6 +478,85 @@ fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
 }
 
 #[test]
+fn associated_const_lookup_is_not_filtered_by_expected_value_type() {
+    // Rustc resolves an associated item from the receiver and item name
+    // first. A conflicting surrounding expectation is diagnosed at the use
+    // site; it must not make an existing `f128::INFINITY` declaration look
+    // unresolved.
+    let package_id = test_pkg();
+    let impl_id = hir::DefId::new(package_id.clone(), 30);
+    let const_id = hir::DefId::new(package_id.clone(), 31);
+    let f128_path = |hir_id: u32| hir::TypeExpr {
+        hir_id: hid(hir_id),
+        kind: hir::TypeExprKind::Path(hir::QPath::resolved(hir::Path {
+            span: Default::default(),
+            segments: vec![hir::PathSegment {
+                ident: "f128".into(),
+                hir_id: Default::default(),
+                args: None,
+                infer_args: false,
+                delegation_child_segment: false,
+                res: hir::Res::Error,
+            }],
+            res: hir::Res::Builtin(hir::BuiltinSelfType::Primitive("f128".into())),
+        })),
+        span: fp_core::span::Span::null(),
+    };
+    let constant = hir::ImplItem {
+        def_id: const_id,
+        hir_id: hid(32),
+        name: "INFINITY".into(),
+        kind: hir::ImplItemKind::AssocConst(hir::Const {
+            name: "INFINITY".into(),
+            ty: f128_path(33),
+            body: hir::Body {
+                hir_id: hid(34),
+                params: Vec::new(),
+                value: hir::Expr {
+                    hir_id: hid(35),
+                    kind: hir::ExprKind::Literal(hir::Lit::Float(0.0)),
+                    span: fp_core::span::Span::null(),
+                },
+            },
+            mutable: false,
+            is_host: false,
+        }),
+    };
+    let implementation = hir::Item {
+        hir_id: hid(36),
+        def_id: impl_id.clone(),
+        visibility: hir::Visibility::Private,
+        kind: hir::ItemKind::Impl(hir::Impl {
+            generics: hir::Generics::default(),
+            trait_ty: None,
+            self_ty: f128_path(37),
+            items: vec![constant],
+        }),
+        span: fp_core::span::Span::null(),
+    };
+    let mut package = hir::HirPackage::new(package_id);
+    package.items.push(implementation.clone());
+    package.def_map.insert(impl_id, implementation);
+
+    let executor = fp_core::executor::CompilerExecutor::new().handle();
+    let checker = HirTypeChecker::new(
+        Rc::new(RefCell::new(package)),
+        None,
+        None,
+        executor.clone(),
+    );
+    let result = executor.run(async move {
+        let mut checker = checker.borrow_mut();
+        checker.expected_expr_type = Some(Ty::bool());
+        checker
+            .method_declared_signature_at(&Ty::float(ty::FloatTy::F128), &"INFINITY".into())
+            .await
+            .expect("associated constant lookup should not fail")
+    });
+    assert_eq!(result, Some(Ty::float(ty::FloatTy::F128)));
+}
+
+#[test]
 fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
     let package_id = test_pkg();
     let wrapper_id = hir::DefId::new(package_id.clone(), 2);

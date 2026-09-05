@@ -1479,13 +1479,13 @@ impl HirTypeChecker {
                         let mut scope = scope.with_self_type(impl_self_ty.clone());
                         let ty = scope.check_type_expr(&constant.ty).await?;
                         let ty = scope.substitute_param_map(&ty, &substitutions);
-                        if expected_output.as_ref().is_none_or(|expected| {
-                            scope
-                                .unify_call_types_probe(&ty, expected, &mut HashMap::new())
-                                .is_ok()
-                        }) {
-                            return Ok(Some(ty));
-                        }
+                        // Associated-item existence is determined by the
+                        // receiver and name. Rustc keeps a candidate whose
+                        // associated-constant type disagrees with the
+                        // surrounding expected type, then reports that type
+                        // mismatch at the use site; filtering it here would
+                        // incorrectly turn a valid item into "not found".
+                        return Ok(Some(ty));
                     }
                     _ => {}
                 }
@@ -1537,13 +1537,7 @@ impl HirTypeChecker {
                                 }
                                 let ty = scope.check_type_expr(&constant.ty).await?;
                                 let ty = scope.substitute_param_map(&ty, &substitutions);
-                                if expected_output.as_ref().is_none_or(|expected| {
-                                    scope
-                                        .unify_call_types_probe(&ty, expected, &mut HashMap::new())
-                                        .is_ok()
-                                }) {
-                                    return Ok(Some(ty));
-                                }
+                                return Ok(Some(ty));
                             }
                             hir::TraitItemKind::Method(_)
                             | hir::TraitItemKind::AssocConst(_)
