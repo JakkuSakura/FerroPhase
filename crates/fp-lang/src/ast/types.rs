@@ -27,8 +27,7 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     // `parse_name` owns path-segment parsing, including per-segment generic
     // and parenthesized arguments. Keeping that representation intact is
     // important for QPath lowering: `<T as Trait>::Assoc::Nested` must retain
-    // every segment rather than collapsing the first associated item into a
-    // legacy `TypeProjection` node.
+    // every segment rather than collapsing the first associated item.
     if skip_symbol(&mut probe, "::").is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }

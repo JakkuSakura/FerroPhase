@@ -700,13 +700,6 @@ impl InterfaceBuilder {
         receiver_ctx: Option<&ReceiverContext>,
     ) -> String {
         match ty {
-            Ty::Projection(projection) => self.wit_type_for(
-                &projection.self_ty,
-                hint,
-                receiver_scope,
-                current_package,
-                receiver_ctx,
-            ),
             Ty::Primitive(p) => match p {
                 TypePrimitive::Bool => "bool".to_string(),
                 TypePrimitive::Char => "char".to_string(),
@@ -1554,7 +1547,6 @@ fn name_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
 
 fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
     match ty {
-        Ty::Projection(projection) => ty_to_wit_with_self(&projection.self_ty, self_name),
         Ty::Primitive(p) => match p {
             TypePrimitive::Bool => "bool".to_string(),
             TypePrimitive::Char => "char".to_string(),

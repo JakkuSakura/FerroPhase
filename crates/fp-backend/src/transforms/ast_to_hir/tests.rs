@@ -4266,7 +4266,7 @@ mod function_body_resolution {
     }
 
     #[test]
-    fn lowers_legacy_ast_projection_to_qpath() {
+    fn lowers_qualified_ast_type_to_qpath() {
         let parser = FerroPhaseParser::new();
         let mut items = parser
             .parse_items_ast("trait Trait { type Item; } struct Value; type Alias = Value;")
@@ -4278,15 +4278,19 @@ mod function_body_resolution {
         let ast::ItemKind::DefType(def) = alias.kind_mut() else {
             unreachable!();
         };
-        def.value = ast::Ty::Projection(Box::new(ast::TypeProjection {
-            self_ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
-                ast::Name::ident("Value"),
-            )))),
-            trait_ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
-                ast::Name::ident("Trait"),
-            )))),
-            assoc: ast::Ident::new("Item"),
-        }));
+        def.value = ast::Ty::Expr(Box::new(ast::Expr::name(ast::Name {
+            qself: Some(ast::QSelf {
+                ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
+                    ast::Name::ident("Value"),
+                )))),
+                path_span: Span::null(),
+                position: 1,
+            }),
+            path: ast::Path::plain(vec![
+                ast::Ident::new("Trait").into(),
+                ast::Ident::new("Item").into(),
+            ]),
+        })));
 
         let package = package_from_items(items).expect("projection fixture package");
         let package_id = PackageId::new("test");
@@ -4302,7 +4306,7 @@ mod function_body_resolution {
             .expect("projection fixture should lower");
         assert!(
             lowerer.take_diagnostics().get_diagnostics().is_empty(),
-            "legacy projection lowering emitted diagnostics"
+            "qualified path lowering emitted diagnostics"
         );
         let alias = lowered
             .items
@@ -4314,7 +4318,7 @@ mod function_body_resolution {
             .expect("lowered type alias should be present");
         let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind
         else {
-            panic!("legacy projection should lower to a resolved QPath");
+            panic!("qualified AST type should lower to a resolved QPath");
         };
         assert_eq!(path.segments.len(), 2);
         assert_eq!(path.segments[0].ident.as_str(), "Trait");

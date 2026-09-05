@@ -2649,34 +2649,6 @@ impl AstToHirLowerer {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
-            ast::Ty::Projection(projection) => {
-                let self_ty = Box::new(self.transform_type_to_hir(&projection.self_ty)?);
-                let trait_ty = self.transform_type_to_hir(&projection.trait_ty)?;
-                let hir::TypeExprKind::Path(trait_qpath) = trait_ty.kind else {
-                    return Ok(self.error_type_expr(ty.span()));
-                };
-                let Some(trait_path) = trait_qpath.into_path() else {
-                    return Ok(self.error_type_expr(ty.span()));
-                };
-                let trait_span = trait_path.span();
-                let trait_res = trait_path.res;
-                let mut segments = trait_path.segments;
-                segments.push(self.make_path_segment(
-                    projection.assoc.name.as_str(),
-                    None,
-                    ParamMode::Explicit,
-                ));
-                let path = hir::Path::with_span(
-                    Span::union([self_ty.span(), trait_span]),
-                    trait_res,
-                    segments,
-                );
-                Ok(hir::TypeExpr::new(
-                    self.next_id(),
-                    hir::TypeExprKind::Path(hir::QPath::qualified(*self_ty, path)),
-                    self.normalize_span(ty.span()),
-                ))
-            }
             ast::Ty::Value(type_value) => {
                 let expr = match type_value.value.as_ref() {
                     ast::Value::Int(_) => {
