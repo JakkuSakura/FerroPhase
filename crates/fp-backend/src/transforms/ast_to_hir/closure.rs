@@ -20,6 +20,7 @@ pub(super) struct ClosureLowering {
     struct_infos: HashMap<String, ClosureInfo>,
     variable_infos: HashMap<String, ClosureInfo>,
     pub(super) generated_items: Vec<ast::Item>,
+    pub(super) generated_item_paths: Vec<fp_core::ast::path::InPackagePath>,
     pub(super) diagnostics: Vec<Diagnostic>,
     /// Struct name -> (field name, declared field type), collected once up
     /// front over the whole package — used only to derive a closure
@@ -36,6 +37,7 @@ pub(super) struct ClosureLowering {
     /// Generic parameters from the enclosing function. Generated closure
     /// items must carry these when captured field types refer to them.
     current_generics_params: Vec<ast::GenericParam>,
+    pub(super) current_module_path: fp_core::ast::path::InPackagePath,
 }
 // TODO: move to new file
 impl ClosureLowering {
@@ -47,10 +49,12 @@ impl ClosureLowering {
             struct_infos: HashMap::new(),
             variable_infos: HashMap::new(),
             generated_items: Vec::new(),
+            generated_item_paths: Vec::new(),
             diagnostics: Vec::new(),
             struct_field_types: HashMap::new(),
             current_param_types: HashMap::new(),
             current_generics_params: Vec::new(),
+            current_module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
         }
     }
 
@@ -378,7 +382,11 @@ impl ClosureLowering {
         for item in items {
             match item.kind_mut() {
                 ast::ItemKind::Module(module) => {
+                    let previous_module = self.current_module_path.clone();
+                    self.current_module_path = previous_module
+                        .with_segment(module.name.as_str().to_owned());
                     self.find_and_transform_functions(&mut module.items)?;
+                    self.current_module_path = previous_module;
                 }
                 ast::ItemKind::DefFunction(func) => {
                     let previous = std::mem::replace(
@@ -640,7 +648,11 @@ impl ClosureLowering {
         let fn_item = ast::Item::new(ast::ItemKind::DefFunction(fn_item_ast));
 
         self.generated_items.push(struct_item);
+        self.generated_item_paths
+            .push(self.current_module_path.clone());
         self.generated_items.push(fn_item);
+        self.generated_item_paths
+            .push(self.current_module_path.clone());
 
         let mut fields = Vec::new();
         for capture in &captures {
@@ -678,7 +690,13 @@ impl ClosureLowering {
     pub(super) fn rewrite_usage(&mut self, items: &mut [ast::Item]) -> Result<()> {
         for item in items {
             match item.kind_mut() {
-                ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
+                ast::ItemKind::Module(module) => {
+                    let previous_module = self.current_module_path.clone();
+                    self.current_module_path = previous_module
+                        .with_segment(module.name.as_str().to_owned());
+                    self.rewrite_usage(&mut module.items)?;
+                    self.current_module_path = previous_module;
+                }
                 ast::ItemKind::DefFunction(func) => {
                     let previous = std::mem::replace(
                         &mut self.current_param_types,

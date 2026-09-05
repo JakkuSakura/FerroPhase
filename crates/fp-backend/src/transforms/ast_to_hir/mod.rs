@@ -1066,16 +1066,11 @@ impl AstToHirLowerer {
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
         // closure literal into an ordinary struct+function pair before HIR
         // lowering sees it — see `lower_closures_in_items`'s doc comment.
-        // Run it here, once, on a local mutable copy; its generated
-        // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
-        // any one source module, so they're scoped to the package root.
-        let original_package_items = package.items();
-        let mut lowered_items: Vec<ast::Item> = original_package_items
-            .iter()
-            .map(|pi| pi.item.clone())
-            .collect();
-        expand_quote_splices(&mut lowered_items)?;
-        let original_len = lowered_items.len();
+        // Run it here, once, on a local mutable copy. Generated
+        // `__ClosureN`/`__closureN_call` items are inserted into the module
+        // where their closure originated, preserving lexical imports.
+        let mut lowered_module = package.module.clone();
+        expand_quote_splices(&mut lowered_module.items)?;
         // A closure argument's receiver (e.g. `node.stats` in
         // `node.stats.as_ref().map_or(..)`) is frequently a struct defined
         // in a *dependency* package, not this one — collect every already
@@ -1090,25 +1085,18 @@ impl AstToHirLowerer {
         // entirely.
         if !self.lowering_config.capabilities.first_class_closures {
             let dependency_struct_field_types = self.workspace_struct_field_types();
-            lower_closures_in_items(
-                &mut lowered_items,
+            let closure_diagnostics = lower_closures_in_items(
+                &mut lowered_module,
                 &dependency_struct_field_types,
                 self.package_id.as_str(),
             )?;
+            self.diagnostics.add_diagnostics(closure_diagnostics);
         }
-        let generated_count = lowered_items.len() - original_len;
-        // Closure lowering prepends synthetic declarations at the package
-        // root. Publish those declarations to the AST workspace before the
-        // global resolver pass so generated closure paths receive ordinary
-        // module bindings and DefIds just like source declarations.
-        if generated_count != 0 || self.intrinsic_normalizer.is_some() {
+        if self.intrinsic_normalizer.is_some()
+            || lowered_module.items.len() != package.module.items.len()
+        {
             let mut resolver_source = package.clone();
-            if generated_count != 0 {
-                resolver_source
-                    .module
-                    .items
-                    .splice(0..0, lowered_items[..generated_count].iter().cloned());
-            }
+            resolver_source.module = lowered_module.clone();
             if self.intrinsic_normalizer.is_some() {
                 let wrapped_root = fp_core::ast::package::PackageItem {
                     module_path: fp_core::ast::path::InPackagePath::new(Vec::new()),
@@ -1141,24 +1129,10 @@ impl AstToHirLowerer {
         ));
         resolver.borrow_mut().resolve_package(&self.package_id)?;
         self.package_resolver = Some(Rc::clone(&resolver));
-        let root_path = fp_core::ast::path::InPackagePath::new(Vec::new());
-        let package_items: Vec<fp_core::ast::package::PackageItem> = lowered_items
-            .into_iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let path = if i < generated_count {
-                    root_path.clone()
-                } else {
-                    original_package_items[i - generated_count]
-                        .module_path
-                        .clone()
-                };
-                fp_core::ast::package::PackageItem {
-                    module_path: path,
-                    item,
-                }
-            })
-            .collect();
+        let package_items = fp_core::ast::package::AstPackage::flatten_module_items(
+            &fp_core::ast::path::InPackagePath::new(Vec::new()),
+            &lowered_module.items,
+        );
         // Item-position `macro_rules!` invocations (real std's own idiom for
         // generating a batch of items — e.g. `std/os/raw/mod.rs`'s
         // `alias_core_ffi! { c_int c_uint .. }`, expanding to `pub type
@@ -3726,10 +3700,10 @@ impl AstToHirLowerer {
     }
 }
 
-/// Decomposes every `ExprKind::Closure` reachable from `items` into an
+/// Decomposes every `ExprKind::Closure` reachable from `module` into an
 /// ordinary `__ClosureN` struct + `__closureN_call` function pair
-/// (`ClosureLowering`) — run once, up front, over a package's flattened
-/// item list (`transform_package`). Without this pre-pass, a closure literal
+/// (`ClosureLowering`) — run once, up front, over the package's module tree
+/// (`transform_package`). Without this pre-pass, a closure literal
 /// reaching
 /// `transform_expr_to_hir_inner`'s `ExprKind::Closure` arm has no other
 /// lowering support and gets discarded entirely (see that arm's explicit
@@ -3738,38 +3712,76 @@ impl AstToHirLowerer {
 /// compiles) since typed content never exercised this path for a real
 /// multi-file package before.
 fn lower_closures_in_items(
-    items: &mut Vec<ast::Item>,
+    module: &mut ast::Module,
     dependency_struct_field_types: &HashMap<String, Vec<(String, ast::Ty)>>,
     package_name: &str,
 ) -> Result<Vec<Diagnostic>> {
     let mut pass = ClosureLowering::new(sanitize_generated_symbol_prefix(package_name));
-    pass.reserve_generated_names(items);
+    pass.reserve_generated_names(&module.items);
     pass.struct_field_types = dependency_struct_field_types.clone();
-    pass.collect_struct_field_types(items);
-    pass.find_and_transform_functions(items)?;
-    pass.rewrite_usage(items)?;
+    pass.collect_struct_field_types(&module.items);
+    pass.find_and_transform_functions(&mut module.items)?;
+    pass.rewrite_usage(&mut module.items)?;
 
     // A closure body can itself contain a closure. The first rewrite pass
     // transforms closures in the original package items, but generated call
     // functions are stored separately and therefore need to be walked as
     // well. Process that generated queue until no nested closure emits more
     // items; otherwise the nested literal reaches HIR lowering unchanged.
-    let mut pending = std::mem::take(&mut pass.generated_items);
+    let generated_items = std::mem::take(&mut pass.generated_items);
+    let generated_paths = std::mem::take(&mut pass.generated_item_paths);
+    let mut pending = generated_items
+        .into_iter()
+        .zip(generated_paths)
+        .collect::<Vec<_>>();
     let mut rewritten = Vec::with_capacity(pending.len());
-    while let Some(mut item) = pending.pop() {
+    let mut rewritten_paths = Vec::with_capacity(pending.len());
+    while let Some((mut item, path)) = pending.pop() {
+        pass.current_module_path = path.clone();
         pass.rewrite_in_item(&mut item)?;
         rewritten.push(item);
-        pending.extend(std::mem::take(&mut pass.generated_items));
+        let nested_items = std::mem::take(&mut pass.generated_items);
+        let nested_paths = std::mem::take(&mut pass.generated_item_paths);
+        pending.extend(nested_items.into_iter().zip(nested_paths));
+        rewritten_paths.push(path);
     }
     rewritten.reverse();
+    rewritten_paths.reverse();
     pass.generated_items = rewritten;
+    pass.generated_item_paths = rewritten_paths;
 
-    if !pass.generated_items.is_empty() {
-        let mut new_items = pass.generated_items;
-        new_items.append(items);
-        *items = new_items;
+    for (path, item) in pass
+        .generated_item_paths
+        .into_iter()
+        .zip(pass.generated_items.into_iter())
+    {
+        insert_generated_item(module, &path.segments, item)?;
     }
     Ok(pass.diagnostics)
+}
+
+fn insert_generated_item(
+    module: &mut ast::Module,
+    path: &[String],
+    item: ast::Item,
+) -> Result<()> {
+    let Some((segment, rest)) = path.split_first() else {
+        module.items.insert(0, item);
+        return Ok(());
+    };
+    let Some(child) = module.items.iter_mut().find_map(|existing| {
+        let ast::ItemKind::Module(child) = existing.kind_mut() else {
+            return None;
+        };
+        (child.name.as_str() == segment).then_some(child)
+    }) else {
+        return Err(format!(
+            "generated closure module `{}` was not found",
+            path.join("::")
+        )
+        .into());
+    };
+    insert_generated_item(child, rest, item)
 }
 
 fn lower_closures_in_expr(expr: &mut ast::Expr) -> Result<(Vec<ast::Item>, Vec<Diagnostic>)> {

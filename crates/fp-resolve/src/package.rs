@@ -569,6 +569,9 @@ impl InPackageResolver {
                     prefix = PathPrefix::Crate;
                 }
                 fp_core::ast::ItemImportTree::SuperMod => {
+                    if base.segments.is_empty() {
+                        base = module.clone();
+                    }
                     let _ = base.pop();
                     prefix = PathPrefix::Crate;
                 }

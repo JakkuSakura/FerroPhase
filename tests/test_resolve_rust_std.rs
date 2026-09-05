@@ -223,6 +223,31 @@ fn resolves_nominal_bases_reported_by_typecheck_diagnostics() {
 }
 
 #[test]
+fn resolves_btree_super_node_imports() {
+    let prepared = prepare_std();
+    let package = PackageId::new("alloc");
+    let location = InPackagePath::new(
+        ["collections", "btree", "fix"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+    );
+    let mut failures = Vec::new();
+    for name in ["Root", "NodeRef", "Handle"] {
+        let path = Path::new(PathPrefix::Plain, vec![name.into()]);
+        if !matches!(
+            prepared
+                .resolver
+                .resolve_parsed_path(&package, &location, &path, Namespace::Type),
+            ResolutionResult::Found(_)
+        ) {
+            failures.push(name);
+        }
+    }
+    assert!(failures.is_empty(), "btree imports unresolved: {failures:?}");
+}
+
+#[test]
 fn rust_std_source_items_keep_module_paths_for_local_imports() {
     let provider = RustStdProvider;
     let package = provider
