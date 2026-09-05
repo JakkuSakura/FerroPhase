@@ -3360,7 +3360,7 @@ impl HirTypeChecker {
                             hir::GenericParamKind::Const { default, .. } => {
                                 let default = default
                                     .as_ref()
-                                    .map(|default| self.const_expr_kind(default))
+                                    .map(|default| self.const_arg_kind(default))
                                     .unwrap_or_else(|| {
                                         ty::ConstKind::Param(ty::ParamConst {
                                             index: parameter.def_id.index,
@@ -3399,7 +3399,7 @@ impl HirTypeChecker {
                                         name: parameter.name.clone(),
                                     })
                                 },
-                                |default| self.const_expr_kind(default),
+                                |default| self.const_arg_kind(default),
                             ))
                         }
                     })
@@ -3427,7 +3427,7 @@ impl HirTypeChecker {
                                         name: parameter.name.clone(),
                                     })
                                 },
-                                |default| self.const_expr_kind(default),
+                                |default| self.const_arg_kind(default),
                             ))
                         }
                     })
@@ -4372,7 +4372,7 @@ impl HirTypeChecker {
                     hir::GenericParamKind::Const { default, .. } => {
                         let default = default
                             .as_ref()
-                            .map(|default| self.const_expr_kind(default))
+                            .map(|default| self.const_arg_kind(default))
                             .unwrap_or_else(|| {
                                 ty::ConstKind::Param(ty::ParamConst {
                                     index: parameter.def_id.index,
@@ -4412,7 +4412,7 @@ impl HirTypeChecker {
                     hir::GenericParamKind::Const { default, .. } => {
                         let value = default
                             .as_ref()
-                            .map(|default| self.const_expr_kind(default))
+                            .map(|default| self.const_arg_kind(default))
                             .unwrap_or_else(|| {
                                 ty::ConstKind::Param(ty::ParamConst {
                                     index: parameter.def_id.index,

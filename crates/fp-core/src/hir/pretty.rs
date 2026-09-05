@@ -1222,7 +1222,7 @@ fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
                 if ctx.options.show_types {
                     let default = default
                         .as_ref()
-                        .map(|default| format!(" = {}", format_expr_inline(default, ctx)))
+                        .map(|default| format!(" = {}", format_const_arg(default, ctx)))
                         .unwrap_or_default();
                     format!(
                         "const {}: {}{}",

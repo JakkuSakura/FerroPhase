@@ -4719,6 +4719,34 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn preserves_const_generic_default_as_const_argument() {
+        let (package, diagnostics) = lower("struct Buffer<const N: usize = 4>;");
+        assert!(
+            diagnostics.is_empty(),
+            "const generic default emitted diagnostics: {diagnostics:?}"
+        );
+        let buffer = package
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Struct(def) if def.name.as_str() == "Buffer" => Some(def),
+                _ => None,
+            })
+            .expect("Buffer struct");
+        let hir::GenericParamKind::Const { default, .. } = &buffer.generics.params[0].kind else {
+            panic!("expected const generic parameter");
+        };
+        let default = default.as_ref().expect("const generic default");
+        assert!(matches!(
+            default.kind,
+            hir::ConstArgKind::Literal {
+                lit: hir::Lit::Integer(4),
+                negated: false,
+            }
+        ));
+    }
+
+    #[test]
     fn type_namespace_wins_for_ambiguous_single_segment_generic_arguments() {
         let (package, diagnostics) = lower(
             "struct N; const N: usize = 1; struct Array<T, const M: usize> { value: T } fn use_array(value: Array<N, 1>) -> Array<N, 1> { value }",

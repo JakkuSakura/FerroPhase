@@ -1309,7 +1309,7 @@ pub enum GenericParamKind {
     },
     Const {
         ty: Box<TypeExpr>,
-        default: Option<Box<Expr>>,
+        default: Option<Box<ConstArg>>,
     },
 }
 
@@ -2207,7 +2207,7 @@ impl GenericParamKind {
                 .map(|ty| ty.span())
                 .unwrap_or_else(Span::null),
             GenericParamKind::Const { ty, default } => Span::union(
-                [Some(ty.span()), default.as_ref().map(|expr| expr.span)]
+                [Some(ty.span()), default.as_ref().map(|const_arg| const_arg.span)]
                     .into_iter()
                     .flatten(),
             ),

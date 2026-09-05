@@ -369,7 +369,7 @@ impl AstToHirLowerer {
                             _ => None,
                         })
                         .transpose()?
-                        .map(Box::new),
+                        .map(|expr| Box::new(hir::ConstArg::from_expr(expr))),
                 },
             };
             hir_params.push(hir::GenericParam {
