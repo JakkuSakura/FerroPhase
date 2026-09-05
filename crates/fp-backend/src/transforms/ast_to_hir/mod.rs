@@ -581,7 +581,14 @@ impl AstToHirLowerer {
                     .and_then(|path| {
                         path.segments
                             .iter()
-                            .find_map(|segment| segment.args.as_ref())
+                            .find(|segment| {
+                                !segment.infer_args
+                                    || !segment.args.is_empty()
+                                    || !segment.args.constraints.is_empty()
+                                    || segment.args.parenthesized
+                                        != hir::GenericArgsParentheses::No
+                            })
+                            .map(|segment| &segment.args)
                     })
                     .map(|args| {
                         args.args
@@ -589,7 +596,7 @@ impl AstToHirLowerer {
                             .filter_map(|arg| match arg {
                                 hir::GenericArg::Lifetime(_) => None,
                                 hir::GenericArg::Type(ty) => Some(
-                                    self.impl_self_key(ty)
+                                    self.impl_self_key(ty.as_ref())
                                         .map(|key| ImplGenericArgKey::Type(Box::new(key))),
                                 ),
                                 hir::GenericArg::Const(const_arg) => {
@@ -1294,7 +1301,7 @@ impl AstToHirLowerer {
                                 segments: vec![hir::PathSegment {
                                     ident: hir::Symbol::new(name),
                                     hir_id: Default::default(),
-                                    args: None,
+                                    args: hir::GenericArgs::default(),
                                     infer_args: true,
                                     delegation_child_segment: false,
                                     res: hir::Res::Def(def_id.clone()),
@@ -2591,14 +2598,14 @@ impl AstToHirLowerer {
                 )?;
                 if let Some(segment) = path.segments_mut().first_mut() {
                     segment.infer_args = false;
-                    segment.args = Some(args);
+                    segment.args = args;
                 } else {
                     path = hir::QPath::resolved(hir::Path::new(
                         path.res(),
                         vec![hir::PathSegment {
                             ident: "Vec".into(),
                             hir_id: Default::default(),
-                            args: Some(args),
+                            args,
                             infer_args: false,
                             delegation_child_segment: false,
                             res: path.res(),
@@ -2995,7 +3002,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new(type_name),
                     hir_id: Default::default(),
-                    args: None,
+                    args: hir::GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Error,
@@ -3026,7 +3033,7 @@ impl AstToHirLowerer {
                 segments: vec![hir::PathSegment {
                     ident: hir::Symbol::new("null"),
                     hir_id: Default::default(),
-                    args: None,
+                    args: hir::GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Error,
@@ -3256,7 +3263,7 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(name.clone()),
                 hir_id: Default::default(),
-                args: None,
+                args: hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: hir::Res::Def(def_id.clone()),
@@ -3333,7 +3340,7 @@ impl AstToHirLowerer {
             segments: vec![hir::PathSegment {
                 ident: hir::Symbol::new(def.name.clone()),
                 hir_id: Default::default(),
-                args: None,
+                args: hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: hir::Res::Def(def.def_id.clone()),

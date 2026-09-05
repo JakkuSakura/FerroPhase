@@ -42,7 +42,7 @@ fn path_type(name: &str) -> TypeExpr {
             segments: vec![PathSegment {
                 ident: Symbol::new(name),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Error,
@@ -102,7 +102,7 @@ fn local_path(hir_id: u32, name: &str, local_id: hir::HirId) -> Expr {
             segments: vec![PathSegment {
                 ident: Symbol::new(name),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Local(local_id.clone()),
@@ -240,7 +240,7 @@ fn lowers_identity_function_with_parameter() {
         segments: vec![hir::PathSegment {
             ident: hir::Symbol::new("x"),
             hir_id: Default::default(),
-            args: None,
+            args: fp_core::hir::GenericArgs::default(),
             infer_args: true,
             delegation_child_segment: false,
             res: hir::Res::Local(param_pat.hir_id.clone()),
@@ -315,7 +315,7 @@ fn rejects_unresolved_value_path_in_function_body() {
             segments: vec![PathSegment {
                 ident: Symbol::new("missing_value"),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Error,
@@ -449,7 +449,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
                     segments: vec![PathSegment {
                         ident: Symbol::new("Some"),
                         hir_id: Default::default(),
-                        args: None,
+                        args: fp_core::hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: Res::Def(variant_def_id.clone()),
@@ -479,7 +479,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
                     segments: vec![PathSegment {
                         ident: Symbol::new("MaybeInt"),
                         hir_id: Default::default(),
-                        args: None,
+                        args: fp_core::hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: Res::Def(enum_def_id.clone()),
@@ -559,7 +559,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                         segments: vec![PathSegment {
                             ident: Symbol::new("Some"),
                             hir_id: Default::default(),
-                            args: None,
+                            args: fp_core::hir::GenericArgs::default(),
                             infer_args: true,
                             delegation_child_segment: false,
                             res: Res::Def(payload_struct_def_id.clone()),
@@ -583,7 +583,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                 segments: vec![PathSegment {
                     ident: Symbol::new("Some"),
                     hir_id: Default::default(),
-                    args: None,
+                    args: fp_core::hir::GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: Res::Def(variant_def_id.clone()),
@@ -611,7 +611,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
                     segments: vec![PathSegment {
                         ident: Symbol::new("MaybeInt"),
                         hir_id: Default::default(),
-                        args: None,
+                    args: fp_core::hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: Res::Def(enum_def_id.clone()),
@@ -774,7 +774,7 @@ fn lowers_function_local_const_before_its_declaration_without_a_global() {
             segments: vec![PathSegment {
                 ident: Symbol::new("VALUE"),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Def(local_const_id.clone()),
@@ -881,7 +881,7 @@ fn lowers_index_expression_into_place_projection() {
             segments: vec![PathSegment {
                 ident: Symbol::new("values"),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Local(values_pat.hir_id.clone()),
@@ -897,7 +897,7 @@ fn lowers_index_expression_into_place_projection() {
             segments: vec![PathSegment {
                 ident: Symbol::new("idx"),
                 hir_id: Default::default(),
-                args: None,
+                args: fp_core::hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: Res::Local(idx_pat.hir_id.clone()),

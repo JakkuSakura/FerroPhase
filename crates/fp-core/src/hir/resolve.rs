@@ -6,6 +6,7 @@
 
 use crate::ast::path::InPackagePath;
 use crate::span::Span;
+use crate::hir::GenericArgs;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,7 +117,7 @@ impl ModuleData {
                 segments: vec![crate::hir::PathSegment {
                     ident: name.into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: resolution.clone(),
@@ -176,7 +177,7 @@ impl ModuleData {
                 segments: vec![crate::hir::PathSegment {
                     ident: last.as_str().into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: resolution.clone(),

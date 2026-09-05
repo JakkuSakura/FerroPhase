@@ -1090,7 +1090,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     let args = path
         .segments()
         .last()
-        .and_then(|segment| segment.args.as_ref())
+        .and_then(|segment| segment.explicit_args())
         .ok_or_else(|| {
             crate::error::optimization_error("expected generic args on Result".to_string())
         })?;
@@ -1399,7 +1399,7 @@ fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
     assert_eq!(
         path.segments()
             .last()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .unwrap()
             .args
             .len(),
@@ -1960,7 +1960,7 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
             "expected Wrapper parameter type path".to_owned(),
         ));
     };
-    let Some(hir::GenericArgs { args, .. }) = path.segments()[0].args.as_ref() else {
+    let Some(hir::GenericArgs { args, .. }) = path.segments()[0].explicit_args() else {
         return Err(crate::error::optimization_error(
             "expected lifetime generic arguments".to_owned(),
         ));
@@ -2010,7 +2010,7 @@ fn const_generic_identifier_arguments_use_value_namespace() -> Result<()> {
     let args = path
         .segments()
         .first()
-        .and_then(|segment| segment.args.as_ref())
+        .and_then(|segment| segment.explicit_args())
         .expect("Array's generic arguments should be retained on its resolved base");
     assert!(matches!(args.args.get(1), Some(hir::GenericArg::Const(_))));
     Ok(())
@@ -4328,8 +4328,7 @@ mod function_body_resolution {
         };
         assert_eq!(
             trait_path.segments[0]
-                .args
-                .as_ref()
+                .explicit_args()
                 .expect("trait arguments")
                 .args
                 .len(),
@@ -4337,8 +4336,7 @@ mod function_body_resolution {
         );
         assert_eq!(
             trait_path.segments[1]
-                .args
-                .as_ref()
+                .explicit_args()
                 .expect("associated-type arguments")
                 .args
                 .len(),
@@ -4373,7 +4371,7 @@ mod function_body_resolution {
         };
         assert_eq!(second.ident.as_str(), "Second");
         assert_eq!(
-            second.args.as_ref().expect("Second arguments").args.len(),
+            second.explicit_args().expect("Second arguments").args.len(),
             1
         );
         assert!(!second.infer_args);
@@ -4386,7 +4384,7 @@ mod function_body_resolution {
             );
         };
         assert_eq!(first.ident.as_str(), "First");
-        assert_eq!(first.args.as_ref().expect("First arguments").args.len(), 1);
+        assert_eq!(first.explicit_args().expect("First arguments").args.len(), 1);
         assert!(!first.infer_args);
         let hir::TypeExprKind::Path(hir::QPath::Resolved(None, base)) = &base_receiver.kind else {
             panic!(
@@ -4419,8 +4417,7 @@ mod function_body_resolution {
             panic!("expected resolved trait path, got {:?}", alias.target.kind);
         };
         let args = path.segments[0]
-            .args
-            .as_ref()
+            .explicit_args()
             .expect("trait generic arguments");
         assert!(matches!(
             args.constraints.as_slice(),
@@ -4452,8 +4449,7 @@ mod function_body_resolution {
             panic!("expected resolved trait path, got {:?}", alias.target.kind);
         };
         let args = path.segments[0]
-            .args
-            .as_ref()
+            .explicit_args()
             .expect("trait generic arguments");
         let [
             hir::AssocItemConstraint {
@@ -4493,8 +4489,7 @@ mod function_body_resolution {
             panic!("expected resolved trait path, got {:?}", alias.target.kind);
         };
         let args = path.segments[0]
-            .args
-            .as_ref()
+            .explicit_args()
             .expect("trait generic arguments");
         assert!(matches!(
             args.constraints.as_slice(),
@@ -4531,8 +4526,7 @@ mod function_body_resolution {
             );
         };
         let args = path.segments[0]
-            .args
-            .as_ref()
+            .explicit_args()
             .expect("callable path arguments");
         assert_eq!(args.parenthesized, hir::GenericArgsParentheses::ParenSugar);
         assert!(matches!(
@@ -4571,8 +4565,7 @@ mod function_body_resolution {
             panic!("expected resolved trait path, got {:?}", alias.target.kind);
         };
         let args = path.segments[0]
-            .args
-            .as_ref()
+            .explicit_args()
             .expect("trait path arguments");
         assert_eq!(
             args.parenthesized,
@@ -4668,7 +4661,7 @@ mod function_body_resolution {
         let args = input_path
             .segments()
             .first()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .expect("resolved Wrapper base should retain generic arguments");
         assert_eq!(args.args.len(), 1);
         assert!(matches!(args.args[0], hir::GenericArg::Type(_)));
@@ -4687,12 +4680,9 @@ mod function_body_resolution {
         let function = function(&package, "take");
         let input_path = type_path(&function.sig.inputs[0].ty);
         let segment = input_path.segments().first().expect("Wrapper path segment");
-        assert!(segment.args.is_some(), "explicit <> must be retained");
+        assert!(segment.explicit_args().is_some(), "explicit <> must be retained");
         assert!(
-            segment
-                .args
-                .as_ref()
-                .is_some_and(|args| args.args.is_empty()),
+            segment.args.args.is_empty(),
             "explicit <> must remain empty"
         );
         assert!(!segment.infer_args);
@@ -4712,7 +4702,7 @@ mod function_body_resolution {
         let args = input_path
             .segments()
             .first()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .expect("Array generic arguments");
         assert!(matches!(args.args[0], hir::GenericArg::Type(_)));
         assert!(matches!(args.args[1], hir::GenericArg::Const(_)));
@@ -4760,7 +4750,7 @@ mod function_body_resolution {
         let args = input_path
             .segments()
             .first()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .expect("Array generic arguments");
         assert!(matches!(args.args[0], hir::GenericArg::Type(_)));
         assert!(matches!(args.args[1], hir::GenericArg::Const(_)));
@@ -4779,7 +4769,7 @@ mod function_body_resolution {
         let args = input_path
             .segments()
             .first()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .expect("Wrapper generic arguments");
         let hir::GenericArg::Infer(infer) = &args.args[0] else {
             panic!(
@@ -4808,7 +4798,7 @@ mod function_body_resolution {
         let args = input_path
             .segments()
             .first()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(|segment| segment.explicit_args())
             .expect("Array generic arguments");
         let hir::GenericArg::Infer(infer) = &args.args[0] else {
             panic!(
@@ -4836,7 +4826,7 @@ mod function_body_resolution {
         };
         assert_eq!(method.ident.as_str(), "inner");
         assert_eq!(
-            method.args.as_ref().expect("method arguments").args.len(),
+            method.explicit_args().expect("method arguments").args.len(),
             1
         );
         assert!(!method.infer_args);
@@ -4846,15 +4836,7 @@ mod function_body_resolution {
         assert_eq!(receiver.segments.len(), 1);
         assert_eq!(receiver.segments[0].ident.as_str(), "Outer");
         assert!(!receiver.segments[0].infer_args);
-        assert_eq!(
-            receiver.segments[0]
-                .args
-                .as_ref()
-                .expect("receiver arguments")
-                .args
-                .len(),
-            1
-        );
+        assert_eq!(receiver.segments[0].args.args.len(), 1);
     }
 
     #[test]
@@ -4883,7 +4865,7 @@ mod function_body_resolution {
             receiver.infer_args,
             "omitted generic arguments on a type-relative receiver should be inferred"
         );
-        assert!(receiver.args.is_none());
+        assert!(receiver.explicit_args().is_none());
     }
 
     #[test]
@@ -4960,7 +4942,7 @@ mod function_body_resolution {
         };
         let method = path.segments.last().expect("method path segment");
         assert_eq!(method.ident.as_str(), "method");
-        let args = method.args.as_ref().expect("method generic arguments");
+        let args = method.explicit_args().expect("method generic arguments");
         assert_eq!(args.args.len(), 1);
         assert!(!method.infer_args);
         Ok(())

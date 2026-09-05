@@ -969,7 +969,11 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
     let mut segments = Vec::new();
     for segment in &path.segments {
         let mut text = String::from(segment.ident.clone());
-        if let Some(generic_args) = &segment.args {
+        let generic_args = &segment.args;
+        if !generic_args.is_empty()
+            || !generic_args.constraints.is_empty()
+            || generic_args.parenthesized != GenericArgsParentheses::No
+        {
             let mut args = generic_args
                 .args
                 .iter()
@@ -1107,8 +1111,8 @@ mod tests {
         PathSegment {
             ident: name.into(),
             hir_id: Default::default(),
-            args: None,
-            infer_args: false,
+            args: GenericArgs::default(),
+            infer_args: true,
             delegation_child_segment: false,
             res: Res::Error,
         }
@@ -1184,7 +1188,7 @@ mod tests {
             vec![PathSegment {
                 ident: "Fn".into(),
                 hir_id: Default::default(),
-                args: Some(args),
+                args,
                 infer_args: false,
                 delegation_child_segment: false,
                 res: Res::Error,

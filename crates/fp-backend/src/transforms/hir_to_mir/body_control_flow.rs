@@ -295,7 +295,7 @@ impl<'a> BodyBuilder<'a> {
                             .and_then(|path| {
                                 path.segments
                                     .iter()
-                                    .find_map(|segment| segment.args.as_ref())
+                                    .find_map(|segment| segment.explicit_args())
                             })
                             .map(|args| self.lowering.lower_generic_args(Some(args), init_span))
                             .unwrap_or_default();

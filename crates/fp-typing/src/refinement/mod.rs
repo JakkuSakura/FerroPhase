@@ -63,7 +63,7 @@ fn path_expr(name: &str) -> hir::Expr {
             segments: vec![hir::PathSegment {
                 ident: name.into(),
                 hir_id: Default::default(),
-                args: None,
+                args: hir::GenericArgs::default(),
                 infer_args: true,
                 delegation_child_segment: false,
                 res: fp_core::hir::Res::Error,
@@ -145,7 +145,8 @@ pub fn discharge(
 #[cfg(test)]
 pub(crate) mod test_support {
     use fp_core::hir::{
-        BinOp, Expr, ExprKind, HirId, Lit, OwnerId, PackageId, Path, PathSegment, QPath, Res,
+        BinOp, Expr, ExprKind, GenericArgs, HirId, Lit, OwnerId, PackageId, Path, PathSegment,
+        QPath, Res,
     };
     use fp_core::span::Span;
 
@@ -165,7 +166,7 @@ pub(crate) mod test_support {
                 segments: vec![PathSegment {
                     ident: name.into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: Res::Error,

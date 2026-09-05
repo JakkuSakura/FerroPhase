@@ -665,7 +665,7 @@ mod tests {
                     .map(|segment| PathSegment {
                         ident: symbol(segment),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: res.clone().unwrap_or(hir::Res::Error),

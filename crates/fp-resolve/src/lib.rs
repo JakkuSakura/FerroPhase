@@ -102,7 +102,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "std".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Module(std_root),
@@ -110,7 +110,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "alloc".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Def(alloc),
@@ -210,7 +210,7 @@ mod tests {
                 segments: vec![hir::PathSegment {
                     ident: "T".into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: hir::GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Generic(ty),
@@ -281,7 +281,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Module(module.clone()),
@@ -289,7 +289,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Def(value),
@@ -306,7 +306,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Module(module.clone()),
@@ -314,7 +314,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Def(ty),
@@ -331,7 +331,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "nested".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Module(module),
@@ -339,7 +339,7 @@ mod tests {
                     hir::PathSegment {
                         ident: "Thing".into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Def(mac),
@@ -456,7 +456,7 @@ impl Resolver {
                     .map(|segment| hir::PathSegment {
                         ident: segment.ident.name.clone().into(),
                         hir_id: Default::default(),
-                        args: None,
+                        args: hir::GenericArgs::default(),
                         infer_args: true,
                         delegation_child_segment: false,
                         res: hir::Res::Module(root.clone()),
@@ -494,7 +494,7 @@ impl Resolver {
                 .map(|segment| hir::PathSegment {
                     ident: segment.ident.name.clone().into(),
                     hir_id: Default::default(),
-                    args: None,
+                    args: hir::GenericArgs::default(),
                     infer_args: true,
                     delegation_child_segment: false,
                     res: hir::Res::Module(root.clone()),
@@ -517,7 +517,7 @@ impl Resolver {
                         resolved_segments.push(hir::PathSegment {
                             ident: segment.ident.name.clone().into(),
                             hir_id: Default::default(),
-                            args: None,
+                            args: hir::GenericArgs::default(),
                             infer_args: true,
                             delegation_child_segment: false,
                             res: resolved.clone(),

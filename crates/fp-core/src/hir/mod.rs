@@ -826,10 +826,14 @@ pub struct PathSegment {
     /// uses `Res::Error` here and is resolved by type checking, matching
     /// rustc HIR.
     pub res: Res,
-    pub args: Option<GenericArgs>,
+    /// Generic arguments for this segment. HIR always owns a generic-args
+    /// node, matching rustc; omitted source arguments are represented by an
+    /// empty value together with `infer_args = true`.
+    pub args: GenericArgs,
     /// Whether generic arguments were omitted and should be inferred. This
-    /// mirrors rustc HIR's `PathSegment::infer_args`; an explicit `::<_>` is
-    /// represented by `args = Some(...)` with an `Infer` generic argument.
+    /// mirrors rustc HIR's `PathSegment::infer_args`; an omitted argument list
+    /// has an empty `args` value with `infer_args = true`, while an explicit
+    /// `::<_>` keeps its `Infer` argument and sets this flag to `false`.
     pub infer_args: bool,
     /// Whether this segment is the child of a delegation path. FerroPhase
     /// does not currently expose delegation syntax, but retaining rustc's
@@ -843,7 +847,7 @@ impl PathSegment {
         Self {
             ident: ident.into(),
             hir_id: HirId::default(),
-            args,
+            args: args.unwrap_or_default(),
             infer_args,
             res: Res::Error,
             delegation_child_segment: false,
@@ -860,17 +864,28 @@ impl PathSegment {
         Self {
             ident: ident.into(),
             hir_id,
-            args,
+            args: args.unwrap_or_default(),
             infer_args,
             res,
             delegation_child_segment: false,
         }
     }
 
-    /// Return this segment's arguments, using rustc's empty-list view when
-    /// the source omitted an argument list.
+    /// Return this segment's generic arguments.
     pub fn args(&self) -> &GenericArgs {
-        self.args.as_ref().unwrap_or(GenericArgs::NONE)
+        &self.args
+    }
+
+    /// Return the arguments only when the source contained an argument list.
+    /// HIR stores an empty `GenericArgs` node for omitted arguments, so this
+    /// view uses `infer_args` to retain the AST-level optional distinction for
+    /// consumers that need to inspect explicit syntax.
+    pub fn explicit_args(&self) -> Option<&GenericArgs> {
+        (!self.infer_args
+            || !self.args.is_empty()
+            || !self.args.constraints.is_empty()
+            || self.args.parenthesized != GenericArgsParentheses::No)
+            .then_some(&self.args)
     }
 }
 
@@ -1000,8 +1015,8 @@ pub struct GenericArgs {
 
 impl GenericArgs {
     /// The empty argument list used by rustc for a path segment without
-    /// explicit arguments. `PathSegment::args` exposes this view while the
-    /// optional field still preserves whether arguments were written.
+    /// explicit arguments. `PathSegment::explicit_args` preserves whether
+    /// the source actually contained an argument list.
     pub const NONE: &'static Self = &Self {
         args: Vec::new(),
         constraints: Vec::new(),
@@ -2066,10 +2081,7 @@ impl QPath {
 
 impl PathSegment {
     pub fn span(&self) -> Span {
-        self.args
-            .as_ref()
-            .and_then(GenericArgs::span_ext)
-            .unwrap_or_else(Span::null)
+        self.args.span_ext().unwrap_or_else(Span::null)
     }
 }
 
@@ -2252,7 +2264,7 @@ mod path_tests {
     fn omitted_segment_arguments_use_rustc_empty_view() {
         let segment = PathSegment::new("Item", None);
 
-        assert!(segment.args.is_none());
+        assert!(segment.args.is_empty());
         assert_eq!(segment.args(), GenericArgs::NONE);
         assert!(segment.args().args.is_empty());
         assert!(segment.infer_args);
