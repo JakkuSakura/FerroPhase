@@ -9,6 +9,8 @@ use fp_core::mir::{
     ty::{IntTy as MirIntTy, TyKind as MirTyKind},
 };
 use fp_core::span::Span;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn span() -> Span {
     Span::new(0, 0, 0)
@@ -71,7 +73,7 @@ fn mir_lowering(package: HirPackage) -> HirToMirLowerer {
     let mut program = fp_core::hir::HirProgram::new();
     program.publish_package(package);
     HirToMirLowerer::new(
-        fp_core::hir::SharedHirProgram::new(program),
+        Rc::new(RefCell::new(program)),
         package_id,
         std::rc::Rc::new(std::cell::RefCell::new(fp_core::mir::MirPackage::default())),
     )

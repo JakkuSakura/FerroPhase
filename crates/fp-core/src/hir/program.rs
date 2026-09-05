@@ -1,271 +1,6 @@
 use super::*;
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
-
-/// Session-wide HIR storage. Cloning this handle preserves both program and
-/// package identity; it never creates a package snapshot.
-#[derive(Clone, Debug, Default)]
-pub struct SharedHirProgram(Rc<RefCell<HirProgram>>);
-
-impl SharedHirProgram {
-    pub fn new(program: HirProgram) -> Self {
-        Self(Rc::new(RefCell::new(program)))
-    }
-
-    /// Returns a clone of the underlying shared HIR program handle.
-    pub fn rc(&self) -> Rc<RefCell<HirProgram>> {
-        Rc::clone(&self.0)
-    }
-    pub fn publish_package(&self, package: HirPackage) {
-        self.0.borrow_mut().publish_package(package);
-    }
-
-    pub fn add_package(&self, package: Rc<RefCell<HirPackage>>) {
-        self.0.borrow_mut().add_package(package);
-    }
-
-    pub fn package(&self, id: &PackageId) -> Option<Rc<RefCell<HirPackage>>> {
-        self.0.borrow().package_rc(id)
-    }
-
-    pub fn package_rc(&self, id: &PackageId) -> Option<Rc<RefCell<HirPackage>>> {
-        self.0.borrow().package_rc(id)
-    }
-
-    pub fn with<R>(&self, f: impl FnOnce(&HirProgram) -> R) -> R {
-        f(&self.0.borrow())
-    }
-
-    pub fn borrow(&self) -> Ref<'_, HirProgram> {
-        self.0.borrow()
-    }
-
-    pub fn borrow_mut(&self) -> RefMut<'_, HirProgram> {
-        self.0.borrow_mut()
-    }
-
-    /// Captures the packages published so far in a stable membership view.
-    /// Cloning `HirProgram` retains each shared package handle without copying
-    /// package data or observing packages published later.
-    pub fn snapshot(&self) -> Rc<HirProgram> {
-        Rc::new(self.0.borrow().clone())
-    }
-    pub fn item(&self, def_id: DefId) -> Option<Item> {
-        self.0.borrow().item(def_id)
-    }
-
-    pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
-        self.0.borrow().record_const_block_value(def_id, value);
-    }
-
-    pub fn anonymous_const(&self, def_id: DefId) -> Option<Block> {
-        self.0.borrow().anonymous_const(def_id)
-    }
-
-    pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
-        self.0.borrow().refinement_hint(hir_id, slot)
-    }
-
-    pub fn all_items(&self) -> Vec<Item> {
-        self.0.borrow().all_items().collect()
-    }
-
-    pub fn source_path(&self, def_id: DefId) -> Option<crate::ast::path::InPackagePath> {
-        self.0.borrow().source_path(def_id)
-    }
-    pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
-        self.0.borrow().member_owner(def_id)
-    }
-    pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
-        self.0.borrow().local_struct_fields(def_id)
-    }
-
-    pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.0.borrow().expr_type(hir_id)
-    }
-
-    pub fn intrinsic_def(&self, id: DefId) -> Option<CallKind> {
-        self.0.borrow().intrinsic_def(id)
-    }
-    pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.0.borrow().type_expr_type(hir_id)
-    }
-
-    pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
-        self.0.borrow().record_type_expr_type(hir_id, ty);
-    }
-
-    pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
-        self.0.borrow().method_resolution(hir_id)
-    }
-
-    pub fn resolve_module_name(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        name: &str,
-        namespace: crate::hir::resolve::Namespace,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.resolve_module_name_with_rules(
-            package_id,
-            module,
-            name,
-            namespace,
-            crate::hir::resolve::ResolutionRules::default(),
-        )
-    }
-
-    pub fn resolve_module_name_with_rules(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        name: &str,
-        namespace: crate::hir::resolve::Namespace,
-        rules: crate::hir::resolve::ResolutionRules,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.0
-            .borrow()
-            .resolve_module_name_with_rules(package_id, module, name, namespace, rules)
-    }
-    pub fn resolve_module_path(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        path: &crate::ast::path::InPackagePath,
-        namespace: crate::hir::resolve::Namespace,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.resolve_module_path_with_rules(
-            package_id,
-            module,
-            path,
-            namespace,
-            crate::hir::resolve::ResolutionRules::default(),
-        )
-    }
-
-    pub fn resolve_module_path_with_rules(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        path: &crate::ast::path::InPackagePath,
-        namespace: crate::hir::resolve::Namespace,
-        rules: crate::hir::resolve::ResolutionRules,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.0
-            .borrow()
-            .resolve_module_path_with_rules(package_id, module, path, namespace, rules)
-    }
-    pub fn module_exists(
-        &self,
-        package_id: &PackageId,
-        path: &crate::ast::path::InPackagePath,
-    ) -> bool {
-        self.0.borrow().module_exists(package_id, path)
-    }
-    pub fn resolve_module_path_final(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        path: &crate::ast::path::InPackagePath,
-        namespace: crate::hir::resolve::Namespace,
-    ) -> crate::hir::resolve::ResolutionResult {
-        self.resolve_module_path_final_with_rules(
-            package_id,
-            module,
-            path,
-            namespace,
-            crate::hir::resolve::ResolutionRules::default(),
-        )
-    }
-    pub fn resolve_module_path_final_with_rules(
-        &self,
-        package_id: &PackageId,
-        module: &crate::ast::path::InPackagePath,
-        path: &crate::ast::path::InPackagePath,
-        namespace: crate::hir::resolve::Namespace,
-        rules: crate::hir::resolve::ResolutionRules,
-    ) -> crate::hir::resolve::ResolutionResult {
-        match self.resolve_module_path_with_rules(package_id, module, path, namespace, rules) {
-            crate::hir::resolve::ResolutionResult::Found(path)
-                if matches!(path.res, crate::hir::Res::Module(_)) =>
-            {
-                crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
-                    span: Default::default(),
-                    res: crate::hir::Res::Error,
-                    segments: Vec::new(),
-                })
-            }
-            result => result,
-        }
-    }
-    pub fn module_member_names(
-        &self,
-        package_id: &PackageId,
-        path: &crate::ast::path::InPackagePath,
-    ) -> Option<Vec<crate::hir::resolve::Symbol>> {
-        self.package(package_id).and_then(|package| {
-            let package = package.borrow();
-            let root = crate::hir::resolve::ModuleData::virtual_root_for(package_id.clone());
-            let module = if path.segments.is_empty() {
-                Some(root)
-            } else {
-                match package.module_data.resolve_module(
-                    &root,
-                    &path.segments,
-                    crate::hir::resolve::Namespace::Type,
-                ) {
-                    crate::hir::resolve::ResolutionResult::Found(path)
-                        if let crate::hir::Res::Module(id) = path.res.clone() =>
-                    {
-                        Some(id)
-                    }
-                    _ => None,
-                }
-            }?;
-            package
-                .module_data
-                .children(&module)
-                .map(|children| children.iter().map(|(name, _, _)| name.clone()).collect())
-        })
-    }
-    pub fn reflection_field_intrinsic(
-        &self,
-        hir_id: HirId,
-    ) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.0.borrow().reflection_field_intrinsic(hir_id)
-    }
-
-    pub fn reflection_field_intrinsic_at_span(
-        &self,
-        package_id: PackageId,
-        span: crate::span::Span,
-    ) -> Option<crate::intrinsics::IntrinsicKind> {
-        self.0
-            .borrow()
-            .reflection_field_intrinsic_at_span(package_id, span)
-    }
-    pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.0.borrow().generic_call_arg(hir_id)
-    }
-
-    pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.0.borrow().generic_method_arg(hir_id)
-    }
-
-    pub fn const_value(&self, def_id: DefId) -> Option<Value> {
-        self.0.borrow().const_value(def_id)
-    }
-
-    pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
-        self.0.borrow().const_block_value(def_id)
-    }
-}
-
-impl From<Rc<RefCell<HirProgram>>> for SharedHirProgram {
-    fn from(program: Rc<RefCell<HirProgram>>) -> Self {
-        Self(program)
-    }
-}
 
 /// The whole compiled result — every package involved, keyed by
 /// `PackageId`. `AstToHirLowerer` owns one of these and works package-by-package
@@ -346,7 +81,6 @@ impl HirProgram {
             }
         }
         crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
-            span: Default::default(),
             res: crate::hir::Res::Module(module),
             segments: Vec::new(),
         })
@@ -448,7 +182,6 @@ impl HirProgram {
                     }
                 }
                 crate::hir::resolve::ResolutionResult::Found(crate::hir::Path {
-                    span: Default::default(),
                     res: crate::hir::Res::Module(module_id),
                     segments: Vec::new(),
                 })
@@ -456,6 +189,22 @@ impl HirProgram {
             .unwrap_or(crate::hir::resolve::ResolutionResult::NotFound(
                 crate::hir::resolve::ResolutionNotFound::Package(package_id.clone()),
             ))
+    }
+
+    pub fn resolve_module_path_final(
+        &self,
+        package_id: &PackageId,
+        module: &crate::ast::path::InPackagePath,
+        path: &crate::ast::path::InPackagePath,
+        namespace: crate::hir::resolve::Namespace,
+    ) -> crate::hir::resolve::ResolutionResult {
+        self.resolve_module_path_with_rules(
+            package_id,
+            module,
+            path,
+            namespace,
+            crate::hir::resolve::ResolutionRules::default(),
+        )
     }
 
     pub fn module_exists(

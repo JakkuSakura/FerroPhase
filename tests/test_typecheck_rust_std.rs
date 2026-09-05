@@ -27,7 +27,7 @@ fn type_checks_rust_std_packages_without_stopping_at_first_error() {
     }
 
     let hir_program = Rc::new(RefCell::new(HirProgram::new()));
-    let shared_hir_program = fp_core::hir::SharedHirProgram::from(Rc::clone(&hir_program));
+    let shared_hir_program = fp_core::Rc::clone(&hir_program);
     let mut lowering_failures = Vec::new();
     for package_id in &package_ids {
         let source = ast_program.get_ast_package(package_id).borrow().clone();

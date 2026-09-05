@@ -152,8 +152,9 @@ impl HirToMirLowerer {
                 // would never actually become a real global.
                 let value = self
                     .hir_program
+                    .borrow()
                     .const_value(def_id.clone())
-                    .or_else(|| self.hir_program.const_block_value(def_id.clone()))?;
+                    .or_else(|| self.hir_program.borrow().const_block_value(def_id.clone()))?;
                 self.typed_const_value_to_mir_constant(&value, &ty, konst.body.value.span)
             });
         let Some(init_constant) = folded else {

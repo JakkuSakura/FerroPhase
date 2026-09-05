@@ -7,6 +7,8 @@ use fp_core::query::{
 };
 use fp_lang::FerroFrontend;
 use fp_sql::sql_ast::parse_sql_ast;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn test_layout() -> LirDataLayout {
     LirDataLayout::new(
@@ -22,7 +24,7 @@ fn lower_to_mir(program: hir::HirPackage) -> fp_core::Result<mir::MirCodeUnit> {
     let mut hir_program = hir::HirProgram::new();
     hir_program.publish_package(program);
     let mut lowering = HirToMirLowerer::new(
-        hir::SharedHirProgram::new(hir_program),
+        Rc::new(RefCell::new(hir_program)),
         package_id.clone(),
         std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())),
     );
@@ -36,7 +38,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator
@@ -114,7 +116,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator
@@ -182,7 +184,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let hir_program = hir_generator.transform_expr(expr).expect("hir program");

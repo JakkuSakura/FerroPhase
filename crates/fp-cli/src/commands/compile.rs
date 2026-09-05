@@ -567,15 +567,13 @@ fn run_compile_pipeline(
     // in the shared driver.
     let backend_capabilities = backend.capabilities();
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
-    let (executor, mut session) =
-        compiler::build_workspace_session(provider.clone(), lang, backend_capabilities);
-    session
-        .driver()
+    let (executor, mut driver) =
+        compiler::build_workspace_driver(provider.clone(), lang, backend_capabilities);
+    driver
         .state
         .borrow_mut()
         .set_intrinsic_materializer(backend.intrinsic_materializer());
-    session
-        .driver()
+    driver
         .state
         .borrow_mut()
         .set_target_operations(backend.portable_operation_registry());
@@ -597,10 +595,10 @@ fn run_compile_pipeline(
             | "goasm"
     );
     if needs_native_pipeline {
-        session.driver().pipeline = fp_compiler::PipelineMode::Native;
+        driver.pipeline = fp_compiler::PipelineMode::Native;
     }
     executor
-        .run(session.driver().compile_workspace(&root_id, &packages))
+        .run(driver.compile_workspace(&root_id, &packages))
         .map_err(|e| {
             CliError::Compilation(format!(
                 "typecheck failed for project at {}: {}",
@@ -608,21 +606,17 @@ fn run_compile_pipeline(
                 e
             ))
         })?;
-    compiler::drain_driver(session.driver())?;
+    compiler::drain_driver(&mut driver)?;
     if matches!(target_name, "bytecode" | "text-bytecode") {
-        session.driver().pipeline = fp_compiler::PipelineMode::Native;
-        session
-            .driver()
-            .state
-            .borrow_mut()
-            .set_bytecode_comptime(true);
+        driver.pipeline = fp_compiler::PipelineMode::Native;
+        driver.state.borrow_mut().set_bytecode_comptime(true);
         for package_id in &packages {
             executor
-                .run(session.driver().compile_bytecode(package_id))
+                .run(driver.compile_bytecode(package_id))
                 .map_err(|error| CliError::Compilation(error.to_string()))?;
         }
     }
-    let workspace = session.driver().state.borrow().workspace.clone();
+    let workspace = driver.state.borrow().workspace.clone();
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -631,7 +625,7 @@ fn run_compile_pipeline(
         // portable-op -> Kotlin-idiom pass) happens inside
         // emit_package_artifact itself, not here.
         let mir_module = {
-            let state = session.driver().state.borrow();
+            let state = driver.state.borrow();
             let mut unit = fp_core::mir::MirCodeUnit::new();
             if let Some(package) = state.mir_program().package(package_id) {
                 let package = package.borrow();
@@ -642,7 +636,7 @@ fn run_compile_pipeline(
             unit
         };
         let lir_blob = {
-            let state = session.driver().state.borrow();
+            let state = driver.state.borrow();
             state.lir_program().merged_blob_for_package(package_id).ok()
         }
         .map(|mut blob| {
@@ -653,7 +647,7 @@ fn run_compile_pipeline(
             // unrenamed if `package_id` has no `main` (e.g. a library).
             if let Some(ast_package) = workspace.compiled_package(package_id) {
                 let hir_package_id = ast_package.borrow().package_id.clone();
-                if let Ok(hir_package) = session.driver().state.borrow().hir(hir_package_id) {
+                if let Ok(hir_package) = driver.state.borrow().hir(hir_package_id) {
                     if let Ok(def_id) = fp_core::ast::package::resolve_entrypoint_def_id(
                         package_id,
                         &hir_package,
@@ -670,7 +664,7 @@ fn run_compile_pipeline(
             .map_err(|e| CliError::Compilation(e.to_string()))?;
     }
 
-    let hir_program = session.driver().state.borrow().hir_program();
+    let hir_program = driver.state.borrow().hir_program();
     let hir_program = hir_program.borrow();
     backend
         .write_workspace_files(&workspace, &hir_program)

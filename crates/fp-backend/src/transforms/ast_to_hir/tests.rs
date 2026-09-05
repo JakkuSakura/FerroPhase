@@ -221,7 +221,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let user_type = hir::DefId::new(hir::PackageId::new("test"), 7);
@@ -234,6 +234,7 @@ fn user_type_named_like_primitive_shadows_builtin_fallback() -> Result<()> {
 
     generator
         .hir_program
+        .borrow_mut()
         .add_package(generator.hir_package_handle());
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("u8"))));
     let path =
@@ -248,7 +249,7 @@ fn unresolved_primitive_name_resolves_to_builtin() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let expr = ast::Expr::new(ast::ExprKind::Name(ast::Name::ident(ident("f128"))));
@@ -287,7 +288,7 @@ fn unresolved_item_does_not_fall_back_to_resolved_module_prefix() -> Result<()> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let root = fp_core::hir::resolve::ModuleData::virtual_root_for(hir::PackageId::new("test"));
@@ -450,7 +451,7 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     generator.module_path = InPackagePath::new(vec!["dependency".to_string()]);
@@ -480,7 +481,7 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     )
     .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
@@ -516,7 +517,7 @@ fn suffixed_numeric_literal_lowers_to_explicit_cast() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let lowered = generator.transform_expr_to_hir(expr)?;
@@ -551,7 +552,7 @@ fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let lowered = generator.transform_expr_to_hir(expr)?;
@@ -593,7 +594,7 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -630,7 +631,7 @@ fn nested_type_position_const_block_lowers_to_dedicated_hir_node() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let lowered = generator.transform_type_to_hir(&const_block_ty)?;
@@ -670,7 +671,7 @@ fn test_hir_generator_creation() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     assert_eq!(generator.local_id, 0);
@@ -683,7 +684,7 @@ fn test_simple_literal_creation() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let expr = generator.create_simple_literal(42);
@@ -707,7 +708,7 @@ fn test_simple_type_creation() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let ty = generator.create_simple_type("i32");
@@ -731,7 +732,7 @@ fn transform_slice_type_to_hir() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let slice_ty = ast::Ty::Slice(ast::TypeSlice {
@@ -772,7 +773,7 @@ fn transform_index_expression_to_hir() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -814,7 +815,7 @@ fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
 
@@ -891,7 +892,7 @@ fn transform_range_value_to_standard_range_struct() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let range = range_expr(
@@ -917,7 +918,7 @@ fn transform_raw_reference_preserves_pointer_kind() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let raw_ref = ast::Expr::from(ast::ExprKind::Reference(ast::ExprReference {
@@ -941,7 +942,7 @@ fn transform_await_expression_to_hir_passthrough() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
@@ -972,7 +973,7 @@ fn transform_async_await_expression_to_hir_passthrough() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
@@ -1028,7 +1029,7 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     generator.set_target_triple(Some("x86_64-apple-darwin"));
@@ -1054,7 +1055,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let result_def_id = hir::DefId::new(hir::PackageId::new("test"), 1);
@@ -1124,7 +1125,7 @@ fn transform_package_resolves_pub_super_type_from_sibling_module() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     generator.transform_package(&package)?;
@@ -1142,7 +1143,7 @@ fn transform_intrinsic_container_to_hir() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let container = ast::ExprIntrinsicContainer::VecElements {
@@ -1186,7 +1187,7 @@ fn transform_package_with_function_and_struct() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1261,7 +1262,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1332,7 +1333,7 @@ fn transform_parsed_mut_self_receiver_into_one_hir_input() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1375,7 +1376,7 @@ fn transform_explicit_boxed_self_receiver_preserves_wrapper() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1422,7 +1423,7 @@ fn transform_trait_associated_type_bounds() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1464,7 +1465,7 @@ fn transform_dynamic_type_preserves_all_bounds() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1526,7 +1527,7 @@ fn transform_dynamic_type_prefers_trait_from_prelude_collision() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -1564,7 +1565,7 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("dependency"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -1589,7 +1590,7 @@ fn transform_dynamic_type_resolves_foreign_trait_from_prelude() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -1622,7 +1623,7 @@ fn enum_attributes_survive_hir_roundtrip() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let hir = lowerer.transform_package(&package)?;
@@ -1675,7 +1676,7 @@ fn enum_constructor_keeps_variant_identity_with_generic_arguments() -> Result<()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1727,7 +1728,7 @@ fn enum_constructor_through_alias_keeps_nominal_variant_identity() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1778,7 +1779,7 @@ fn self_enum_constructor_preserves_type_relative_identity() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1834,7 +1835,7 @@ fn transparent_type_alias_has_a_hir_definition_identity() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1868,7 +1869,7 @@ fn generic_transparent_type_alias_resolves_rhs_parameter() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = lowerer.transform_package(&package)?;
@@ -1906,7 +1907,7 @@ fn lifetime_path_arguments_are_erased_without_resolution_diagnostics() -> Result
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let lowered = lowerer.transform_package(&package)?;
@@ -1983,7 +1984,7 @@ fn const_generic_identifier_arguments_use_value_namespace() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let lowered = lowerer.transform_package(&package)?;
@@ -2041,7 +2042,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("core"),
     );
     let mut core = core_lowerer.transform_package(&core_source)?;
@@ -2078,7 +2079,7 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(core_workspace),
+        Rc::new(RefCell::new(core_workspace)),
         hir::PackageId::new("std"),
     );
     let mut std = std_lowerer.transform_package(&std_source)?;
@@ -2097,7 +2098,9 @@ fn transform_package_resolves_foreign_glob_reexport_through_selected_prelude() -
     );
 
     let workspace = std_lowerer.hir_program.clone();
-    workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(std)));
+    workspace
+        .borrow_mut()
+        .add_package(std::rc::Rc::new(std::cell::RefCell::new(std)));
     let consumer_items = parser.parse_items_ast("pub struct Holder { value: Ok }")?;
     let consumer_source = package_from_items_as(PackageId::new("consumer"), consumer_items)?;
     let mut consumer_lowerer = AstToHirLowerer::new(
@@ -2176,7 +2179,7 @@ fn transform_package_resolves_sysroot_io_result_reexport_chain() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("std"),
     );
     let program = lowerer.transform_package(&source)?;
@@ -2220,7 +2223,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("dependency"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2248,7 +2251,7 @@ fn transform_qualified_dependency_type_uses_exported_module_path() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2292,7 +2295,7 @@ fn lift_cross_package_intrinsic_call_from_its_resolved_definition() -> Result<()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("dependency"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_source)?;
@@ -2308,7 +2311,7 @@ fn lift_cross_package_intrinsic_call_from_its_resolved_definition() -> Result<()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace.clone()),
+        Rc::new(RefCell::new(workspace.clone())),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_source)?;
@@ -2348,7 +2351,7 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("std"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2375,7 +2378,7 @@ fn transform_normalizes_bundled_std_external_crate_root() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2411,7 +2414,7 @@ fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("alloc"),
     );
     let alloc = alloc_lowerer.transform_package(&alloc_package)?;
@@ -2438,7 +2441,7 @@ fn transform_dependency_reexport_uses_defining_package_item_kind() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2477,7 +2480,7 @@ fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("skln-core"),
     );
     let dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2497,7 +2500,7 @@ fn transform_hyphenated_dependency_exports_use_rust_crate_root() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2529,7 +2532,7 @@ fn transform_imported_dependency_enum_variant_uses_defining_identity() -> Result
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("skln-core"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2545,7 +2548,7 @@ fn transform_imported_dependency_enum_variant_uses_defining_identity() -> Result
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2582,7 +2585,7 @@ fn transform_bare_imported_enum_variant_pattern_uses_enum_identity() -> Result<(
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("consumer"),
     );
     let _package = lowerer.transform_package(&package)?;
@@ -2606,7 +2609,7 @@ fn unresolved_import_diagnostic_points_at_import_span() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     lowerer.transform_package(&package)?;
@@ -2644,7 +2647,7 @@ fn conflicting_glob_imports_are_reported_as_ambiguous() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     lowerer.transform_package(&package)?;
@@ -2679,7 +2682,7 @@ fn local_definition_wins_over_glob_import() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     lowerer.transform_package(&package)?;
@@ -2702,7 +2705,7 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("skln-core"),
     );
     let dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2724,7 +2727,7 @@ fn transform_hyphenated_dependency_root_reexport_uses_rust_crate_root() -> Resul
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2764,7 +2767,7 @@ fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<(
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("skln-core"),
     );
     let mut dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -2780,7 +2783,7 @@ fn transform_provider_rooted_hyphenated_exports_replace_cargo_root() -> Result<(
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(workspace),
+        Rc::new(RefCell::new(workspace)),
         hir::PackageId::new("consumer"),
     );
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
@@ -2817,7 +2820,7 @@ fn indexes_function_local_trait_impl_by_local_type() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let package = generator.transform_package(&package)?;
@@ -2848,7 +2851,7 @@ fn resolves_local_struct_constructor_inside_impl_method() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let package = generator.transform_package(&package)?;
@@ -2912,7 +2915,7 @@ fn transform_type_relative_call_without_a_method_receiver() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -2959,7 +2962,7 @@ fn transform_type_relative_call_through_reexport_keeps_type_resolution() -> Resu
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3026,7 +3029,7 @@ fn transform_method_call_on_runtime_field_keeps_receiver_chain() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3067,7 +3070,7 @@ fn transform_generic_associated_const_keeps_type_relative_base() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3118,7 +3121,7 @@ fn transform_trait_associated_consts_preserves_declaration_and_default() -> Resu
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3170,7 +3173,7 @@ fn transform_trait_associated_consts_preserves_ids_and_body_owner() -> Result<()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3244,7 +3247,7 @@ fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("dependency"),
     );
     let dependency = dependency_lowerer.transform_package(&dependency_package)?;
@@ -3269,7 +3272,7 @@ fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> 
 
     let mut workspace = hir::HirProgram::new();
     workspace.add_package(std::rc::Rc::new(std::cell::RefCell::new(dependency)));
-    let workspace = hir::SharedHirProgram::new(workspace);
+    let workspace = Rc::new(RefCell::new(workspace));
     let consumer_items = parser
         .parse_items_ast("use dependency::Layout; fn read<T: Layout>() -> bool { T::DEFAULTED }")?;
     let consumer_package = package_from_items(consumer_items)?;
@@ -3283,6 +3286,7 @@ fn transform_trait_associated_const_default_is_owned_by_dependency_package() -> 
     let consumer = consumer_lowerer.transform_package(&consumer_package)?;
     assert!(!consumer.def_map.contains_key(&trait_def_id));
     let dependency_item = workspace
+        .borrow()
         .item(trait_def_id)
         .expect("dependency trait remains in its owning package");
     let hir::ItemKind::Trait(dependency_trait) = &dependency_item.kind else {
@@ -3314,7 +3318,7 @@ fn transform_associated_const_uses_type_namespace_for_base() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3365,7 +3369,7 @@ fn transform_generic_associated_type_path_keeps_qpath_base() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3419,7 +3423,7 @@ fn transform_module_const_keeps_value_namespace_for_base() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3492,7 +3496,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3610,7 +3614,7 @@ fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Res
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3701,7 +3705,7 @@ fn transform_package_resolves_import_nested_inside_inline_module() -> Result<()>
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3796,7 +3800,7 @@ fn transform_package_resolves_self_plus_variants_group_import() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3909,7 +3913,7 @@ fn transform_package_resolves_extern_crate_alias_reexport_chain() -> Result<()> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -3968,7 +3972,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -4243,7 +4247,7 @@ mod function_body_resolution {
             std::rc::Rc::new(AstProgram::new(std::sync::Arc::new(
                 fp_core::ast::package::provider::EmptyProvider,
             ))),
-            hir::SharedHirProgram::new(hir::HirProgram::new()),
+            Rc::new(RefCell::new(hir::HirProgram::new())),
             PackageId::new("test"),
         );
         let lowered = lowerer
@@ -6076,7 +6080,7 @@ fn transform_expr_rejects_dynamic_import() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let expr = ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
@@ -6099,7 +6103,7 @@ fn transform_expr_rejects_match_without_scrutinee() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let expr = ast::Expr::from(ast::ExprKind::Match(ast::ExprMatch {
@@ -6126,7 +6130,7 @@ fn transform_expr_rejects_for_loop_non_binding_pattern() {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let pat = ast::Pattern::new(ast::PatternKind::Tuple(ast::PatternTuple {
@@ -6210,7 +6214,7 @@ fn transform_package_plain_absolute_path_into_vendored_subcrate() -> Result<()> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -6304,7 +6308,7 @@ fn transform_package_resolves_self_group_import_nested_in_module_via_default_pre
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -6373,7 +6377,7 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     )
     .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
@@ -6433,7 +6437,7 @@ fn transform_package_expands_item_macro_in_nested_module_before_resolution() -> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     )
     .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
@@ -6493,7 +6497,7 @@ fn transform_package_expands_macro_invocation_before_definition() -> Result<()> 
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     )
     .with_intrinsic_normalizer(fp_lang::FerroIntrinsicNormalizer::new());
@@ -6578,7 +6582,7 @@ fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_s
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;
@@ -6667,7 +6671,7 @@ fn transform_package_resolves_whole_module_import_then_relative_item_reference()
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("std"),
     );
     let program = generator.transform_package(&package)?;
@@ -6767,7 +6771,7 @@ fn transform_package_resolves_module_self_plus_named_item_group_import() -> Resu
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let program = generator.transform_package(&package)?;

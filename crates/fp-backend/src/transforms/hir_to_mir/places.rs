@@ -1068,7 +1068,13 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id.clone()) {
-                    if let Some(kind) = self.lowering.hir_program.intrinsic_def(def_id.clone()) {
+                    let intrinsic_kind = {
+                        self.lowering
+                            .hir_program
+                            .borrow()
+                            .intrinsic_def(def_id.clone())
+                    };
+                    if let Some(kind) = intrinsic_kind {
                         resolved_intrinsic = Some(kind);
                         let mut intrinsic_args = Vec::with_capacity(arg_values.len() + 1);
                         intrinsic_args.push(receiver.as_ref());

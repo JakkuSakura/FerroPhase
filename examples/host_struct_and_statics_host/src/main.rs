@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use fp_compiler::{CompilerExecutor, CompilerSession};
+use fp_compiler::{CompilerDriver, CompilerExecutor};
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::CompositeProvider;
 use fp_core::ast::program::AstProgram;
@@ -34,13 +34,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let workspace = Rc::new(AstProgram::new(Arc::new(provider)));
     let executor = CompilerExecutor::new();
-    let mut session = CompilerSession::new(
+    let mut driver = CompilerDriver::with_workspace(
         LirDataLayout::new(64, 8, vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)])?,
-        &executor,
+        executor.handle(),
         workspace,
     );
-    executor.run(session.driver().compile_package(&package_id))?;
-    session.driver().select_entrypoint(
+    executor.run(driver.compile_package(&package_id))?;
+    driver.select_entrypoint(
         &package_id,
         &InPackagePath::new(vec![package_id.as_str().to_owned()]),
         "main",
@@ -50,9 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     interpreter.set_host_globals(host_globals()?);
     interpreter.set_host_functions(host_functions()?);
     interpreter
-        .load_program(session.driver().state.borrow().lir_program_rc())
+        .load_program(driver.state.borrow().lir_program_rc())
         .map_err(|error| error.to_string())?;
-    let main_def_id = session.driver().resolve_entrypoint_def_id(
+    let main_def_id = driver.resolve_entrypoint_def_id(
         &package_id,
         &InPackagePath::new(vec![package_id.as_str().to_owned()]),
         "main",

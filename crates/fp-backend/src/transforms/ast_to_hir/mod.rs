@@ -178,7 +178,7 @@ pub struct AstToHirLowerer {
     /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
     /// `hir_definitions`). Separate from `workspace` (AST-only data) since
     /// `AstProgram` no longer carries HIR content itself.
-    hir_program: fp_core::hir::SharedHirProgram,
+    hir_program: Rc<RefCell<fp_core::hir::HirProgram>>,
     package_resolver: Option<Rc<RefCell<InPackageResolver>>>,
     diagnostics: DiagnosticManager,
 }
@@ -341,7 +341,7 @@ impl AstToHirLowerer {
 
     pub fn with_file<P: AsRef<Path>>(
         workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
-        hir_program: fp_core::hir::SharedHirProgram,
+        hir_program: Rc<RefCell<fp_core::hir::HirProgram>>,
         package_id: hir::PackageId,
         path: P,
     ) -> Self {
@@ -359,7 +359,7 @@ impl AstToHirLowerer {
     /// cross-package name resolution is always available.
     pub fn new(
         workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
-        hir_program: fp_core::hir::SharedHirProgram,
+        hir_program: Rc<RefCell<fp_core::hir::HirProgram>>,
         package_id: hir::PackageId,
     ) -> Self {
         let package_handle = Rc::new(RefCell::new(hir::HirPackage::new(package_id.clone())));
@@ -392,7 +392,7 @@ impl AstToHirLowerer {
             workspace: Rc::clone(&workspace),
             local_resolver: LocalResolver::new(
                 Rc::clone(&workspace),
-                hir_program.rc(),
+                Rc::clone(&hir_program),
                 Rc::clone(&package_handle),
                 workspace.provider().declaration_rules(),
                 workspace.provider().resolution_rules(),
@@ -403,6 +403,7 @@ impl AstToHirLowerer {
         };
         lowerer
             .hir_program
+            .borrow_mut()
             .add_package(lowerer.hir_package_handle());
         lowerer
     }
@@ -450,7 +451,7 @@ impl AstToHirLowerer {
         self.current_position = 0;
         self.local_resolver = LocalResolver::new(
             Rc::clone(&self.workspace),
-            self.hir_program.rc(),
+            Rc::clone(&self.hir_program),
             Rc::clone(&self.package_handle),
             self.workspace.provider().declaration_rules(),
             self.workspace.provider().resolution_rules(),
@@ -789,7 +790,7 @@ impl AstToHirLowerer {
             .def_map
             .get(def_id)
             .cloned()
-            .or_else(|| self.hir_program.item(def_id.clone()))
+            .or_else(|| self.hir_program.borrow().item(def_id.clone()))
             .is_some_and(|item| matches!(item.kind, hir::ItemKind::Trait(_)))
     }
 
@@ -1058,7 +1059,9 @@ impl AstToHirLowerer {
         // Register the mutable HIR package up front so global path queries
         // performed while its module bindings are collected can traverse the
         // package through the shared HIR program as well.
-        self.hir_program.add_package(self.hir_package_handle());
+        self.hir_program
+            .borrow_mut()
+            .add_package(self.hir_package_handle());
         // Unlike `transform_file` (the single-file path), `transform_package`
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
         // closure literal into an ordinary struct+function pair before HIR
@@ -1129,7 +1132,7 @@ impl AstToHirLowerer {
         let resolver = Rc::new(RefCell::new(
             InPackageResolver::new(
                 self.hir_package_handle(),
-                self.hir_program.rc(),
+                Rc::clone(&self.hir_program),
                 self.workspace.provider().declaration_rules(),
                 self.workspace.provider().resolution_rules(),
                 Rc::clone(&self.workspace),
@@ -3497,7 +3500,7 @@ impl AstToHirLowerer {
                     // crate root.
                     let source_path =
                         fp_core::ast::path::InPackagePath::new(vec![source_name.to_owned()]);
-                    let source_def_id = match self.hir_program.resolve_module_path_final(
+                    let source_def_id = match self.hir_program.borrow().resolve_module_path_final(
                         &self.package_id,
                         &self.module_path,
                         &source_path,

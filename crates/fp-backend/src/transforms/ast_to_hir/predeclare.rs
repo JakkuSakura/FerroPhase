@@ -4,7 +4,7 @@ impl AstToHirLowerer {
     pub(super) fn prepare_lowering_state(&mut self) {
         self.local_resolver = fp_resolve::local::LocalResolver::new(
             std::rc::Rc::clone(&self.workspace),
-            self.hir_program.rc(),
+            std::rc::Rc::clone(&self.hir_program),
             std::rc::Rc::clone(&self.package_handle),
             self.workspace.provider().declaration_rules(),
             self.workspace.provider().resolution_rules(),

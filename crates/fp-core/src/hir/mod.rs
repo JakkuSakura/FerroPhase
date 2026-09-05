@@ -17,7 +17,7 @@ pub mod ty;
 
 pub use ident::Symbol;
 pub use package::HirPackage;
-pub use program::{HirProgram, SharedHirProgram};
+pub use program::HirProgram;
 pub use refinement::{ParamSlot, RefinementHint};
 pub use ty::{Abi, Ty};
 

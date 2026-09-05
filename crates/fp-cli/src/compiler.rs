@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_compiler::{
-    CompilerDriver, CompilerExecutor, CompilerSession, FullyInPackagePath, PipelineMode,
-};
+use fp_compiler::{CompilerDriver, CompilerExecutor, FullyInPackagePath, PipelineMode};
 use fp_core::ast::package::PackageId;
 use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::path::InPackagePath;
@@ -349,22 +347,18 @@ fn compile_source_file(
         input_provider,
     ));
     let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(provider));
-    let mut session = CompilerSession::new(data_layout(), executor, workspace);
-    session.driver().pipeline = pipeline;
+    let mut driver = CompilerDriver::with_workspace(data_layout(), executor.handle(), workspace);
+    driver.pipeline = pipeline;
     executor
-        .run(session.driver().compile_package(&package_id))
+        .run(driver.compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     // Only evaluate comptime LIR for full native compilation
     if pipeline == PipelineMode::Native {
         executor
-            .run(
-                session
-                    .driver()
-                    .compile_package_module_native(&package_id, &module_path, "main"),
-            )
+            .run(driver.compile_package_module_native(&package_id, &module_path, "main"))
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
-    Ok(session.into_driver())
+    Ok(driver)
 }
 
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
@@ -451,19 +445,19 @@ pub fn compile_file_to_lir_bundle(
     })
 }
 
-/// Builds the executor/provider/workspace/session a typechecking compile
+/// Builds the executor/provider/workspace/driver a typechecking compile
 /// needs — shared by `compile_emit_target`'s single-package path and
 /// `compile_project`'s/`compile_project_external`'s (`fp-cli/src/commands/
 /// compile.rs`) whole-workspace path, so a workspace compile builds this
 /// once for every member instead of once per member. Callers compile via
-/// `session.driver().compile_package`/`compile_workspace`, then read back
+/// `CompilerDriver::compile_package`/`compile_workspace`, then read back
 /// each package's typed `AstPackage` via `AstProgram::package_source`
 /// — never by hand-extracting it themselves.
-pub fn build_workspace_session(
+pub fn build_workspace_driver(
     provider: Arc<dyn PackageProvider>,
     language: &str,
     backend_capabilities: fp_core::capabilities::LanguageCapabilities,
-) -> (CompilerExecutor, CompilerSession) {
+) -> (CompilerExecutor, CompilerDriver) {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
     let source_operations = operation_registry_for(provider.as_ref());
@@ -479,10 +473,9 @@ pub fn build_workspace_session(
         provider,
     ));
     let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(combined));
-    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
-    session.driver().pipeline = PipelineMode::Transpile;
-    session
-        .driver()
+    let mut driver = CompilerDriver::with_workspace(data_layout(), executor.handle(), workspace);
+    driver.pipeline = PipelineMode::Transpile;
+    driver
         .state
         .borrow_mut()
         .set_backend_capabilities(backend_capabilities);
@@ -494,10 +487,10 @@ pub fn build_workspace_session(
             merged_source_operations = Some(std_operations);
         }
     }
-    let mut state = session.driver().state.borrow_mut();
+    let mut state = driver.state.borrow_mut();
     state.set_source_operations(merged_source_operations);
     drop(state);
-    (executor, session)
+    (executor, driver)
 }
 
 /// Resolves the effective source language for `path`: an explicit

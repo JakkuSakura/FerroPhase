@@ -11,6 +11,9 @@ pub mod lir_optimizer;
 pub mod optimizer;
 pub mod transforms;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 pub use transforms as transformations;
 
 /// Wraps a single already-parsed file's items as a one-member package,
@@ -18,7 +21,7 @@ pub use transforms as transformations;
 /// just hands back an already-built `AstPackage` — no filesystem
 /// access), then `AstProgram::begin_package`. Deliberately does not
 /// use `fp-lang`'s disk-resolving `single_file_provider`: callers here
-/// (`roundtrip_items_via_hir`/`_dce`) receive already-fully-assembled
+/// (`roundtrip_items_via_hir_target`/`_dce`) receive already-fully-assembled
 /// `File`s (e.g. `fp-shell` splices in its embedded std tree directly,
 /// leaving behind `mod foo;` markers whose content already lives
 /// elsewhere in the tree) that must not be re-resolved against a real
@@ -65,23 +68,6 @@ fn package_from_file(
     Ok((workspace, package))
 }
 
-pub fn roundtrip_items_via_hir(
-    file: &fp_core::ast::File,
-) -> fp_core::Result<Vec<fp_core::ast::Item>> {
-    let (ast_program, package) = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
-        ast_program,
-        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
-        package.package_id.clone(),
-    );
-    generator.set_cfg_filtering(false);
-    let program = generator.transform_package(&package)?;
-    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
-    hir_program.publish_package(program.clone());
-    let workspace = hir_program.borrow();
-    transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
-}
-
 pub fn roundtrip_items_via_hir_target(
     file: &fp_core::ast::File,
     target_lang: &str,
@@ -93,14 +79,14 @@ pub fn roundtrip_items_via_hir_target(
     let (ast_program, package) = package_from_file(&filtered)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
         ast_program,
-        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
+        Rc::new(RefCell::new(fp_core::hir::HirProgram::new())),
         package.package_id.clone(),
     );
     generator.set_target_lang(Some(target_lang));
     generator.set_cfg_filtering(true);
     let program = generator.transform_package(&package)?;
-    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
-    hir_program.publish_package(program.clone());
+    let hir_program = Rc::new(RefCell::new(fp_core::hir::HirProgram::new()));
+    hir_program.borrow_mut().publish_package(program.clone());
     let workspace = hir_program.borrow();
     transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
 }
@@ -111,14 +97,14 @@ pub fn roundtrip_items_via_hir_dce(
     let (ast_program, package) = package_from_file(file)?;
     let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
         ast_program,
-        fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new()),
+        Rc::new(RefCell::new(fp_core::hir::HirProgram::new())),
         package.package_id.clone(),
     );
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);
-    let hir_program = fp_core::hir::SharedHirProgram::new(fp_core::hir::HirProgram::new());
-    hir_program.publish_package(program.clone());
+    let hir_program = Rc::new(RefCell::new(fp_core::hir::HirProgram::new()));
+    hir_program.borrow_mut().publish_package(program.clone());
     let workspace = hir_program.borrow();
     transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
 }
@@ -131,6 +117,24 @@ mod tests {
     };
     use fp_core::span::Span;
     use std::path::PathBuf;
+    use std::{cell::RefCell, rc::Rc};
+
+    fn roundtrip_items_via_hir(
+        file: &fp_core::ast::File,
+    ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
+        let (ast_program, package) = package_from_file(file)?;
+        let mut generator = transforms::ast_to_hir::AstToHirLowerer::new(
+            ast_program,
+            Rc::new(RefCell::new(fp_core::hir::HirProgram::new())),
+            package.package_id.clone(),
+        );
+        generator.set_cfg_filtering(false);
+        let program = generator.transform_package(&package)?;
+        let hir_program = Rc::new(RefCell::new(fp_core::hir::HirProgram::new()));
+        hir_program.borrow_mut().publish_package(program.clone());
+        let workspace = hir_program.borrow();
+        transforms::hir_to_ast::HirToAstLifter::new(&program, &workspace).lift_items()
+    }
 
     fn ident(name: &str) -> Ident {
         Ident::new(name)

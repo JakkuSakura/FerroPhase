@@ -1540,12 +1540,14 @@ dependencies = [
  "clap",
  "fp-backend",
  "fp-bash",
+ "fp-cli",
  "fp-core",
  "fp-lang",
  "fp-powershell",
  "serde",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

@@ -640,12 +640,11 @@ impl CompilerDriver {
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().package_id.clone();
-        let existing = self
-            .state
+        let hir_program = self.state.borrow().hir_program();
+        let existing = hir_program
             .borrow()
-            .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| hir_package.borrow().hir_exports.len());
+            .map(|hir_package| hir_package.hir_exports.len());
         if existing.is_some() {
             return Ok(());
         }
@@ -668,15 +667,11 @@ impl CompilerDriver {
         // Re-lowering after comptime evaluation rebuilds HIR from the same
         // source. Preserve values recorded on the previous package so the
         // new MIR pass can replace executable entries with static data.
-        let prior_const_values = self
-            .state
+        let hir_program = self.state.borrow().hir_program();
+        let prior_const_values = hir_program
             .borrow()
-            .hir_program()
             .package(&hir_package_id)
-            .map(|hir_package| {
-                let hir_package = hir_package.borrow();
-                (hir_package.const_values(), hir_package.const_block_values())
-            });
+            .map(|hir_package| (hir_package.const_values(), hir_package.const_block_values()));
         let (hir_program, package_exports) =
             self.lower_package_hir(&package_source, hir_package_id.clone())?;
         self.type_check_program(hir_program, package_exports)
@@ -848,7 +843,8 @@ impl CompilerDriver {
         package_exports: std::collections::HashMap<String, hir::Res>,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
-        let dependency_program = self.state.borrow().hir_program().snapshot();
+        let hir_program = self.state.borrow().hir_program();
+        let dependency_program = Rc::new(hir_program.borrow().clone());
         let executor = self.state.borrow().tasks.clone();
         let checker = fp_typing::HirTypeChecker::new(
             Rc::new(RefCell::new(program)),
@@ -967,7 +963,7 @@ impl CompilerDriver {
         // id — no need to look the compiled package up in the workspace
         // just to recover an id it already has.
         let package_id = PackageId::new(request.def_id.package_id.as_str());
-        let hir_program = hir::SharedHirProgram::new(hir_program.as_ref().clone());
+        let hir_program = Rc::new(RefCell::new(hir_program.as_ref().clone()));
         let mir_package = state.borrow_mut().mir_package_rc(&package_id);
         let mut lowering =
             HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);

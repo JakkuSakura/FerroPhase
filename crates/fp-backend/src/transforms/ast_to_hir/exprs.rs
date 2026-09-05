@@ -1994,7 +1994,7 @@ impl AstToHirLowerer {
             .program_def_map
             .get(&def_id)
             .cloned()
-            .or_else(|| self.hir_program.item(def_id.clone()));
+            .or_else(|| self.hir_program.borrow().item(def_id.clone()));
         let Some(item) = item else {
             return None;
         };

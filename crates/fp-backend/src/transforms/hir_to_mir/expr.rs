@@ -27,8 +27,10 @@ use fp_core::mir::{
 };
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 use super::body::BodyBuilder;
 
@@ -345,7 +347,7 @@ pub struct HirToMirLowerer {
     /// under the same id — so every lookup method (`hir_item`,
     /// source-path metadata, `hir_all_items`) reads straight off this map with no
     /// separate "current package first" fallback.
-    pub(super) hir_program: hir::SharedHirProgram,
+    pub(super) hir_program: Rc<RefCell<hir::HirProgram>>,
     /// The id of the package this instance is currently lowering — its HIR
     /// lives in `hir_program.packages` under this id (`new`/`transform`
     /// insert it there), so all HIR access routes through `hir_program`
@@ -398,12 +400,12 @@ impl HirToMirLowerer {
     /// current package is always a member of `hir_program` and the lookup
     /// methods query the already-installed HIR package directly.
     pub fn new(
-        hir_program: hir::SharedHirProgram,
+        hir_program: Rc<RefCell<hir::HirProgram>>,
         package_id: hir::PackageId,
         mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     ) -> Self {
         assert!(
-            hir_program.with(|program| program.packages.contains_key(&package_id)),
+            hir_program.borrow().packages.contains_key(&package_id),
             "MIR lowering requires installed HIR package `{package_id}`"
         );
         Self {
@@ -424,7 +426,7 @@ impl HirToMirLowerer {
     /// resolved callee `DefId` — read straight off `hir_program`, no
     /// lowering step needed.
     pub(crate) fn typeck_method_resolution(&self, hir_id: hir::HirId) -> Option<hir::DefId> {
-        self.hir_program.method_resolution(hir_id)
+        self.hir_program.borrow().method_resolution(hir_id)
     }
 
     pub(crate) fn typeck_method_intrinsic(
@@ -432,7 +434,7 @@ impl HirToMirLowerer {
         hir_id: hir::HirId,
     ) -> Option<fp_core::intrinsics::IntrinsicKind> {
         let def_id = self.typeck_method_resolution(hir_id)?;
-        match self.hir_program.intrinsic_def(def_id)? {
+        match self.hir_program.borrow().intrinsic_def(def_id)? {
             fp_core::intrinsics::CallKind::Len => Some(fp_core::intrinsics::IntrinsicKind::Len),
             _ => None,
         }
@@ -442,7 +444,7 @@ impl HirToMirLowerer {
         &self,
         hir_id: hir::HirId,
     ) -> Option<fp_core::intrinsics::IntrinsicKind> {
-        self.hir_program.reflection_field_intrinsic(hir_id)
+        self.hir_program.borrow().reflection_field_intrinsic(hir_id)
     }
 
     pub(crate) fn typeck_reflection_field_intrinsic_expr(
@@ -452,6 +454,7 @@ impl HirToMirLowerer {
         self.typeck_reflection_field_intrinsic(expr.hir_id.clone())
             .or_else(|| {
                 self.hir_program
+                    .borrow()
                     .reflection_field_intrinsic_at_span(expr.hir_id.package_id().clone(), expr.span)
             })
     }
@@ -459,7 +462,7 @@ impl HirToMirLowerer {
     /// Same idea as `typeck_expr_type`, for a `const { .. }` block's
     /// already-resolved comptime value.
     pub(crate) fn typeck_const_block_value(&self, def_id: hir::DefId) -> Option<Value> {
-        self.hir_program.const_block_value(def_id)
+        self.hir_program.borrow().const_block_value(def_id)
     }
 
     /// Materialize the compile-time value represented by a nominal type name.
@@ -539,14 +542,14 @@ impl HirToMirLowerer {
     /// first" fallback anymore. Replaces every old direct
     /// `self.hir_def_map.get(def_id)` read.
     pub(crate) fn hir_item(&self, def_id: hir::DefId) -> Option<hir::Item> {
-        self.hir_program.item(def_id)
+        self.hir_program.borrow().item(def_id)
     }
 
     pub(crate) fn hir_source_path(
         &self,
         def_id: hir::DefId,
     ) -> Option<fp_core::ast::path::InPackagePath> {
-        self.hir_program.source_path(def_id)
+        self.hir_program.borrow().source_path(def_id)
     }
 
     /// Every item `hir_program` knows about (which always includes
@@ -554,13 +557,18 @@ impl HirToMirLowerer {
     /// `self.hir_def_map.values()`/`.iter()` full scan (used to build a
     /// one-time reverse index; never a per-lookup cost).
     pub(crate) fn hir_all_items(&self) -> impl Iterator<Item = hir::Item> {
-        self.hir_program.all_items().into_iter()
+        self.hir_program
+            .borrow()
+            .all_items()
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn transform(&mut self, package_id: hir::PackageId) -> Result<mir::MirCodeUnit> {
         self.current_package_id = package_id.clone();
         let hir_package = self
             .hir_program
+            .borrow()
             .package_rc(&package_id)
             .expect("MIR lowering requires installed HIR package");
         let hir_package = hir_package.borrow().clone();
@@ -673,7 +681,12 @@ impl HirToMirLowerer {
     /// `register_all_dependency_adts`'s eager sweep — reached only when a
     /// `def_id` isn't already registered locally.
     pub(crate) fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
-        if let Some(fields) = self.hir_program.local_struct_fields(def_id.clone()) {
+        let struct_fields = {
+            self.hir_program
+                .borrow()
+                .local_struct_fields(def_id.clone())
+        };
+        if let Some(fields) = struct_fields {
             self.register_comptime_struct(def_id, fields, span);
             return;
         }
@@ -716,7 +729,9 @@ impl HirToMirLowerer {
                     hir::OwnerId(def_id.clone()),
                     u32::MAX.saturating_sub(index as u32),
                 );
-                self.hir_program.record_type_expr_type(hir_id.clone(), ty);
+                self.hir_program
+                    .borrow()
+                    .record_type_expr_type(hir_id.clone(), ty);
                 StructFieldDef {
                     name: name.as_str().to_string(),
                     ty: hir::TypeExpr {
@@ -967,14 +982,14 @@ impl HirToMirLowerer {
     /// including ones that only hold `&self` or reach `HirToMirLowerer` through
     /// an immutably-borrowed field — without a parallel `&mut self` variant.
     pub(crate) fn typeck_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
-        let ty = self.hir_program.expr_type(hir_id)?;
+        let ty = self.hir_program.borrow().expr_type(hir_id)?;
         lower_hir_ty(&ty).ok()
     }
 
     /// Same as `typeck_expr_type`, for a type-position `TypeExpr`'s own
     /// checked type instead of a value expr's.
     pub(crate) fn typeck_type_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
-        let ty = self.hir_program.type_expr_type(hir_id)?;
+        let ty = self.hir_program.borrow().type_expr_type(hir_id)?;
         lower_hir_ty(&ty).ok()
     }
 
@@ -982,7 +997,7 @@ impl HirToMirLowerer {
     /// type arguments — if any one argument fails to lower, the whole
     /// resolution is skipped (a partial arg list would be nonsensical).
     pub(crate) fn typeck_generic_call_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
-        let resolution = self.hir_program.generic_call_arg(hir_id)?;
+        let resolution = self.hir_program.borrow().generic_call_arg(hir_id)?;
         resolution
             .args
             .iter()
@@ -992,7 +1007,7 @@ impl HirToMirLowerer {
     }
 
     pub(super) fn typeck_generic_method_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
-        let resolution = self.hir_program.generic_method_arg(hir_id)?;
+        let resolution = self.hir_program.borrow().generic_method_arg(hir_id)?;
         resolution
             .args
             .iter()
@@ -1227,6 +1242,7 @@ impl HirToMirLowerer {
     /// `CompilerState` separately.
     pub fn current_package_handle(&self) -> std::rc::Rc<std::cell::RefCell<hir::HirPackage>> {
         self.hir_program
+            .borrow()
             .package_rc(&self.current_package_id)
             .expect("current package is always a member of hir_program")
     }
@@ -1388,7 +1404,7 @@ impl HirToMirLowerer {
         if self.lowered_items.contains(&def_id) {
             return Ok(());
         }
-        let Some(block) = self.hir_program.anonymous_const(def_id.clone()) else {
+        let Some(block) = self.hir_program.borrow().anonymous_const(def_id.clone()) else {
             return Err(fp_core::error::Error::from(format!(
                 "comptime definition {def_id} is missing from its HIR package"
             )));
@@ -3602,10 +3618,10 @@ impl HirToMirLowerer {
     /// `member_to_owning_item` reverse index maintained during HIR
     /// building) and then finds the member within it by `DefId`.
     pub(super) fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
-        let Some(owning_def_id) = self.hir_program.member_owner(def_id.clone()) else {
+        let Some(owning_def_id) = self.hir_program.borrow().member_owner(def_id.clone()) else {
             return;
         };
-        let Some(owning_item) = self.hir_program.item(owning_def_id) else {
+        let Some(owning_item) = self.hir_program.borrow().item(owning_def_id) else {
             return;
         };
         let hir::ItemKind::Impl(impl_block) = &owning_item.kind else {

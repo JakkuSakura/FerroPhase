@@ -127,6 +127,7 @@ impl<'a> BodyBuilder<'a> {
         let hir_ty = self
             .lowering
             .hir_program
+            .borrow()
             .expr_type(expr.hir_id.clone())
             .ok_or_else(|| {
                 fp_core::error::Error::from(format!(

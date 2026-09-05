@@ -9,6 +9,8 @@ use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{CallKind, IntrinsicKind};
 use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 mod support;
 
@@ -94,7 +96,7 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     generator.transform_package(&package)
@@ -107,7 +109,7 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
 
@@ -141,7 +143,7 @@ fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
         std::rc::Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
             fp_core::ast::package::provider::EmptyProvider,
         ))),
-        hir::SharedHirProgram::new(hir::HirProgram::new()),
+        Rc::new(RefCell::new(hir::HirProgram::new())),
         hir::PackageId::new("test"),
     );
     let try_expr: Expr = ExprKind::Try(ExprTry {
