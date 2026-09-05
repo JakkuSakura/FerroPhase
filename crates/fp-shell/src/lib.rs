@@ -28,14 +28,15 @@ pub use inventory::load_inventory;
 pub struct ShellBackend {
     target: ScriptTarget,
     output: PathBuf,
+    inventory: Option<PathBuf>,
     dry_run: bool,
     rendered: Mutex<Vec<String>>,
 }
 
 impl ShellBackend {
-    pub fn new(target: ScriptTarget, config: fp_core::backend::BackendConfig, _inventory: Option<File>, dry_run: bool) -> Self {
+    pub fn new(target: ScriptTarget, config: fp_core::backend::BackendConfig, inventory: Option<PathBuf>, dry_run: bool) -> Self {
         let output = config.single_file_output.unwrap_or(config.workspace_root);
-        Self { target, output, dry_run, rendered: Mutex::new(Vec::new()) }
+        Self { target, output, inventory, dry_run, rendered: Mutex::new(Vec::new()) }
     }
 }
 
@@ -43,15 +44,17 @@ impl TargetBackend for ShellBackend {
     fn capabilities(&self) -> LanguageCapabilities { LanguageCapabilities::NATIVE }
 
     fn intrinsic_materializer(&self) -> Option<Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
-        Some(Arc::new(shell_materializer::ShellMaterializer::new(None)))
+        let inventory = self.inventory.as_deref().map(load_inventory).transpose().ok().flatten();
+        Some(Arc::new(shell_materializer::ShellMaterializer::new(inventory)))
     }
 
     fn emit_package_artifact(&self, workspace: &fp_core::ast::program::AstProgram, package_id: &fp_core::ast::package::PackageId, _mir: &fp_core::mir::MirCodeUnit, _lir: Option<&fp_core::lir::LirBlob>) -> CoreResult<()> {
         let package = workspace.package_source(package_id)?;
         let file = File { path: PathBuf::from(package_id.as_str()), attrs: package.module.attrs.clone(), items: package.module.items.clone() };
+        let inventory = self.inventory.as_deref().map(load_inventory).transpose().map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         let code = match self.target {
-            ScriptTarget::Bash => fp_bash::BashTarget::new().render(&file, &bash_inventory(None)),
-            ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new().render(&file, &powershell_inventory(None)),
+            ScriptTarget::Bash => fp_bash::BashTarget::new().render(&file, &bash_inventory(inventory.as_ref())),
+            ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new().render(&file, &powershell_inventory(inventory.as_ref())),
         }.map_err(|e| fp_core::error::Error::from(e))?;
         self.rendered.lock().map_err(|_| fp_core::error::Error::from("shell backend render lock poisoned"))?.push(code);
         Ok(())

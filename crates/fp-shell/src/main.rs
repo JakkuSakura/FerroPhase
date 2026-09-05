@@ -23,10 +23,12 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let target = parse_target(&cli.target)?;
+    let inventory = cli.inventory.clone();
     for (name, target_kind) in [("bash", ScriptTarget::Bash), ("powershell", ScriptTarget::PowerShell), ("pwsh", ScriptTarget::PowerShell), ("ps", ScriptTarget::PowerShell)] {
         let dry_run = cli.dry_run;
+        let inventory = inventory.clone();
         fp_cli::register_target_backend(name, move |config| {
-            Ok(Box::new(ShellBackend::new(target_kind, config, None, dry_run)))
+            Ok(Box::new(ShellBackend::new(target_kind, config, inventory.clone(), dry_run)))
         });
     }
     let args = CompileArgs {
