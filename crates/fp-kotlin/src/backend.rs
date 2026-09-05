@@ -966,6 +966,7 @@ impl TargetBackend for KotlinBackend {
     fn write_workspace_files(
         &self,
         workspace: &fp_core::ast::program::AstProgram,
+        _hir_program: &fp_core::hir::HirProgram,
     ) -> fp_core::error::Result<()> {
         let output_root = self.output_root()?;
         let scan = self.ensure_scan(workspace)?;

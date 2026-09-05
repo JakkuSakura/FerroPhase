@@ -251,7 +251,11 @@ pub trait TargetBackend: Send + Sync {
 
     /// Workspace-level side files not tied to a single package (e.g.
     /// Kotlin's `settings.gradle.kts`/`build.gradle.kts`). Default: no-op.
-    fn write_workspace_files(&self, workspace: &AstProgram) -> Result<()> {
+    fn write_workspace_files(
+        &self,
+        workspace: &AstProgram,
+        _hir_program: &crate::hir::HirProgram,
+    ) -> Result<()> {
         let _ = workspace;
         Ok(())
     }

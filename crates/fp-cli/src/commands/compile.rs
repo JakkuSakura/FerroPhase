@@ -670,8 +670,10 @@ fn run_compile_pipeline(
             .map_err(|e| CliError::Compilation(e.to_string()))?;
     }
 
+    let hir_program = session.driver().state.borrow().hir_program();
+    let hir_program = hir_program.borrow();
     backend
-        .write_workspace_files(&workspace)
+        .write_workspace_files(&workspace, &hir_program)
         .map_err(|e| CliError::Compilation(e.to_string()))?;
 
     if exec {
