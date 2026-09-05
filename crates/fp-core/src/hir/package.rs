@@ -405,7 +405,9 @@ fn classify_type_shape(
             QPath::TypeRelative(_, _) => ImplShapeClass::Unclassified,
             QPath::Resolved(_, path) => match &path.res {
                 Res::Builtin(builtin) => ImplShapeClass::Shape(builtin.bucket_key().to_string()),
-                Res::Def(did) if generics.params.iter().any(|param| param.def_id == *did) => {
+                Res::Def(did) | Res::Generic(did)
+                    if generics.params.iter().any(|param| param.def_id == *did) =>
+                {
                     ImplShapeClass::Blanket
                 }
                 Res::Def(did) => ImplShapeClass::Nominal(did.clone()),

@@ -3976,6 +3976,33 @@ impl HirTypeChecker {
         // trait/generic-param the path starts from, not the method itself.
         if path.segments.len() > 1 {
             let tail_method = &path.segments.last().unwrap().ident;
+            // A generic base remains `Res::Generic` in HIR. Handle it before
+            // the nominal `Res::Def` path below; otherwise valid projections
+            // such as `T::IS_ZST`/`T::LAYOUT` are reported as unresolved
+            // value paths without consulting either the parameter bounds or
+            // blanket implementations.
+            if let hir::Res::Generic(generic_id) = path.res_ref() {
+                if let Some(Ty {
+                    kind: TyKind::Param(param),
+                }) = self.generic_ty(generic_id.clone())
+                {
+                    if let Some(sig) = self
+                        .generic_param_bound_method_signature(
+                            &param.name,
+                            tail_method,
+                        )
+                        .await?
+                    {
+                        return Ok(sig);
+                    }
+                    if let Some(ty) = self
+                        .generic_param_bound_assoc_const_type(&param, tail_method)
+                        .await?
+                    {
+                        return Ok(ty);
+                    }
+                }
+            }
             // A generic type parameter base (`T::default()` where
             // `T: Default`) — there is no impl to search (`T` is still
             // abstract), so resolve the method against the parameter's own
@@ -4762,9 +4789,7 @@ impl HirTypeChecker {
         param: &ty::ParamTy,
         const_name: &hir::Symbol,
     ) -> Result<Option<Ty>> {
-        let Some(bounds) = self.projection_param_bounds(param).map(<[_]>::to_vec) else {
-            return Ok(None);
-        };
+        let bounds = self.projection_param_bounds(param).map(<[_]>::to_vec);
 
         let mut trait_ids = Vec::new();
         fn flatten<'a>(bound: &'a hir::TypeExpr, out: &mut Vec<&'a hir::TypeExpr>) {
@@ -4778,8 +4803,10 @@ impl HirTypeChecker {
             }
         }
         let mut flattened = Vec::new();
-        for bound in &bounds {
-            flatten(bound, &mut flattened);
+        if let Some(bounds) = &bounds {
+            for bound in bounds {
+                flatten(bound, &mut flattened);
+            }
         }
         for bound in &flattened {
             let hir::TypeExprKind::Path(path) = &bound.kind else {
@@ -4870,7 +4897,13 @@ impl HirTypeChecker {
                 }
             }
         }
-        Ok(None)
+        // A generic parameter may satisfy a trait through a blanket impl
+        // without carrying that trait as an explicit bound. Rustc still
+        // permits projections such as `T::IS_ZST` when the selected blanket
+        // impl inherits a default associated constant. Reuse the normal
+        // impl candidate walk so this case follows the same identity and
+        // substitution rules as concrete associated-constant lookup.
+        self.method_declared_signature_at(&param_ty, const_name).await
     }
 
     /// Resolves `T::method_name(..)` where `T` is a still-generic type

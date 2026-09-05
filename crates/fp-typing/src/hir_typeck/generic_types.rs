@@ -1388,12 +1388,16 @@ impl HirTypeChecker {
                     })
                     .is_some_and(|item| match item.kind {
                         hir::ItemKind::Trait(trait_def) => trait_def.items.iter().any(|item| {
-                            item.name == *method
-                                && matches!(
-                                    &item.kind,
-                                    hir::TraitItemKind::Method(function)
-                                        if function.body.is_some()
-                                )
+                            if item.name != *method {
+                                return false;
+                            }
+                            match &item.kind {
+                                hir::TraitItemKind::Method(function) => function.body.is_some(),
+                                hir::TraitItemKind::AssocConst(constant) => {
+                                    constant.body.is_some()
+                                }
+                                hir::TraitItemKind::AssocType(_) => false,
+                            }
                         }),
                         _ => false,
                     })
@@ -1498,23 +1502,52 @@ impl HirTypeChecker {
             if let Some(trait_ty) = &impl_item.trait_ty {
                 if let Some(trait_def) = scope.resolve_trait_def(trait_ty) {
                     for trait_item in &trait_def.items {
-                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                        if trait_item.name != *method {
                             continue;
-                        };
-                        if trait_item.name == *method && function.body.is_some() {
-                            let signature = Self::method_declared_signature_apply_receiver(
-                                &mut scope,
-                                receiver_ty,
-                                function,
-                            )
-                            .await?;
-                            if Self::signature_matches_expected_output(
-                                &scope,
-                                signature.as_ref(),
-                                expected_output.as_ref(),
-                            ) {
-                                return Ok(signature);
+                        }
+                        match &trait_item.kind {
+                            hir::TraitItemKind::Method(function) if function.body.is_some() => {
+                                let signature = Self::method_declared_signature_apply_receiver(
+                                    &mut scope,
+                                    receiver_ty,
+                                    function,
+                                )
+                                .await?;
+                                if Self::signature_matches_expected_output(
+                                    &scope,
+                                    signature.as_ref(),
+                                    expected_output.as_ref(),
+                                ) {
+                                    return Ok(signature);
+                                }
                             }
+                            hir::TraitItemKind::AssocConst(constant)
+                                if constant.body.is_some() =>
+                            {
+                                let mut substitutions = HashMap::new();
+                                if scope
+                                    .unify_call_types_probe(
+                                        &impl_self_ty,
+                                        receiver_ty,
+                                        &mut substitutions,
+                                    )
+                                    .is_err()
+                                {
+                                    continue;
+                                }
+                                let ty = scope.check_type_expr(&constant.ty).await?;
+                                let ty = scope.substitute_param_map(&ty, &substitutions);
+                                if expected_output.as_ref().is_none_or(|expected| {
+                                    scope
+                                        .unify_call_types_probe(&ty, expected, &mut HashMap::new())
+                                        .is_ok()
+                                }) {
+                                    return Ok(Some(ty));
+                                }
+                            }
+                            hir::TraitItemKind::Method(_)
+                            | hir::TraitItemKind::AssocConst(_)
+                            | hir::TraitItemKind::AssocType(_) => {}
                         }
                     }
                 }
