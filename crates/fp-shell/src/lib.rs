@@ -13,9 +13,66 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use fp_core::backend::TargetBackend;
+use fp_core::capabilities::LanguageCapabilities;
+use fp_core::error::Result as CoreResult;
 
 pub use ScriptTarget as ShellTarget;
 pub use inventory::load_inventory;
+
+/// Shell code generator exposed through FerroPhase's shared compile pipeline.
+/// Parsing, package discovery, type checking and HIR lowering remain owned by
+/// `fp-cli`; this backend only materializes shell intrinsics and renders the
+/// completed package AST.
+pub struct ShellBackend {
+    target: ScriptTarget,
+    output: PathBuf,
+    dry_run: bool,
+    rendered: Mutex<Vec<String>>,
+}
+
+impl ShellBackend {
+    pub fn new(target: ScriptTarget, config: fp_core::backend::BackendConfig, _inventory: Option<File>, dry_run: bool) -> Self {
+        let output = config.single_file_output.unwrap_or(config.workspace_root);
+        Self { target, output, dry_run, rendered: Mutex::new(Vec::new()) }
+    }
+}
+
+impl TargetBackend for ShellBackend {
+    fn capabilities(&self) -> LanguageCapabilities { LanguageCapabilities::NATIVE }
+
+    fn intrinsic_materializer(&self) -> Option<Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
+        Some(Arc::new(shell_materializer::ShellMaterializer::new(None)))
+    }
+
+    fn emit_package_artifact(&self, workspace: &fp_core::ast::program::AstProgram, package_id: &fp_core::ast::package::PackageId, _mir: &fp_core::mir::MirCodeUnit, _lir: Option<&fp_core::lir::LirBlob>) -> CoreResult<()> {
+        let package = workspace.package_source(package_id)?;
+        let file = File { path: PathBuf::from(package_id.as_str()), attrs: package.module.attrs.clone(), items: package.module.items.clone() };
+        let code = match self.target {
+            ScriptTarget::Bash => fp_bash::BashTarget::new().render(&file, &bash_inventory(None)),
+            ScriptTarget::PowerShell => fp_powershell::PowerShellTarget::new().render(&file, &powershell_inventory(None)),
+        }.map_err(|e| fp_core::error::Error::from(e))?;
+        self.rendered.lock().map_err(|_| fp_core::error::Error::from("shell backend render lock poisoned"))?.push(code);
+        Ok(())
+    }
+
+    fn write_workspace_files(&self, _workspace: &fp_core::ast::program::AstProgram, _hir: &fp_core::hir::HirProgram) -> CoreResult<()> {
+        let mut code = self.rendered.lock().map_err(|_| fp_core::error::Error::from("shell backend render lock poisoned"))?.join("\n");
+        if self.dry_run {
+            code = format!("#!/usr/bin/env bash\nset -euo pipefail\nFP_DRY_RUN=1\n__dry() {{ echo \\\"[DRY-RUN] $*\\\"; }}\n\n{code}");
+        }
+        if let Some(parent) = self.output.parent() { std::fs::create_dir_all(parent)?; }
+        std::fs::write(&self.output, code)?;
+        Ok(())
+    }
+
+    fn exec(&self) -> CoreResult<()> {
+        let mut command = match self.target { ScriptTarget::Bash => { let mut c = Command::new("bash"); c.arg(&self.output); c }, ScriptTarget::PowerShell => { let mut c = Command::new("pwsh"); c.args(["-NoProfile", "-NonInteractive", "-File"]).arg(&self.output); c } };
+        let status = command.status()?;
+        if status.success() { Ok(()) } else { Err(fp_core::error::Error::from(format!("shell execution failed with status {status}"))) }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptTarget {
@@ -114,7 +171,7 @@ pub fn compile_source_with_options(
         attrs: Vec::new(),
         items: lowered_items,
     };
-    let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
+    let materializer = shell_materializer::ShellMaterializer::new(options.inventory.clone());
     let mut lowered = fp_core::intrinsics::materialize_file(lowered_file, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 

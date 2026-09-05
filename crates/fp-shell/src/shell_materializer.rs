@@ -7,13 +7,13 @@ use fp_core::intrinsics::{CallKind, IntrinsicMaterializer, MaterializeOutcome};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-pub struct ShellMaterializer<'a> {
-    inventory: Option<&'a File>,
+pub struct ShellMaterializer {
+    inventory: Option<File>,
     sigs: RefCell<Option<HashMap<String, FunctionSignature>>>,
 }
 
-impl<'a> ShellMaterializer<'a> {
-    pub fn new(inventory: Option<&'a File>) -> Self {
+impl ShellMaterializer {
+    pub fn new(inventory: Option<File>) -> Self {
         Self {
             inventory,
             sigs: RefCell::new(None),
@@ -24,7 +24,7 @@ impl<'a> ShellMaterializer<'a> {
         if host == "localhost" {
             return Some("local".into());
         }
-        let file = self.inventory?;
+        let file = self.inventory.as_ref()?;
         let item = file.items.iter().find_map(|i| match i.kind() {
             ItemKind::DefFunction(f) if f.name.as_str() == "inventory" => Some(f),
             _ => None,
@@ -64,7 +64,7 @@ impl<'a> ShellMaterializer<'a> {
     }
 }
 
-impl ShellMaterializer<'_> {
+impl ShellMaterializer {
     fn prepare_file(&self, file: &mut File) {
         // Scan signatures from the AST
         *self.sigs.borrow_mut() = Some(scan_all_signatures(file));
@@ -204,7 +204,7 @@ impl ShellMaterializer<'_> {
     }
 }
 
-impl IntrinsicMaterializer for ShellMaterializer<'_> {
+impl IntrinsicMaterializer for ShellMaterializer {
     fn prepare_file(&self, file: &mut File) {
         ShellMaterializer::prepare_file(self, file);
     }
