@@ -2184,7 +2184,12 @@ impl AssocItemConstraint {
 
 impl Generics {
     pub fn span(&self) -> Span {
-        self.span
+        self.span.or(Span::union(
+            self.params
+                .iter()
+                .map(GenericParam::span)
+                .chain(self.where_clause.as_ref().map(WhereClause::span)),
+        ))
     }
 }
 
