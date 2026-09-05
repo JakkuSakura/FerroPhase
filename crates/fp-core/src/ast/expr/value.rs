@@ -306,15 +306,7 @@ impl ExprInvokeTarget {
 
 impl ExprInvoke {
     pub fn span(&self) -> Span {
-        span_or(
-            self.span,
-            union_spans(
-                Some(self.target.span())
-                    .into_iter()
-                    .chain(self.args.iter().map(Expr::span))
-                    .chain(self.kwargs.iter().map(ExprKwArg::span)),
-            ),
-        )
+        self.span
     }
 }
 
