@@ -1,7 +1,8 @@
 use super::worklist::ResolutionWorklist;
 use super::Resolver;
 use fp_core::ast::package::PackageId;
-use fp_core::ast::path::InPackagePath;
+use fp_core::ast::path::{InPackagePath, PathPrefix};
+use fp_core::ast::Path;
 use fp_core::ast::program::AstProgram;
 use fp_core::cfg::CfgFilter;
 use fp_core::hir;
@@ -127,6 +128,7 @@ impl InPackageResolver {
         for prelude in preludes {
             let mut target = InPackagePath::new(vec![prelude.package_id.as_str().to_owned()]);
             target.segments.extend(prelude.path.segments);
+            let target = Self::ast_import_path(PathPrefix::Plain, &target);
             for namespace in [Namespace::Type, Namespace::Value, Namespace::Macro] {
                 worklist.push(ImportDirective {
                     module: module.clone(),
@@ -403,8 +405,8 @@ impl InPackageResolver {
                     } else {
                         self.resolver.resolve_parsed_path(
                             &self.hir_package.borrow().id,
-                            &InPackagePath::new(Vec::new()),
-                            &directive.target.to_ast_path(),
+                            &directive.module,
+                            &directive.target,
                             Namespace::Type,
                         )
                     };
@@ -458,8 +460,8 @@ impl InPackageResolver {
                 // bar`), so terminal type/value checks stay out of this pass.
                 let resolved = self.resolver.resolve_parsed_path(
                     &self.hir_package.borrow().id,
-                    &InPackagePath::new(Vec::new()),
-                    &directive.target.to_ast_path(),
+                    &directive.module,
+                    &directive.target,
                     directive.namespace,
                 );
                 let Some(target) = (match resolved {
@@ -502,54 +504,33 @@ impl InPackageResolver {
         use fp_core::ast::ItemKind;
         if let ItemKind::Import(import) = item.kind() {
             let mut leaves = Vec::new();
-            let base = match &import.style {
+            let (base, prefix) = match &import.style {
                 fp_core::ast::ItemImportStyle::Plain => {
-                    // In Rust 2018+, an initial identifier in a `use` path
-                    // may name an external crate from the extern prelude.
-                    // Treat that crate name as rooted instead of appending it
-                    // to the importing module (for example, `use core::ptr`
-                    // inside `alloc::sync` must target `core::ptr`, not
-                    // `alloc::sync::core::ptr`).
-                    let starts_at_external = match &import.tree {
-                        fp_core::ast::ItemImportTree::Ident(ident)
-                        | fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
-                            from: ident,
-                            ..
-                        }) => self.hir_program.borrow().packages.keys().any(|package| {
-                            hir::HirProgram::external_crate_name(package) == ident.as_str()
-                        }),
-                        fp_core::ast::ItemImportTree::Path(path) => path
-                            .segments
-                            .first()
-                            .and_then(|segment| match segment {
-                                fp_core::ast::ItemImportTree::Ident(ident)
-                                | fp_core::ast::ItemImportTree::Rename(
-                                    fp_core::ast::ItemImportRename { from: ident, .. },
-                                ) => Some(ident.as_str()),
-                                _ => None,
-                            })
-                            .is_some_and(|name| {
-                                self.hir_program.borrow().packages.keys().any(|package| {
-                                    hir::HirProgram::external_crate_name(package) == name
-                                })
-                            }),
-                        _ => false,
-                    };
-                    if starts_at_external {
-                        InPackagePath::new(Vec::new())
-                    } else {
-                        module.clone()
-                    }
+                    // Keep a plain import relative to its lexical module.
+                    // `Resolver` performs the ancestor walk and recognizes
+                    // extern-prelude crate roots; baking `module` into the
+                    // target would make aliases such as `alloc_crate` look
+                    // like children of every importing submodule.
+                    (InPackagePath::new(Vec::new()), PathPrefix::Plain)
                 }
                 fp_core::ast::ItemImportStyle::From(from) => {
                     let mut base = module.clone();
                     for _ in 0..from.level {
                         let _ = base.pop();
                     }
-                    self.import_path(module, &from.module, base)
+                    self.import_path(
+                        module,
+                        &from.module,
+                        base,
+                        if from.level > 0 {
+                            PathPrefix::Crate
+                        } else {
+                            PathPrefix::Plain
+                        },
+                    )
                 }
             };
-            self.collect_tree(module, base, &import.tree, &mut leaves);
+            self.collect_tree(module, base, prefix, &import.tree, &mut leaves);
             for (target, name, kind) in leaves {
                 for namespace in [Namespace::Type, Namespace::Value] {
                     worklist.push(ImportDirective {
@@ -571,40 +552,54 @@ impl InPackageResolver {
         module: &InPackagePath,
         path: &fp_core::ast::ItemImportPath,
         mut base: InPackagePath,
-    ) -> InPackagePath {
+        mut prefix: PathPrefix,
+    ) -> (InPackagePath, PathPrefix) {
         for segment in &path.segments {
             match segment {
-                fp_core::ast::ItemImportTree::Root => base = InPackagePath::new(Vec::new()),
+                fp_core::ast::ItemImportTree::Root => {
+                    base = InPackagePath::new(Vec::new());
+                    prefix = PathPrefix::Root;
+                }
                 fp_core::ast::ItemImportTree::Crate => {
                     base = InPackagePath::new(Vec::new());
+                    prefix = PathPrefix::Crate;
                 }
-                fp_core::ast::ItemImportTree::SelfMod => base = module.clone(),
+                fp_core::ast::ItemImportTree::SelfMod => {
+                    base = module.clone();
+                    prefix = PathPrefix::Crate;
+                }
                 fp_core::ast::ItemImportTree::SuperMod => {
                     let _ = base.pop();
+                    prefix = PathPrefix::Crate;
                 }
                 fp_core::ast::ItemImportTree::Ident(ident) => base.push(ident.name.clone()),
                 fp_core::ast::ItemImportTree::Path(nested) => {
-                    base = self.import_path(module, nested, base)
+                    (base, prefix) = self.import_path(module, nested, base, prefix)
                 }
                 _ => {}
             }
         }
-        base
+        (base, prefix)
     }
 
     fn collect_tree(
         &self,
         module: &InPackagePath,
         prefix: InPackagePath,
+        prefix_kind: PathPrefix,
         tree: &fp_core::ast::ItemImportTree,
-        out: &mut Vec<(InPackagePath, Symbol, ImportKind)>,
+        out: &mut Vec<(Path, Symbol, ImportKind)>,
     ) {
         use fp_core::ast::ItemImportTree;
         match tree {
             ItemImportTree::Root | ItemImportTree::Crate => {}
             ItemImportTree::SelfMod => {
                 if let Some(name) = prefix.tail().map(Symbol::from) {
-                    out.push((prefix, name, ImportKind::Single));
+                    out.push((
+                        Self::ast_import_path(prefix_kind, &prefix),
+                        name,
+                        ImportKind::Single,
+                    ));
                 }
             }
             ItemImportTree::SuperMod => {
@@ -612,47 +607,78 @@ impl InPackageResolver {
                     .parent_n(1)
                     .unwrap_or_else(|| InPackagePath::new(Vec::new()));
                 if let Some(name) = target.tail().map(Symbol::from) {
-                    out.push((target, name, ImportKind::Single));
+                    out.push((
+                        Self::ast_import_path(PathPrefix::Crate, &target),
+                        name,
+                        ImportKind::Single,
+                    ));
                 }
             }
             ItemImportTree::Ident(ident) => {
                 let target = prefix.with_segment(ident.name.clone());
                 out.push((
-                    target,
+                    Self::ast_import_path(prefix_kind, &target),
                     Symbol::from(ident.name.as_str()),
                     ImportKind::Single,
                 ));
             }
             ItemImportTree::Rename(rename) => {
                 out.push((
-                    prefix.with_segment(rename.from.name.clone()),
+                    Self::ast_import_path(
+                        prefix_kind,
+                        &prefix.with_segment(rename.from.name.clone()),
+                    ),
                     Symbol::from(rename.to.name.as_str()),
                     ImportKind::Single,
                 ));
             }
-            ItemImportTree::Glob => out.push((prefix, Symbol::from(""), ImportKind::Glob)),
+            ItemImportTree::Glob => out.push((
+                Self::ast_import_path(prefix_kind, &prefix),
+                Symbol::from(""),
+                ImportKind::Glob,
+            )),
             ItemImportTree::Group(group) => {
                 for member in &group.items {
-                    self.collect_tree(module, prefix.clone(), member, out);
+                    self.collect_tree(module, prefix.clone(), prefix_kind.clone(), member, out);
                 }
             }
             ItemImportTree::Path(path) => {
                 let mut current = prefix;
+                let mut current_kind = prefix_kind;
                 for (index, member) in path.segments.iter().enumerate() {
                     if index + 1 == path.segments.len() {
-                        self.collect_tree(module, current.clone(), member, out);
+                        self.collect_tree(
+                            module,
+                            current.clone(),
+                            current_kind.clone(),
+                            member,
+                            out,
+                        );
                     } else {
-                        current = self.import_path(
+                        (current, current_kind) = self.import_path(
                             module,
                             &fp_core::ast::ItemImportPath {
                                 segments: vec![member.clone()],
                             },
                             current,
+                            current_kind,
                         );
                     }
                 }
             }
         }
+    }
+
+    fn ast_import_path(prefix: PathPrefix, path: &InPackagePath) -> Path {
+        Path::new(
+            prefix,
+            path.segments
+                .iter()
+                .cloned()
+                .map(fp_core::ast::Ident::new)
+                .map(Into::into)
+                .collect(),
+        )
     }
 }
 
@@ -660,7 +686,7 @@ impl InPackageResolver {
 pub struct ImportDirective {
     pub module: InPackagePath,
     pub name: Symbol,
-    pub target: InPackagePath,
+    pub target: Path,
     pub namespace: Namespace,
     pub kind: ImportKind,
     pub visibility: fp_core::ast::Visibility,
@@ -720,7 +746,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root_path.clone(),
             name: "Alias".into(),
-            target: InPackagePath::new(vec!["Target".into()]),
+            target: Path::new(PathPrefix::Plain, vec!["Target".into()]),
             namespace: Namespace::Type,
             kind: ImportKind::Single,
             visibility: fp_core::ast::Visibility::Private,
@@ -759,7 +785,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root_path,
             name: "MissingAlias".into(),
-            target: InPackagePath::new(vec!["Missing".into()]),
+            target: Path::new(PathPrefix::Plain, vec!["Missing".into()]),
             namespace: Namespace::Type,
             kind: ImportKind::Single,
             visibility: fp_core::ast::Visibility::Private,
@@ -788,7 +814,7 @@ mod tests {
             worklist.push(ImportDirective {
                 module: root_path.clone(),
                 name: name.into(),
-                target: InPackagePath::new(vec![source.into()]),
+                target: Path::new(PathPrefix::Plain, vec![source.into()]),
                 namespace: Namespace::Type,
                 kind: ImportKind::Single,
                 visibility: fp_core::ast::Visibility::Private,
@@ -835,7 +861,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root_path.clone(),
             name: "".into(),
-            target: source,
+            target: InPackageResolver::ast_import_path(PathPrefix::Plain, &source),
             namespace: Namespace::Type,
             kind: ImportKind::Glob,
             visibility: fp_core::ast::Visibility::Private,
@@ -887,7 +913,7 @@ mod tests {
         worklist.push(ImportDirective {
             module: root_path.clone(),
             name: "alias".into(),
-            target: child,
+            target: InPackageResolver::ast_import_path(PathPrefix::Plain, &child),
             namespace: Namespace::Type,
             kind: ImportKind::Single,
             visibility: fp_core::ast::Visibility::Private,

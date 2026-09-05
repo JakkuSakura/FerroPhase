@@ -94,6 +94,64 @@ fn resolves_std_runtime_and_thread_items_within_std_package() {
 }
 
 #[test]
+fn resolves_imported_items_at_their_source_module_locations() {
+    let prepared = prepare_std();
+    let mut failures = Vec::new();
+    for path in [
+        "alloc_crate",
+        "alloc_crate::collections::VecDeque",
+        "alloc_crate::sync::Arc",
+    ] {
+        let parsed = Path::new(
+            PathPrefix::Plain,
+            path.split("::").map(Into::into).collect(),
+        );
+        let result = prepared.resolver.resolve_parsed_path(
+            &PackageId::new("std"),
+            &InPackagePath::new(Vec::new()),
+            &parsed,
+            Namespace::Type,
+        );
+        if !matches!(result, ResolutionResult::Found(_)) {
+            failures.push(format!("std root::{path}: {result:?}"));
+        }
+    }
+    for (package, module, names) in [
+        (
+            "alloc",
+            ["alloc", "sync"].as_slice(),
+            ["Allocator", "Global", "Layout"].as_slice(),
+        ),
+        (
+            "std",
+            ["io", "impls"].as_slice(),
+            ["Allocator", "VecDeque", "Arc"].as_slice(),
+        ),
+        (
+            "std",
+            ["path"].as_slice(),
+            ["Borrow", "Arc"].as_slice(),
+        ),
+    ] {
+        let package_id = PackageId::new(package);
+        let location = InPackagePath::new(module.iter().map(|segment| (*segment).to_owned()).collect());
+        for name in names {
+            let parsed = Path::new(PathPrefix::Plain, vec![(*name).into()]);
+            let result = prepared.resolver.resolve_parsed_path(
+                &package_id,
+                &location,
+                &parsed,
+                Namespace::Type,
+            );
+            if !matches!(result, ResolutionResult::Found(_)) {
+                failures.push(format!("{package}::{module:?}::{name}: {result:?}"));
+            }
+        }
+    }
+    assert_failures("source-module imports", failures);
+}
+
+#[test]
 fn prelude_exports_are_visible_in_each_package_root() {
     let prepared = prepare_std();
     let mut failures = Vec::new();
