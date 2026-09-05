@@ -4266,6 +4266,63 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn lowers_legacy_ast_projection_to_qpath() {
+        let parser = FerroPhaseParser::new();
+        let mut items = parser
+            .parse_items_ast("trait Trait { type Item; } struct Value; type Alias = Value;")
+            .expect("projection fixture should parse");
+        let alias = items
+            .iter_mut()
+            .find(|item| matches!(item.kind(), ast::ItemKind::DefType(_)))
+            .expect("type alias should be present");
+        let ast::ItemKind::DefType(def) = alias.kind_mut() else {
+            unreachable!();
+        };
+        def.value = ast::Ty::Projection(Box::new(ast::TypeProjection {
+            self_ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
+                ast::Name::ident("Value"),
+            )))),
+            trait_ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
+                ast::Name::ident("Trait"),
+            )))),
+            assoc: ast::Ident::new("Item"),
+        }));
+
+        let package = package_from_items(items).expect("projection fixture package");
+        let package_id = PackageId::new("test");
+        let mut lowerer = AstToHirLowerer::new(
+            std::rc::Rc::new(AstProgram::new(std::sync::Arc::new(
+                fp_core::ast::package::provider::EmptyProvider,
+            ))),
+            hir::SharedHirProgram::new(hir::HirProgram::new()),
+            package_id,
+        );
+        let lowered = lowerer
+            .transform_package(&package)
+            .expect("projection fixture should lower");
+        assert!(
+            lowerer.take_diagnostics().get_diagnostics().is_empty(),
+            "legacy projection lowering emitted diagnostics"
+        );
+        let alias = lowered
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::TypeAlias(alias) if alias.name.as_str() == "Alias" => Some(alias),
+                _ => None,
+            })
+            .expect("lowered type alias should be present");
+        let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind
+        else {
+            panic!("legacy projection should lower to a resolved QPath");
+        };
+        assert_eq!(path.segments.len(), 2);
+        assert_eq!(path.segments[0].ident.as_str(), "Trait");
+        assert_eq!(path.segments[1].ident.as_str(), "Item");
+        assert!(matches!(path.segments[1].res, hir::Res::Error));
+    }
+
+    #[test]
     fn resolves_explicit_qself_type_path() {
         let (package, diagnostics) =
             lower("trait Trait { type Item; } struct Value; type Alias = <Value as Trait>::Item;");

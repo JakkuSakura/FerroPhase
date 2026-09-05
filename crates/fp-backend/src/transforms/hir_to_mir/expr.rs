@@ -3174,9 +3174,6 @@ impl HirToMirLowerer {
         substs: &HashMap<String, Ty>,
     ) -> Ty {
         match &ty_expr.kind {
-            hir::TypeExprKind::Projection(projection) => {
-                self.lower_type_expr_with_substs(&projection.self_ty, substs)
-            }
             hir::TypeExprKind::Primitive(primitive) => {
                 self.lower_primitive_type(primitive, ty_expr.span)
             }

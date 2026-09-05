@@ -2745,47 +2745,6 @@ impl HirTypeChecker {
                             })
                     }
                 },
-                hir::TypeExprKind::Projection(projection) => {
-                    let owner_ty = self.check_type_expr(&projection.self_ty).await?;
-                    let hir::Res::Def(trait_def_id) = &projection.trait_path.res else {
-                        return Ok(self.error_ty("qualified projection trait is unresolved"));
-                    };
-                    let Some(item) = self.program_rc().item(trait_def_id.clone()) else {
-                        return Ok(self.error_ty("qualified projection trait was not found"));
-                    };
-                    let hir::ItemKind::Trait(trait_def) = &item.kind else {
-                        return Ok(self.error_ty("qualified projection target is not a trait"));
-                    };
-                    let mut seen = HashSet::new();
-                    let Some(assoc_type) =
-                        self.trait_assoc_type(&trait_def, &projection.assoc, &mut seen)
-                    else {
-                        return Ok(self.error_ty(format!(
-                            "trait does not declare associated type `{}`",
-                            projection.assoc
-                        )));
-                    };
-                    let name = hir::Symbol::new(format!(
-                        "<{} as {}>::{}",
-                        owner_ty, trait_def_id, projection.assoc
-                    ));
-                    let projection_ty = Ty {
-                        kind: TyKind::Param(ty::ParamTy {
-                            index: u32::MAX,
-                            name: name.clone(),
-                        }),
-                    };
-                    if !assoc_type.bounds.is_empty() {
-                        self.projection_param_bounds
-                            .entry(ty::ParamTy {
-                                index: u32::MAX,
-                                name: name.clone(),
-                            })
-                            .or_default()
-                            .extend(assoc_type.bounds);
-                    }
-                    projection_ty
-                }
                 hir::TypeExprKind::Tuple(items) => {
                     let mut checked = Vec::with_capacity(items.len());
                     for item in items {

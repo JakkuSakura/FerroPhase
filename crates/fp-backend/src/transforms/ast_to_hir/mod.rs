@@ -2658,13 +2658,22 @@ impl AstToHirLowerer {
                 let Some(trait_path) = trait_qpath.into_path() else {
                     return Ok(self.error_type_expr(ty.span()));
                 };
+                let trait_span = trait_path.span();
+                let trait_res = trait_path.res;
+                let mut segments = trait_path.segments;
+                segments.push(self.make_path_segment(
+                    projection.assoc.name.as_str(),
+                    None,
+                    ParamMode::Explicit,
+                ));
+                let path = hir::Path::with_span(
+                    Span::union([self_ty.span(), trait_span]),
+                    trait_res,
+                    segments,
+                );
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Projection(hir::TypeProjection {
-                        self_ty,
-                        trait_path,
-                        assoc: projection.assoc.name.clone().into(),
-                    }),
+                    hir::TypeExprKind::Path(hir::QPath::qualified(*self_ty, path)),
                     self.normalize_span(ty.span()),
                 ))
             }

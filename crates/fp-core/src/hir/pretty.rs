@@ -1261,12 +1261,6 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
     match &ty.kind {
         TypeExprKind::Primitive(prim) => fmt_type_primitive(prim),
         TypeExprKind::Path(path) => fmt_qpath(path, ctx),
-        TypeExprKind::Projection(projection) => format!(
-            "<{} as {}>::{}",
-            fmt_type_expr(&projection.self_ty, ctx),
-            fmt_path(&projection.trait_path, ctx),
-            projection.assoc
-        ),
         TypeExprKind::Structural(structural) => {
             let fields = structural
                 .fields
