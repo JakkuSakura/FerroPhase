@@ -2927,6 +2927,7 @@ mod tests {
                     generics: hir::Generics {
                         params: Vec::new(),
                         where_clause: None,
+                        span: Span::null(),
                     },
                     items: Vec::new(),
                     supertraits: Vec::new(),
@@ -3761,6 +3762,7 @@ mod tests {
                 generics: hir::Generics {
                     params: Vec::new(),
                     where_clause: None,
+                    span: Span::null(),
                 },
                 abi: hir::Abi::Rust,
             },
@@ -3778,6 +3780,7 @@ mod tests {
                 generics: hir::Generics {
                     params: Vec::new(),
                     where_clause: None,
+                    span: Span::null(),
                 },
                 items: vec![hir::TraitItem {
                     def_id: method_id,

@@ -1082,6 +1082,7 @@ mod tests {
                 projection_bounds: Vec::new(),
             }],
             where_clause: None,
+            span: Span::null(),
         };
         let class = classify_impl_shape(&impl_for(path_type(Res::Def(param), "T"), generics));
         assert!(matches!(class, ImplShapeClass::Blanket));

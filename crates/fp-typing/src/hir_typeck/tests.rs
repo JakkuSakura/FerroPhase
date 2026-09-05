@@ -498,6 +498,7 @@ fn lifetime_arguments_do_not_shift_nominal_type_arguments() {
             projection_bounds: Vec::new(),
         }],
         where_clause: None,
+        span: fp_core::span::Span::null(),
     };
     let wrapper = hir::Item {
         hir_id: hid(2),

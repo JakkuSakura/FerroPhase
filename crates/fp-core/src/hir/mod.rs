@@ -1234,6 +1234,9 @@ pub enum AssocItemConstraintKind {
 pub struct Generics {
     pub params: Vec<GenericParam>,
     pub where_clause: Option<WhereClause>,
+    /// Source span covering the complete generic parameter/where-clause
+    /// list, matching rustc HIR's explicit `Generics::span` metadata.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1496,6 +1499,7 @@ impl Default for Generics {
         Self {
             params: Vec::new(),
             where_clause: None,
+            span: Span::null(),
         }
     }
 }
@@ -2164,12 +2168,7 @@ impl AssocItemConstraint {
 
 impl Generics {
     pub fn span(&self) -> Span {
-        Span::union(
-            self.params
-                .iter()
-                .map(GenericParam::span)
-                .chain(self.where_clause.as_ref().map(WhereClause::span)),
-        )
+        self.span
     }
 }
 
@@ -2287,6 +2286,7 @@ mod path_tests {
             super::Generics {
                 params: vec![parameter],
                 where_clause: None,
+                span,
             }
             .span(),
             span

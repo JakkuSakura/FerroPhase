@@ -385,6 +385,7 @@ impl AstToHirLowerer {
         }
 
         Ok(hir::Generics {
+            span: Span::union(hir_params.iter().map(hir::GenericParam::span)),
             params: hir_params,
             where_clause: None,
         })

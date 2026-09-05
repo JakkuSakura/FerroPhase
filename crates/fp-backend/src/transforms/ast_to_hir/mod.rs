@@ -1339,6 +1339,7 @@ impl AstToHirLowerer {
                             generics: hir::Generics {
                                 params: vec![generic_param(this, "U", u_def_id)],
                                 where_clause: None,
+                                span,
                             },
                             abi: hir::Abi::Rust,
                         },
@@ -1355,6 +1356,7 @@ impl AstToHirLowerer {
                             generics: hir::Generics {
                                 params: vec![generic_param(this, "T", t_def_id)],
                                 where_clause: None,
+                                span,
                             },
                             trait_ty: None,
                             self_ty,

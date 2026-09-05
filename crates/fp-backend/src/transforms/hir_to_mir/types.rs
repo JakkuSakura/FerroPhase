@@ -242,6 +242,7 @@ impl HirToMirLowerer {
                     generics: hir::Generics {
                         params: Vec::new(),
                         where_clause: None,
+                        span: Span::null(),
                     },
                     abi: hir::Abi::Rust,
                 },

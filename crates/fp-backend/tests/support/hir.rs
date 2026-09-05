@@ -39,6 +39,7 @@ pub fn function_item(name: &str, body: Expr) -> Item {
         generics: Generics {
             params: Vec::new(),
             where_clause: None,
+            span: Span::null(),
         },
         abi: hir::Abi::Rust,
     };
