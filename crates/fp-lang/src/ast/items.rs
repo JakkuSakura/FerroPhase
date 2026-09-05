@@ -25,8 +25,15 @@ pub(crate) fn parse_items_tokens(
             items.extend(parsed);
             continue;
         }
+        let before = input.len();
         let item =
             parse_item_or_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        if input.len() == before {
+            return Err(error_at_current(
+                input,
+                "item parser made no progress",
+            ));
+        }
         items.push(item);
     }
     Ok(items)
@@ -57,7 +64,14 @@ pub(crate) fn parse_item_tokens(
             items.extend(parsed);
             continue;
         }
+        let before = input.len();
         let item = parse_item_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+        if input.len() == before {
+            return Err(error_at_current(
+                input,
+                "item parser made no progress",
+            ));
+        }
         items.push(item);
     }
     Ok(items)

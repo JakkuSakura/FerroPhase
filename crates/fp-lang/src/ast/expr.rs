@@ -258,6 +258,15 @@ fn parse_range_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr
 }
 
 fn parse_binary(input: &mut &[Token], file: FileId, min_prec: u8) -> ModalResult<Expr> {
+    // A binary expression always starts with an operand.  Macro expansion
+    // can hand the parser a truncated token stream (for example an item
+    // repetition ending at `}`); reject that boundary before descending into
+    // the operand parser instead of recursively probing malformed input.
+    if input.is_empty()
+        || matches!(peek_symbol(input), Some("}" | ")" | "]" | ";" | ","))
+    {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
     let mut lhs = parse_cast(input, file)?;
     loop {
         let Some((op, prec, kind)) = peek_binary_op(input) else {
@@ -280,6 +289,11 @@ fn parse_binary(input: &mut &[Token], file: FileId, min_prec: u8) -> ModalResult
 }
 
 fn parse_binary_no_struct(input: &mut &[Token], file: FileId, min_prec: u8) -> ModalResult<Expr> {
+    if input.is_empty()
+        || matches!(peek_symbol(input), Some("}" | ")" | "]" | ";" | ","))
+    {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
     let mut lhs = parse_cast_no_struct(input, file)?;
     loop {
         let Some((op, prec, kind)) = peek_binary_op(input) else {

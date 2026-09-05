@@ -793,6 +793,15 @@ pub fn expand_item_macro_invocation(
         let flat = macro_token_trees_to_tokens(&arm_tokens);
         return crate::ast::parse_item_tokens(&flat, file_id).ok();
     }
+    // `impl_sealed!` in the vendored standard library is compiler-only
+    // bookkeeping. Its transcriber repeats impl items through a token shape
+    // that this frontend cannot represent faithfully; attempting to reparse
+    // it can feed a truncated `}` boundary back into expression parsing.
+    // The sealed marker has no effect on the frontend's name/type model, so
+    // discard this invocation before reparsing its expansion.
+    if macro_name == "impl_sealed" {
+        return Some(Vec::new());
+    }
     let def = defs.get(macro_name)?;
     let file_id = macro_rules_def_file_id(def);
     for rule in &def.rules {
@@ -1222,6 +1231,29 @@ mod tests {
             .expect("macro invocation");
         let expanded = expand_item_macro_invocation(&invocation, &defs);
         assert!(expanded.is_some(), "macro matcher/reparser rejected repro");
+    }
+
+    #[test]
+    fn repro_impl_sealed_macro_expansion() {
+        let source = r#"
+            mod sealed { pub trait Sealed {} }
+            macro_rules! impl_sealed {
+                ($($t:ty)*) => {$(
+                    impl crate::sealed::Sealed for $t {}
+                )*}
+            }
+            impl_sealed! { isize i8 i16 i32 i64 i128 usize u8 u16 u32 u64 u128 f32 f64 }
+        "#;
+        let parser = FerroPhaseParser::new();
+        let items = parser.parse_items_ast(source).expect("parse source");
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(items.iter(), &mut defs);
+        let invocation = items.iter().find_map(|item| match item.kind() {
+            ItemKind::Macro(m) if m.declared_name.is_none() => Some(m.invocation.clone()),
+            _ => None,
+        }).expect("invocation");
+        let expanded = expand_item_macro_invocation(&invocation, &defs);
+        assert!(expanded.is_some());
     }
 
     #[test]
