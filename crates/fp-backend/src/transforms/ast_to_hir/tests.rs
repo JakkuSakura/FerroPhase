@@ -4266,31 +4266,11 @@ mod function_body_resolution {
     }
 
     #[test]
-    fn lowers_qualified_ast_type_to_qpath() {
+    fn lowers_qualified_type_to_qpath() {
         let parser = FerroPhaseParser::new();
-        let mut items = parser
-            .parse_items_ast("trait Trait { type Item; } struct Value; type Alias = Value;")
+        let items = parser
+            .parse_items_ast("trait Trait { type Item; } struct Value; type Alias = <Value as Trait>::Item;")
             .expect("projection fixture should parse");
-        let alias = items
-            .iter_mut()
-            .find(|item| matches!(item.kind(), ast::ItemKind::DefType(_)))
-            .expect("type alias should be present");
-        let ast::ItemKind::DefType(def) = alias.kind_mut() else {
-            unreachable!();
-        };
-        def.value = ast::Ty::Expr(Box::new(ast::Expr::name(ast::Name {
-            qself: Some(ast::QSelf {
-                ty: Box::new(ast::Ty::Expr(Box::new(ast::Expr::name(
-                    ast::Name::ident("Value"),
-                )))),
-                path_span: Span::null(),
-                position: 1,
-            }),
-            path: ast::Path::plain(vec![
-                ast::Ident::new("Trait").into(),
-                ast::Ident::new("Item").into(),
-            ]),
-        })));
 
         let package = package_from_items(items).expect("projection fixture package");
         let package_id = PackageId::new("test");
@@ -4318,7 +4298,7 @@ mod function_body_resolution {
             .expect("lowered type alias should be present");
         let hir::TypeExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &alias.target.kind
         else {
-            panic!("qualified AST type should lower to a resolved QPath");
+            panic!("qualified type should lower to a resolved QPath");
         };
         assert_eq!(path.segments.len(), 2);
         assert_eq!(path.segments[0].ident.as_str(), "Trait");
