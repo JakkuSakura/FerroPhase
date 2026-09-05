@@ -4,7 +4,8 @@ use std::fmt::{self, Formatter};
 
 use super::{
     AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
-    AssocItemConstraint, Function, GenericArg, GenericArgs, GenericArgsParentheses, Term,
+    AssocItemConstraint, ConstArg, ConstArgKind, Function, GenericArg, GenericArgs,
+    GenericArgsParentheses, Term,
     GenericParamKind,
     Generics, HirPackage, Impl,
     ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Query, Stmt, StmtKind, Struct, Trait,
@@ -799,6 +800,22 @@ fn format_lit(lit: &Lit) -> String {
     }
 }
 
+fn format_const_arg(arg: &ConstArg, ctx: &PrettyCtx<'_>) -> String {
+    match &arg.kind {
+        ConstArgKind::Path(path) => fmt_qpath(path, ctx),
+        ConstArgKind::Anon(expr) => format_expr_inline(expr, ctx),
+        ConstArgKind::Literal { lit, negated } => {
+            if *negated {
+                format!("-{}", format_lit(lit))
+            } else {
+                format_lit(lit)
+            }
+        }
+        ConstArgKind::Error(_) => "<error>".to_owned(),
+        ConstArgKind::Infer(_) => "_".to_owned(),
+    }
+}
+
 fn summarize_format_parts(parts: &[FormatTemplatePart]) -> String {
     let mut buf = String::new();
     for part in parts {
@@ -888,7 +905,7 @@ fn fmt_generic_args(args: &GenericArgs, ctx: &PrettyCtx<'_>) -> String {
         .map(|arg| match arg {
             GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
             GenericArg::Type(ty) => fmt_type_expr(ty.as_ref(), ctx),
-            GenericArg::Const(expr) => format_expr_inline(expr.as_ref(), ctx),
+            GenericArg::Const(const_arg) => format_const_arg(const_arg, ctx),
             GenericArg::Infer(_) => "_".to_owned(),
         })
         .collect::<Vec<_>>();
@@ -959,7 +976,7 @@ fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
                 .map(|arg| match arg {
                     GenericArg::Lifetime(lifetime) => lifetime.as_str().to_owned(),
                     GenericArg::Type(ty) => fmt_type_expr(ty, ctx),
-                    GenericArg::Const(expr) => format_expr_inline(expr, ctx),
+                    GenericArg::Const(const_arg) => format_const_arg(const_arg, ctx),
                     GenericArg::Infer(_) => "_".to_owned(),
                 })
                 .collect::<Vec<_>>();

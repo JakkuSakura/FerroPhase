@@ -170,7 +170,7 @@ pub struct HirTypeChecker {
 }
 
 impl HirTypeChecker {
-    fn const_arg_kind(&self, expr: &hir::Expr) -> ty::ConstKind {
+    fn const_expr_kind(&self, expr: &hir::Expr) -> ty::ConstKind {
         match &expr.kind {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) if *value >= 0 => {
                 ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(ty::ScalarInt {
@@ -185,6 +185,37 @@ impl HirTypeChecker {
                 })
             }
             _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.local_id())),
+        }
+    }
+
+    fn const_arg_kind(&self, arg: &hir::ConstArg) -> ty::ConstKind {
+        match &arg.kind {
+            hir::ConstArgKind::Literal {
+                lit: hir::Lit::Integer(value),
+                negated: false,
+            } if *value >= 0 => {
+                ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(ty::ScalarInt {
+                    data: *value as u128,
+                    size: 8,
+                })))
+            }
+            hir::ConstArgKind::Path(path) if path.segments().len() == 1 => {
+                ty::ConstKind::Param(ty::ParamConst {
+                    index: u32::MAX,
+                    name: path.segments()[0].ident.clone(),
+                })
+            }
+            hir::ConstArgKind::Path(_) => {
+                ty::ConstKind::Infer(ty::InferConst::Fresh(arg.hir_id.local_id()))
+            }
+            hir::ConstArgKind::Infer(infer) => {
+                ty::ConstKind::Infer(ty::InferConst::Fresh(infer.hir_id.local_id()))
+            }
+            hir::ConstArgKind::Anon(expr) => self.const_expr_kind(expr),
+            hir::ConstArgKind::Literal { .. } => {
+                ty::ConstKind::Infer(ty::InferConst::Fresh(arg.hir_id.local_id()))
+            }
+            hir::ConstArgKind::Error(error) => ty::ConstKind::Error(error.clone()),
         }
     }
 
@@ -3329,7 +3360,7 @@ impl HirTypeChecker {
                             hir::GenericParamKind::Const { default, .. } => {
                                 let default = default
                                     .as_ref()
-                                    .map(|default| self.const_arg_kind(default))
+                                    .map(|default| self.const_expr_kind(default))
                                     .unwrap_or_else(|| {
                                         ty::ConstKind::Param(ty::ParamConst {
                                             index: parameter.def_id.index,
@@ -3368,7 +3399,7 @@ impl HirTypeChecker {
                                         name: parameter.name.clone(),
                                     })
                                 },
-                                |default| self.const_arg_kind(default),
+                                |default| self.const_expr_kind(default),
                             ))
                         }
                     })
@@ -3396,7 +3427,7 @@ impl HirTypeChecker {
                                         name: parameter.name.clone(),
                                     })
                                 },
-                                |default| self.const_arg_kind(default),
+                                |default| self.const_expr_kind(default),
                             ))
                         }
                     })
@@ -4341,7 +4372,7 @@ impl HirTypeChecker {
                     hir::GenericParamKind::Const { default, .. } => {
                         let default = default
                             .as_ref()
-                            .map(|default| self.const_arg_kind(default))
+                            .map(|default| self.const_expr_kind(default))
                             .unwrap_or_else(|| {
                                 ty::ConstKind::Param(ty::ParamConst {
                                     index: parameter.def_id.index,
@@ -4381,7 +4412,7 @@ impl HirTypeChecker {
                     hir::GenericParamKind::Const { default, .. } => {
                         let value = default
                             .as_ref()
-                            .map(|default| self.const_arg_kind(default))
+                            .map(|default| self.const_expr_kind(default))
                             .unwrap_or_else(|| {
                                 ty::ConstKind::Param(ty::ParamConst {
                                     index: parameter.def_id.index,

@@ -1830,7 +1830,7 @@ impl<'a> HirToAstLifter<'a> {
                 hir::GenericArg::Type(ty) => self
                     .lift_type(ty)
                     .map(|ty| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(Box::new(ty)))),
-                hir::GenericArg::Const(expr) => self.lift_expr(expr).map(|expr| {
+                hir::GenericArg::Const(const_arg) => self.lift_const_arg(const_arg).map(|expr| {
                     ast::AngleBracketedArg::Arg(ast::GenericArg::Const(Box::new(expr)))
                 }),
                 hir::GenericArg::Infer(infer) => {
@@ -1898,6 +1898,33 @@ impl<'a> HirToAstLifter<'a> {
                 args: lifted,
             },
         ))
+    }
+
+    fn lift_const_arg(&self, arg: &hir::ConstArg) -> Result<ast::Expr> {
+        match &arg.kind {
+            hir::ConstArgKind::Path(path) => Ok(ast::Expr::name(self.lift_qpath(path)?)),
+            hir::ConstArgKind::Anon(expr) => self.lift_expr(expr),
+            hir::ConstArgKind::Literal { lit, negated } => {
+                let expr = hir::Expr::new(
+                    arg.hir_id.clone(),
+                    hir::ExprKind::Literal(lit.clone()),
+                    arg.span,
+                );
+                let mut lifted = self.lift_expr(&expr)?;
+                if *negated {
+                    lifted = ast::Expr::new(ast::ExprKind::UnOp(ast::ExprUnOp {
+                        span: arg.span,
+                        op: UnOpKind::Neg,
+                        val: Box::new(lifted),
+                    }));
+                }
+                Ok(lifted)
+            }
+            hir::ConstArgKind::Infer(_) => Ok(ast::Expr::ident(Ident::new("_"))),
+            hir::ConstArgKind::Error(_) => Err(fp_core::error::Error::from(
+                "cannot lift an erroneous const argument",
+            )),
+        }
     }
 
     fn lift_ast_path(&self, path: &hir::Path) -> Result<Path> {
@@ -2629,11 +2656,11 @@ mod tests {
                     )),
                     Span::null(),
                 ))),
-                hir::GenericArg::Const(Box::new(hir::Expr::new(
+                hir::GenericArg::Const(Box::new(hir::ConstArg::from_expr(hir::Expr::new(
                     hir::HirId::new(owner.clone(), 4),
                     hir::ExprKind::Literal(hir::Lit::Integer(3)),
                     Span::null(),
-                ))),
+                )))),
                 hir::GenericArg::Infer(hir::InferArg {
                     hir_id: hir::HirId::new(owner.clone(), 5),
                     span: Span::null(),

@@ -1139,10 +1139,58 @@ pub struct InferArg {
 pub enum GenericArg {
     Lifetime(Lifetime),
     Type(Box<TypeExpr>),
-    Const(Box<Expr>),
+    Const(Box<ConstArg>),
     /// An inferred generic argument (`_`), matching rustc HIR's dedicated
     /// `GenericArg::Infer` variant rather than encoding it as a type node.
     Infer(InferArg),
+}
+
+/// A constant argument entering the type system.
+///
+/// Rustc keeps const arguments separate from ordinary expressions because a
+/// bare path (`N`) and an arbitrary expression (`{ N + 1 }`) participate in
+/// generic argument lowering differently.  The owned HIR representation uses
+/// the same distinction while retaining the existing expression tree for
+/// anonymous constants.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstArg {
+    pub hir_id: HirId,
+    pub kind: ConstArgKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstArgKind {
+    /// A path-shaped const argument, normally a const parameter or item.
+    Path(QPath),
+    /// An arbitrary const expression (including blocks and operators).
+    Anon(Box<Expr>),
+    /// A literal const argument.
+    Literal { lit: Lit, negated: bool },
+    /// A const argument that could not be lowered.
+    Error(ty::ErrorGuaranteed),
+    /// An unambiguous const inference argument (`{ _ }`).
+    Infer(InferArg),
+}
+
+impl ConstArg {
+    pub fn from_expr(expr: Expr) -> Self {
+        let hir_id = expr.hir_id.clone();
+        let span = expr.span;
+        let kind = match expr.kind {
+            ExprKind::Path(path) => ConstArgKind::Path(path),
+            ExprKind::Literal(lit) => ConstArgKind::Literal {
+                lit,
+                negated: false,
+            },
+            other => ConstArgKind::Anon(Box::new(Expr {
+                hir_id: hir_id.clone(),
+                kind: other,
+                span,
+            })),
+        };
+        Self { hir_id, kind, span }
+    }
 }
 
 /// A constraint on an associated item of a path segment.
@@ -2020,7 +2068,7 @@ impl GenericArg {
         match self {
             GenericArg::Lifetime(lifetime) => lifetime.span(),
             GenericArg::Type(ty) => ty.span(),
-            GenericArg::Const(expr) => expr.span(),
+            GenericArg::Const(const_arg) => const_arg.span,
             GenericArg::Infer(infer) => infer.span,
         }
     }
@@ -2031,7 +2079,7 @@ impl GenericArg {
         match self {
             GenericArg::Lifetime(lifetime) => lifetime.hir_id.clone(),
             GenericArg::Type(ty) => ty.hir_id.clone(),
-            GenericArg::Const(expr) => expr.hir_id.clone(),
+            GenericArg::Const(const_arg) => const_arg.hir_id.clone(),
             GenericArg::Infer(infer) => infer.hir_id.clone(),
         }
     }
@@ -2172,7 +2220,7 @@ mod path_tests {
     use super::{
         AssocItemConstraint, AssocItemConstraintKind, GenericArg, GenericArgs,
         GenericArgsParentheses, HirId, InferArg, InferArgKind, Lifetime, LifetimeKind, OwnerId,
-        PackageId, PathSegment, Term, TypeExpr, TypeExprKind,
+        PackageId, Path, PathSegment, QPath, Term, TypeExpr, TypeExprKind,
     };
     use crate::span::Span;
 
@@ -2184,6 +2232,34 @@ mod path_tests {
         assert_eq!(segment.args(), GenericArgs::NONE);
         assert!(segment.args().args.is_empty());
         assert!(segment.infer_args);
+    }
+
+    #[test]
+    fn const_args_preserve_rustc_node_kinds() {
+        let path_expr = super::Expr::new(
+            HirId::default(),
+            super::ExprKind::Path(QPath::resolved(Path::new(
+                super::Res::Error,
+                vec![PathSegment::new("N", None)],
+            ))),
+            Span::new(0, 1, 2),
+        );
+        let path_arg = super::ConstArg::from_expr(path_expr);
+        assert!(matches!(path_arg.kind, super::ConstArgKind::Path(_)));
+        assert_eq!(path_arg.span, Span::new(0, 1, 2));
+
+        let literal_arg = super::ConstArg::from_expr(super::Expr::new(
+            HirId::default(),
+            super::ExprKind::Literal(super::Lit::Integer(3)),
+            Span::new(0, 3, 4),
+        ));
+        assert!(matches!(
+            literal_arg.kind,
+            super::ConstArgKind::Literal {
+                lit: super::Lit::Integer(3),
+                negated: false
+            }
+        ));
     }
 
     #[test]

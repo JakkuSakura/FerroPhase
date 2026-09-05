@@ -592,8 +592,8 @@ impl AstToHirLowerer {
                                     self.impl_self_key(ty)
                                         .map(|key| ImplGenericArgKey::Type(Box::new(key))),
                                 ),
-                                hir::GenericArg::Const(expr) => {
-                                    Some(Ok(ImplGenericArgKey::Const(expr.hir_id.clone())))
+                                hir::GenericArg::Const(const_arg) => {
+                                    Some(Ok(ImplGenericArgKey::Const(const_arg.hir_id.clone())))
                                 }
                                 hir::GenericArg::Infer(_) => Some(Ok(ImplGenericArgKey::Infer)),
                             })

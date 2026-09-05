@@ -232,9 +232,9 @@ impl AstToHirLowerer {
                             fp_core::hir::resolve::ResolutionResult::Found(_)
                         )
                     {
-                        hir_args.push(hir::GenericArg::Const(Box::new(
+                        hir_args.push(hir::GenericArg::Const(Box::new(hir::ConstArg::from_expr(
                             self.transform_expr_to_hir(expr)?,
-                        )));
+                        ))));
                     } else {
                         hir_args.push(hir::GenericArg::Type(Box::new(
                             self.transform_type_to_hir(ty.as_ref())?,
@@ -264,9 +264,9 @@ impl AstToHirLowerer {
                             kind: hir::InferArgKind::Const,
                         }));
                     } else {
-                        hir_args.push(hir::GenericArg::Const(Box::new(
+                        hir_args.push(hir::GenericArg::Const(Box::new(hir::ConstArg::from_expr(
                             self.transform_expr_to_hir(expr.as_ref())?,
-                        )));
+                        ))));
                     }
                 }
             }
@@ -342,7 +342,9 @@ impl AstToHirLowerer {
                         if matches!(value.as_ref(), ast::Value::Int(_) | ast::Value::UInt(_))
                 ) {
                     let hir_expr = self.transform_expr_to_hir(expr)?;
-                    hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
+                    hir_args.push(hir::GenericArg::Const(Box::new(hir::ConstArg::from_expr(
+                        hir_expr,
+                    ))));
                     continue;
                 }
                 if let ast::ExprKind::Name(name) = expr.kind()
@@ -369,7 +371,9 @@ impl AstToHirLowerer {
                     )
                 {
                     let hir_expr = self.transform_expr_to_hir(expr)?;
-                    hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
+                    hir_args.push(hir::GenericArg::Const(Box::new(hir::ConstArg::from_expr(
+                        hir_expr,
+                    ))));
                     continue;
                 }
             }
