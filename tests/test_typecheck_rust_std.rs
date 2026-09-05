@@ -15,6 +15,67 @@ use fp_typing::ComptimeResolver;
 use fp_typing::HirTypeChecker;
 
 #[test]
+fn core_f128_inherent_associated_constants_are_lowered() {
+    let provider = Arc::new(RustStdProvider);
+    let package_id = PackageId::new("core");
+    let ast_program = Rc::new(AstProgram::new(provider.clone()));
+    let source = provider
+        .load_package_source(&package_id)
+        .expect("failed to load core source");
+    ast_program.begin_package(package_id.clone(), source, LirDataLayout::x86_64());
+
+    let source = ast_program.get_ast_package(&package_id).borrow().clone();
+    let hir_program = Rc::new(RefCell::new(HirProgram::new()));
+    let mut lowerer = fp_backend::transformations::AstToHirLowerer::new(
+        Rc::clone(&ast_program),
+        Rc::clone(&hir_program),
+        package_id.clone(),
+    );
+    let mut package = lowerer
+        .transform_package(&source)
+        .expect("failed to lower core source");
+
+    let has_f128_constants = package.items.iter().any(|item| {
+        let fp_core::hir::ItemKind::Impl(implementation) = &item.kind else {
+            return false;
+        };
+        implementation.items.iter().any(|member| {
+            matches!(
+                &member.kind,
+                fp_core::hir::ImplItemKind::AssocConst(constant)
+                    if matches!(constant.name.as_str(), "INFINITY" | "NEG_INFINITY")
+            )
+        })
+    });
+    assert!(
+        has_f128_constants,
+        "core f128 inherent associated constants were not lowered"
+    );
+
+    package.index_derived_lookups();
+    let package = Rc::new(RefCell::new(package));
+    hir_program.borrow_mut().add_package(package);
+    let indexed_impls = hir_program
+        .borrow()
+        .impls_for_shape("f128")
+        .filter_map(|item| match item.kind {
+            fp_core::hir::ItemKind::Impl(implementation) => Some(implementation),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let f128_impl = indexed_impls.iter().find(|implementation| {
+        implementation.items.iter().any(|member| {
+            matches!(&member.kind, fp_core::hir::ImplItemKind::AssocConst(constant) if constant.name == "INFINITY")
+        })
+    }).expect("core f128 inherent impl was not indexed by primitive shape");
+    assert!(matches!(
+        &f128_impl.self_ty.kind,
+        fp_core::hir::TypeExprKind::Path(fp_core::hir::QPath::Resolved(_, path))
+            if matches!(path.res, fp_core::hir::Res::Builtin(fp_core::hir::BuiltinSelfType::Primitive(ref name)) if name == "f128")
+    ), "impl f128 must resolve its self type as the primitive, not the core::f128 module");
+}
+
+#[test]
 fn type_checks_rust_std_packages_without_stopping_at_first_error() {
     let provider = Arc::new(RustStdProvider);
     let package_ids = dependency_closure(&provider, &[PackageId::new("std")]);
