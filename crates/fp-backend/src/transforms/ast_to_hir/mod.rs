@@ -1274,6 +1274,7 @@ impl AstToHirLowerer {
                             hir_id: this.next_id(),
                             def_id,
                             name: hir::Symbol::new(name),
+                            span,
                             kind: hir::GenericParamKind::Type {
                                 default: None,
                                 synthetic: false,

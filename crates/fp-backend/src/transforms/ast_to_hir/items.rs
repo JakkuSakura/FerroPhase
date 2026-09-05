@@ -376,6 +376,7 @@ impl AstToHirLowerer {
                 hir_id,
                 def_id: def_id.clone(),
                 name: param.name.clone().into(),
+                span: param.span(),
                 kind,
                 bounds,
                 explicit_bindings,

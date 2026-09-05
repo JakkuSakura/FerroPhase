@@ -1241,6 +1241,10 @@ pub struct GenericParam {
     pub hir_id: HirId,
     pub def_id: DefId,
     pub name: Symbol,
+    /// Source span covering the complete generic parameter declaration.
+    /// Rustc stores this independently of the parameter kind so spans remain
+    /// available for lifetime/type parameters without a default value.
+    pub span: Span,
     pub kind: GenericParamKind,
     /// This parameter's own trait bounds (`T: Iterator<Item = U>`, `F:
     /// FnOnce() -> R`, ...) so `path_ty` can resolve a still-generic
@@ -2194,7 +2198,7 @@ impl GenericParam {
     }
 
     pub fn span(&self) -> Span {
-        self.kind.span()
+        self.span
     }
 }
 
@@ -2260,6 +2264,33 @@ mod path_tests {
                 negated: false
             }
         ));
+    }
+
+    #[test]
+    fn generic_parameter_spans_are_stored_explicitly() {
+        let span = Span::new(0, 10, 20);
+        let parameter = super::GenericParam {
+            hir_id: HirId::default(),
+            def_id: super::DefId::local(1),
+            name: "T".into(),
+            span,
+            kind: super::GenericParamKind::Type {
+                default: None,
+                synthetic: false,
+            },
+            bounds: Vec::new(),
+            explicit_bindings: Vec::new(),
+            projection_bounds: Vec::new(),
+        };
+        assert_eq!(parameter.span(), span);
+        assert_eq!(
+            super::Generics {
+                params: vec![parameter],
+                where_clause: None,
+            }
+            .span(),
+            span
+        );
     }
 
     #[test]

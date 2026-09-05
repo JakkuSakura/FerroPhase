@@ -1072,6 +1072,7 @@ mod tests {
                 hir_id: HirId::new(OwnerId::root(PackageId::new("test")), 2),
                 def_id: param.clone(),
                 name: "T".into(),
+                span: Span::null(),
                 kind: GenericParamKind::Type {
                     default: None,
                     synthetic: false,

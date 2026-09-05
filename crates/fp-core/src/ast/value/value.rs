@@ -895,7 +895,20 @@ common_struct! {
 }
 impl GenericParam {
     pub fn span(&self) -> Span {
-        self.bounds.span()
+        let kind_span = match &self.kind {
+            GenericParamKind::Const { ty } => ty.span(),
+            GenericParamKind::Lifetime | GenericParamKind::Type => Span::null(),
+        };
+        Span::union(
+            [
+                Some(self.name.span()),
+                Some(self.bounds.span()),
+                Some(kind_span),
+                self.default.as_ref().map(|default| default.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }
 
