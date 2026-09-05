@@ -89,7 +89,7 @@ impl<'a> BodyBuilder<'a> {
 
     pub(super) fn enum_variant_info_from_expected(
         &self,
-        path: &hir::Path,
+        path: &hir::QPath,
         expected_ty: Option<&Ty>,
     ) -> Option<EnumVariantInfo> {
         let expected_ty = self.lowering.unwrap_expr_actual_ty(expected_ty?);
