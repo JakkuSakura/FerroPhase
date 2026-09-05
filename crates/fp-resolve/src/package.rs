@@ -15,6 +15,7 @@ use fp_core::hir::Symbol;
 use fp_core::span::Span;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::rc::Rc;
 pub struct InPackageResolver {
     hir_package: Rc<RefCell<hir::HirPackage>>,
@@ -27,6 +28,7 @@ pub struct InPackageResolver {
     ast_program: Rc<AstProgram>,
     hir_program: Rc<RefCell<HirProgram>>,
     cfg_filter: CfgFilter,
+    impl_def_occurrences: HashMap<(String, Span), usize>,
 }
 
 impl InPackageResolver {
@@ -45,6 +47,7 @@ impl InPackageResolver {
             ast_program,
             hir_program,
             cfg_filter: CfgFilter::host(),
+            impl_def_occurrences: HashMap::new(),
         }
     }
 
@@ -54,6 +57,7 @@ impl InPackageResolver {
     }
 
     pub fn resolve_package(&mut self, package_id: &PackageId) -> fp_core::error::Result<()> {
+        self.impl_def_occurrences.clear();
         let module = self
             .ast_program
             .get_ast_package(package_id)
@@ -371,7 +375,14 @@ impl InPackageResolver {
             }
             ItemKind::Impl(_) => {
                 let module_key = module.to_key();
-                self.hir_package.borrow_mut().impl_def_id(&module_key, span);
+                let ordinal = self
+                    .impl_def_occurrences
+                    .entry((module_key.clone(), span))
+                    .and_modify(|value| *value += 1)
+                    .or_insert(0);
+                self.hir_package
+                    .borrow_mut()
+                    .impl_def_id(&module_key, span, *ordinal);
             }
             ItemKind::Macro(mac) => {
                 if let Some(name) = mac.declared_name.as_ref() {

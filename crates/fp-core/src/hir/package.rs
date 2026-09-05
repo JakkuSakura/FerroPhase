@@ -58,7 +58,7 @@ pub struct HirPackage {
     /// Stable identities for named members created while lowering an owning
     /// item (impl/trait members and similar nested declarations).
     pub member_def_ids: HashMap<(DefId, Symbol, crate::hir::resolve::Namespace), DefId>,
-    pub impl_def_ids: HashMap<(String, crate::span::Span), DefId>,
+    pub impl_def_ids: HashMap<(String, crate::span::Span, usize), DefId>,
     /// Identity-based module namespace, keyed by module definition id.
     pub module_data: crate::hir::resolve::ModuleData,
     /// Prelude modules participating in this package's resolved namespace.
@@ -517,8 +517,8 @@ impl HirPackage {
         id
     }
 
-    pub fn impl_def_id(&mut self, module: &str, span: crate::span::Span) -> DefId {
-        let key = (module.to_owned(), span);
+    pub fn impl_def_id(&mut self, module: &str, span: crate::span::Span, ordinal: usize) -> DefId {
+        let key = (module.to_owned(), span, ordinal);
         if let Some(existing) = self.impl_def_ids.get(&key) {
             return existing.clone();
         }
@@ -527,8 +527,15 @@ impl HirPackage {
         id
     }
 
-    pub fn registered_impl_def_id(&self, module: &str, span: crate::span::Span) -> Option<DefId> {
-        self.impl_def_ids.get(&(module.to_owned(), span)).cloned()
+    pub fn registered_impl_def_id(
+        &self,
+        module: &str,
+        span: crate::span::Span,
+        ordinal: usize,
+    ) -> Option<DefId> {
+        self.impl_def_ids
+            .get(&(module.to_owned(), span, ordinal))
+            .cloned()
     }
 
     /// Allocates and registers a named source definition atomically.

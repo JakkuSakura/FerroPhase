@@ -13,6 +13,7 @@ impl AstToHirLowerer {
         self.current_owner = None;
         self.local_id = 0;
         self.current_position = 0;
+        self.impl_def_occurrences.clear();
         self.trait_defs.clear();
         self.trait_def_modules.clear();
         self.structural_value_defs.clear();
@@ -328,13 +329,7 @@ impl AstToHirLowerer {
                     // is safe to fully re-run later, unmodified.
                     let defer = false;
                     if !defer {
-                        let module_key = self.module_path.to_key();
-                        let existing = self
-                            .package()
-                            .registered_impl_def_id(&module_key, item.span());
-                        let impl_def_id = existing.unwrap_or_else(|| {
-                            self.package_mut().impl_def_id(&module_key, item.span())
-                        });
+                        let impl_def_id = self.impl_def_id_for_current_item(item.span());
                         // A self-type can be permanently unresolvable — not a
                         // timing issue an import-order retry would fix, but a
                         // genuine dead end (e.g. its target type lives in a
