@@ -4349,6 +4349,27 @@ mod function_body_resolution {
     }
 
     #[test]
+    fn infers_omitted_qself_associated_arguments_in_expression_paths() {
+        let (package, diagnostics) = lower(
+            "trait Trait<T> { fn make() -> T; } struct Value<T>(T); fn call() -> i64 { <Value<i64> as Trait<i64>>::make() }",
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expression QPath emitted diagnostics: {diagnostics:?}"
+        );
+        let call = function(&package, "call");
+        let hir::ExprKind::Call(callee, _) = &body_expr(call).kind else {
+            panic!("expected qualified associated function call");
+        };
+        let hir::ExprKind::Path(hir::QPath::Resolved(Some(_), path)) = &callee.kind else {
+            panic!("expected resolved qualified QPath, got {:?}", callee.kind);
+        };
+        assert_eq!(path.segments.len(), 2);
+        assert!(!path.segments[0].infer_args);
+        assert!(path.segments[1].infer_args);
+    }
+
+    #[test]
     fn preserves_generic_arguments_on_nested_type_relative_segments() {
         let (package, diagnostics) = lower("type Alias<T> = <T>::First<u8>::Second<u16>;");
         assert!(

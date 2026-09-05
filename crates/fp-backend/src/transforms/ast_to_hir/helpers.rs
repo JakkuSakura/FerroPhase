@@ -418,7 +418,7 @@ impl AstToHirLowerer {
                         let trait_qpath = self.ast_expr_to_hir_path(
                             &trait_expr,
                             PathResolutionScope::Type,
-                            ParamMode::Explicit,
+                            param_mode,
                         )?;
                         let hir::QPath::Resolved(_, trait_path) = trait_qpath else {
                             return Err(
