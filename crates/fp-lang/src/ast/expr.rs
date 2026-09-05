@@ -747,6 +747,7 @@ fn parse_primary(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 /// shape. Selection of a concrete impl remains a type-checking concern, and
 /// the ordinary postfix chain (`::field`, calls, ...) continues from there.
 fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let original = *input;
     let mut probe = *input;
     if !try_eat_symbol(&mut probe, "<") {
         return Err(ErrMode::Backtrack(ContextError::new()));
@@ -786,10 +787,12 @@ fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<
             segments = qualified;
         }
         *input = assoc_probe;
-        let path_span = Span::union([
-            trait_path.map(Path::span).unwrap_or_else(Span::null),
-            assoc_path.span(),
-        ]);
+        let consumed = original.len().saturating_sub(assoc_probe.len());
+        let path_span = original
+            .get(..consumed)
+            .and_then(|tokens| tokens.first().zip(tokens.last()))
+            .map(|(first, last)| Span::union([token_span_to_span(first), token_span_to_span(last)]))
+            .unwrap_or_else(Span::null);
         return Ok(Expr::name(Name {
             qself: Some(fp_core::ast::QSelf {
                 ty: Box::new(ty),

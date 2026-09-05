@@ -878,7 +878,13 @@ impl Name {
     }
 
     pub fn span(&self) -> Span {
-        self.path.span()
+        Span::union([
+            self.qself
+                .as_ref()
+                .map(|qself| qself.ty.span())
+                .unwrap_or_else(Span::null),
+            self.path.span(),
+        ])
     }
 }
 

@@ -458,6 +458,23 @@ fn parse_qualified_expression_uses_trait_path_for_qself_span() {
 }
 
 #[test]
+fn qualified_expression_path_span_includes_qself_prefix() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast("<Vec<u8> as a::Trait>::Item")
+        .unwrap();
+    let ExprKind::Name(Name { qself, path }) = expr.kind() else {
+        panic!("expected qualified path expression");
+    };
+    let qself = qself.as_ref().expect("qualified self");
+
+    assert_eq!(path.span().lo, 0);
+    assert_eq!(expr.span(), path.span());
+    assert!(path.span().hi > qself.ty.span().hi);
+}
+
+#[test]
 fn parse_traitless_expression_qpath_keeps_associated_tail() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
